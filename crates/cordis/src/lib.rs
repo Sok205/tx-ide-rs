@@ -14,6 +14,8 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
+pub mod loader;
+
 pub type BoxError = Box<dyn std::error::Error>;
 
 /// A typed service key. Linking is by `name`; `T` is the value type every provider must bind.
@@ -113,7 +115,12 @@ impl Runtime {
 
     /// `O-Insert` + settle: load a root component. Rejects a provision overlap up front.
     pub fn plug(&mut self, component: impl Component) -> Result<FiberId, Error> {
-        let id = self.insert(Rc::new(component), None)?;
+        self.plug_shared(Rc::new(component))
+    }
+
+    /// [`Runtime::plug`] for a component built at runtime (the [`loader`]'s factories).
+    pub fn plug_shared(&mut self, component: Rc<dyn Component>) -> Result<FiberId, Error> {
+        let id = self.insert(component, None)?;
         self.settle();
         Ok(id)
     }
