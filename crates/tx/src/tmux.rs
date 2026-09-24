@@ -285,6 +285,12 @@ impl Tmux {
             .map(drop)
     }
 
+    /// `switch-client -t <name>` with the reference's bare target: `tx start` switches to its
+    /// fixed `Views` home and its failure text names that argv (T-TMUX-19).
+    pub fn switch_client_bare(&self, name: &str) -> Result<(), TmuxError> {
+        self.run(&["switch-client", "-t", name]).map(drop)
+    }
+
     // ----- introspection -------------------------------------------------------------------
 
     /// Expand a tmux format against `target` (or the calling client). `None` outside tmux / on an
@@ -702,6 +708,15 @@ mod tests {
             pane_id: pane_id.into(),
             pane_index: pane_index.into(),
         }
+    }
+
+    #[test]
+    fn switch_client_failure_names_the_target_form() {
+        let tmux = Tmux::new("/usr/bin/false", TmuxEnv::default());
+        let bare = tmux.switch_client_bare("Views").unwrap_err().to_string();
+        assert_eq!(bare, "tmux switch-client -t Views failed: ");
+        let exact = tmux.switch_client("Views").unwrap_err().to_string();
+        assert_eq!(exact, "tmux switch-client -t =Views failed: ");
     }
 
     #[test]

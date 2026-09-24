@@ -426,7 +426,7 @@ impl Command for Start {
         }
 
         if deps.inside_tmux() {
-            tmux.switch_client("Views")?;
+            tmux.switch_client_bare("Views")?;
         } else {
             let _ = std::io::stdout().flush();
             Process::new(tmux.binary())
