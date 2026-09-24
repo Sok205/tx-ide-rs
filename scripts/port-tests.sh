@@ -19,7 +19,8 @@ cd "$ref"
 if [ $# -eq 0 ]; then
   exec python3.14 -m unittest discover port-tests -v
 fi
+status=0
 for area in "$@"; do
   python3.14 -m unittest discover port-tests -v -p "test_${area}.py" || status=1
 done
-exit "${status:-0}"
+exit "$status"

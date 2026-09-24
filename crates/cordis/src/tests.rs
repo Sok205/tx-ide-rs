@@ -280,3 +280,38 @@ proptest! {
         prop_assert!(world.borrow().is_empty());
     }
 }
+
+#[test]
+fn a_failed_provider_frees_its_key_for_a_replacement() {
+    let (mut rt, world, log) = fixture();
+    let mut bad = Probe::new("pg", &world, &log).provide(&["db"]);
+    bad.fail_after_effect = true;
+    rt.plug(bad).unwrap();
+    let app = rt.plug(Probe::new("app", &world, &log).inject(&["db"])).unwrap();
+    rt.plug(Probe::new("sqlite", &world, &log).provide(&["db"])).unwrap();
+    assert_eq!(rt.state(app), Some(FiberState::Active));
+}
+
+#[test]
+fn unplugging_a_deep_tree_removes_every_fiber() {
+    struct Nest(u8, World, Rc<RefCell<Vec<String>>>);
+    impl Component for Nest {
+        fn name(&self) -> &str {
+            "nest"
+        }
+        fn apply(&self, ctx: &mut Ctx<'_>) -> Result<(), BoxError> {
+            if self.0 > 0 {
+                ctx.plug(Nest(self.0 - 1, Rc::clone(&self.1), Rc::clone(&self.2)))?;
+            } else {
+                ctx.plug(Probe::new("leaf", &self.1, &self.2))?;
+            }
+            Ok(())
+        }
+    }
+    let (mut rt, world, log) = fixture();
+    let root = rt.plug(Nest(3, Rc::clone(&world), Rc::clone(&log))).unwrap();
+    assert_eq!(world.borrow().len(), 1);
+    rt.unplug(root);
+    assert!(world.borrow().is_empty());
+    assert!(rt.fibers.is_empty(), "{} fibers left", rt.fibers.len());
+}

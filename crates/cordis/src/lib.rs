@@ -278,6 +278,7 @@ impl Runtime {
                 })
                 .map(|(id, _)| *id)
                 .collect();
+            changed |= !vestigial.is_empty();
             for id in vestigial {
                 self.fibers.remove(&id);
             }
@@ -299,6 +300,9 @@ impl Runtime {
         if let Err(error) = component.apply(&mut ctx) {
             let fiber = self.fibers.get_mut(&id).expect("present");
             fiber.failed = true;
+            // Retired too: the orchestrator is told through `take_failures`, and the key is freed
+            // for a replacement once the unwound fiber is garbage-collected.
+            fiber.retired = true;
             fiber.state = FiberState::Unloading;
             self.failures.push((component.name().to_owned(), error));
         }
