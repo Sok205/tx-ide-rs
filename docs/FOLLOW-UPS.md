@@ -6,3 +6,6 @@
 - artifact.rs rejects float revs such as `1.0`, which Python accepted (narrowing on corrupt data).
 - argparse `int()` accepts ASCII digits / i64 only (Python: any Unicode digit, unbounded).
 - Kit fixes to propose upstream: see the end of BASELINE.md.
+- Installer scripts call `tx` hidden verbs through a scratch `TX_IDE_HOME` because the core creates
+  the home skeleton on every start; a core flag to skip `ensure` would remove the `tx_seam` wrapper.
+- `setup/iterm.sh` still edits iTerm prefs with `python3` (optional path).

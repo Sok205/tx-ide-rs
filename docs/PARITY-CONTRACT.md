@@ -56,3 +56,15 @@ verbatim and find `tx` beside themselves. `tmux-session-relabel` (Python in the 
 shim over `tx _relabel`. `install`, `uninstall`, `setup/engines/*`, `claude/statusline.sh` embed
 `python3.14 -m tx`; they are ported last (INST/STATUS) as `tx install` / `tx statusline` or as
 bash with the python calls replaced.
+
+## Open spec gaps (need a decision from the spec owner)
+
+- **Hook shim / tmux hook line (NOTES-05 "Cross-cutting 7").** INST byte-compares the generated
+  shims against the reference's `PYTHONPATH="<LIB>" "python3.14" -m tx hook …` line and
+  `readlink == <REPO>/bin/<tool>`; the spec never says what a port's line is. The port writes
+  `exec env TX_IDE_HOME="<home>" "<repo>/bin/tx" hook <event>` and links its own `bin/`.
+  18 INST cases fail on exactly those strings (123/124 pass with only the expected strings pointed
+  at the port). Proposed fix: let the kit take the expected exec line from the port (an env var
+  beside `TX_INSTALLER`).
+- **argparse wording.** T-CLI-03 / T-ENG-01 / T-MODEL-05 pin `(choose from '1', '2', …)`, which
+  no CPython 3.14 on this host prints; the port follows the tests.
