@@ -185,7 +185,6 @@ fn replace_bytes(haystack: &[u8], old: &[u8], new: &[u8]) -> Vec<u8> {
     out
 }
 
-
 // ----- fork surgery (version-fragile, no CLI fork verb) ---------------------------------------
 
 /// The fork surgery failed: sqlite errors become the version-fragility refusal (and the partial
