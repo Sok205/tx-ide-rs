@@ -3,7 +3,7 @@
 //! Deviations from the reference (FIX quirks, `PARITY-CONTRACT.md`):
 //! - Q27: calls that address a session BY NAME use exact targets — `=name` for session-typed
 //!   targets (`has-session`, `kill-session`, `rename-session`, `switch-client`) and `=name:` for
-//!   pane-typed ones (`show-options` / `set-option` behind `get_tx_id` / `set_tx_id` /
+//!   pane-typed ones (`show-options` / `set-option` behind `get_tx_id` /
 //!   `set_tx_view` / `is_view`; tmux rejects a bare `=name` there). Generic target-taking methods
 //!   (`set_option`, `send_keys`, `display_message`, …) pass the caller's target through untouched.
 //! - Q30: `@remote-session` is read at PANE scope (`show-options -p`).
@@ -262,8 +262,11 @@ impl Tmux {
         self.show_option(&exact_session_pane(name), "@tx_id")
     }
 
+    /// Stamped only on a session just created under a fresh uuid, so the bare target cannot
+    /// prefix-match another session (a prefix would have to contain the whole uuid); bare keeps
+    /// the reference's error text (`set-option -t <id> … no such session: <id>`, T-TMUX-01/06).
     pub fn set_tx_id(&self, name: &str, session_id: &str) -> Result<(), TmuxError> {
-        self.set_option(&exact_session_pane(name), "@tx_id", session_id, false)
+        self.set_option(name, "@tx_id", session_id, false)
     }
 
     /// Mark a live session as a view (`@tx_view` is a view's entire durable identity).
