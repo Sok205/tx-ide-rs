@@ -79,35 +79,85 @@ pub struct CommandTable {
 
 /// The order `tx --help` lists the reference's public verbs in; other verbs follow by name.
 const HELP_ORDER: [&str; 25] = [
-    "start", "attach", "ls", "spawn", "spawn-nvim", "spawn-view", "tag", "group", "rename", "whoami",
-    "send-message", "send-user-message", "kill", "archive", "rm", "show", "history", "chat", "resume",
-    "artifact", "sync", "fork", "handover", "rollover", "migrate",
+    "start",
+    "attach",
+    "ls",
+    "spawn",
+    "spawn-nvim",
+    "spawn-view",
+    "tag",
+    "group",
+    "rename",
+    "whoami",
+    "send-message",
+    "send-user-message",
+    "kill",
+    "archive",
+    "rm",
+    "show",
+    "history",
+    "chat",
+    "resume",
+    "artifact",
+    "sync",
+    "fork",
+    "handover",
+    "rollover",
+    "migrate",
 ];
 
 impl CommandTable {
     /// Register `command` for the lifetime of the calling fiber (the undo removes the row).
-    pub fn register(self: &Rc<Self>, ctx: &mut Ctx<'_>, visibility: Visibility, command: impl Command + 'static) {
+    pub fn register(
+        self: &Rc<Self>,
+        ctx: &mut Ctx<'_>,
+        visibility: Visibility,
+        command: impl Command + 'static,
+    ) {
         let id = self.next_id.get();
         self.next_id.set(id + 1);
-        self.rows.borrow_mut().push(Row { id, visibility, command: Rc::new(command) });
+        self.rows.borrow_mut().push(Row {
+            id,
+            visibility,
+            command: Rc::new(command),
+        });
         let table = Rc::clone(self);
         ctx.effect(move || table.rows.borrow_mut().retain(|row| row.id != id));
     }
 
     pub fn get(&self, name: &str) -> Option<Rc<dyn Command>> {
-        self.rows.borrow().iter().find(|row| row.command.name() == name).map(|row| Rc::clone(&row.command))
+        self.rows
+            .borrow()
+            .iter()
+            .find(|row| row.command.name() == name)
+            .map(|row| Rc::clone(&row.command))
     }
 
     pub fn help(&self) -> String {
         let rows = self.rows.borrow();
-        let mut public: Vec<_> = rows.iter().filter(|row| row.visibility == Visibility::Public).collect();
+        let mut public: Vec<_> = rows
+            .iter()
+            .filter(|row| row.visibility == Visibility::Public)
+            .collect();
         public.sort_by_key(|row| {
             let name = row.command.name();
-            (HELP_ORDER.iter().position(|known| *known == name).unwrap_or(HELP_ORDER.len()), name)
+            (
+                HELP_ORDER
+                    .iter()
+                    .position(|known| *known == name)
+                    .unwrap_or(HELP_ORDER.len()),
+                name,
+            )
         });
-        let mut out = String::from("tx — tmux + Claude Code session controller\n\nusage: tx <command> [args]\n\ncommands:\n");
+        let mut out = String::from(
+            "tx — tmux + Claude Code session controller\n\nusage: tx <command> [args]\n\ncommands:\n",
+        );
         for row in public {
-            out.push_str(&format!("  {:<18} {}\n", row.command.name(), row.command.summary()));
+            out.push_str(&format!(
+                "  {:<18} {}\n",
+                row.command.name(),
+                row.command.summary()
+            ));
         }
         out
     }
@@ -129,7 +179,13 @@ impl<T: 'static> Service<T> {
         key: Key<T>,
         build: fn(&Ctx<'_>) -> Result<T, BoxError>,
     ) -> Self {
-        Self { name, inject, provide: [key.name], key, build }
+        Self {
+            name,
+            inject,
+            provide: [key.name],
+            key,
+            build,
+        }
     }
 }
 
@@ -172,28 +228,47 @@ pub fn plug_core(runtime: &mut Runtime, env: Env) -> Result<(), cordis::Error> {
     runtime.plug(EnvProvider(RefCell::new(Some(env))))?;
     runtime.plug(Service::new("home", &["env"], HOME, |ctx| {
         let env = ctx.get(ENV)?;
-        let home = Home::resolve(env.var("TX_IDE_HOME"), env.var("HOME").map(std::path::Path::new));
+        let home = Home::resolve(
+            env.var("TX_IDE_HOME"),
+            env.var("HOME").map(std::path::Path::new),
+        );
         // Creating the skeleton is an emission past the system boundary (paper §6.1): not reverted.
         home.ensure()?;
         Ok(home)
     }))?;
-    runtime.plug(Service::new("events", &["home"], EVENTS, |ctx| Ok(EventLog::new(ctx.get(HOME)?.log_path()))))?;
+    runtime.plug(Service::new("events", &["home"], EVENTS, |ctx| {
+        Ok(EventLog::new(ctx.get(HOME)?.log_path()))
+    }))?;
     runtime.plug(Service::new("store", &["home"], STORE, |ctx| {
-        Ok(SessionStore::new(ctx.get(HOME)?.sessions_dir(), Rc::new(WarnOnce::stderr())))
+        Ok(SessionStore::new(
+            ctx.get(HOME)?.sessions_dir(),
+            Rc::new(WarnOnce::stderr()),
+        ))
     }))?;
     runtime.plug(Service::new("tmux", &["env"], TMUX, |ctx| {
         let env = ctx.get(ENV)?;
-        Ok(Tmux::new("tmux", TmuxEnv { tmux: env.var("TMUX").map(str::to_owned) }))
+        Ok(Tmux::new(
+            "tmux",
+            TmuxEnv {
+                tmux: env.var("TMUX").map(str::to_owned),
+            },
+        ))
     }))?;
-    runtime.plug(Service::new("commands", &[], COMMANDS, |_| Ok(CommandTable::default())))?;
+    runtime.plug(Service::new("commands", &[], COMMANDS, |_| {
+        Ok(CommandTable::default())
+    }))?;
     Ok(())
 }
 
 /// `main()` of the reference: help, unknown verb, dispatch, `tx <verb>: <error>` on failure.
 pub fn run(args: Vec<OsString>) -> i32 {
-    let argv: Vec<String> = args.into_iter().map(|arg| arg.to_string_lossy().into_owned()).collect();
+    let argv: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
     let mut runtime = Runtime::new();
-    if let Err(error) = plug_core(&mut runtime, Env::capture()).and_then(|()| crate::plugins::plug_features(&mut runtime))
+    if let Err(error) = plug_core(&mut runtime, Env::capture())
+        .and_then(|()| crate::plugins::plug_features(&mut runtime))
     {
         eprintln!("tx: {error}");
         return 1;

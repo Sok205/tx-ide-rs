@@ -18,7 +18,8 @@ impl Component for HomeVerbs {
     }
     fn apply(&self, ctx: &mut Ctx<'_>) -> Result<(), BoxError> {
         let home = ctx.get(HOME)?;
-        ctx.get(COMMANDS)?.register(ctx, Visibility::Hidden, InitHome(home));
+        ctx.get(COMMANDS)?
+            .register(ctx, Visibility::Hidden, InitHome(home));
         Ok(())
     }
 }
@@ -34,7 +35,10 @@ impl Command for InitHome {
     }
     fn run(&self, _argv: &[String]) -> Result<i32, BoxError> {
         self.0.ensure()?;
-        println!("initialized $TX_IDE_HOME skeleton at {}", self.0.root().display());
+        println!(
+            "initialized $TX_IDE_HOME skeleton at {}",
+            self.0.root().display()
+        );
         Ok(0)
     }
 }
