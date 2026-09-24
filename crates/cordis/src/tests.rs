@@ -287,8 +287,11 @@ fn a_failed_provider_frees_its_key_for_a_replacement() {
     let mut bad = Probe::new("pg", &world, &log).provide(&["db"]);
     bad.fail_after_effect = true;
     rt.plug(bad).unwrap();
-    let app = rt.plug(Probe::new("app", &world, &log).inject(&["db"])).unwrap();
-    rt.plug(Probe::new("sqlite", &world, &log).provide(&["db"])).unwrap();
+    let app = rt
+        .plug(Probe::new("app", &world, &log).inject(&["db"]))
+        .unwrap();
+    rt.plug(Probe::new("sqlite", &world, &log).provide(&["db"]))
+        .unwrap();
     assert_eq!(rt.state(app), Some(FiberState::Active));
 }
 
@@ -309,7 +312,9 @@ fn unplugging_a_deep_tree_removes_every_fiber() {
         }
     }
     let (mut rt, world, log) = fixture();
-    let root = rt.plug(Nest(3, Rc::clone(&world), Rc::clone(&log))).unwrap();
+    let root = rt
+        .plug(Nest(3, Rc::clone(&world), Rc::clone(&log)))
+        .unwrap();
     assert_eq!(world.borrow().len(), 1);
     rt.unplug(root);
     assert!(world.borrow().is_empty());
