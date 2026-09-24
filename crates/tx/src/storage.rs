@@ -92,9 +92,23 @@ pub fn expand_user(raw: &str, home_dir: Option<&Path>) -> PathBuf {
     match (raw.strip_prefix('~'), home_dir) {
         (Some(""), Some(home)) => home.to_path_buf(),
         (Some(rest), Some(home)) if rest.starts_with('/') => {
-            home.join(rest.trim_start_matches('/'))
+            py_path(&home.join(rest.trim_start_matches('/')).to_string_lossy())
         }
-        _ => PathBuf::from(raw),
+        _ => py_path(raw),
+    }
+}
+
+/// `pathlib.PurePosixPath(raw)`: `""` and `"."` are `.`, repeated and trailing slashes and `.`
+/// components are dropped (`..` is kept).
+pub fn py_path(raw: &str) -> PathBuf {
+    let path: PathBuf = Path::new(raw)
+        .components()
+        .filter(|component| !matches!(component, std::path::Component::CurDir))
+        .collect();
+    if path.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        path
     }
 }
 
@@ -450,6 +464,31 @@ impl Storage for S3Storage {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn home_paths_normalise_like_pathlib() {
+        // Expected values: python3.14 -c 'from pathlib import Path; print(Path(x).expanduser())'
+        let home = Path::new("/u");
+        let cases = [
+            ("", "."),
+            (".", "."),
+            ("/tmp/x/", "/tmp/x"),
+            ("/tmp//x/./y", "/tmp/x/y"),
+            ("./rel/", "rel"),
+            ("a/../b", "a/../b"),
+            ("~", "/u"),
+            ("~/h//", "/u/h"),
+            // Python raises "Could not determine home directory" here; the port keeps it literal.
+            ("~other/x", "~other/x"),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(
+                expand_user(raw, Some(home)),
+                PathBuf::from(want),
+                "raw: {raw:?}"
+            );
+        }
+    }
+
     use super::*;
     use serde_json::json;
 
