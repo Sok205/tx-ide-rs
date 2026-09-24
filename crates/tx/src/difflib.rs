@@ -179,7 +179,8 @@ impl<'a> SequenceMatcher<'a> {
             }
             group.push((tag, i1, i2, j1, j2));
         }
-        if !group.is_empty() && !(group.len() == 1 && group[0].0 == Tag::Equal) {
+        let only_equal = group.len() == 1 && group[0].0 == Tag::Equal;
+        if !group.is_empty() && !only_equal {
             groups.push(group);
         }
         groups
@@ -296,7 +297,10 @@ mod tests {
             "--- rev0\n+++ rev1\n@@ -1,2 +1,3 @@\n a\n-b\n+c\n+d\n"
         );
         assert_eq!(diff("", "x"), "--- rev0\n+++ rev1\n@@ -0,0 +1 @@\n+x");
-        assert_eq!(diff("body\n", "v1\n"), "--- rev0\n+++ rev1\n@@ -1 +1 @@\n-body\n+v1\n");
+        assert_eq!(
+            diff("body\n", "v1\n"),
+            "--- rev0\n+++ rev1\n@@ -1 +1 @@\n-body\n+v1\n"
+        );
         let a: String = (0..20).map(|i| format!("{i}\n")).collect();
         let b = a.replace("2\n", "two\n").replace("17\n", "seventeen\n");
         assert_eq!(
