@@ -39,6 +39,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd)"
 TX="$REPO_ROOT/bin/tx"
+# The installer seams (`tx _…`) take every path as a flag. Run them against a throwaway
+# TX_IDE_HOME: like every verb, `tx` creates its home skeleton on start, and an uninstall / status /
+# dry run must not grow one.
+tx_seam() {
+  local scratch rc=0
+  scratch="$(mktemp -d)"
+  TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
 
 # C9: the home baked into the shims + recorded in the marker. Default ~/.tx-ide; the S2 dev home is
 # ~/.tx-ide-next (passed via TX_IDE_HOME). Expand a leading ~ (env vars are not tilde-expanded).
@@ -159,7 +169,7 @@ run_settings() {  # <install|uninstall|status>
   [[ $SANDBOX -eq 1 ]] && args+=(--sandbox)
   [[ $DRY_RUN -eq 1 ]] && args+=(--dry-run)
   [[ $APPLY_PROFILE -eq 0 ]] && args+=(--no-context-profile)
-  "$TX" _claude-settings "${args[@]}"
+  tx_seam _claude-settings "${args[@]}"
 }
 
 # ----- live-global steps (skipped under --dry-run / sandbox) --------------------------------

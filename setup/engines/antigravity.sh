@@ -12,6 +12,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd)"
 TX="$REPO_ROOT/bin/tx"
+# The installer seams (`tx _…`) take every path as a flag. Run them against a throwaway
+# TX_IDE_HOME: like every verb, `tx` creates its home skeleton on start, and an uninstall / status /
+# dry run must not grow one.
+tx_seam() {
+  local scratch rc=0
+  scratch="$(mktemp -d)"
+  TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
 
 # Expand a leading ~ by hand — env vars are not tilde-expanded.
 TX_HOME="${TX_IDE_HOME:-$HOME/.tx-ide}"
@@ -93,7 +103,7 @@ write_template() {
   # The exact shapes agy 1.1.13 parses (builtin docs + verified live): tool events are GROUPED
   # (matcher + hooks wrapper), the rest are FLAT handler lists — mixing the shapes up makes agy
   # reject the whole file silently.
-  "$TX" _agy-template "--home=$TX_HOME"
+  tx_seam _agy-template "--home=$TX_HOME"
   ok "template $TEMPLATE"
 }
 

@@ -23,6 +23,17 @@ TX_IDE_DIR="${TX_IDE_HOME:-$HOME_DIR/.tx-ide}"
 TX_IDE_DIR="${TX_IDE_DIR/#\~/$HOME_DIR}"
 export TX_IDE_HOME="$TX_IDE_DIR"
 STAMP=$(date +%Y%m%d%H%M%S)
+TX="$REPO/bin/tx"
+# The installer seams (`tx _…`) take every path as a flag. Run them against a throwaway
+# TX_IDE_HOME: like every verb, `tx` creates its home skeleton on start, and an uninstall / status /
+# dry run must not grow one.
+tx_seam() {
+  local scratch rc=0
+  scratch="$(mktemp -d)"
+  TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
 
 B=$'\e[1m'
 G=$'\e[32m'
@@ -330,7 +341,7 @@ header "Statusline → $TX_IDE_DIR (C10)"
 cp "$REPO/claude/statusline.sh" "$TX_IDE_DIR/statusline.sh"
 chmod +x "$TX_IDE_DIR/statusline.sh"
 ok "$TX_IDE_DIR/statusline.sh" "copied"
-"$REPO/bin/tx" _statusline install "--settings=$CLAUDE_DIR/settings.json" "--home=$TX_IDE_DIR" "--stamp=$STAMP"
+tx_seam _statusline install "--settings=$CLAUDE_DIR/settings.json" "--home=$TX_IDE_DIR" "--stamp=$STAMP"
 
 # === 7: nvim config (optional, per-machine toggle) ===
 # tx-ide ships a full LazyVim config under $REPO/nvim — everything spawn-nvim

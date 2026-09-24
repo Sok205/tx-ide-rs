@@ -20,6 +20,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd)"
 TX="$REPO_ROOT/bin/tx"
+# The installer seams (`tx _…`) take every path as a flag. Run them against a throwaway
+# TX_IDE_HOME: like every verb, `tx` creates its home skeleton on start, and an uninstall / status /
+# dry run must not grow one.
+tx_seam() {
+  local scratch rc=0
+  scratch="$(mktemp -d)"
+  TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
 
 B=$'\e[1m'; D=$'\e[2m'; X=$'\e[0m'
 header() { printf '\n%s%s%s\n' "$B" "$*" "$X"; }
@@ -62,7 +72,7 @@ done
 # new engine needs. Read at top level (not in a subshell) so an unreadable registry is fatal rather
 # than a silent empty set; an engine with no setup script is skipped, not fatal.
 if [[ ${#ENGINES[@]} -eq 0 ]]; then
-  REGISTRY="$("$TX" _engines)" || {
+  REGISTRY="$(tx_seam _engines)" || {
     printf 'install.sh: could not read the engine registry with %s — pass --engine NAME\n' "$TX" >&2
     exit 2
   }

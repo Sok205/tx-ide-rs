@@ -120,7 +120,10 @@ fn pretty(value: &Value) -> String {
     pyjson::dumps_pretty(value) + "\n"
 }
 
-fn object_mut<'a>(value: &'a mut Value, what: &str) -> Result<&'a mut Map<String, Value>, InstallError> {
+fn object_mut<'a>(
+    value: &'a mut Value,
+    what: &str,
+) -> Result<&'a mut Map<String, Value>, InstallError> {
     value
         .as_object_mut()
         .ok_or_else(|| InstallError::NotObject(what.to_owned()))
@@ -154,7 +157,9 @@ fn py_str(value: Option<&Value>) -> String {
 
 /// `(value or {}).get(key)` — `None` for a missing key and for a non-object.
 fn field<'a>(value: Option<&'a Value>, key: &str) -> Option<&'a Value> {
-    value.and_then(|value| value.as_object()).and_then(|map| map.get(key))
+    value
+        .and_then(|value| value.as_object())
+        .and_then(|map| map.get(key))
 }
 
 /// `.get(key)` treating JSON `null` like a missing key (`x.get(k) is not None`).
@@ -462,7 +467,9 @@ impl Surgery {
                 "skipped (--no-context-profile)".into(),
             ));
             (
-                field(existing, "context_profile").cloned().unwrap_or(Value::Null),
+                field(existing, "context_profile")
+                    .cloned()
+                    .unwrap_or(Value::Null),
                 field(existing, "context_profile_previous")
                     .cloned()
                     .unwrap_or(Value::Null),
@@ -742,7 +749,11 @@ fn path_set(data: &mut Value, key: &str, value: Value) -> Result<(), InstallErro
 /// Pop the leaf, then drop every parent object the pop left empty (Q29). A missing parent is an
 /// error (Q9) — nothing has been written at that point.
 fn path_del(data: &mut Value, key: &str) -> Result<(), InstallError> {
-    fn remove(node: &mut Map<String, Value>, parts: &[&str], key: &str) -> Result<bool, InstallError> {
+    fn remove(
+        node: &mut Map<String, Value>,
+        parts: &[&str],
+        key: &str,
+    ) -> Result<bool, InstallError> {
         let [head, rest @ ..] = parts else {
             return Ok(false);
         };
@@ -942,7 +953,8 @@ impl Codex {
         if !content.is_empty() {
             self.backup(&real, &content)?;
         }
-        let appended = format!("{content}\n{CODEX_MARK_BEGIN}\n{CODEX_BLOCK_BODY}{CODEX_MARK_END}\n");
+        let appended =
+            format!("{content}\n{CODEX_MARK_BEGIN}\n{CODEX_BLOCK_BODY}{CODEX_MARK_END}\n");
         atomic_write(&real, ".tx-codex.", &appended)?;
         let tail = if content.is_empty() {
             String::new()
@@ -1064,9 +1076,7 @@ impl Command for AgyTemplate {
         let dir = format!("{}/hooks/antigravity", arg(&matches, "home"));
         let shim = |name: &str| format!("{dir}/{name}.sh");
         let flat = |command: String| json!([{"type": "command", "command": command}]);
-        let grouped = |command: String| {
-            json!([{"matcher": "*", "hooks": [{"type": "command", "command": command}]}])
-        };
+        let grouped = |command: String| json!([{"matcher": "*", "hooks": [{"type": "command", "command": command}]}]);
         let mut events = Map::new();
         events.insert("SessionStart".into(), flat(shim("start")));
         events.insert("PreInvocation".into(), flat(shim("pre")));
@@ -1216,7 +1226,10 @@ mod tests {
     fn path_set_creates_parents_and_keeps_order() {
         let mut data = json!({"z": 1});
         path_set(&mut data, "permissions.deny", json!(["x"])).unwrap();
-        assert_eq!(pyjson::dumps(&data), r#"{"z": 1, "permissions": {"deny": ["x"]}}"#);
+        assert_eq!(
+            pyjson::dumps(&data),
+            r#"{"z": 1, "permissions": {"deny": ["x"]}}"#
+        );
     }
 
     #[test]
@@ -1228,7 +1241,10 @@ mod tests {
             strip_codex_block(&format!("a\n\n{block}\n{block}")),
             format!("a\n\n{block}")
         );
-        assert_eq!(strip_codex_block(&format!("a\n{CODEX_MARK_BEGIN}")), format!("a\n{CODEX_MARK_BEGIN}"));
+        assert_eq!(
+            strip_codex_block(&format!("a\n{CODEX_MARK_BEGIN}")),
+            format!("a\n{CODEX_MARK_BEGIN}")
+        );
     }
 
     #[test]

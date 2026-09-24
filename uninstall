@@ -20,6 +20,17 @@ TX_IDE_DIR="${TX_IDE_HOME:-$HOME_DIR/.tx-ide}"
 TX_IDE_DIR="${TX_IDE_DIR/#\~/$HOME_DIR}"
 export TX_IDE_HOME="$TX_IDE_DIR"
 STAMP=$(date +%Y%m%d%H%M%S)
+TX="$REPO/bin/tx"
+# The installer seams (`tx _…`) take every path as a flag. Run them against a throwaway
+# TX_IDE_HOME: like every verb, `tx` creates its home skeleton on start, and an uninstall / status /
+# dry run must not grow one.
+tx_seam() {
+  local scratch rc=0
+  scratch="$(mktemp -d)"
+  TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
 
 KEEP_AGENT=0
 PURGE=0
@@ -85,7 +96,7 @@ if [[ $KEEP_AGENT -eq 0 ]]; then
   printf '\n%sClaude statusLine (C10 reverse)%s\n' "$B" "$X"
   SETTINGS_MAIN="$CLAUDE_DIR/settings.json"
   if [[ -f "$SETTINGS_MAIN" ]]; then
-    "$REPO/bin/tx" _statusline uninstall "--settings=$SETTINGS_MAIN" "--home=$TX_IDE_DIR" "--stamp=$STAMP"
+    tx_seam _statusline uninstall "--settings=$SETTINGS_MAIN" "--home=$TX_IDE_DIR" "--stamp=$STAMP"
   else
     skip "$SETTINGS_MAIN" "not present"
   fi

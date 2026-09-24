@@ -5,6 +5,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd)"
 TX="$REPO_ROOT/bin/tx"
+# The installer seams (`tx _…`) take every path as a flag. Run them against a throwaway
+# TX_IDE_HOME: like every verb, `tx` creates its home skeleton on start, and an uninstall / status /
+# dry run must not grow one.
+tx_seam() {
+  local scratch rc=0
+  scratch="$(mktemp -d)"
+  TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
 
 # Expand a leading ~ by hand — env vars are not tilde-expanded.
 TX_HOME="${TX_IDE_HOME:-$HOME/.tx-ide}"
@@ -102,7 +112,7 @@ run_codex() {  # <install|uninstall|status>
   local -a args=("$1" "--hooks-json=$HOOKS_JSON" "--config-toml=$CONFIG_TOML"
                  "--update-log=$TX_HOME/codex-update/update.log" "--home=$TX_HOME" "--stamp=$STAMP")
   [[ $DRY_RUN -eq 1 ]] && args+=(--dry-run)
-  "$TX" _codex-hooks "${args[@]}"
+  tx_seam _codex-hooks "${args[@]}"
 }
 
 cmd_install() {
