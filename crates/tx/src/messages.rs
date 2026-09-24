@@ -832,7 +832,10 @@ fn truthy(value: Option<&Value>) -> bool {
 
 fn sha1_hex(data: &[u8]) -> String {
     use sha1::{Digest, Sha1};
-    Sha1::digest(data).iter().map(|byte| format!("{byte:02x}")).collect()
+    Sha1::digest(data)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[cfg(test)]

@@ -10,7 +10,9 @@ use std::rc::Rc;
 
 use cordis::{BoxError, Component, Ctx, Key, Runtime};
 
+use crate::engines::EngineRegistry;
 use crate::events::EventLog;
+use crate::service::SessionService;
 use crate::storage::Home;
 use crate::store::{SessionStore, WarnOnce};
 use crate::tmux::{Tmux, TmuxEnv};
@@ -49,6 +51,9 @@ pub const EVENTS: Key<EventLog> = Key::new("events");
 pub const STORE: Key<SessionStore> = Key::new("store");
 pub const TMUX: Key<Tmux> = Key::new("tmux");
 pub const COMMANDS: Key<CommandTable> = Key::new("commands");
+/// The engine table (commutative: one removable row per adapter component).
+pub const ENGINES: Key<RefCell<EngineRegistry>> = Key::new("engines");
+pub const SERVICE: Key<SessionService> = Key::new("service");
 
 /// A `tx <verb>`. `run` gets the verb's own argv; errors print as `tx <verb>: <error>`, exit 1.
 pub trait Command {
@@ -254,6 +259,24 @@ pub fn plug_core(runtime: &mut Runtime, env: Env) -> Result<(), cordis::Error> {
             },
         ))
     }))?;
+    runtime.plug(Service::new("engines", &[], ENGINES, |_| {
+        Ok(RefCell::new(EngineRegistry::new()))
+    }))?;
+    runtime.plug(Service::new(
+        "service",
+        &["store", "tmux", "events", "engines", "home", "env"],
+        SERVICE,
+        |ctx| {
+            Ok(SessionService::new(
+                ctx.get(STORE)?,
+                ctx.get(TMUX)?,
+                ctx.get(EVENTS)?,
+                ctx.get(ENGINES)?,
+                ctx.get(HOME)?,
+                ctx.get(ENV)?,
+            ))
+        },
+    ))?;
     runtime.plug(Service::new("commands", &[], COMMANDS, |_| {
         Ok(CommandTable::default())
     }))?;
