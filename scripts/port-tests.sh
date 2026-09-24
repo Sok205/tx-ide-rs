@@ -12,8 +12,9 @@ cargo build --quiet --manifest-path "$root/Cargo.toml" --bin tx
 ln -sf "$root/target/debug/tx" "$root/bin/tx"
 
 export TX_BIN="$root/bin/tx" TX_IMPL=rust TX_HELPERS_DIR="$root/bin"
-# macOS: the default $TMPDIR pushes tmux socket paths past sun_path's 104 bytes.
-export TMPDIR=/tmp
+# macOS: the default $TMPDIR pushes tmux socket paths past sun_path's 104 bytes, and /tmp is a
+# symlink the kit does not resolve while tx and git print resolved paths (docs/BASELINE.md).
+export TMPDIR=/private/tmp
 
 cd "$ref"
 if [ $# -eq 0 ]; then
