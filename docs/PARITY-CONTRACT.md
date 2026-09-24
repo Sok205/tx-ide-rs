@@ -68,3 +68,10 @@ bash with the python calls replaced.
   beside `TX_INSTALLER`).
 - **argparse wording.** T-CLI-03 / T-ENG-01 / T-MODEL-05 pin `(choose from '1', '2', …)`, which
   no CPython 3.14 on this host prints; the port follows the tests.
+- **D11 `nvim_socket` vs unmarked parity legs.** The port implements T-NVIM-20 (spec rev 6: `--listen`
+  on the nvim launch, `nvim_socket` on non-llm records). T-NVIM-02/03/05 and T-CLI-04 still pin the
+  pre-D11 argv / key set without `@python_reference_only`, which the kit README's pairing rule calls
+  a kit bug. Kept D11; revert with `git revert 0c08543` if the spec owner decides otherwise.
+- **Kit assumptions about the checkout.** T-CLI-25 expects the Views cwd to be the reference repo
+  (`REPO`), not the port's; T-TMUXCONF-18 races tmux's automatic window rename (~0.5 s after the view
+  is created) and fails for a fast `tx` — fix belongs in the kit (wait for the name to settle).
