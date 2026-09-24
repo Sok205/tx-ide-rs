@@ -611,19 +611,26 @@ mod tests {
         let marker = l.base.join("child-ran");
         // A stand-in for `tx`: records its argv + env, prints `ok`.
         let fake_tx = l.base.join("fake-tx");
+        // Written through `cp`, not from this process: a sibling test thread forking while we hold
+        // a write fd on the script would make its exec fail with ETXTBSY.
+        let staged = l.base.join("fake-tx.staged");
         std::fs::write(
-            &fake_tx,
+            &staged,
             format!(
                 "#!/bin/sh\necho \"$1 $CODEX_HOME $CODEX_INSTALL_DIR $CODEX_NON_INTERACTIVE $EXTRA\" > {}\necho ok\n",
                 marker.display()
             ),
         )
         .unwrap();
-        std::fs::set_permissions(
-            &fake_tx,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .unwrap();
+        std::fs::set_permissions(&staged, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let copied = std::process::Command::new("cp")
+            .arg("-p")
+            .arg(&staged)
+            .arg(&fake_tx)
+            .status()
+            .unwrap();
+        assert!(copied.success());
         let executable = l.bin.join("codex");
         let env = vec![("EXTRA".to_owned(), "e".to_owned())];
         let request = UpdateRequest {
