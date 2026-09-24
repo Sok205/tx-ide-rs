@@ -173,7 +173,8 @@ bind -n C-$key if -F '$nav_pass' {
   }
 }
 EOF
-    if [ "$nav_prefix" != none ]; then
+    # Q24: tmux reports a disabled prefix as `None`; compare case-insensitively (bash 3.2: no ${,,}).
+    if [ "$(printf %s "$nav_prefix" | tr '[:upper:]' '[:lower:]')" != none ]; then
       printf "bind C-%s if -F '%s' 'send-keys %s C-%s' 'send-keys C-%s'\n" \
         "$key" "$nav_nested" "$nav_prefix" "$key" "$key" >>"$CONF"
     fi
