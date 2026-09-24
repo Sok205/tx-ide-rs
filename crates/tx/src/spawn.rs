@@ -30,6 +30,18 @@ pub fn infer_role(command: &str, engines: &EngineRegistry) -> Role {
     }
 }
 
+/// D11: the nvim launch command with `--listen <socket>` right after the binary, ahead of every
+/// `+cmd` / file argument. The record keeps the command without it.
+pub fn nvim_listen_command(cmd: &str, socket: &str) -> String {
+    let (binary, rest) = cmd.split_once(' ').unwrap_or((cmd, ""));
+    let mut launch = format!("{binary} --listen {}", shlex_quote(socket));
+    if !rest.is_empty() {
+        launch.push(' ');
+        launch.push_str(rest);
+    }
+    launch
+}
+
 /// Everything needed to bring one session into being. Built via the constructors below, then
 /// adjusted through the public fields (the reference's keyword arguments). `cmd` is the final
 /// engine command that is persisted; `launch_cmd`, when set, is what tmux runs instead.
@@ -241,6 +253,15 @@ mod tests {
             assert_eq!(infer_role(command, &engines), role, "{command:?}");
         }
         assert_eq!(infer_role("claude", &EngineRegistry::new()), Role::Other);
+    }
+
+    #[test]
+    fn nvim_listen_goes_right_after_the_binary() {
+        assert_eq!(
+            nvim_listen_command(NVIM_BASE_COMMAND, "/h/nvim/a b.sock"),
+            "nvim --listen '/h/nvim/a b.sock' +'set background=dark | colorscheme tokyonight-moon'"
+        );
+        assert_eq!(nvim_listen_command("nvim", "/s"), "nvim --listen /s");
     }
 
     #[test]

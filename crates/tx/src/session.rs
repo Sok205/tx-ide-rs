@@ -290,6 +290,44 @@ pub struct OtherSession {
     pub role: OtherRole,
     /// v5: the artifact an nvim view renders.
     pub artifact_id: Option<String>,
+    /// D11: the `--listen` socket of an nvim companion.
+    pub nvim_socket: NvimSocket,
+}
+
+/// D11 `nvim_socket`, three states so a record written before D11 round-trips unchanged.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum NvimSocket {
+    /// No key in the record (a pre-D11 record); none is written back.
+    #[default]
+    Absent,
+    /// `"nvim_socket": null` — a non-nvim session written by the port.
+    Unset,
+    /// The socket nvim was told to `--listen` on.
+    Path(String),
+}
+
+impl NvimSocket {
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            Self::Path(path) => Some(path),
+            Self::Absent | Self::Unset => None,
+        }
+    }
+
+    fn from_record(data: &Map<String, Value>) -> Result<Self, RecordError> {
+        if !data.contains_key("nvim_socket") {
+            return Ok(Self::Absent);
+        }
+        Ok(opt_string(data, "nvim_socket")?.map_or(Self::Unset, Self::Path))
+    }
+
+    fn to_value(&self) -> Option<Value> {
+        match self {
+            Self::Absent => None,
+            Self::Unset => Some(Value::Null),
+            Self::Path(path) => Some(path.as_str().into()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -453,6 +491,9 @@ impl Session {
             }
             SessionKind::Other(other) => {
                 map.insert("artifact_id".into(), json!(other.artifact_id));
+                if let Some(socket) = other.nvim_socket.to_value() {
+                    map.insert("nvim_socket".into(), socket);
+                }
             }
         }
         Value::Object(map)
@@ -522,7 +563,12 @@ impl Session {
                 None => None,
                 Some(_) => opt_string(data, "artifact_id")?,
             };
-            SessionKind::Other(OtherSession { role, artifact_id })
+            let nvim_socket = NvimSocket::from_record(data)?;
+            SessionKind::Other(OtherSession {
+                role,
+                artifact_id,
+                nvim_socket,
+            })
         };
         Ok(Self {
             id,
@@ -792,6 +838,46 @@ mod tests {
         let s = Session::from_value(&d).unwrap();
         assert_eq!(s.group, None);
         assert_eq!(s.llm().unwrap().turn_started_at, None);
+    }
+
+    fn keys_of(session: &Session) -> Vec<String> {
+        session
+            .to_value()
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn nvim_socket_three_states_round_trip() {
+        // Absent (a pre-D11 record): stays absent on resave.
+        let absent = Session::from_value(&parse(OTHER)).unwrap();
+        assert_eq!(pyjson::dumps_pretty(&absent.to_value()), OTHER_OUT);
+
+        let mut d = parse(OTHER);
+        d["nvim_socket"] = Value::Null;
+        let unset = Session::from_value(&d).unwrap();
+        assert_eq!(unset.to_value()["nvim_socket"], Value::Null);
+        assert_eq!(keys_of(&unset).last().unwrap(), "nvim_socket");
+
+        d["nvim_socket"] = json!("/h/nvim/sh.sock");
+        let path = Session::from_value(&d).unwrap();
+        assert_eq!(path.to_value()["nvim_socket"], json!("/h/nvim/sh.sock"));
+        assert_eq!(keys_of(&path).last().unwrap(), "nvim_socket");
+
+        d["nvim_socket"] = json!(5);
+        assert_eq!(
+            load_err(&d),
+            wrong_type("nvim_socket", "a string or null").to_string()
+        );
+
+        // llm records never carry the key, even if one is on disk.
+        let mut llm = parse(LLM);
+        llm["nvim_socket"] = json!("/x.sock");
+        let llm = Session::from_value(&llm).unwrap();
+        assert!(!keys_of(&llm).contains(&"nvim_socket".to_owned()));
     }
 
     fn llm_session(state: State) -> Session {

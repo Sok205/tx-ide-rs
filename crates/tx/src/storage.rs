@@ -69,6 +69,10 @@ impl Home {
     pub fn launch_dir(&self) -> PathBuf {
         self.root.join("launch")
     }
+    /// D11 nvim `--listen` sockets; created on first use, not by `ensure` (T-HOME-04).
+    pub fn nvim_dir(&self) -> PathBuf {
+        self.root.join("nvim")
+    }
 
     /// Create the skeleton (idempotent): exactly the dirs `ensure_home` makes.
     pub fn ensure(&self) -> std::io::Result<()> {

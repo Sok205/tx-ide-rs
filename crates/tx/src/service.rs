@@ -31,11 +31,11 @@ use crate::messages::{TAG_AGENT, TAG_USER, build_envelope};
 use crate::read_only::{ReadOnlySandboxError, SandboxHost, System, wrap_read_only_command};
 use crate::reconcile::{ReconcileError, Reconciler};
 use crate::session::{
-    ChatRef, Engine, LlmSession, Origin, OtherRole, OtherSession, READ_ONLY_ENV,
+    ChatRef, Engine, LlmSession, NvimSocket, Origin, OtherRole, OtherSession, READ_ONLY_ENV,
     REQUIRE_WORKTREE_ENV, Role, SCHEMA_VERSION, Session, SessionKind, State,
 };
 use crate::shlex::shlex_quote;
-use crate::spawn::SpawnSpec;
+use crate::spawn::{SpawnSpec, nvim_listen_command};
 use crate::storage::Home;
 use crate::store::{SessionStore, StoreError};
 use crate::tmux::{MAX_COMMAND_BYTES, Tmux, TmuxError, format_envelope};
@@ -333,8 +333,9 @@ impl SessionService {
             .map_err(ServiceError::RemoveWorktree)
     }
 
+    /// D11: the companion listens on `nvim/<session-id>.sock`, recorded as `nvim_socket`.
     pub fn spawn_nvim(&self, spec: SpawnSpec) -> Result<Session> {
-        self.launch(spec)
+        self.launch_as(spec, Listen::NvimSocket)
     }
 
     /// Bring up a view: a live `@tx_view` tmux session, never a store record (no `@tx_id`, no
@@ -386,6 +387,10 @@ impl SessionService {
     /// The shared spawn mechanics (`_spawn`): a detached tmux session named by a fresh uuid,
     /// `@tx_id` stamped, the record persisted, one log line.
     fn launch(&self, spec: SpawnSpec) -> Result<Session> {
+        self.launch_as(spec, Listen::None)
+    }
+
+    fn launch_as(&self, spec: SpawnSpec, listen: Listen) -> Result<Session> {
         let session_id = uuid::Uuid::new_v4().to_string();
         self.require_name_free(&spec.name)?;
         if self.tmux.has_session(&session_id) {
@@ -430,14 +435,27 @@ impl SessionService {
             role => SessionKind::Other(OtherSession {
                 role: OtherRole::from_role(role).ok_or(ServiceError::NotAnAgent)?,
                 artifact_id: None,
+                nvim_socket: match listen {
+                    Listen::None => NvimSocket::Unset,
+                    Listen::NvimSocket => {
+                        let directory = self.home.nvim_dir();
+                        std::fs::create_dir_all(&directory)
+                            .map_err(ServiceError::io(&directory))?;
+                        let socket = directory.join(format!("{session_id}.sock"));
+                        NvimSocket::Path(socket.to_string_lossy().into_owned())
+                    }
+                },
             }),
         };
         let parent = match spec.parent {
             Some(parent) => Some(parent),
             None => self.executor_parent(),
         };
-        let command = self
-            .transportable_command(&session_id, spec.launch_cmd.as_deref().unwrap_or(&spec.cmd))?;
+        let mut command = spec.launch_cmd.clone().unwrap_or_else(|| spec.cmd.clone());
+        if let Some(socket) = nvim_socket_of(&kind) {
+            command = nvim_listen_command(&command, socket);
+        }
+        let command = self.transportable_command(&session_id, &command)?;
         let pid = self
             .tmux
             .new_session(&session_id, &spec.cwd, &command, &launch_env)?;
@@ -521,11 +539,14 @@ impl SessionService {
             self.tmux.kill_session(session.tmux_name());
         }
         let script = self.home.launch_dir().join(format!("{}.sh", session.id));
-        match std::fs::remove_file(&script) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => {
-                return Err(ServiceError::io(&script)(error));
+        let socket = nvim_socket_of(&session.kind).map(PathBuf::from);
+        for leftover in std::iter::once(script).chain(socket) {
+            match std::fs::remove_file(&leftover) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                    return Err(ServiceError::io(&leftover)(error));
+                }
+                _ => {}
             }
-            _ => {}
         }
         if session.transition_to(State::Exited) {
             session.ended_at = Number::from_f64(events::now());
@@ -863,6 +884,20 @@ impl SessionService {
 }
 
 /// Q25 / Q39: names a worktree label can never take.
+/// Whether a launch gives nvim a `--listen` socket (D11).
+#[derive(Clone, Copy)]
+enum Listen {
+    None,
+    NvimSocket,
+}
+
+fn nvim_socket_of(kind: &SessionKind) -> Option<&str> {
+    match kind {
+        SessionKind::Other(other) => other.nvim_socket.path(),
+        SessionKind::Llm(_) => None,
+    }
+}
+
 fn refuse_reserved_name(name: &str) -> Result<()> {
     if matches!(name, "" | "." | "..") {
         return Err(ServiceError::InvalidWorkerName(name.to_owned()));
