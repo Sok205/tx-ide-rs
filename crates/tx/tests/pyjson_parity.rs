@@ -177,3 +177,15 @@ proptest! {
         check_floats(&fs)?;
     }
 }
+
+proptest::proptest! {
+    /// A timestamp written with `dumps_pretty` reads back bit-identical, so a record never drifts
+    /// on resave (serde_json needs `float_roundtrip` for this; its default parser is off by an ULP
+    /// on some inputs).
+    #[test]
+    fn timestamps_survive_a_write_read_cycle(ts in 1.0e9f64..2.0e9f64) {
+        let text = tx::pyjson::dumps_pretty(&serde_json::json!({ "created_at": ts }));
+        let back: serde_json::Value = serde_json::from_str(&text).unwrap();
+        proptest::prop_assert_eq!(back["created_at"].as_f64().unwrap().to_bits(), ts.to_bits(), "{}", text);
+    }
+}
