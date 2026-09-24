@@ -19,8 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd)"
-LIB_DIR="$REPO_ROOT/lib"
-PY="${TX_PYTHON:-python3.14}"
+TX="$REPO_ROOT/bin/tx"
 
 B=$'\e[1m'; D=$'\e[2m'; X=$'\e[0m'
 header() { printf '\n%s%s%s\n' "$B" "$*" "$X"; }
@@ -63,14 +62,8 @@ done
 # new engine needs. Read at top level (not in a subshell) so an unreadable registry is fatal rather
 # than a silent empty set; an engine with no setup script is skipped, not fatal.
 if [[ ${#ENGINES[@]} -eq 0 ]]; then
-  REGISTRY="$(PYTHONPATH="$LIB_DIR" "$PY" -c '
-from tx import spawn  # noqa: F401 - side-effect import: every adapter self-registers
-from tx.engines import registry
-
-for engine in sorted(registry.registered(), key=lambda engine: engine.value):
-    print(engine.value, registry.get(engine).binary)
-')" || {
-    printf 'install.sh: could not read the engine registry with %s — pass --engine NAME\n' "$PY" >&2
+  REGISTRY="$("$TX" _engines)" || {
+    printf 'install.sh: could not read the engine registry with %s — pass --engine NAME\n' "$TX" >&2
     exit 2
   }
   while read -r engine binary; do

@@ -85,50 +85,7 @@ if [[ $KEEP_AGENT -eq 0 ]]; then
   printf '\n%sClaude statusLine (C10 reverse)%s\n' "$B" "$X"
   SETTINGS_MAIN="$CLAUDE_DIR/settings.json"
   if [[ -f "$SETTINGS_MAIN" ]]; then
-    SETTINGS_MAIN="$SETTINGS_MAIN" STAMP="$STAMP" TX_HOME="$TX_IDE_DIR" python3.14 - <<'PY'
-import json, os, tempfile
-
-path  = os.environ["SETTINGS_MAIN"]
-stamp = os.environ["STAMP"]
-G, Y, D, X = "\033[32m", "\033[33m", "\033[2m", "\033[0m"
-
-real = os.path.realpath(path)
-with open(real) as fh:
-    data = json.load(fh)
-before = json.loads(json.dumps(data))
-
-# Marker sidecar first (see setup/engines/claude.sh), legacy in-settings marker as fallback.
-marker_path = os.path.join(os.environ["TX_HOME"], "claude-managed.json")
-if os.path.exists(marker_path):
-    with open(marker_path) as fh:
-        marker = json.load(fh)
-else:
-    marker = data.get("_tx_ide_managed")
-status_command = (marker or {}).get("statusLine_command")
-existing = data.get("statusLine")
-removed = False
-if status_command and isinstance(existing, dict) and existing.get("command") == status_command:
-    del data["statusLine"]
-    removed = True
-
-if removed:
-    with open(f"{real}.bak.{stamp}", "w") as fh:
-        json.dump(before, fh, indent=2); fh.write("\n")
-    directory = os.path.dirname(real) or "."
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tx-settings.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as fh:
-            fh.write(json.dumps(data, indent=2) + "\n")
-        os.replace(tmp, real)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
-    print(f"  {G}→{X} statusLine removed  {D}({status_command}){X}")
-    print(f"  {D}backup: {real}.bak.{stamp}{X}")
-else:
-    print(f"  {Y}→{X} statusLine not ours / absent — left alone")
-PY
+    "$REPO/bin/tx" _statusline uninstall "--settings=$SETTINGS_MAIN" "--home=$TX_IDE_DIR" "--stamp=$STAMP"
   else
     skip "$SETTINGS_MAIN" "not present"
   fi
@@ -170,7 +127,8 @@ elif [[ -L "$agents_link" ]]; then
 elif [[ -e "$agents_link" ]]; then
   skip "$agents_link" "not a symlink, left alone"
 fi
-for leftover in tmux.conf config.json log.jsonl; do
+# Q10: log.jsonl is state (the event log) — only --purge removes it.
+for leftover in tmux.conf config.json; do
   if [[ -e "$TX_IDE_DIR/$leftover" ]]; then
     rm -f "$TX_IDE_DIR/$leftover"
     ok "$TX_IDE_DIR/$leftover"
@@ -180,6 +138,10 @@ if [[ -d "$TX_IDE_DIR/hooks" ]]; then
   rmdir "$TX_IDE_DIR/hooks" 2>/dev/null && ok "$TX_IDE_DIR/hooks" || skip "$TX_IDE_DIR/hooks" "not empty, left alone"
 fi
 if [[ $PURGE -eq 1 ]]; then
+  if [[ -e "$TX_IDE_DIR/log.jsonl" ]]; then
+    rm -f "$TX_IDE_DIR/log.jsonl"
+    ok "$TX_IDE_DIR/log.jsonl"
+  fi
   for state in sessions history user-agents; do
     if [[ -d "$TX_IDE_DIR/$state" ]]; then
       rm -rf "${TX_IDE_DIR:?}/$state"

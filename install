@@ -4,7 +4,7 @@
 #
 # The repo is the code source of truth (git pull updates in place); $TX_IDE_HOME holds only state.
 # Install:
-#   - deps (tmux, fzf, python3.14)
+#   - deps (tmux, fzf) + the built tx binary at bin/tx (no Python)
 #   - symlink the CLIs onto PATH at ~/.local/bin (tx, tx-assistant, tmux-pane-session-name,
 #     tmux-system-resources)
 #   - create the $TX_IDE_HOME skeleton via `tx _init-home`, + the agents symlink
@@ -94,7 +94,7 @@ Repo:  $REPO
 Home:  $TX_IDE_DIR
 
 I will:
-  - check dependencies and brew-install tmux + fzf + python@3.14 if missing
+  - check dependencies and brew-install tmux + fzf if missing
       (also warn if claude / gh are not on PATH)
   - symlink CLIs into ~/.local/bin/  (tx, tx-assistant, tmux-pane-session-name,
       tmux-system-resources)
@@ -128,8 +128,8 @@ I will NOT touch:
   - $TX_IDE_DIR/user-agents/ contents (your overrides survive re-runs)
 
 After install:
-  - run $(tx) from any tmux pane to pick a session
-  - run $(tx start) to create the Views home-base and warm the tx-assistant
+  - run \`tx\` from any tmux pane to pick a session
+  - run \`tx start\` to create the Views home-base and warm the tx-assistant
 
 EOF
 
@@ -139,7 +139,7 @@ confirm "Proceed?" Y || {
 }
 
 # === 0: Dependencies ===
-# Hard requirements (auto-installed via brew): tmux, fzf (≥ 0.63 for the picker), python@3.14.
+# Hard requirements (auto-installed via brew): tmux, fzf (≥ 0.63 for the picker); the tx binary.
 # Soft requirements (warn only): claude, gh.
 header "Dependencies"
 
@@ -176,17 +176,12 @@ else
   ok "fzf $fzf_version" "≥ $FZF_MIN (picker ok)"
 fi
 
-# Hard requirement: the tx package + the hook shims run under python3.14.
-if command -v python3.14 >/dev/null 2>&1; then
-  ok "python3.14" "found"
+# Hard requirement: tx and the hook shims run the built binary behind $REPO/bin/tx (no Python).
+if [[ -x "$REPO/bin/tx" ]]; then
+  ok "tx binary" "found"
 else
-  info "installing python@3.14 via brew..."
-  if brew install python@3.14 2>&1 | sed 's/^/    /'; then
-    ok "python3.14" "installed"
-  else
-    fail "python3.14" "required — install with: brew install python@3.14"
-    exit 1
-  fi
+  fail "tx binary" "missing — build it: cargo build --release && ln -sf ../target/release/tx $REPO/bin/tx"
+  exit 1
 fi
 
 # Soft checks — warn but do not block.
@@ -202,7 +197,7 @@ else
 fi
 
 # === 1: CLIs ===
-# Only the live entrypoints (install-flip §2.2): tx (the python shim), tx-assistant, the
+# Only the live entrypoints (install-flip §2.2): tx (the binary), tx-assistant, the
 # pane-border reader, and the status sampler. No txn (coexistence alias only), no tx-mailbox /
 # tmux-pane-for-session (gone).
 header "CLIs into ~/.local/bin"
@@ -267,7 +262,8 @@ desired_content="# Written by tx-ide install — do not edit, re-run install to 
 # Repo: $REPO
 run-shell '$REPO/tmux/tx-ide.tmux'
 "
-if [[ -f "$TX_IDE_CONF" ]] && [[ "$(cat "$TX_IDE_CONF")" == "$desired_content" ]]; then
+# Q22: compare bytes — `$(cat)` would strip the trailing newline and never match.
+if [[ -f "$TX_IDE_CONF" ]] && printf '%s' "$desired_content" | cmp -s - "$TX_IDE_CONF"; then
   ok "$TX_IDE_CONF" "already current"
 else
   if [[ -f "$TX_IDE_CONF" ]]; then
@@ -334,67 +330,7 @@ header "Statusline → $TX_IDE_DIR (C10)"
 cp "$REPO/claude/statusline.sh" "$TX_IDE_DIR/statusline.sh"
 chmod +x "$TX_IDE_DIR/statusline.sh"
 ok "$TX_IDE_DIR/statusline.sh" "copied"
-SETTINGS_MAIN="$CLAUDE_DIR/settings.json" TX_HOME="$TX_IDE_DIR" STAMP="$STAMP" TX_MODE="installed" \
-  python3.14 - <<'PY'
-import json, os, tempfile
-
-path  = os.environ["SETTINGS_MAIN"]
-home  = os.environ["TX_HOME"]
-stamp = os.environ["STAMP"]
-mode  = os.environ["TX_MODE"]
-G, Y, D, X = "\033[32m", "\033[33m", "\033[2m", "\033[0m"
-
-# settings.json is a symlink into the claude-server git repo — edit the REALPATH, atomically.
-real = os.path.realpath(path)
-if not os.path.exists(real):
-    print(f"  {Y}!{X} {path} absent — run claude.sh install first")
-    raise SystemExit(1)
-with open(real) as fh:
-    data = json.load(fh)
-before = json.loads(json.dumps(data))
-
-# C10: point statusLine at the moved copy (absolute, baked like the hook shims), preserving any
-# other statusLine keys the user has. settings.json is a boundary, so tolerate a non-dict value.
-status_command = f"bash {home}/statusline.sh"
-existing = data.get("statusLine")
-if isinstance(existing, dict):
-    existing["command"] = status_command
-else:
-    data["statusLine"] = {"type": "command", "command": status_command}
-
-# Stamp the marker sidecar claude.sh just wrote (the marker lives at $TX_IDE_HOME/claude-managed.json,
-# not in settings.json — see claude.sh): this is a real install (not coexistence), and record the
-# statusLine command so uninstall can find + remove exactly ours.
-marker_path = os.path.join(home, "claude-managed.json")
-with open(marker_path) as fh:
-    marker = json.load(fh)
-marker["mode"] = mode
-marker["statusLine_command"] = status_command
-fd, tmp = tempfile.mkstemp(dir=home, prefix=".tx-managed.", suffix=".tmp")
-try:
-    with os.fdopen(fd, "w") as fh:
-        fh.write(json.dumps(marker, indent=2) + "\n")
-    os.replace(tmp, marker_path)
-except BaseException:
-    if os.path.exists(tmp):
-        os.unlink(tmp)
-    raise
-
-with open(f"{real}.bak.{stamp}", "w") as fh:
-    json.dump(before, fh, indent=2); fh.write("\n")
-directory = os.path.dirname(real) or "."
-fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tx-settings.", suffix=".tmp")
-try:
-    with os.fdopen(fd, "w") as fh:
-        fh.write(json.dumps(data, indent=2) + "\n")
-    os.replace(tmp, real)
-except BaseException:
-    if os.path.exists(tmp):
-        os.unlink(tmp)
-    raise
-print(f"  {G}→{X} statusLine.command → {status_command}  {D}(marker mode={mode}){X}")
-print(f"  {D}backup: {real}.bak.{stamp}{X}")
-PY
+"$REPO/bin/tx" _statusline install "--settings=$CLAUDE_DIR/settings.json" "--home=$TX_IDE_DIR" "--stamp=$STAMP"
 
 # === 7: nvim config (optional, per-machine toggle) ===
 # tx-ide ships a full LazyVim config under $REPO/nvim — everything spawn-nvim
@@ -435,7 +371,7 @@ fi
 
 # === 9: reload tmux (only if a server is already running) ===
 header "Reload tmux"
-if tmux info >/dev/null 2>&1; then
+if tmux list-sessions >/dev/null 2>&1; then
   if tmux source-file "$HOME_DIR/.tmux.conf" 2>&1 | sed 's/^/  → /'; then
     ok "tmux bindings" "reloaded"
   fi
