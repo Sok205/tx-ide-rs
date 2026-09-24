@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Refresh @tx_name on every live session (choose-tree labels). Logic lives in `tx _relabel`.
+exec "$(dirname "$(readlink -f "$0")")/tx" _relabel "$@"

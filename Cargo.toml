@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/cordis", "crates/tx"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.92"
+
+[workspace.dependencies]
+cordis = { path = "crates/cordis" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
