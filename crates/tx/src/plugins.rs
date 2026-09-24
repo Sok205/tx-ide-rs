@@ -33,6 +33,7 @@ pub fn plug_features(runtime: &mut Runtime) -> Result<(), cordis::Error> {
     runtime.plug(verbs::hooks::HookVerbs)?;
     runtime.plug(verbs::chat::ChatVerbs)?;
     runtime.plug(verbs::artifacts::ArtifactVerbs)?;
+    runtime.plug(verbs::install::InstallVerbs)?;
     Ok(())
 }
 

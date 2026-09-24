@@ -1,0 +1,419 @@
+#!/usr/bin/env bash
+# tx-ide installer (new model — install-flip.md §2.1). Click-through, idempotent, safe to re-run.
+# All settings.json edits target the realpath and back up to <file>.bak.<timestamp>.
+#
+# The repo is the code source of truth (git pull updates in place); $TX_IDE_HOME holds only state.
+# Install:
+#   - deps (tmux, fzf) + the built tx binary at bin/tx (no Python)
+#   - symlink the CLIs onto PATH at ~/.local/bin (tx, tx-assistant, tmux-pane-session-name,
+#     tmux-system-resources)
+#   - create the $TX_IDE_HOME skeleton via `tx _init-home`, + the agents symlink
+#   - the ~/.tx-ide/tmux.conf shim + the ~/.tmux.conf source-file block
+#   - register engine hooks via setup/engines/install.sh (every engine CLI you have; baked shims under $TX_IDE_HOME/hooks)
+#   - C10: move the statusline under $TX_IDE_HOME and point settings.json at it (marker mode=installed)
+set -u
+
+REPO="$(cd "$(dirname "$0")" && pwd)"
+HOME_DIR="${HOME%/}"
+LOCAL_BIN="$HOME_DIR/.local/bin"
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}"
+# Default home ~/.tx-ide; honor a pre-set $TX_IDE_HOME, expand a leading ~. Export it so every
+# sub-call (tx _init-home, claude.sh, the C10 edit) resolves the SAME home.
+TX_IDE_DIR="${TX_IDE_HOME:-$HOME_DIR/.tx-ide}"
+TX_IDE_DIR="${TX_IDE_DIR/#\~/$HOME_DIR}"
+export TX_IDE_HOME="$TX_IDE_DIR"
+STAMP=$(date +%Y%m%d%H%M%S)
+TX="$REPO/bin/tx"
+# The installer seams (`tx _…`) take every path as a flag. Run them against a throwaway
+# TX_IDE_HOME: like every verb, `tx` creates its home skeleton on start, and an uninstall / status /
+# dry run must not grow one.
+tx_seam() {
+  local scratch rc=0
+  scratch="$(mktemp -d)"
+  TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
+
+B=$'\e[1m'
+G=$'\e[32m'
+Y=$'\e[33m'
+RED=$'\e[31m'
+D=$'\e[2m'
+X=$'\e[0m'
+ok() { printf '  %s→%s %-48s %s%s%s\n' "$G" "$X" "$1" "$G" "${2:-ok}" "$X"; }
+warn() { printf '  %s→%s %-48s %s%s%s\n' "$Y" "$X" "$1" "$Y" "$2" "$X"; }
+fail() { printf '  %s→%s %-48s %s%s%s\n' "$RED" "$X" "$1" "$RED" "$2" "$X"; }
+info() { printf '  %s%s%s\n' "$D" "$*" "$X"; }
+header() { printf '\n%s%s%s\n' "$B" "$*" "$X"; }
+
+confirm() {
+  local prompt="$1" default="${2:-N}" reply
+  if [[ "$default" == Y ]]; then
+    read -r -p "$prompt [Y/n] " reply || reply=""
+    [[ -z "$reply" || "$reply" =~ ^[Yy]$ ]]
+  else
+    read -r -p "$prompt [y/N] " reply || reply=""
+    [[ "$reply" =~ ^[Yy]$ ]]
+  fi
+}
+
+# Symlink src → dst; idempotent; refuses to clobber non-symlinks.
+link() {
+  local src="$1" dst="$2"
+  if [[ -L "$dst" ]]; then
+    local current
+    current=$(readlink "$dst")
+    if [[ "$current" == "$src" ]]; then
+      ok "$dst" "already linked"
+      return 0
+    fi
+    rm -f "$dst"
+  elif [[ -e "$dst" ]]; then
+    fail "$dst" "exists (not a symlink) — refusing to clobber"
+    return 1
+  fi
+  ln -s "$src" "$dst"
+  ok "$dst" "linked"
+}
+
+# Symlink for a directory target (uses -n to prevent symlink-into-symlink).
+link_dir() {
+  local src="$1" dst="$2"
+  if [[ -L "$dst" ]]; then
+    local current
+    current=$(readlink "$dst")
+    if [[ "$current" == "$src" ]]; then
+      ok "$dst" "already linked"
+      return 0
+    fi
+    rm "$dst"
+  elif [[ -e "$dst" ]]; then
+    fail "$dst" "exists (not a symlink) — refusing to clobber"
+    return 1
+  fi
+  ln -sn "$src" "$dst"
+  ok "$dst" "linked"
+}
+
+# === Pre-flight ===
+
+cat <<EOF
+${B}=== tx-ide install ===${X}
+
+Repo:  $REPO
+Home:  $TX_IDE_DIR
+
+I will:
+  - check dependencies and brew-install tmux + fzf if missing
+      (also warn if claude / gh are not on PATH)
+  - symlink CLIs into ~/.local/bin/  (tx, tx-assistant, tmux-pane-session-name,
+      tmux-system-resources)
+  - add ~/.local/bin to your shell PATH (zsh/bash; marker-tracked)
+  - create the $TX_IDE_DIR skeleton (sessions/, history/, user-agents/, config)
+      and symlink agents/ → repo (orchestration role files)
+  - write $TX_IDE_DIR/tmux.conf (a one-line file I own)
+  - install the tx-ide default ~/.tmux.conf if you have none; if you
+      already have one, add a source-file block (or, with a [y/N]
+      confirm, replace it with the default) — backup either way
+  - register engine hooks via setup/engines/install.sh, for every engine tx
+      can spawn whose CLI is on this machine (claude / codex / agy) — an engine
+      you do not have is left alone, ~/.codex included
+      (each engine's hook events → baked shims under $TX_IDE_DIR/hooks/<engine>,
+       the global tmux session-closed hook, all tracked by a _tx_ide_managed marker)
+  - move the statusline under $TX_IDE_DIR and point settings.json at it
+  - optionally ([y/N] confirm) symlink ~/.config/nvim to the tx-ide default
+      nvim config (existing config backed up, never deleted; flip later with
+      setup/nvim.sh install|remove)
+  - configure iTerm: keyboard map + import tokyonight-night color preset,
+      with a [Y/n] confirm to also apply it to your Default profile
+      (only if iTerm is installed and currently quit)
+
+I will NOT touch:
+  - your ~/.config/nvim, unless you opt in to the tx-ide config ([y/N], backed up)
+  - any settings.json entry the marker did not add (permissions, theme,
+      plugins, peon-ping / require-worktree / other hooks)
+  - ~/.claude/CLAUDE.md
+  - your existing ~/.tmux.conf, unless you confirm a replace ([y/N], backed up)
+  - any iTerm preference if iTerm is currently running (you'll get a hint)
+  - $TX_IDE_DIR/user-agents/ contents (your overrides survive re-runs)
+
+After install:
+  - run \`tx\` from any tmux pane to pick a session
+  - run \`tx start\` to create the Views home-base and warm the tx-assistant
+
+EOF
+
+confirm "Proceed?" Y || {
+  echo "Aborted."
+  exit 0
+}
+
+# === 0: Dependencies ===
+# Hard requirements (auto-installed via brew): tmux, fzf (≥ 0.63 for the picker); the tx binary.
+# Soft requirements (warn only): claude, gh.
+header "Dependencies"
+
+if ! command -v brew >/dev/null 2>&1; then
+  fail "homebrew" "not installed — install from https://brew.sh, then re-run"
+  exit 1
+fi
+
+for pkg in tmux fzf; do
+  if command -v "$pkg" >/dev/null 2>&1; then
+    ok "$pkg" "already installed"
+  else
+    info "installing $pkg via brew..."
+    if brew install "$pkg" 2>&1 | sed 's/^/    /'; then
+      ok "$pkg" "installed"
+    else
+      fail "$pkg" "brew install failed"
+      exit 1
+    fi
+  fi
+done
+
+# fzf ≥ 0.63 is required to RENDER the picker: `tx attach`'s fzf command uses the `footer` --color
+# element (added in fzf 0.63.0). Older fzf — e.g. Ubuntu apt's 0.44 — parses everything else but
+# rejects `footer` with "invalid color specification: footer:…", so the picker dies on launch.
+# Warn only (don't block): tx's session store + everything but the picker works on any fzf.
+FZF_MIN="0.63.0"
+fzf_version="$(fzf --version 2>/dev/null | awk '{print $1}')"
+if [[ -z "$fzf_version" ]]; then
+  warn "fzf version" "could not parse \`fzf --version\` — the picker needs ≥ $FZF_MIN"
+elif [[ "$(printf '%s\n%s\n' "$FZF_MIN" "$fzf_version" | sort -V | head -n1)" != "$FZF_MIN" ]]; then
+  warn "fzf $fzf_version" "too old for the picker (need ≥ $FZF_MIN) — run: brew install fzf"
+else
+  ok "fzf $fzf_version" "≥ $FZF_MIN (picker ok)"
+fi
+
+# Hard requirement: tx and the hook shims run the built binary behind $REPO/bin/tx (no Python).
+if [[ -x "$REPO/bin/tx" ]]; then
+  ok "tx binary" "found"
+else
+  fail "tx binary" "missing — build it: cargo build --release && ln -sf ../target/release/tx $REPO/bin/tx"
+  exit 1
+fi
+
+# Soft checks — warn but do not block.
+if command -v claude >/dev/null 2>&1; then
+  ok "claude" "found"
+else
+  warn "claude" "missing — \`tx start\` needs Claude Code; see https://docs.claude.com/claude-code"
+fi
+if command -v gh >/dev/null 2>&1; then
+  ok "gh" "found"
+else
+  warn "gh" "missing — coding workers need it to open draft PRs; install: brew install gh"
+fi
+
+# === 1: CLIs ===
+# Only the live entrypoints (install-flip §2.2): tx (the binary), tx-assistant, the
+# pane-border reader, and the status sampler. No txn (coexistence alias only), no tx-mailbox /
+# tmux-pane-for-session (gone).
+header "CLIs into ~/.local/bin"
+mkdir -p "$LOCAL_BIN"
+link "$REPO/bin/tx" "$LOCAL_BIN/tx"
+link "$REPO/bin/tx-assistant" "$LOCAL_BIN/tx-assistant"
+link "$REPO/bin/tmux-pane-session-name" "$LOCAL_BIN/tmux-pane-session-name"
+link "$REPO/bin/tmux-system-resources" "$LOCAL_BIN/tmux-system-resources"
+
+# === 1b: ~/.local/bin on PATH ===
+# Add a marked block to the user's shell rc so `tx` is callable from a fresh shell. Idempotent.
+header "PATH"
+PATH_BEGIN="# === BEGIN tx-ide PATH ==="
+PATH_END="# === END tx-ide PATH ==="
+case ":${PATH:-}:" in
+*":$LOCAL_BIN:"*) ok "$LOCAL_BIN" "already on PATH in this session" ;;
+*) info "$LOCAL_BIN is not on \$PATH in this shell (new shells will pick it up)" ;;
+esac
+case "${SHELL:-}" in
+*/zsh) rc_file="$HOME_DIR/.zshrc" ;;
+*/bash) rc_file="$HOME_DIR/.bash_profile" ;;
+*) rc_file="" ;;
+esac
+if [[ -z "$rc_file" ]]; then
+  warn "shell rc" "SHELL='${SHELL:-unknown}' — add $LOCAL_BIN to PATH yourself"
+elif [[ -f "$rc_file" ]] && grep -qF "$PATH_BEGIN" "$rc_file"; then
+  ok "$rc_file" "tx-ide PATH block already present"
+elif grep -qsF "$LOCAL_BIN" "$rc_file" 2>/dev/null; then
+  ok "$rc_file" "already references $LOCAL_BIN (left as-is)"
+else
+  if [[ -f "$rc_file" ]]; then
+    cp "$rc_file" "$rc_file.bak.$STAMP"
+  else
+    : >"$rc_file"
+  fi
+  cat >>"$rc_file" <<HEREDOC
+
+$PATH_BEGIN
+case ":\$PATH:" in *":\$HOME/.local/bin:"*) ;; *) export PATH="\$HOME/.local/bin:\$PATH" ;; esac
+$PATH_END
+HEREDOC
+  ok "$rc_file" "PATH block added (open a new shell, or: source $rc_file)"
+fi
+
+# === 2: $TX_IDE_HOME skeleton + agents ===
+# `tx _init-home` builds the layout idempotently (sessions/, history/, user-agents/, dirs the
+# package writes into). The agents symlink + the hooks shims are the installer's job: the symlink
+# here, the shims via claude.sh below (§2.3).
+header "tx-ide home ($TX_IDE_DIR)"
+if "$REPO/bin/tx" _init-home 2>&1 | sed 's/^/  → /'; then
+  ok "$TX_IDE_DIR" "skeleton ready"
+else
+  fail "$TX_IDE_DIR" "tx _init-home failed"
+  exit 1
+fi
+link_dir "$REPO/agents" "$TX_IDE_DIR/agents"
+
+# === 3: ~/.tx-ide/tmux.conf shim ===
+header "Tmux config shim"
+TX_IDE_CONF="$TX_IDE_DIR/tmux.conf"
+desired_content="# Written by tx-ide install — do not edit, re-run install to update.
+# Repo: $REPO
+run-shell '$REPO/tmux/tx-ide.tmux'
+"
+# Q22: compare bytes — `$(cat)` would strip the trailing newline and never match.
+if [[ -f "$TX_IDE_CONF" ]] && printf '%s' "$desired_content" | cmp -s - "$TX_IDE_CONF"; then
+  ok "$TX_IDE_CONF" "already current"
+else
+  if [[ -f "$TX_IDE_CONF" ]]; then
+    cp "$TX_IDE_CONF" "$TX_IDE_CONF.bak.$STAMP"
+  fi
+  printf '%s' "$desired_content" >"$TX_IDE_CONF"
+  ok "$TX_IDE_CONF" "written"
+fi
+
+# === 4: ~/.tmux.conf default + source-file block ===
+#   - no ~/.tmux.conf       → install the default
+#   - has one, block present → leave it (idempotent re-run)
+#   - has one, no block      → confirm replace-with-default [y/N]; on no, append the
+#                              source-file block. Backup either way.
+header "~/.tmux.conf"
+USER_TMUX_CONF="$HOME_DIR/.tmux.conf"
+EXAMPLE_TMUX_CONF="$REPO/tmux/tmux.conf"
+BEGIN_MARKER="# === BEGIN tx-ide ==="
+END_MARKER="# === END tx-ide ==="
+
+append_block() {
+  cat >>"$USER_TMUX_CONF" <<EOF
+
+$BEGIN_MARKER
+source-file $TX_IDE_CONF
+$END_MARKER
+EOF
+}
+
+if [[ ! -f "$USER_TMUX_CONF" ]]; then
+  cp "$EXAMPLE_TMUX_CONF" "$USER_TMUX_CONF"
+  ok "$USER_TMUX_CONF" "installed tx-ide default"
+elif grep -qF "$BEGIN_MARKER" "$USER_TMUX_CONF"; then
+  ok "$USER_TMUX_CONF" "block present"
+else
+  cp "$USER_TMUX_CONF" "$USER_TMUX_CONF.bak.$STAMP"
+  if confirm "Replace your ~/.tmux.conf with the tx-ide default?" N; then
+    cp "$EXAMPLE_TMUX_CONF" "$USER_TMUX_CONF"
+    ok "$USER_TMUX_CONF" "replaced with tx-ide default"
+  else
+    append_block
+    ok "$USER_TMUX_CONF" "block added"
+  fi
+  info "backup: $USER_TMUX_CONF.bak.$STAMP"
+fi
+
+# === 5: Engine hooks (settings.json) ===
+# The unified installer drives the per-engine integration setup/engines/<engine>.sh (engine-
+# abstraction design §4.6). It drives every engine tx can spawn whose CLI is on this machine — an
+# engine wired nowhere still gets spawned, and with no hooks its chats are never captured and never
+# resumable; an engine you do not have is untouched, so a codex-less box grows no ~/.codex. claude.sh
+# owns the settings.json hook registration behind the _tx_ide_managed marker — it generates the
+# C9-baked shims under $TX_IDE_HOME/hooks/claude, surgically sets the tx hook events (match-by-marker,
+# so peon-ping / require-worktree / discord are preserved), installs the global tmux session-closed →
+# reconcile hook, and stops any mx-speaker.
+header "Engine hooks (setup/engines/install.sh)"
+"$REPO/setup/engines/install.sh" install
+
+# === 6: Statusline (C10) ===
+# Move the statusline under $TX_IDE_HOME and point settings.json at the moved copy, then stamp the
+# marker mode=installed + record the new statusLine command (so uninstall removes exactly ours).
+# claude.sh leaves the statusLine alone (C10 is install/flip-only), so this is the one extra edit.
+header "Statusline → $TX_IDE_DIR (C10)"
+cp "$REPO/claude/statusline.sh" "$TX_IDE_DIR/statusline.sh"
+chmod +x "$TX_IDE_DIR/statusline.sh"
+ok "$TX_IDE_DIR/statusline.sh" "copied"
+tx_seam _statusline install "--settings=$CLAUDE_DIR/settings.json" "--home=$TX_IDE_DIR" "--stamp=$STAMP"
+
+# === 7: nvim config (optional, per-machine toggle) ===
+# tx-ide ships a full LazyVim config under $REPO/nvim — everything spawn-nvim
+# relies on (tokyonight, diffview.nvim, gitsigns diff keymaps, keylog telemetry).
+# Linking is opt-in per machine; flip later any time with setup/nvim.sh install|remove.
+header "Nvim config (optional)"
+if [[ -L "${XDG_CONFIG_HOME:-$HOME_DIR/.config}/nvim" && \
+  "$(readlink "${XDG_CONFIG_HOME:-$HOME_DIR/.config}/nvim")" == "$REPO/nvim" ]]; then
+  ok "~/.config/nvim" "already linked to tx-ide"
+elif confirm "Use tx-ide's default nvim config (~/.config/nvim → repo; existing config backed up)?" N; then
+  "$REPO/setup/nvim.sh" install
+else
+  info "Skipped. Opt in later with: $REPO/setup/nvim.sh install"
+fi
+
+# === 8: iTerm (keymap + tokyonight-night colors) ===
+header "iTerm setup"
+if [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
+  if pgrep -x iTerm2 >/dev/null 2>&1; then
+    warn "iTerm" "iTerm is running — quit it, then run $REPO/setup/iterm.sh --apply-colors"
+  else
+    iterm_flag=""
+    if confirm "Apply tokyonight-night to your Default iTerm profile?" Y; then
+      iterm_flag="--apply-colors"
+    else
+      info "Skipping color apply. The preset is still imported — pick it from"
+      info "iTerm Settings → Profiles → Colors → Color Presets when you want it."
+    fi
+    if "$REPO/setup/iterm.sh" $iterm_flag 2>&1 | sed 's/^/  /'; then
+      ok "iTerm" "keymap + preset configured"
+    else
+      fail "iTerm" "setup script failed; see $REPO/setup/iterm.sh output"
+    fi
+  fi
+else
+  warn "iTerm" "TERM_PROGRAM='${TERM_PROGRAM:-unknown}' — skipping (iTerm only)"
+fi
+
+# === 9: reload tmux (only if a server is already running) ===
+header "Reload tmux"
+if tmux list-sessions >/dev/null 2>&1; then
+  if tmux source-file "$HOME_DIR/.tmux.conf" 2>&1 | sed 's/^/  → /'; then
+    ok "tmux bindings" "reloaded"
+  fi
+else
+  info "no tmux server running — bindings will load when you next start tmux"
+fi
+
+# === Final ===
+cat <<EOF
+
+${B}=== Done ===${X}
+
+${B}Set up the tx-ide view:${X}
+  ${D}tx start${X}  (creates the Views home-base and warms the tx-assistant)
+
+${B}Customize roles (optional):${X}
+  ${D}drop overrides in $TX_IDE_DIR/user-agents/ (e.g. TX-ASSISTANT.local.md)${X}
+
+${B}Undo:${X}
+  ${D}$REPO/uninstall${X}
+
+EOF
+
+# If the current shell doesn't have ~/.local/bin on PATH, re-exec it so `tx` is immediately
+# callable. Skipped when PATH is already correct (most common on re-runs).
+case ":${PATH:-}:" in
+*":$LOCAL_BIN:"*) : ;;
+*)
+  if [[ -n "${SHELL:-}" && -x "$SHELL" ]]; then
+    printf '%sReloading shell so `tx` is on PATH... (exit to return to your previous shell)%s\n' "$D" "$X"
+    exec "$SHELL" -l
+  fi
+  ;;
+esac

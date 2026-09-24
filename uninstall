@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+# Reverse the tx-ide install (install-flip.md §9). The core uninstall is independent of the
+# per-agent (Claude) registration:
+#   ./uninstall                reverse everything (calls setup/engines/install.sh uninstall)
+#   ./uninstall --keep-agent   leave the Claude hooks + statusline + marker in place
+#   ./uninstall --purge        also remove sessions/, history/, user-agents/ (your state)
+#
+# Leaves user state alone by default:
+#   $TX_IDE_HOME/sessions/      (durable session metadata)
+#   $TX_IDE_HOME/history/       (ingested chat bundles)
+#   $TX_IDE_HOME/user-agents/   (your role overrides)
+#   the tx-ide repo itself
+set -u
+
+REPO="$(cd "$(dirname "$0")" && pwd)"
+HOME_DIR="${HOME%/}"
+LOCAL_BIN="$HOME_DIR/.local/bin"
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}"
+TX_IDE_DIR="${TX_IDE_HOME:-$HOME_DIR/.tx-ide}"
+TX_IDE_DIR="${TX_IDE_DIR/#\~/$HOME_DIR}"
+export TX_IDE_HOME="$TX_IDE_DIR"
+STAMP=$(date +%Y%m%d%H%M%S)
+TX="$REPO/bin/tx"
+# The installer seams (`tx _…`) take every path as a flag. Run them against a throwaway
+# TX_IDE_HOME: like every verb, `tx` creates its home skeleton on start, and an uninstall / status /
+# dry run must not grow one.
+tx_seam() {
+  local scratch rc=0
+  scratch="$(mktemp -d)"
+  TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
+
+KEEP_AGENT=0
+PURGE=0
+for arg in "$@"; do
+  case "$arg" in
+    --keep-agent) KEEP_AGENT=1 ;;
+    --purge) PURGE=1 ;;
+    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    *) printf 'uninstall: unknown argument: %s\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
+B=$'\e[1m'
+G=$'\e[32m'
+Y=$'\e[33m'
+D=$'\e[2m'
+X=$'\e[0m'
+ok() { printf '  %s→%s %-48s %s%s%s\n' "$G" "$X" "$1" "$G" "${2:-removed}" "$X"; }
+skip() { printf '  %s→%s %-48s %s%s%s\n' "$Y" "$X" "$1" "$Y" "$2" "$X"; }
+
+cat <<EOF
+${B}=== tx-ide uninstall ===${X}
+
+Repo:  $REPO
+Home:  $TX_IDE_DIR
+
+I will remove:
+  - the CLI symlinks in ~/.local/bin/ (only if they still point at this repo)
+  - $TX_IDE_DIR/agents (symlink) and $TX_IDE_DIR/tmux.conf
+  - the empty $TX_IDE_DIR/ directory (only if nothing user-owned remains)
+  - the tx-ide block from ~/.tmux.conf (matched by markers)
+  - the tx-ide PATH block from ~/.zshrc / ~/.bash_profile (matched by markers)
+$( ((KEEP_AGENT)) && echo "  - (--keep-agent) leaving the Claude hooks + statusline + marker in place" || cat <<INNER
+  - the Claude integration via setup/engines/install.sh uninstall:
+      the 4 tx hook entries + marker + the baked \$TX_IDE_HOME/hooks shims
+  - the statusLine entry + $TX_IDE_DIR/statusline.sh (only if it is ours)
+INNER
+)
+
+I will NOT touch:
+  - any settings.json entry not recorded in the _tx_ide_managed marker
+      (peon-ping / require-worktree / discord / theme / plugins / permissions)
+  - ~/.claude/CLAUDE.md
+$( ((PURGE)) && echo "  - (--purge) sessions/, history/, user-agents/ WILL be removed" || cat <<INNER
+  - $TX_IDE_DIR/sessions/ (durable session metadata)
+  - $TX_IDE_DIR/history/ (ingested chat bundles)
+  - $TX_IDE_DIR/user-agents/ (your role overrides)
+INNER
+)
+
+EOF
+read -r -p "Proceed? [y/N] " reply
+[[ "$reply" =~ ^[Yy]$ ]] || {
+  echo "Aborted."
+  exit 0
+}
+
+# === Claude integration (per-agent) ===
+# Remove the statusLine FIRST (while the marker still records its command), then hand the hooks +
+# marker + shims to claude.sh. claude.sh owns the hook surgery; it does not touch the statusLine
+# (C10 is install/flip-only), so the statusLine removal is ours.
+if [[ $KEEP_AGENT -eq 0 ]]; then
+  printf '\n%sClaude statusLine (C10 reverse)%s\n' "$B" "$X"
+  SETTINGS_MAIN="$CLAUDE_DIR/settings.json"
+  if [[ -f "$SETTINGS_MAIN" ]]; then
+    tx_seam _statusline uninstall "--settings=$SETTINGS_MAIN" "--home=$TX_IDE_DIR" "--stamp=$STAMP"
+  else
+    skip "$SETTINGS_MAIN" "not present"
+  fi
+
+  printf '\n%sEngine hooks (setup/engines/install.sh uninstall)%s\n' "$B" "$X"
+  "$REPO/setup/engines/install.sh" uninstall
+
+  if [[ -f "$TX_IDE_DIR/statusline.sh" ]]; then
+    rm -f "$TX_IDE_DIR/statusline.sh"
+    ok "$TX_IDE_DIR/statusline.sh"
+  fi
+else
+  printf '\n%sClaude integration%s\n' "$B" "$X"
+  skip "claude.sh uninstall" "--keep-agent — hooks + statusline left in place"
+fi
+
+# === CLI symlinks ===
+printf '\n%sCLI symlinks%s\n' "$B" "$X"
+for tool in tx tx-assistant tmux-pane-session-name tmux-system-resources; do
+  target="$LOCAL_BIN/$tool"
+  if [[ -L "$target" ]] && [[ "$(readlink "$target")" == "$REPO/bin/$tool" ]]; then
+    rm "$target"
+    ok "$target"
+  elif [[ -L "$target" ]]; then
+    skip "$target" "points elsewhere, left alone"
+  else
+    skip "$target" "not present"
+  fi
+done
+
+# === $TX_IDE_HOME scaffolding ===
+printf '\n%s%s%s\n' "$B" "$TX_IDE_DIR" "$X"
+agents_link="$TX_IDE_DIR/agents"
+if [[ -L "$agents_link" ]] && [[ "$(readlink "$agents_link")" == "$REPO/agents" ]]; then
+  rm "$agents_link"
+  ok "$agents_link"
+elif [[ -L "$agents_link" ]]; then
+  skip "$agents_link" "points elsewhere, left alone"
+elif [[ -e "$agents_link" ]]; then
+  skip "$agents_link" "not a symlink, left alone"
+fi
+# Q10: log.jsonl is state (the event log) — only --purge removes it.
+for leftover in tmux.conf config.json; do
+  if [[ -e "$TX_IDE_DIR/$leftover" ]]; then
+    rm -f "$TX_IDE_DIR/$leftover"
+    ok "$TX_IDE_DIR/$leftover"
+  fi
+done
+if [[ -d "$TX_IDE_DIR/hooks" ]]; then
+  rmdir "$TX_IDE_DIR/hooks" 2>/dev/null && ok "$TX_IDE_DIR/hooks" || skip "$TX_IDE_DIR/hooks" "not empty, left alone"
+fi
+if [[ $PURGE -eq 1 ]]; then
+  if [[ -e "$TX_IDE_DIR/log.jsonl" ]]; then
+    rm -f "$TX_IDE_DIR/log.jsonl"
+    ok "$TX_IDE_DIR/log.jsonl"
+  fi
+  for state in sessions history user-agents; do
+    if [[ -d "$TX_IDE_DIR/$state" ]]; then
+      rm -rf "${TX_IDE_DIR:?}/$state"
+      ok "$TX_IDE_DIR/$state" "purged"
+    fi
+  done
+else
+  for state in sessions history user-agents; do
+    [[ -d "$TX_IDE_DIR/$state" ]] && skip "$TX_IDE_DIR/$state" "state, left alone (use --purge)"
+  done
+fi
+if [[ -d "$TX_IDE_DIR" ]]; then
+  rmdir "$TX_IDE_DIR" 2>/dev/null && ok "$TX_IDE_DIR" "removed (empty)" || skip "$TX_IDE_DIR" "not empty, left alone"
+fi
+
+# === Strip marker-bounded blocks from rc / tmux files ===
+strip_block() {
+  local file="$1" begin="$2" end="$3" label="$4"
+  if [[ -f "$file" ]] && grep -qF "$begin" "$file"; then
+    local stamp
+    stamp=$(date +%Y%m%d%H%M%S)
+    cp "$file" "$file.bak.$stamp"
+    awk -v b="$begin" -v e="$end" '
+      $0==b { skip=1; next }
+      $0==e { skip=0; next }
+      !skip
+    ' "$file" >"$file.tmp"
+    sed -e :a -e '/^$/{$d;N;ba' -e '}' "$file.tmp" >"$file"
+    rm "$file.tmp"
+    ok "$file" "$label removed (backup: $file.bak.$stamp)"
+  else
+    skip "$file" "no $label block found"
+  fi
+}
+
+printf '\n%s~/.tmux.conf block%s\n' "$B" "$X"
+strip_block "$HOME_DIR/.tmux.conf" "# === BEGIN tx-ide ===" "# === END tx-ide ===" "tx-ide tmux"
+
+printf '\n%sShell PATH block%s\n' "$B" "$X"
+for rc in "$HOME_DIR/.zshrc" "$HOME_DIR/.bash_profile" "$HOME_DIR/.bashrc"; do
+  strip_block "$rc" "# === BEGIN tx-ide PATH ===" "# === END tx-ide PATH ===" "tx-ide PATH"
+done
+
+cat <<EOF
+
+${B}=== Done ===${X}
+
+${B}Remaining (left in place):${X}
+  ${D}$TX_IDE_DIR/sessions/${X}       durable session metadata$( ((PURGE)) && echo "  (PURGED)")
+  ${D}$TX_IDE_DIR/history/${X}        ingested chat bundles$( ((PURGE)) && echo "  (PURGED)")
+  ${D}$TX_IDE_DIR/user-agents/${X}    your role overrides$( ((PURGE)) && echo "  (PURGED)")
+
+${B}Tmux:${X} reload to drop the bindings:
+  ${D}tmux source-file ~/.tmux.conf${X}
+EOF
