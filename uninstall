@@ -26,7 +26,7 @@ TX="$REPO/bin/tx"
 # dry run must not grow one.
 tx_seam() {
   local scratch rc=0
-  scratch="$(mktemp -d)"
+  scratch="$(mktemp -d)" && [ -d "$scratch" ] || return 1
   TX_IDE_HOME="$scratch" "$TX" "$@" || rc=$?
   rm -rf "$scratch"
   return "$rc"

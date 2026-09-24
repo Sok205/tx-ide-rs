@@ -15,3 +15,5 @@
   `uuid` is replaced by the synthetic key (Python keeps it).
 - codex_update schedule test: rare flake under the full parallel suite (~1/25), not reproduced
   in isolation; the assertion now prints the log + marker when it fires.
+- Reinstall rewrites settings.json (+ `.bak.<stamp>`) even when nothing changed — same as the
+  reference's claude.sh / statusline step; skip the write when the serialized document is unchanged.
