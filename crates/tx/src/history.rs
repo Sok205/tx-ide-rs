@@ -258,6 +258,14 @@ impl IngestLock {
     }
 }
 
+impl Drop for IngestLock {
+    /// `LOCK_UN` before the close, as the reference does: a descriptor inherited by a child that is
+    /// still between fork and exec must not keep the lock alive.
+    fn drop(&mut self) {
+        let _ = self._file.unlock();
+    }
+}
+
 /// Stamp `bundle_path` onto each ingested chat, on a record reloaded right before the save so a
 /// concurrent write (a rename) survives. Saves only when a path actually changes.
 fn stamp_bundle_paths(

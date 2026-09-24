@@ -1,0 +1,1490 @@
+test_t_art_01_record_round_trip (test_art.TestArt.test_t_art_01_record_round_trip) ... ok
+test_t_art_02_fixed_show_named_v1_record (test_art.TestArt.test_t_art_02_fixed_show_named_v1_record) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_art_02_parity_show_named_v1_record (test_art.TestArt.test_t_art_02_parity_show_named_v1_record) ... ok
+test_t_art_02_record_version_guard (test_art.TestArt.test_t_art_02_record_version_guard) ... ok
+test_t_art_03_exact_key_set_enforcement (test_art.TestArt.test_t_art_03_exact_key_set_enforcement) ... ok
+test_t_art_04_history_invariants (test_art.TestArt.test_t_art_04_history_invariants) ... ok
+test_t_art_05_record_save_atomic_and_load (test_art.TestArt.test_t_art_05_record_save_atomic_and_load) ... ok
+test_t_art_06_store_scan_tolerant (test_art.TestArt.test_t_art_06_store_scan_tolerant) ... ok
+test_t_art_07_content_path_layout (test_art.TestArt.test_t_art_07_content_path_layout) ... ok
+test_t_art_08_rev_claim_exclusive (test_art.TestArt.test_t_art_08_rev_claim_exclusive) ... ok
+test_t_art_09_orphan_missing_dirty_detection (test_art.TestArt.test_t_art_09_orphan_missing_dirty_detection) ... ok
+test_t_art_10_create_record_files_log (test_art.TestArt.test_t_art_10_create_record_files_log) ... ok
+test_t_art_11_modify_with_a_file (test_art.TestArt.test_t_art_11_modify_with_a_file) ... ok
+test_t_art_12_modify_without_a_file_snapshots_current (test_art.TestArt.test_t_art_12_modify_without_a_file_snapshots_current) ... ok
+test_t_art_13_lost_modify_race_conflict (test_art.TestArt.test_t_art_13_lost_modify_race_conflict) ... ok
+test_t_art_15_diff_default_and_explicit (test_art.TestArt.test_t_art_15_diff_default_and_explicit) ... ok
+test_t_art_16_ls_session (test_art.TestArt.test_t_art_16_ls_session) ... ok
+test_t_art_17_doctor_problem_lines (test_art.TestArt.test_t_art_17_doctor_problem_lines) ... ok
+test_t_art_18_doctor_repair (test_art.TestArt.test_t_art_18_doctor_repair) ... ok
+test_t_art_19_help_and_unknown_sub (test_art.TestArt.test_t_art_19_help_and_unknown_sub) ... ok
+test_t_art_20_create (test_art.TestArt.test_t_art_20_create) ... ok
+test_t_art_21_actor_resolution (test_art.TestArt.test_t_art_21_actor_resolution) ... ok
+test_t_art_22_fixed_empty_token_never_resolves (test_art.TestArt.test_t_art_22_fixed_empty_token_never_resolves) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_art_22_id_resolution (test_art.TestArt.test_t_art_22_id_resolution) ... ok
+test_t_art_23_modify_outputs (test_art.TestArt.test_t_art_23_modify_outputs) ... ok
+test_t_art_24_ls_edges (test_art.TestArt.test_t_art_24_ls_edges) ... ok
+test_t_art_24_ls_shape (test_art.TestArt.test_t_art_24_ls_shape) ... ok
+test_t_art_25_fixed_missing_current (test_art.TestArt.test_t_art_25_fixed_missing_current) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_art_25_show_shape (test_art.TestArt.test_t_art_25_show_shape) ... ok
+test_t_art_26_diff_cli (test_art.TestArt.test_t_art_26_diff_cli) ... ok
+test_t_art_27_open (test_art.TestArt.test_t_art_27_open) ... ok
+test_t_art_27_open_edges (test_art.TestArt.test_t_art_27_open_edges) ... ok
+test_t_art_28_doctor_cli (test_art.TestArt.test_t_art_28_doctor_cli) ... ok
+test_t_attach_01_fzf_argv (test_attach.TestAttach.test_t_attach_01_fzf_argv) ... skipped 'setsid not on PATH'
+test_t_attach_02_arm_flow_binds (test_attach.TestAttach.test_t_attach_02_arm_flow_binds) ... skipped 'setsid not on PATH'
+test_t_attach_03_ctrl_t_bind_and_edit_tag (test_attach.TestAttach.test_t_attach_03_ctrl_t_bind_and_edit_tag) ... skipped 'setsid not on PATH'
+test_t_attach_04_list_row_shape (test_attach.TestAttach.test_t_attach_04_list_row_shape) ... ok
+test_t_attach_04_namew_and_list_feed (test_attach.TestAttach.test_t_attach_04_namew_and_list_feed) ... skipped 'setsid not on PATH'
+test_t_attach_05_arm_file_lifecycle (test_attach.TestAttach.test_t_attach_05_arm_file_lifecycle) ... FAIL
+test_t_attach_06_abort_and_dead_target (test_attach.TestAttach.test_t_attach_06_abort_and_dead_target) ... ok
+test_t_attach_06_row_without_target_resolves_live_record (test_attach.TestAttach.test_t_attach_06_row_without_target_resolves_live_record) ... ok
+test_t_attach_06_selection_uses_row_target (test_attach.TestAttach.test_t_attach_06_selection_uses_row_target) ... ok
+test_t_attach_06_untracked_name_row (test_attach.TestAttach.test_t_attach_06_untracked_name_row) ... ok
+test_t_attach_07_nest_attach_into_view_pane (test_attach.TestAttach.test_t_attach_07_nest_attach_into_view_pane) ... ok
+test_t_attach_07_nested_tmux_pane_falls_through_to_switch_client (test_attach.TestAttach.test_t_attach_07_nested_tmux_pane_falls_through_to_switch_client) ... ok
+test_t_attach_07_non_shell_pane_falls_through_to_switch_client (test_attach.TestAttach.test_t_attach_07_non_shell_pane_falls_through_to_switch_client) ... ok
+test_t_attach_07_tmux_unset_falls_through_to_foreground_attach (test_attach.TestAttach.test_t_attach_07_tmux_unset_falls_through_to_foreground_attach) ... ok
+test_t_attach_07_untracked_target_is_quoted (test_attach.TestAttach.test_t_attach_07_untracked_target_is_quoted) ... ok
+test_t_attach_08_inside_switches_client (test_attach.TestAttach.test_t_attach_08_inside_switches_client) ... ok
+test_t_attach_08_outside_foreground_attach (test_attach.TestAttach.test_t_attach_08_outside_foreground_attach) ... ok
+test_t_attach_08_tmux_set_without_client_swallows_switch_failure (test_attach.TestAttach.test_t_attach_08_tmux_set_without_client_swallows_switch_failure) ... skipped 'setsid not on PATH'
+test_t_attach_09_jump_dead_target (test_attach.TestAttach.test_t_attach_09_jump_dead_target) ... ok
+test_t_attach_09_jump_falls_back_to_nest_attach_then_switch (test_attach.TestAttach.test_t_attach_09_jump_falls_back_to_nest_attach_then_switch) ... ok
+test_t_attach_09_jump_from_the_target_itself_moves_nothing (test_attach.TestAttach.test_t_attach_09_jump_from_the_target_itself_moves_nothing) ... ok
+test_t_attach_09_jump_selects_hosting_pane (test_attach.TestAttach.test_t_attach_09_jump_selects_hosting_pane) ... ok
+test_t_attach_09_jump_switch_failure_reruns_fzf (test_attach.TestAttach.test_t_attach_09_jump_switch_failure_reruns_fzf) ... ok
+test_t_attach_10_host_edges (test_attach.TestAttach.test_t_attach_10_host_edges) ... ok
+test_t_attach_10_host_ssh_and_remote_session_stamp (test_attach.TestAttach.test_t_attach_10_host_ssh_and_remote_session_stamp) ... ok
+test_t_attach_11_all_unsupported (test_attach.TestAttach.test_t_attach_11_all_unsupported) ... ok
+test_t_attach_12_filter_prefill (test_attach.TestAttach.test_t_attach_12_filter_prefill) ... ok
+test_t_chat_01_active_chat_selection (test_chat.TestChat.test_t_chat_01_active_chat_selection) ... ok
+test_t_chat_01_resume_applies_the_same_rule (test_chat.TestChat.test_t_chat_01_resume_applies_the_same_rule) ... ok
+test_t_chat_02_fork_happy_path (test_chat.TestChat.test_t_chat_02_fork_happy_path) ... ok
+test_t_chat_02_fork_name_group_and_read_only_edges (test_chat.TestChat.test_t_chat_02_fork_name_group_and_read_only_edges) ... ok
+test_t_chat_02_fork_refusals (test_chat.TestChat.test_t_chat_02_fork_refusals) ... ok
+test_t_chat_03_fork_per_engine_codex (test_chat.TestChat.test_t_chat_03_fork_per_engine_codex) ... ok
+test_t_chat_05_codex_source (test_chat.TestChat.test_t_chat_05_codex_source) ... ok
+test_t_chat_05_handover_with_distiller (test_chat.TestChat.test_t_chat_05_handover_with_distiller) ... ok
+test_t_chat_05_slug_and_name_edges (test_chat.TestChat.test_t_chat_05_slug_and_name_edges) ... ok
+test_t_chat_06_handover_self_catch_up_finishes_synchronously (test_chat.TestChat.test_t_chat_06_handover_self_catch_up_finishes_synchronously) ... ok
+test_t_chat_07_finish_handover_edges (test_chat.TestChat.test_t_chat_07_finish_handover_edges) ... ok
+test_t_chat_07_finish_handover_with_brief_present (test_chat.TestChat.test_t_chat_07_finish_handover_with_brief_present) ... ok
+test_t_chat_08_finish_idempotent (test_chat.TestChat.test_t_chat_08_finish_idempotent) ... ok
+test_t_chat_09_fixed_missing_key_exit_1_no_traceback (test_chat.TestChat.test_t_chat_09_fixed_missing_key_exit_1_no_traceback) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_09_fixed_missing_worker_name_refused (test_chat.TestChat.test_t_chat_09_fixed_missing_worker_name_refused) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_09_parity_missing_worker_name_spawns_dash_2 (test_chat.TestChat.test_t_chat_09_parity_missing_worker_name_spawns_dash_2) ... ok
+test_t_chat_09_spec_without_read_only_key_is_writable (test_chat.TestChat.test_t_chat_09_spec_without_read_only_key_is_writable) ... ok
+test_t_chat_10_rollover_pane_resolution (test_chat.TestChat.test_t_chat_10_rollover_pane_resolution) ... ok
+test_t_chat_10_rollover_refusals (test_chat.TestChat.test_t_chat_10_rollover_refusals) ... ok
+test_t_chat_11_first_note_is_rollover_1 (test_chat.TestChat.test_t_chat_11_first_note_is_rollover_1) ... ok
+test_t_chat_11_rollover_with_distiller (test_chat.TestChat.test_t_chat_11_rollover_with_distiller) ... ok
+test_t_chat_12_rollover_self_catch_up_detaches_the_finish (test_chat.TestChat.test_t_chat_12_rollover_self_catch_up_detaches_the_finish) ... ERROR
+test_t_chat_13_finish_rollover_respawns_pane_in_place (test_chat.TestChat.test_t_chat_13_finish_rollover_respawns_pane_in_place) ... ok
+test_t_chat_13_long_command_launches_through_a_script (test_chat.TestChat.test_t_chat_13_long_command_launches_through_a_script) ... ok
+test_t_chat_13_note_missing_seeds_the_bundle_pointer (test_chat.TestChat.test_t_chat_13_note_missing_seeds_the_bundle_pointer) ... ok
+test_t_chat_13_read_only_source_respawns_inside_the_sandbox (test_chat.TestChat.test_t_chat_13_read_only_source_respawns_inside_the_sandbox) ... FAIL
+test_t_chat_14_seeded_chat_idempotent_and_close_chat (test_chat.TestChat.test_t_chat_14_seeded_chat_idempotent_and_close_chat) ... ok
+test_t_chat_15_fixed_artifact_without_finish (test_chat.TestChat.test_t_chat_15_fixed_artifact_without_finish) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_15_fixed_distiller_finishes_within_grace (test_chat.TestChat.test_t_chat_15_fixed_distiller_finishes_within_grace) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_15_fixed_edges_distiller_gone_and_no_artifact (test_chat.TestChat.test_t_chat_15_fixed_edges_distiller_gone_and_no_artifact) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_15_fixed_non_linked_distiller_cwd_is_left_untouched (test_chat.TestChat.test_t_chat_15_fixed_non_linked_distiller_cwd_is_left_untouched) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_15_fixed_timeout_path (test_chat.TestChat.test_t_chat_15_fixed_timeout_path) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_16_detached_finish_survives_callers_pane (test_chat.TestChat.test_t_chat_16_detached_finish_survives_callers_pane) ... ERROR
+test_t_chat_16_fixed_handover_watchdog_outlives_killed_pane (test_chat.TestChat.test_t_chat_16_fixed_handover_watchdog_outlives_killed_pane) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_17_resume_as_new_name_copies_the_transcript (test_chat.TestChat.test_t_chat_17_resume_as_new_name_copies_the_transcript) ... ok
+test_t_chat_17_resume_codex_source (test_chat.TestChat.test_t_chat_17_resume_codex_source) ... ok
+test_t_chat_17_resume_happy_path (test_chat.TestChat.test_t_chat_17_resume_happy_path) ... ok
+test_t_chat_17_resume_prefers_the_last_open_chat (test_chat.TestChat.test_t_chat_17_resume_prefers_the_last_open_chat) ... ok
+test_t_chat_18_fixed_live_record_clash_hint (test_chat.TestChat.test_t_chat_18_fixed_live_record_clash_hint) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_18_parity_refusals (test_chat.TestChat.test_t_chat_18_parity_refusals) ... ok
+test_t_chat_19_read_only_propagation_resume_fork_handover (test_chat.TestChat.test_t_chat_19_read_only_propagation_resume_fork_handover) ... ok
+test_t_chat_19_read_only_propagation_rollover (test_chat.TestChat.test_t_chat_19_read_only_propagation_rollover) ... FAIL
+test_t_chat_21_fixed_missing_spec_exit_1_no_traceback (test_chat.TestChat.test_t_chat_21_fixed_missing_spec_exit_1_no_traceback) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_chat_21_parity_no_arg_exit_2_and_missing_spec_has_no_side_effects (test_chat.TestChat.test_t_chat_21_parity_no_arg_exit_2_and_missing_spec_has_no_side_effects) ... ok
+test_t_cli_01_help_and_unknown_verb (test_cli.TestCli.test_t_cli_01_help_and_unknown_verb) ... ok
+test_t_cli_02_error_boundary (test_cli.TestCli.test_t_cli_02_error_boundary) ... ok
+test_t_cli_02_missing_cwd_is_not_a_tmux_error (test_cli.TestCli.test_t_cli_02_missing_cwd_is_not_a_tmux_error) ... ok
+test_t_cli_03_env_pair_split_on_first_equals (test_cli.TestCli.test_t_cli_03_env_pair_split_on_first_equals) ... ok
+test_t_cli_03_fixed_empty_prompt_with_cmd (test_cli.TestCli.test_t_cli_03_fixed_empty_prompt_with_cmd) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_cli_03_parity_required_and_exclusive_flags (test_cli.TestCli.test_t_cli_03_parity_required_and_exclusive_flags) ... 
+  test_t_cli_03_parity_required_and_exclusive_flags (test_cli.TestCli.test_t_cli_03_parity_required_and_exclusive_flags) (argv=['w', '--tag', 't', '--effort', '0']) ... FAIL
+  test_t_cli_03_parity_required_and_exclusive_flags (test_cli.TestCli.test_t_cli_03_parity_required_and_exclusive_flags) (argv=['w', '--tag', 't', '--effort', '6']) ... FAIL
+  test_t_cli_03_parity_required_and_exclusive_flags (test_cli.TestCli.test_t_cli_03_parity_required_and_exclusive_flags) (argv=['w', '--tag', 't', '--engine', 'gpt']) ... FAIL
+test_t_cli_04_bare_shell (test_cli.TestCli.test_t_cli_04_bare_shell) ... ok
+test_t_cli_04_cwd_omitted_falls_back_to_the_callers_cwd (test_cli.TestCli.test_t_cli_04_cwd_omitted_falls_back_to_the_callers_cwd) ... ok
+test_t_cli_04_shell_unset_defaults_to_zsh (test_cli.TestCli.test_t_cli_04_shell_unset_defaults_to_zsh) ... ok
+test_t_cli_05_cmd_infers_engine_and_links_the_common_grant (test_cli.TestCli.test_t_cli_05_cmd_infers_engine_and_links_the_common_grant) ... ok
+test_t_cli_05_codex_engine_links_under_agents_skills (test_cli.TestCli.test_t_cli_05_codex_engine_links_under_agents_skills) ... ok
+test_t_cli_05_engine_built_worker_with_role_and_skills (test_cli.TestCli.test_t_cli_05_engine_built_worker_with_role_and_skills) ... ok
+test_t_cli_05_missing_hook_shim_refuses_the_spawn (test_cli.TestCli.test_t_cli_05_missing_hook_shim_refuses_the_spawn) ... ok
+test_t_cli_05_role_lists_concatenate_in_order (test_cli.TestCli.test_t_cli_05_role_lists_concatenate_in_order) ... ok
+test_t_cli_06_bwrap_absent (test_cli.TestCli.test_t_cli_06_bwrap_absent) ... skipped 'linux-only case'
+test_t_cli_06_read_only_spawn (test_cli.TestCli.test_t_cli_06_read_only_spawn) ... skipped 'linux-only case'
+test_t_cli_07_spawn_nvim_flags_and_output (test_cli.TestCli.test_t_cli_07_spawn_nvim_flags_and_output) ... ok
+test_t_cli_08_spawn_view (test_cli.TestCli.test_t_cli_08_spawn_view) ... ok
+test_t_cli_09_empty_and_stray_argv (test_cli.TestCli.test_t_cli_09_empty_and_stray_argv) ... ok
+test_t_cli_09_ls_output (test_cli.TestCli.test_t_cli_09_ls_output) ... ok
+test_t_cli_10_show_json (test_cli.TestCli.test_t_cli_10_show_json) ... ok
+test_t_cli_11_history_filters_and_rendering (test_cli.TestCli.test_t_cli_11_history_filters_and_rendering) ... ok
+test_t_cli_11_null_ended_at_filters_on_activity (test_cli.TestCli.test_t_cli_11_null_ended_at_filters_on_activity) ... ok
+test_t_cli_12_whoami (test_cli.TestCli.test_t_cli_12_whoami) ... ok
+test_t_cli_13_tag_read_and_set (test_cli.TestCli.test_t_cli_13_tag_read_and_set) ... ok
+test_t_cli_14_rename (test_cli.TestCli.test_t_cli_14_rename) ... ok
+test_t_cli_15_rm (test_cli.TestCli.test_t_cli_15_rm) ... ok
+test_t_cli_16_kill_record_and_view_fallback (test_cli.TestCli.test_t_cli_16_kill_record_and_view_fallback) ... ok
+test_t_cli_17_pane_info (test_cli.TestCli.test_t_cli_17_pane_info) ... ok
+test_t_cli_18_live_same_name_record_wins (test_cli.TestCli.test_t_cli_18_live_same_name_record_wins) ... ok
+test_t_cli_18_tmux_name (test_cli.TestCli.test_t_cli_18_tmux_name) ... ok
+test_t_cli_19_list_picker_feed (test_cli.TestCli.test_t_cli_19_list_picker_feed) ... ok
+test_t_cli_19_namew_default_truncation_and_stray_argv (test_cli.TestCli.test_t_cli_19_namew_default_truncation_and_stray_argv) ... ok
+test_t_cli_20_edit_tag (test_cli.TestCli.test_t_cli_20_edit_tag) ... ok
+test_t_cli_21_fixed_remote_pane_scope (test_cli.TestCli.test_t_cli_21_fixed_remote_pane_scope) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_cli_21_focus_envelope (test_cli.TestCli.test_t_cli_21_focus_envelope) ... ok
+test_t_cli_21_pane_gone (test_cli.TestCli.test_t_cli_21_pane_gone) ... ok
+test_t_cli_21_parity_remote_session_scope (test_cli.TestCli.test_t_cli_21_parity_remote_session_scope) ... ok
+test_t_cli_23_selfcheck (test_cli.TestCli.test_t_cli_23_selfcheck) ... ok
+test_t_cli_24_migrate_output (test_cli.TestCli.test_t_cli_24_migrate_output) ... ok
+test_t_cli_24_migrate_retires_a_v3_view_record (test_cli.TestCli.test_t_cli_24_migrate_retires_a_v3_view_record) ... ok
+test_t_cli_25_start (test_cli.TestCli.test_t_cli_25_start) ... ok
+test_t_cli_26_fixed_live_name_clash_consults_store (test_cli.TestCli.test_t_cli_26_fixed_live_name_clash_consults_store) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_cli_26_parity_chat_ls_and_resume_guards (test_cli.TestCli.test_t_cli_26_parity_chat_ls_and_resume_guards) ... ok
+test_t_cli_27_attach_all_unsupported (test_cli.TestCli.test_t_cli_27_attach_all_unsupported) ... ok
+test_t_cli_27_attach_host_runs_ssh (test_cli.TestCli.test_t_cli_27_attach_host_runs_ssh) ... ok
+test_t_cli_22_init_home (test_cli.TestCliInitHome.test_t_cli_22_init_home) ... ok
+test_t_editor_01_enter_escape_ctrl_c_leave_record_untouched (test_editor.TestEditor.test_t_editor_01_enter_escape_ctrl_c_leave_record_untouched) ... ok
+test_t_editor_01_typed_then_escape_writes_nothing (test_editor.TestEditor.test_t_editor_01_typed_then_escape_writes_nothing) ... ok
+test_t_editor_02_empty_name_refused_then_new_name_accepted (test_editor.TestEditor.test_t_editor_02_empty_name_refused_then_new_name_accepted) ... ok
+test_t_editor_02_returned_name_is_not_stripped (test_editor.TestEditor.test_t_editor_02_returned_name_is_not_stripped) ... ok
+test_t_editor_02_whitespace_only_name_refused (test_editor.TestEditor.test_t_editor_02_whitespace_only_name_refused) ... ok
+test_t_editor_03_any_key_clears_the_error_row (test_editor.TestEditor.test_t_editor_03_any_key_clears_the_error_row) ... ok
+test_t_editor_03_control_key_aliases_edit_the_field (test_editor.TestEditor.test_t_editor_03_control_key_aliases_edit_the_field) ... ok
+test_t_editor_03_ctrl_u_on_name_then_enter_refused (test_editor.TestEditor.test_t_editor_03_ctrl_u_on_name_then_enter_refused) ... ok
+test_t_editor_03_home_delete_char (test_editor.TestEditor.test_t_editor_03_home_delete_char) ... ok
+test_t_editor_03_home_then_end_moves_the_cursor_to_the_end (test_editor.TestEditor.test_t_editor_03_home_then_end_moves_the_cursor_to_the_end) ... ok
+test_t_editor_03_left_left_ctrl_k_kills_to_end (test_editor.TestEditor.test_t_editor_03_left_left_ctrl_k_kills_to_end) ... ok
+test_t_editor_03_navigation_keys_toggle_active_field (test_editor.TestEditor.test_t_editor_03_navigation_keys_toggle_active_field) ... ok
+test_t_editor_03_rendered_rows (test_editor.TestEditor.test_t_editor_03_rendered_rows) ... ok
+test_t_editor_03_tab_edits_tags_only (test_editor.TestEditor.test_t_editor_03_tab_edits_tags_only) ... ok
+test_t_editor_03_too_small_window_only_cancels (test_editor.TestEditor.test_t_editor_03_too_small_window_only_cancels) ... ok
+test_t_editor_04_name_collision_leaves_name_and_tags_untouched (test_editor.TestEditor.test_t_editor_04_name_collision_leaves_name_and_tags_untouched) ... ok
+test_t_editor_04_plain_enter_and_escape_write_nothing (test_editor.TestEditor.test_t_editor_04_plain_enter_and_escape_write_nothing) ... ok
+test_t_editor_04_rename_only_when_tags_unchanged (test_editor.TestEditor.test_t_editor_04_rename_only_when_tags_unchanged) ... ok
+test_t_editor_04_rename_then_tag_by_id (test_editor.TestEditor.test_t_editor_04_rename_then_tag_by_id) ... ok
+test_t_editor_04_unresolvable_panes_exit_1_without_a_form (test_editor.TestEditor.test_t_editor_04_unresolvable_panes_exit_1_without_a_form) ... ok
+test_t_eng_01_effort_levels_and_default (test_eng.TestEng.test_t_eng_01_effort_levels_and_default) ... FAIL
+test_t_eng_02_registry_get_and_registered (test_eng.TestEng.test_t_eng_02_registry_get_and_registered) ... ok
+test_t_eng_03_engine_for_command_by_first_token_basename (test_eng.TestEng.test_t_eng_03_engine_for_command_by_first_token_basename) ... ok
+test_t_eng_03_explicit_engine_wins_and_missing_shim_names_inferred_engine (test_eng.TestEng.test_t_eng_03_explicit_engine_wins_and_missing_shim_names_inferred_engine) ... ok
+test_t_eng_10_claude_build_launch_command_defaults (test_eng.TestEng.test_t_eng_10_claude_build_launch_command_defaults) ... ok
+test_t_eng_11_claude_launch_with_model_effort_prompt_browser_priming (test_eng.TestEng.test_t_eng_11_claude_launch_with_model_effort_prompt_browser_priming) ... ok
+test_t_eng_12_claude_read_only_launch_shape (test_eng.TestEng.test_t_eng_12_claude_read_only_launch_shape) ... FAIL
+test_t_eng_13_claude_distiller_command (test_eng.TestEng.test_t_eng_13_claude_distiller_command) ... ok
+test_t_eng_13_codex_distiller_command (test_eng.TestEng.test_t_eng_13_codex_distiller_command) ... ok
+test_t_eng_14_resume_uses_the_same_grammar (test_eng.TestEng.test_t_eng_14_resume_uses_the_same_grammar) ... ok
+test_t_eng_14_strip_identity_value_optional_bare_flags (test_eng.TestEng.test_t_eng_14_strip_identity_value_optional_bare_flags) ... ok
+test_t_eng_15_strip_keeps_unknown_value_flags_dangling_flags_variadics (test_eng.TestEng.test_t_eng_15_strip_keeps_unknown_value_flags_dangling_flags_variadics) ... ok
+test_t_eng_16_strip_drops_positionals_golden (test_eng.TestEng.test_t_eng_16_strip_drops_positionals_golden) ... ok
+test_t_eng_17_strip_truncates_at_shell_control (test_eng.TestEng.test_t_eng_17_strip_truncates_at_shell_control) ... ok
+test_t_eng_18_claude_strip_access_flags (test_eng.TestEng.test_t_eng_18_claude_strip_access_flags) ... ok
+test_t_eng_19_chrome_survives_into_all_three (test_eng.TestEng.test_t_eng_19_chrome_survives_into_all_three) ... ok
+test_t_eng_19_claude_resume_fork_seed_command_exact_argv (test_eng.TestEng.test_t_eng_19_claude_resume_fork_seed_command_exact_argv) ... ok
+test_t_eng_19_resume_of_read_only_record_reapplies_the_block_once (test_eng.TestEng.test_t_eng_19_resume_of_read_only_record_reapplies_the_block_once) ... ok
+test_t_eng_20_claude_is_read_only_command (test_eng.TestEng.test_t_eng_20_claude_is_read_only_command) ... ok
+test_t_eng_21_claude_config_dir_unset_falls_back_to_home (test_eng.TestEng.test_t_eng_21_claude_config_dir_unset_falls_back_to_home) ... ok
+test_t_eng_21_munge_and_transcript_sidecar_paths (test_eng.TestEng.test_t_eng_21_munge_and_transcript_sidecar_paths) ... ok
+test_t_eng_21_symlinked_chat_cwd_munges_the_realpath (test_eng.TestEng.test_t_eng_21_symlinked_chat_cwd_munges_the_realpath) ... ok
+test_t_eng_22_claude_bundle_paths_and_bundle_sidecars (test_eng.TestEng.test_t_eng_22_claude_bundle_paths_and_bundle_sidecars) ... ok
+test_t_eng_23_claude_prepare_chat_for_cwd_copies_transcript_and_sidecars (test_eng.TestEng.test_t_eng_23_claude_prepare_chat_for_cwd_copies_transcript_and_sidecars) ... ok
+test_t_eng_23_edges (test_eng.TestEng.test_t_eng_23_edges) ... ok
+test_t_eng_24_claude_prepare_workspace_links_skills (test_eng.TestEng.test_t_eng_24_claude_prepare_workspace_links_skills) ... ok
+test_t_eng_24_empty_grant_and_common_grant (test_eng.TestEng.test_t_eng_24_empty_grant_and_common_grant) ... ok
+test_t_eng_24_fixed_unknown_skill_has_no_traceback (test_eng.TestEng.test_t_eng_24_fixed_unknown_skill_has_no_traceback) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_eng_24_parity_unknown_skill_refuses_the_spawn (test_eng.TestEng.test_t_eng_24_parity_unknown_skill_refuses_the_spawn) ... ok
+test_t_eng_24_resume_relinks_without_duplicating_the_exclude_line (test_eng.TestEng.test_t_eng_24_resume_relinks_without_duplicating_the_exclude_line) ... ok
+test_t_eng_25_claude_capture_session_id_and_event_to_state (test_eng.TestEng.test_t_eng_25_claude_capture_session_id_and_event_to_state) ... ok
+test_t_eng_25_event_to_state_table (test_eng.TestEng.test_t_eng_25_event_to_state_table) ... ok
+test_t_eng_30_codex_home_precedence (test_eng.TestEng.test_t_eng_30_codex_home_precedence) ... ok
+test_t_eng_31_codex_build_launch_command_defaults_and_effort (test_eng.TestEng.test_t_eng_31_codex_build_launch_command_defaults_and_effort) ... ok
+test_t_eng_32_codex_role_priming_merges_configured_developer_instructions (test_eng.TestEng.test_t_eng_32_codex_role_priming_merges_configured_developer_instructions) ... ok
+test_t_eng_33_codex_read_only_launch (test_eng.TestEng.test_t_eng_33_codex_read_only_launch) ... ok
+test_t_eng_34_codex_strip_identity_grammar (test_eng.TestEng.test_t_eng_34_codex_strip_identity_grammar) ... ok
+test_t_eng_35_codex_resume_fork_seed_distiller (test_eng.TestEng.test_t_eng_35_codex_resume_fork_seed_distiller) ... ok
+test_t_eng_35_sandbox_pair_in_source_stripped_before_destination_mode (test_eng.TestEng.test_t_eng_35_sandbox_pair_in_source_stripped_before_destination_mode) ... ok
+test_t_eng_37_codex_resolve_transcript_via_recursive_rollout_glob (test_eng.TestEng.test_t_eng_37_codex_resolve_transcript_via_recursive_rollout_glob) ... ok
+test_t_eng_37_no_match_gives_the_sentinel_and_the_warning (test_eng.TestEng.test_t_eng_37_no_match_gives_the_sentinel_and_the_warning) ... ok
+test_t_eng_37_two_matches_prefer_the_lexicographically_last (test_eng.TestEng.test_t_eng_37_two_matches_prefer_the_lexicographically_last) ... ok
+test_t_eng_38_codex_prepare_workspace_skills_and_non_standalone_passthrough (test_eng.TestEng.test_t_eng_38_codex_prepare_workspace_skills_and_non_standalone_passthrough) ... ok
+test_t_eng_39_codex_standalone_executable_detection (test_eng.TestEng.test_t_eng_39_codex_standalone_executable_detection) ... ok
+test_t_eng_39_not_detected_variants (test_eng.TestEng.test_t_eng_39_not_detected_variants) ... ok
+test_t_eng_40_codex_disable_startup_update_check (test_eng.TestEng.test_t_eng_40_codex_disable_startup_update_check) ... ok
+test_t_eng_41_codex_schedule_update_interval_flock_log (test_eng.TestEng.test_t_eng_41_codex_schedule_update_interval_flock_log) ... ERROR
+test_t_eng_41_state_dir_is_a_regular_file (test_eng.TestEng.test_t_eng_41_state_dir_is_a_regular_file) ... ok
+test_t_eng_42_codex_run_update_child_protocol (test_eng.TestEng.test_t_eng_42_codex_run_update_child_protocol) ... ok
+test_t_eng_42_curl_failure_is_logged_and_the_installer_does_not_run (test_eng.TestEng.test_t_eng_42_curl_failure_is_logged_and_the_installer_does_not_run) ... ok
+test_t_eng_44_codex_capture_event_to_state_and_no_sidecars (test_eng.TestEng.test_t_eng_44_codex_capture_event_to_state_and_no_sidecars) ... ok
+test_t_events_01_line_shape_and_key_order (test_events.TestEvents.test_t_events_01_line_shape_and_key_order) ... ok
+test_t_events_01_non_ascii_msg_is_escaped (test_events.TestEvents.test_t_events_01_non_ascii_msg_is_escaped) ... ok
+test_t_events_02_actor_resolution (test_events.TestEvents.test_t_events_02_actor_resolution) ... ok
+test_t_events_03_single_o_append_write_and_file_mode (test_events.TestEvents.test_t_events_03_single_o_append_write_and_file_mode) ... ok
+test_t_events_04_512_byte_truncation_ascii (test_events.TestEvents.test_t_events_04_512_byte_truncation_ascii) ... ok
+test_t_events_04_exact_512_bytes_is_not_truncated (test_events.TestEvents.test_t_events_04_exact_512_bytes_is_not_truncated) ... ok
+test_t_events_05_truncation_with_non_ascii_msg (test_events.TestEvents.test_t_events_05_truncation_with_non_ascii_msg) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_events_06_event_type_catalogue (test_events.TestEvents.test_t_events_06_event_type_catalogue) ... ok
+test_t_group_01_own_override_wins (test_group.TestGroup.test_t_group_01_own_override_wins) ... ok
+test_t_group_02_tags_then_name_floor (test_group.TestGroup.test_t_group_02_tags_then_name_floor) ... ok
+test_t_group_03_edge_no_override_up_the_chain_falls_to_own_name (test_group.TestGroup.test_t_group_03_edge_no_override_up_the_chain_falls_to_own_name) ... ok
+test_t_group_03_parent_chain_override_inherits_tags_do_not (test_group.TestGroup.test_t_group_03_parent_chain_override_inherits_tags_do_not) ... ok
+test_t_group_04_edge_hub_itself_does_not_walk_its_parent (test_group.TestGroup.test_t_group_04_edge_hub_itself_does_not_walk_its_parent) ... ok
+test_t_group_04_hub_stops_the_walk (test_group.TestGroup.test_t_group_04_hub_stops_the_walk) ... ok
+test_t_group_04_hub_without_override_never_reaches_beyond (test_group.TestGroup.test_t_group_04_hub_without_override_never_reaches_beyond) ... ok
+test_t_group_05_parent_cycle_terminates (test_group.TestGroup.test_t_group_05_parent_cycle_terminates) ... ok
+test_t_group_06_edge_later_referrer_ranks_alive_then_newest (test_group.TestGroup.test_t_group_06_edge_later_referrer_ranks_alive_then_newest) ... ok
+test_t_group_06_edge_unresolvable_parent_ends_the_chain (test_group.TestGroup.test_t_group_06_edge_unresolvable_parent_ends_the_chain) ... ok
+test_t_group_06_parent_by_era_scoped_name (test_group.TestGroup.test_t_group_06_parent_by_era_scoped_name) ... ok
+test_t_group_07_bound_artifact_group_for_an_nvim_view (test_group.TestGroup.test_t_group_07_bound_artifact_group_for_an_nvim_view) ... ok
+test_t_group_07_edge_creator_full_resolution_and_llm_ignores_artifacts (test_group.TestGroup.test_t_group_07_edge_creator_full_resolution_and_llm_ignores_artifacts) ... ok
+test_t_group_08_artifact_group_cascade (test_group.TestGroup.test_t_group_08_artifact_group_cascade) ... ok
+test_t_group_08_edge_creator_wins_over_later_toucher (test_group.TestGroup.test_t_group_08_edge_creator_wins_over_later_toucher) ... ok
+test_t_group_08_edge_no_surviving_toucher_is_ungrouped (test_group.TestGroup.test_t_group_08_edge_no_surviving_toucher_is_ungrouped) ... ok
+test_t_group_08_edge_own_group (test_group.TestGroup.test_t_group_08_edge_own_group) ... ok
+test_t_group_09_session_artifact_recursion_guard (test_group.TestGroup.test_t_group_09_session_artifact_recursion_guard) ... ok
+test_t_group_10_edge_unknown_name (test_group.TestGroup.test_t_group_10_edge_unknown_name) ... ok
+test_t_group_10_read_output (test_group.TestGroup.test_t_group_10_read_output) ... ok
+test_t_group_11_edge_validation (test_group.TestGroup.test_t_group_11_edge_validation) ... ok
+test_t_group_11_set_and_clear (test_group.TestGroup.test_t_group_11_set_and_clear) ... ok
+test_t_group_12_artifact_group_read_set_clear (test_group.TestGroup.test_t_group_12_artifact_group_read_set_clear) ... ok
+test_t_group_12_edge_prefix_and_argparse (test_group.TestGroup.test_t_group_12_edge_prefix_and_argparse) ... ok
+test_t_hist_01_codex_rollout_resolved_regardless_of_cwd (test_hist.TestHist.test_t_hist_01_codex_rollout_resolved_regardless_of_cwd) ... ok
+test_t_hist_01_fast_path_resolves_claude_transcript (test_hist.TestHist.test_t_hist_01_fast_path_resolves_claude_transcript) ... ok
+test_t_hist_02_fixed_codex_fallback_is_per_engine (test_hist.TestHist.test_t_hist_02_fixed_codex_fallback_is_per_engine) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_hist_02_parity_no_match_leaves_no_bundle (test_hist.TestHist.test_t_hist_02_parity_no_match_leaves_no_bundle) ... ok
+test_t_hist_02_parity_single_match_anywhere_wins (test_hist.TestHist.test_t_hist_02_parity_single_match_anywhere_wins) ... ok
+test_t_hist_02_parity_two_matches_cwd_munge_then_sorted_first (test_hist.TestHist.test_t_hist_02_parity_two_matches_cwd_munge_then_sorted_first) ... ok
+test_t_hist_03_chat_without_transcript_is_skipped (test_hist.TestHist.test_t_hist_03_chat_without_transcript_is_skipped) ... ok
+test_t_hist_03_ingest_basics (test_hist.TestHist.test_t_hist_03_ingest_basics) ... ok
+test_t_hist_03_unknown_session_id_is_a_no_op (test_hist.TestHist.test_t_hist_03_unknown_session_id_is_a_no_op) ... ok
+test_t_hist_04_append_by_offset (test_hist.TestHist.test_t_hist_04_append_by_offset) ... ok
+test_t_hist_04_current_copy_is_not_rewritten (test_hist.TestHist.test_t_hist_04_current_copy_is_not_rewritten) ... ok
+test_t_hist_05_empty_bundle_is_a_prefix_and_gets_the_full_copy (test_hist.TestHist.test_t_hist_05_empty_bundle_is_a_prefix_and_gets_the_full_copy) ... ok
+test_t_hist_05_mismatch_inside_trailing_window_is_recopied (test_hist.TestHist.test_t_hist_05_mismatch_inside_trailing_window_is_recopied) ... ok
+test_t_hist_05_parity_divergence_outside_window_is_spliced (test_hist.TestHist.test_t_hist_05_parity_divergence_outside_window_is_spliced) ... ok
+test_t_hist_05_shrunk_source_is_recopied (test_hist.TestHist.test_t_hist_05_shrunk_source_is_recopied) ... ok
+test_t_hist_06_codex_bundle_has_no_sidecars (test_hist.TestHist.test_t_hist_06_codex_bundle_has_no_sidecars) ... ok
+test_t_hist_06_no_sidecar_dir_means_transcript_and_lock_only (test_hist.TestHist.test_t_hist_06_no_sidecar_dir_means_transcript_and_lock_only) ... ok
+test_t_hist_06_sidecar_taken_relative_to_the_resolved_transcript (test_hist.TestHist.test_t_hist_06_sidecar_taken_relative_to_the_resolved_transcript) ... ok
+test_t_hist_06_sidecars_copied_if_absent (test_hist.TestHist.test_t_hist_06_sidecars_copied_if_absent) ... ok
+test_t_hist_07_hook_ingest_coalesces_while_archive_waits (test_hist.TestHist.test_t_hist_07_hook_ingest_coalesces_while_archive_waits) ... ERROR
+test_t_hist_08_fresh_reload_before_stamp_preserves_a_rename (test_hist.TestHist.test_t_hist_08_fresh_reload_before_stamp_preserves_a_rename) ... ERROR
+test_t_hist_08_no_save_when_bundle_path_is_unchanged (test_hist.TestHist.test_t_hist_08_no_save_when_bundle_path_is_unchanged) ... ok
+test_t_hist_09_archive_forces_full_ingest_and_prints_count (test_hist.TestHist.test_t_hist_09_archive_forces_full_ingest_and_prints_count) ... ERROR
+test_t_hist_09_archiving_an_archived_record_re_ingests (test_hist.TestHist.test_t_hist_09_archiving_an_archived_record_re_ingests) ... ok
+test_t_hist_09_no_ingestable_chats (test_hist.TestHist.test_t_hist_09_no_ingestable_chats) ... ok
+test_t_hist_09_unknown_session (test_hist.TestHist.test_t_hist_09_unknown_session) ... ok
+test_t_hist_10_chat_ls_rendering (test_hist.TestHist.test_t_hist_10_chat_ls_rendering) ... ok
+test_t_hist_10_no_chats (test_hist.TestHist.test_t_hist_10_no_chats) ... ok
+test_t_hist_10_unknown_session (test_hist.TestHist.test_t_hist_10_unknown_session) ... ok
+test_t_home_01_tx_ide_home_resolution (test_home.TestHome.test_t_home_01_tx_ide_home_resolution) ... ok
+test_t_home_02_subpath_layout (test_home.TestHome.test_t_home_02_subpath_layout) ... ok
+test_t_home_05_fixed_malformed_config_is_a_message (test_home.TestHome.test_t_home_05_fixed_malformed_config_is_a_message) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_home_05_parity_malformed_config (test_home.TestHome.test_t_home_05_parity_malformed_config) ... ok
+test_t_home_05_stuck_threshold_configured (test_home.TestHome.test_t_home_05_stuck_threshold_configured) ... ok
+test_t_home_05_stuck_threshold_default (test_home.TestHome.test_t_home_05_stuck_threshold_default) ... ok
+test_t_home_05_stuck_threshold_empty_config (test_home.TestHome.test_t_home_05_stuck_threshold_empty_config) ... ok
+test_t_home_05_stuck_threshold_zero (test_home.TestHome.test_t_home_05_stuck_threshold_zero) ... ok
+test_t_home_06_fixed_bad_backend_is_a_message (test_home.TestHome.test_t_home_06_fixed_bad_backend_is_a_message) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_home_06_parity_config_sync_backend (test_home.TestHome.test_t_home_06_parity_config_sync_backend) ... ok
+test_t_home_07_local_storage_put_get_exists (test_home.TestHome.test_t_home_07_local_storage_put_get_exists) ... ok
+test_t_home_08_local_storage_list (test_home.TestHome.test_t_home_08_local_storage_list) ... ok
+test_t_home_09_s3_storage_deferred (test_home.TestHome.test_t_home_09_s3_storage_deferred) ... ok
+test_t_home_04_ensure_home_creates_exactly_these_dirs (test_home.TestHomeEmpty.test_t_home_04_ensure_home_creates_exactly_these_dirs) ... ok
+test_t_home_03_engine_hook_shim_gate (test_home.TestHomeNoHooks.test_t_home_03_engine_hook_shim_gate) ... ok
+test_t_hook_01_exit_0_on_every_path (test_hook.TestHook.test_t_hook_01_exit_0_on_every_path) ... ok
+test_t_hook_02_no_tx_session_id_is_a_no_op (test_hook.TestHook.test_t_hook_02_no_tx_session_id_is_a_no_op) ... ok
+test_t_hook_03_non_llm_record_is_a_no_op (test_hook.TestHook.test_t_hook_03_non_llm_record_is_a_no_op) ... ok
+test_t_hook_04_terminal_record_absorbs (test_hook.TestHook.test_t_hook_04_terminal_record_absorbs) ... ok
+test_t_hook_05_prompt_submit_arms_turn_clock (test_hook.TestHook.test_t_hook_05_prompt_submit_arms_turn_clock) ... ok
+test_t_hook_06_working_family (test_hook.TestHook.test_t_hook_06_working_family) ... ok
+test_t_hook_07_hook_returns_before_large_copy (test_hook.TestHook.test_t_hook_07_hook_returns_before_large_copy) ... ok
+test_t_hook_07_stop_waiting_and_detached_ingest (test_hook.TestHook.test_t_hook_07_stop_waiting_and_detached_ingest) ... ok
+test_t_hook_07_stop_while_waiting_no_ingest_while_idle_real (test_hook.TestHook.test_t_hook_07_stop_while_waiting_no_ingest_while_idle_real) ... ok
+test_t_hook_08_session_end_idle_and_ingest (test_hook.TestHook.test_t_hook_08_session_end_idle_and_ingest) ... ok
+test_t_hook_09_non_yield_and_malformed_payloads_ignored (test_hook.TestHook.test_t_hook_09_non_yield_and_malformed_payloads_ignored) ... ok
+test_t_hook_09_notification_subtype_filter (test_hook.TestHook.test_t_hook_09_notification_subtype_filter) ... ok
+test_t_hook_09_refired_idle_prompt_no_second_ingest (test_hook.TestHook.test_t_hook_09_refired_idle_prompt_no_second_ingest) ... ok
+test_t_hook_10_session_closed_reconciles (test_hook.TestHook.test_t_hook_10_session_closed_reconciles) ... ok
+test_t_hook_11_ingest_pseudo_event (test_hook.TestHook.test_t_hook_11_ingest_pseudo_event) ... ok
+test_t_hook_12_extra_argv_ignored (test_hook.TestHook.test_t_hook_12_extra_argv_ignored) ... ok
+test_t_hook_13_session_start_captures_only (test_hook.TestHook.test_t_hook_13_session_start_captures_only) ... ok
+test_t_hook_14_prompt_submit_captures_and_transitions (test_hook.TestHook.test_t_hook_14_prompt_submit_captures_and_transitions) ... ok
+test_t_hook_15_capture_per_engine_payload_shape (test_hook.TestHook.test_t_hook_15_capture_per_engine_payload_shape) ... ok
+test_t_hook_16_capture_idempotent (test_hook.TestHook.test_t_hook_16_capture_idempotent) ... ok
+test_t_hook_17_latest_pending_wins (test_hook.TestHook.test_t_hook_17_latest_pending_wins) ... ok
+test_t_hook_18_handover_ref_accepts_its_origin_chat (test_hook.TestHook.test_t_hook_18_handover_ref_accepts_its_origin_chat) ... ok
+test_t_hook_18_lazy_fork_guard (test_hook.TestHook.test_t_hook_18_lazy_fork_guard) ... ok
+test_t_hook_19_ownership_guard_logs_capture_skip (test_hook.TestHook.test_t_hook_19_ownership_guard_logs_capture_skip) ... ok
+test_t_hook_20_malformed_payload_on_capture_event_never_fails (test_hook.TestHook.test_t_hook_20_malformed_payload_on_capture_event_never_fails) ... ok
+test_t_hook_21_non_capture_events_never_capture (test_hook.TestHook.test_t_hook_21_non_capture_events_never_capture) ... ok
+test_t_inst_01_fixed_no_tx_before_confirm (test_inst.TestInst.test_t_inst_01_fixed_no_tx_before_confirm) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_01_link_fresh_symlink (test_inst.TestInst.test_t_inst_01_link_fresh_symlink) ... ok
+test_t_inst_01_parity_banner_runs_tx_before_confirm (test_inst.TestInst.test_t_inst_01_parity_banner_runs_tx_before_confirm) ... ok
+test_t_inst_02_link_already_linked_is_a_no_op (test_inst.TestInst.test_t_inst_02_link_already_linked_is_a_no_op) ... ok
+test_t_inst_03_link_stale_symlink_is_repointed (test_inst.TestInst.test_t_inst_03_link_stale_symlink_is_repointed) ... ok
+test_t_inst_04_link_refuses_to_clobber_a_directory (test_inst.TestInst.test_t_inst_04_link_refuses_to_clobber_a_directory) ... ok
+test_t_inst_04_link_refuses_to_clobber_a_regular_file (test_inst.TestInst.test_t_inst_04_link_refuses_to_clobber_a_regular_file) ... ok
+test_t_inst_05_path_block_appended_to_zshrc (test_inst.TestInst.test_t_inst_05_path_block_appended_to_zshrc) ... ok
+test_t_inst_05_path_block_bash_targets_bash_profile (test_inst.TestInst.test_t_inst_05_path_block_bash_targets_bash_profile) ... ok
+test_t_inst_05_path_block_creates_absent_zshrc (test_inst.TestInst.test_t_inst_05_path_block_creates_absent_zshrc) ... ok
+test_t_inst_05_path_block_fish_warns_and_touches_nothing (test_inst.TestInst.test_t_inst_05_path_block_fish_warns_and_touches_nothing) ... ok
+test_t_inst_06_path_block_already_present (test_inst.TestInst.test_t_inst_06_path_block_already_present) ... ok
+test_t_inst_06_path_block_expanded_reference_left_as_is (test_inst.TestInst.test_t_inst_06_path_block_expanded_reference_left_as_is) ... ok
+test_t_inst_06_path_block_literal_home_reference_does_not_count (test_inst.TestInst.test_t_inst_06_path_block_literal_home_reference_does_not_count) ... ok
+test_t_inst_07_init_home_expands_tilde (test_inst.TestInst.test_t_inst_07_init_home_expands_tilde) ... ok
+test_t_inst_07_init_home_rerun_changes_nothing (test_inst.TestInst.test_t_inst_07_init_home_rerun_changes_nothing) ... ok
+test_t_inst_07_init_home_skeleton (test_inst.TestInst.test_t_inst_07_init_home_skeleton) ... ok
+test_t_inst_08_agents_real_dir_refused (test_inst.TestInst.test_t_inst_08_agents_real_dir_refused) ... ok
+test_t_inst_08_agents_symlink (test_inst.TestInst.test_t_inst_08_agents_symlink) ... ok
+test_t_inst_09_fixed_identical_content_already_current (test_inst.TestInst.test_t_inst_09_fixed_identical_content_already_current) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_09_parity_identical_content_rewritten_with_bak (test_inst.TestInst.test_t_inst_09_parity_identical_content_rewritten_with_bak) ... ok
+test_t_inst_09_tmux_conf_shim_different_content_backed_up (test_inst.TestInst.test_t_inst_09_tmux_conf_shim_different_content_backed_up) ... ok
+test_t_inst_09_tmux_conf_shim_written (test_inst.TestInst.test_t_inst_09_tmux_conf_shim_written) ... ok
+test_t_inst_10_user_tmux_conf_absent_default_installed (test_inst.TestInst.test_t_inst_10_user_tmux_conf_absent_default_installed) ... ok
+test_t_inst_11_user_tmux_conf_decline_replace_block_appended (test_inst.TestInst.test_t_inst_11_user_tmux_conf_decline_replace_block_appended) ... ok
+test_t_inst_12_user_tmux_conf_accept_replace (test_inst.TestInst.test_t_inst_12_user_tmux_conf_accept_replace) ... ok
+test_t_inst_13_user_tmux_conf_block_present_untouched (test_inst.TestInst.test_t_inst_13_user_tmux_conf_block_present_untouched) ... ok
+test_t_inst_14_no_claude_and_no_settings (test_inst.TestInst.test_t_inst_14_no_claude_and_no_settings) ... ok
+test_t_inst_14_no_claude_settings_present_marker_absent (test_inst.TestInst.test_t_inst_14_no_claude_settings_present_marker_absent) ... ok
+test_t_inst_14_statusline_absent_added (test_inst.TestInst.test_t_inst_14_statusline_absent_added) ... ok
+test_t_inst_14_statusline_copy_and_settings_edit (test_inst.TestInst.test_t_inst_14_statusline_copy_and_settings_edit) ... ok
+test_t_inst_14_statusline_non_dict_replaced (test_inst.TestInst.test_t_inst_14_statusline_non_dict_replaced) ... ok
+test_t_inst_14_statusline_settings_symlink_edits_realpath (test_inst.TestInst.test_t_inst_14_statusline_settings_symlink_edits_realpath) ... ok
+test_t_inst_15_fixed_rerun_leaves_tmux_conf_shim_current (test_inst.TestInst.test_t_inst_15_fixed_rerun_leaves_tmux_conf_shim_current) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_15_parity_install_idempotent_end_to_end (test_inst.TestInst.test_t_inst_15_parity_install_idempotent_end_to_end) ... ok
+test_t_inst_16_uninstall_declined (test_inst.TestInst.test_t_inst_16_uninstall_declined) ... ok
+test_t_inst_16_uninstall_help (test_inst.TestInst.test_t_inst_16_uninstall_help) ... ok
+test_t_inst_16_uninstall_unknown_argument (test_inst.TestInst.test_t_inst_16_uninstall_unknown_argument) ... ok
+test_t_inst_17_uninstall_ordering_and_statusline_removal (test_inst.TestInst.test_t_inst_17_uninstall_ordering_and_statusline_removal) ... ok
+test_t_inst_18_fixed_no_needless_rewrite (test_inst.TestInst.test_t_inst_18_fixed_no_needless_rewrite) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_18_legacy_in_settings_marker_fallback (test_inst.TestInst.test_t_inst_18_legacy_in_settings_marker_fallback) ... ok
+test_t_inst_18_parity_needless_rewrite_drops_a_bak (test_inst.TestInst.test_t_inst_18_parity_needless_rewrite_drops_a_bak) ... ok
+test_t_inst_18_settings_absent (test_inst.TestInst.test_t_inst_18_settings_absent) ... ok
+test_t_inst_18_statusline_ownership_check (test_inst.TestInst.test_t_inst_18_statusline_ownership_check) ... ok
+test_t_inst_19_keep_agent (test_inst.TestInst.test_t_inst_19_keep_agent) ... ok
+test_t_inst_20_symlink_and_agents_ownership (test_inst.TestInst.test_t_inst_20_symlink_and_agents_ownership) ... ok
+test_t_inst_21_fixed_plain_uninstall_keeps_log (test_inst.TestInst.test_t_inst_21_fixed_plain_uninstall_keeps_log) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_21_parity_plain_uninstall_keeps_state_deletes_config_and_log (test_inst.TestInst.test_t_inst_21_parity_plain_uninstall_keeps_state_deletes_config_and_log) ... ok
+test_t_inst_21_purge_after_plain_uninstall (test_inst.TestInst.test_t_inst_21_purge_after_plain_uninstall) ... ok
+test_t_inst_21_purge_removes_state (test_inst.TestInst.test_t_inst_21_purge_removes_state) ... ok
+test_t_inst_22_strip_block_collapses_at_most_one_trailing_blank (test_inst.TestInst.test_t_inst_22_strip_block_collapses_at_most_one_trailing_blank) ... ok
+test_t_inst_22_strip_block_detects_by_substring_strips_by_whole_line (test_inst.TestInst.test_t_inst_22_strip_block_detects_by_substring_strips_by_whole_line) ... ok
+test_t_inst_22_strip_block_no_marker (test_inst.TestInst.test_t_inst_22_strip_block_no_marker) ... ok
+test_t_inst_22_strip_block_runs_on_all_three_rc_files (test_inst.TestInst.test_t_inst_22_strip_block_runs_on_all_three_rc_files) ... ok
+test_t_inst_22_strip_block_semantics (test_inst.TestInst.test_t_inst_22_strip_block_semantics) ... ok
+test_t_inst_23_argument_parsing (test_inst.TestInst.test_t_inst_23_argument_parsing) ... ok
+test_t_inst_24_six_shims_exact_content (test_inst.TestInst.test_t_inst_24_six_shims_exact_content) ... ok
+test_t_inst_24_tilde_home_expanded (test_inst.TestInst.test_t_inst_24_tilde_home_expanded) ... ok
+test_t_inst_24_tx_python_baked (test_inst.TestInst.test_t_inst_24_tx_python_baked) ... ok
+test_t_inst_25_twelve_events_fresh_add (test_inst.TestInst.test_t_inst_25_twelve_events_fresh_add) ... ok
+test_t_inst_26_add_beside_foreign_hooks (test_inst.TestInst.test_t_inst_26_add_beside_foreign_hooks) ... ok
+test_t_inst_27_already_current_edges (test_inst.TestInst.test_t_inst_27_already_current_edges) ... ok
+test_t_inst_27_repoint_by_marker (test_inst.TestInst.test_t_inst_27_repoint_by_marker) ... ok
+test_t_inst_28_marker_sidecar_v3_fields (test_inst.TestInst.test_t_inst_28_marker_sidecar_v3_fields) ... ok
+test_t_inst_29_previous_preserved_across_reinstalls (test_inst.TestInst.test_t_inst_29_previous_preserved_across_reinstalls) ... ok
+test_t_inst_30_context_profile_keys_and_previous (test_inst.TestInst.test_t_inst_30_context_profile_keys_and_previous) ... ok
+test_t_inst_30_new_profile_key_recorded_on_introducing_run (test_inst.TestInst.test_t_inst_30_new_profile_key_recorded_on_introducing_run) ... ok
+test_t_inst_31_fixed_uninstall_drops_emptied_permissions (test_inst.TestInst.test_t_inst_31_fixed_uninstall_drops_emptied_permissions) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_31_no_context_profile (test_inst.TestInst.test_t_inst_31_no_context_profile) ... ok
+test_t_inst_31_no_context_profile_carries_existing_record (test_inst.TestInst.test_t_inst_31_no_context_profile_carries_existing_record) ... ok
+test_t_inst_31_parity_uninstall_leaves_emptied_permissions (test_inst.TestInst.test_t_inst_31_parity_uninstall_leaves_emptied_permissions) ... ok
+test_t_inst_32_legacy_marker_migration (test_inst.TestInst.test_t_inst_32_legacy_marker_migration) ... ok
+test_t_inst_32_status_with_legacy_marker (test_inst.TestInst.test_t_inst_32_status_with_legacy_marker) ... ok
+test_t_inst_33_drift_skipped (test_inst.TestInst.test_t_inst_33_drift_skipped) ... ok
+test_t_inst_33_fixed_hooks_dropped_when_empty (test_inst.TestInst.test_t_inst_33_fixed_hooks_dropped_when_empty) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_33_hooks_dropped_when_empty (test_inst.TestInst.test_t_inst_33_hooks_dropped_when_empty) ... ok
+test_t_inst_33_no_marker_leaves_settings_alone (test_inst.TestInst.test_t_inst_33_no_marker_leaves_settings_alone) ... ok
+test_t_inst_33_parity_hooks_dropped_when_empty_leaves_permissions (test_inst.TestInst.test_t_inst_33_parity_hooks_dropped_when_empty_leaves_permissions) ... ok
+test_t_inst_33_uninstall_restore_or_strip (test_inst.TestInst.test_t_inst_33_uninstall_restore_or_strip) ... ok
+test_t_inst_34_fixed_missing_parent_key (test_inst.TestInst.test_t_inst_34_fixed_missing_parent_key) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_34_parity_missing_parent_key (test_inst.TestInst.test_t_inst_34_parity_missing_parent_key) ... ok
+test_t_inst_34_uninstall_profile_restore_and_previous_reembedded (test_inst.TestInst.test_t_inst_34_uninstall_profile_restore_and_previous_reembedded) ... ok
+test_t_inst_35_fixed_hook_set_and_foreign_stash_on_any_tmux (test_inst.TestInst.test_t_inst_35_fixed_hook_set_and_foreign_stash_on_any_tmux) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_35_fixed_own_hook_not_stashed_on_any_tmux (test_inst.TestInst.test_t_inst_35_fixed_own_hook_not_stashed_on_any_tmux) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_35_no_tmux_server (test_inst.TestInst.test_t_inst_35_no_tmux_server) ... ok
+test_t_inst_35_own_hook_not_stashed (test_inst.TestInst.test_t_inst_35_own_hook_not_stashed) ... skipped 'tmux 3.5 < 3.6'
+test_t_inst_35_parity_info_probe_misses_live_server_below_3_6 (test_inst.TestInst.test_t_inst_35_parity_info_probe_misses_live_server_below_3_6) ... ok
+test_t_inst_35_tmux_hook_set_and_foreign_stash (test_inst.TestInst.test_t_inst_35_tmux_hook_set_and_foreign_stash) ... skipped 'tmux 3.5 < 3.6'
+test_t_inst_36_fixed_uninstall_restores_stashed_hook_on_any_tmux (test_inst.TestInst.test_t_inst_36_fixed_uninstall_restores_stashed_hook_on_any_tmux) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_36_fixed_uninstall_unsets_without_stash_on_any_tmux (test_inst.TestInst.test_t_inst_36_fixed_uninstall_unsets_without_stash_on_any_tmux) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_inst_36_parity_info_probe_misses_live_server_below_3_6 (test_inst.TestInst.test_t_inst_36_parity_info_probe_misses_live_server_below_3_6) ... ok
+test_t_inst_36_uninstall_restores_stashed_hook (test_inst.TestInst.test_t_inst_36_uninstall_restores_stashed_hook) ... skipped 'tmux 3.5 < 3.6'
+test_t_inst_36_uninstall_unsets_without_stash (test_inst.TestInst.test_t_inst_36_uninstall_unsets_without_stash) ... skipped 'tmux 3.5 < 3.6'
+test_t_inst_37_sandbox_skips_live_globals (test_inst.TestInst.test_t_inst_37_sandbox_skips_live_globals) ... ok
+test_t_inst_38_dry_run_install_changes_nothing (test_inst.TestInst.test_t_inst_38_dry_run_install_changes_nothing) ... ok
+test_t_inst_38_dry_run_uninstall_changes_nothing (test_inst.TestInst.test_t_inst_38_dry_run_uninstall_changes_nothing) ... ok
+test_t_inst_39_status_drift_report (test_inst.TestInst.test_t_inst_39_status_drift_report) ... ok
+test_t_inst_39_status_profile_not_managed (test_inst.TestInst.test_t_inst_39_status_profile_not_managed) ... ok
+test_t_inst_39_status_without_marker (test_inst.TestInst.test_t_inst_39_status_without_marker) ... ok
+test_t_inst_40_mx_speaker_stale_or_absent (test_inst.TestInst.test_t_inst_40_mx_speaker_stale_or_absent) ... ok
+test_t_inst_40_mx_speaker_stopped (test_inst.TestInst.test_t_inst_40_mx_speaker_stopped) ... ok
+test_t_inst_41_codex_shims_content (test_inst.TestInst.test_t_inst_41_codex_shims_content) ... ok
+test_t_inst_42_hooks_json_already_current (test_inst.TestInst.test_t_inst_42_hooks_json_already_current) ... ok
+test_t_inst_42_hooks_json_replaced_with_backup (test_inst.TestInst.test_t_inst_42_hooks_json_replaced_with_backup) ... ok
+test_t_inst_42_hooks_json_symlink_rewritten_at_realpath (test_inst.TestInst.test_t_inst_42_hooks_json_symlink_rewritten_at_realpath) ... ok
+test_t_inst_42_hooks_json_written_wholesale (test_inst.TestInst.test_t_inst_42_hooks_json_written_wholesale) ... ok
+test_t_inst_43_hooks_json_uninstall_only_if_identical (test_inst.TestInst.test_t_inst_43_hooks_json_uninstall_only_if_identical) ... ok
+test_t_inst_44_config_toml_absent_or_empty (test_inst.TestInst.test_t_inst_44_config_toml_absent_or_empty) ... ok
+test_t_inst_44_config_toml_block_added (test_inst.TestInst.test_t_inst_44_config_toml_block_added) ... ok
+test_t_inst_44_config_toml_block_already_present (test_inst.TestInst.test_t_inst_44_config_toml_block_already_present) ... ok
+test_t_inst_44_config_toml_existing_tui_table_warns (test_inst.TestInst.test_t_inst_44_config_toml_existing_tui_table_warns) ... ok
+test_t_inst_45_config_toml_block_stripped (test_inst.TestInst.test_t_inst_45_config_toml_block_stripped) ... ok
+test_t_inst_45_config_toml_without_block (test_inst.TestInst.test_t_inst_45_config_toml_without_block) ... ok
+test_t_inst_46_settings_refuses_live_codex_home (test_inst.TestInst.test_t_inst_46_settings_refuses_live_codex_home) ... ok
+test_t_inst_46_settings_with_throwaway_codex_home (test_inst.TestInst.test_t_inst_46_settings_with_throwaway_codex_home) ... ok
+test_t_inst_47_codex_dry_run (test_inst.TestInst.test_t_inst_47_codex_dry_run) ... ok
+test_t_inst_47_codex_status (test_inst.TestInst.test_t_inst_47_codex_status) ... ok
+test_t_inst_50_engine_list_filtered_by_binary (test_inst.TestInst.test_t_inst_50_engine_list_filtered_by_binary) ... ok
+test_t_inst_50_no_engine_binary (test_inst.TestInst.test_t_inst_50_no_engine_binary) ... ok
+test_t_inst_50_registry_unreadable (test_inst.TestInst.test_t_inst_50_registry_unreadable) ... ok
+test_t_inst_51_uninstall_and_status_drive_every_engine (test_inst.TestInst.test_t_inst_51_uninstall_and_status_drive_every_engine) ... ok
+test_t_inst_52_bad_arguments (test_inst.TestInst.test_t_inst_52_bad_arguments) ... ok
+test_t_inst_52_engine_forcing_and_forwarding (test_inst.TestInst.test_t_inst_52_engine_forcing_and_forwarding) ... ok
+test_t_inst_52_unknown_engine (test_inst.TestInst.test_t_inst_52_unknown_engine) ... ok
+test_t_life_01_kill_actor_is_the_invoker (test_life.TestLife.test_t_life_01_kill_actor_is_the_invoker) ... ok
+test_t_life_01_kill_by_id (test_life.TestLife.test_t_life_01_kill_by_id) ... ok
+test_t_life_01_kill_is_idempotent_and_tolerates_missing_launch_script (test_life.TestLife.test_t_life_01_kill_is_idempotent_and_tolerates_missing_launch_script) ... ok
+test_t_life_01_kill_live_process (test_life.TestLife.test_t_life_01_kill_live_process) ... ok
+test_t_life_02_kill_view_fallback (test_life.TestLife.test_t_life_02_kill_view_fallback) ... ok
+test_t_life_03_archive (test_life.TestLife.test_t_life_03_archive) ... ok
+test_t_life_03_archive_exited_record_stays_exited (test_life.TestLife.test_t_life_03_archive_exited_record_stays_exited) ... ok
+test_t_life_03_archive_unknown (test_life.TestLife.test_t_life_03_archive_unknown) ... ok
+test_t_life_04_remove (test_life.TestLife.test_t_life_04_remove) ... ok
+test_t_life_05_tag_unknown (test_life.TestLife.test_t_life_05_tag_unknown) ... ok
+test_t_life_05_tag_with_nested_client (test_life.TestLife.test_t_life_05_tag_with_nested_client) ... ok
+test_t_life_05_tag_without_nested_client_and_read_mode (test_life.TestLife.test_t_life_05_tag_without_nested_client_and_read_mode) ... ok
+test_t_life_06_empty_group_rejected (test_life.TestLife.test_t_life_06_empty_group_rejected) ... ok
+test_t_life_06_set_group (test_life.TestLife.test_t_life_06_set_group) ... ok
+test_t_life_07_bind_artifact (test_life.TestLife.test_t_life_07_bind_artifact) ... ok
+test_t_life_08_rename_collisions (test_life.TestLife.test_t_life_08_rename_collisions) ... ok
+test_t_life_08_rename_is_store_only (test_life.TestLife.test_t_life_08_rename_is_store_only) ... ok
+test_t_life_08_rename_never_resolves_a_view (test_life.TestLife.test_t_life_08_rename_never_resolves_a_view) ... ok
+test_t_life_08_rename_to_same_name_is_a_no_op (test_life.TestLife.test_t_life_08_rename_to_same_name_is_a_no_op) ... ok
+test_t_life_09_reaffirmed_working_is_a_no_op (test_life.TestLife.test_t_life_09_reaffirmed_working_is_a_no_op) ... ok
+test_t_life_09_record_state_transitions (test_life.TestLife.test_t_life_09_record_state_transitions) ... ok
+test_t_life_09_terminal_is_absorbing (test_life.TestLife.test_t_life_09_terminal_is_absorbing) ... ok
+test_t_life_09_unknown_or_unset_session_id_is_ignored (test_life.TestLife.test_t_life_09_unknown_or_unset_session_id_is_ignored) ... ok
+test_t_life_10_ghost_tx_id_falls_through_to_name_lookup (test_life.TestLife.test_t_life_10_ghost_tx_id_falls_through_to_name_lookup) ... ok
+test_t_life_10_newest_non_live_wins_when_nothing_is_live (test_life.TestLife.test_t_life_10_newest_non_live_wins_when_nothing_is_live) ... ok
+test_t_life_10_resolve_order (test_life.TestLife.test_t_life_10_resolve_order) ... ok
+test_t_life_11_cli_error_mapping (test_life.TestLife.test_t_life_11_cli_error_mapping) ... ok
+test_t_life_12_revive_exited_record_whose_tx_id_session_is_alive (test_life.TestLife.test_t_life_12_revive_exited_record_whose_tx_id_session_is_alive) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_life_12_revive_non_llm_record_to_alive (test_life.TestLife.test_t_life_12_revive_non_llm_record_to_alive)
+D14: a non-llm record revives to `alive` (llm → `idle`, the leg above). ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_life_12_revive_unknown_session (test_life.TestLife.test_t_life_12_revive_unknown_session) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_migr_01_turn_started_at_preserved (test_migr.TestMigr.test_t_migr_01_turn_started_at_preserved) ... ok
+test_t_migr_01_v3_llm_process_record (test_migr.TestMigr.test_t_migr_01_v3_llm_process_record) ... ok
+test_t_migr_02_v3_non_llm_process_record (test_migr.TestMigr.test_t_migr_02_v3_non_llm_process_record) ... ok
+test_t_migr_03_id_named_session_not_stamped (test_migr.TestMigr.test_t_migr_03_id_named_session_not_stamped) ... ok
+test_t_migr_03_live_view_stamped_and_deleted (test_migr.TestMigr.test_t_migr_03_live_view_stamped_and_deleted) ... ok
+test_t_migr_04_dead_view_deleted_only (test_migr.TestMigr.test_t_migr_04_dead_view_deleted_only) ... ok
+test_t_migr_05_v4_and_v5 (test_migr.TestMigr.test_t_migr_05_v4_and_v5) ... ok
+test_t_migr_06_skipped_reasons (test_migr.TestMigr.test_t_migr_06_skipped_reasons) ... ok
+test_t_migr_07_idempotence (test_migr.TestMigr.test_t_migr_07_idempotence) ... ok
+test_t_migr_08_writes_via_store_save (test_migr.TestMigr.test_t_migr_08_writes_via_store_save) ... ok
+test_t_migr_09_artifacts_v1_to_v2 (test_migr.TestMigr.test_t_migr_09_artifacts_v1_to_v2) ... ok
+test_t_migr_09_group_preserved (test_migr.TestMigr.test_t_migr_09_group_preserved) ... ok
+test_t_migr_09_rev1_single_touch_skipped (test_migr.TestMigr.test_t_migr_09_rev1_single_touch_skipped) ... ok
+test_t_migr_10_artifacts_skipped_and_idempotent (test_migr.TestMigr.test_t_migr_10_artifacts_skipped_and_idempotent) ... ok
+test_t_model_01_role_values (test_model.TestModel.test_t_model_01_role_values) ... ok
+test_t_model_01_spawn_infers_role (test_model.TestModel.test_t_model_01_spawn_infers_role) ... ok
+test_t_model_02_state_values_and_is_terminal (test_model.TestModel.test_t_model_02_state_values_and_is_terminal) ... ok
+test_t_model_03_state_initial_for (test_model.TestModel.test_t_model_03_state_initial_for) ... ok
+test_t_model_05_engine_values (test_model.TestModel.test_t_model_05_engine_values) ... FAIL
+test_t_model_06_live_record_shows_live_join (test_model.TestModel.test_t_model_06_live_record_shows_live_join) ... ok
+test_t_model_06_location_round_trip_no_remote (test_model.TestModel.test_t_model_06_location_round_trip_no_remote) ... ok
+test_t_model_07_origin_round_trip (test_model.TestModel.test_t_model_07_origin_round_trip) ... ok
+test_t_model_08_chatref_round_trip_engine_null (test_model.TestModel.test_t_model_08_chatref_round_trip_engine_null) ... ok
+test_t_model_09_llm_record_exact_shape (test_model.TestModel.test_t_model_09_llm_record_exact_shape) ... ok
+test_t_model_10_other_record_exact_shape (test_model.TestModel.test_t_model_10_other_record_exact_shape) ... ok
+test_t_model_11_llm_records_load_as_llm_session (test_model.TestModel.test_t_model_11_llm_records_load_as_llm_session) ... ok
+test_t_model_12_non_llm_records_load_as_other_session (test_model.TestModel.test_t_model_12_non_llm_records_load_as_other_session) ... ok
+test_t_model_13_fixed_ls_history_warn_once (test_model.TestModel.test_t_model_13_fixed_ls_history_warn_once) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_model_13_unsupported_schema_refused (test_model.TestModel.test_t_model_13_unsupported_schema_refused) ... ok
+test_t_model_14_strictness_on_current_records (test_model.TestModel.test_t_model_14_strictness_on_current_records) ... ok
+test_t_model_15_load_save_identity (test_model.TestModel.test_t_model_15_load_save_identity) ... ok
+test_t_model_15_tag_resave_clears_locations (test_model.TestModel.test_t_model_15_tag_resave_clears_locations) ... ok
+test_t_model_16_tmux_name_is_id (test_model.TestModel.test_t_model_16_tmux_name_is_id) ... ok
+test_t_model_17_activity_at_fallback_chain (test_model.TestModel.test_t_model_17_activity_at_fallback_chain) ... ok
+test_t_model_18_is_alive (test_model.TestModel.test_t_model_18_is_alive) ... ok
+test_t_model_21_terminal_states_absorbing (test_model.TestModel.test_t_model_21_terminal_states_absorbing) ... ok
+test_t_model_23_non_llm_records_have_no_chats (test_model.TestModel.test_t_model_23_non_llm_records_have_no_chats) ... ok
+test_t_model_25_schema_version_constant (test_model.TestModel.test_t_model_25_schema_version_constant) ... ok
+test_t_msg_01_envelope_exact_strings (test_msg.TestMsg.test_t_msg_01_envelope_exact_strings) ... ok
+test_t_msg_02_edge_untracked_sender_uses_raw_session_name (test_msg.TestMsg.test_t_msg_02_edge_untracked_sender_uses_raw_session_name) ... ok
+test_t_msg_02_fixed_literal_key_name_body (test_msg.TestMsg.test_t_msg_02_fixed_literal_key_name_body) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_msg_02_send_message_delivery (test_msg.TestMsg.test_t_msg_02_send_message_delivery) ... ok
+test_t_msg_03_edge_missing_body (test_msg.TestMsg.test_t_msg_03_edge_missing_body) ... ok
+test_t_msg_03_errors (test_msg.TestMsg.test_t_msg_03_errors) ... ok
+test_t_msg_04_edge_no_session_id (test_msg.TestMsg.test_t_msg_04_edge_no_session_id) ... ok
+test_t_msg_04_edge_unknown_session_id_is_used_raw (test_msg.TestMsg.test_t_msg_04_edge_unknown_session_id_is_used_raw) ... ok
+test_t_msg_04_send_user_message (test_msg.TestMsg.test_t_msg_04_send_user_message) ... ok
+test_t_nvim_01_argument_errors (test_nvim.TestNvim.test_t_nvim_01_argument_errors) ... ok
+test_t_nvim_01_env_is_repeatable (test_nvim.TestNvim.test_t_nvim_01_env_is_repeatable) ... ok
+test_t_nvim_01_help_flag_set (test_nvim.TestNvim.test_t_nvim_01_help_flag_set) ... ok
+test_t_nvim_02_launch_tmux_session_env_and_fake_argv (test_nvim.TestNvim.test_t_nvim_02_launch_tmux_session_env_and_fake_argv) ... ok
+test_t_nvim_03_diff_default_main_and_explicit_base (test_nvim.TestNvim.test_t_nvim_03_diff_default_main_and_explicit_base) ... ok
+test_t_nvim_04_open_file_quoting (test_nvim.TestNvim.test_t_nvim_04_open_file_quoting) ... ok
+test_t_nvim_05_default_cwd_is_calling_pane_path (test_nvim.TestNvim.test_t_nvim_05_default_cwd_is_calling_pane_path) ... ok
+test_t_nvim_05_default_cwd_is_own_cwd_in_plain_terminal (test_nvim.TestNvim.test_t_nvim_05_default_cwd_is_own_cwd_in_plain_terminal) ... ok
+test_t_nvim_05_parent_null_without_tmux (test_nvim.TestNvim.test_t_nvim_05_parent_null_without_tmux) ... ok
+test_t_nvim_05_record_shape_inside_a_session (test_nvim.TestNvim.test_t_nvim_05_record_shape_inside_a_session) ... ok
+test_t_nvim_06_role_inferred_nvim_from_bare_spawn (test_nvim.TestNvim.test_t_nvim_06_role_inferred_nvim_from_bare_spawn) ... ok
+test_t_nvim_06_role_other_and_shell_from_basename (test_nvim.TestNvim.test_t_nvim_06_role_other_and_shell_from_basename) ... ok
+test_t_nvim_07_bad_cwd_is_tolerated_by_tmux (test_nvim.TestNvim.test_t_nvim_07_bad_cwd_is_tolerated_by_tmux) ... ok
+test_t_nvim_07_name_collision (test_nvim.TestNvim.test_t_nvim_07_name_collision) ... ok
+test_t_nvim_08_ambiguous_and_unknown_prefix (test_nvim.TestNvim.test_t_nvim_08_ambiguous_and_unknown_prefix) ... ok
+test_t_nvim_08_artifact_open_binds_artifact_id (test_nvim.TestNvim.test_t_nvim_08_artifact_open_binds_artifact_id) ... ok
+test_t_nvim_08_cwd_override (test_nvim.TestNvim.test_t_nvim_08_cwd_override) ... ok
+test_t_nvim_08_tag_override_and_empty_tag (test_nvim.TestNvim.test_t_nvim_08_tag_override_and_empty_tag) ... ok
+test_t_nvim_08_untagged_invoker_or_no_tmux_gets_artifact_tag (test_nvim.TestNvim.test_t_nvim_08_untagged_invoker_or_no_tmux_gets_artifact_tag) ... ok
+test_t_nvim_09_fixed_ls_json (test_nvim.TestNvim.test_t_nvim_09_fixed_ls_json) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_nvim_09_fixed_ls_json_empty (test_nvim.TestNvim.test_t_nvim_09_fixed_ls_json_empty) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_nvim_09_parity_tx_id_lines (test_nvim.TestNvim.test_t_nvim_09_parity_tx_id_lines) ... ok
+test_t_nvim_10_argv_form_and_envelope (test_nvim.TestNvim.test_t_nvim_10_argv_form_and_envelope) ... ok
+test_t_nvim_10_live_record_wins_over_exited_namesake (test_nvim.TestNvim.test_t_nvim_10_live_record_wins_over_exited_namesake) ... ok
+test_t_nvim_10_raw_id_without_record_is_the_sender (test_nvim.TestNvim.test_t_nvim_10_raw_id_without_record_is_the_sender) ... ok
+test_t_nvim_10_requires_tx_session_id (test_nvim.TestNvim.test_t_nvim_10_requires_tx_session_id) ... ok
+test_t_nvim_10_target_by_id_and_by_tx_id_name (test_nvim.TestNvim.test_t_nvim_10_target_by_id_and_by_tx_id_name) ... ok
+test_t_nvim_10_unknown_or_dead_target (test_nvim.TestNvim.test_t_nvim_10_unknown_or_dead_target) ... ok
+test_t_nvim_11_whoami (test_nvim.TestNvim.test_t_nvim_11_whoami) ... ok
+test_t_nvim_11_whoami_outside_tmux (test_nvim.TestNvim.test_t_nvim_11_whoami_outside_tmux) ... ok
+test_t_nvim_11_whoami_untracked_session_prints_raw_name (test_nvim.TestNvim.test_t_nvim_11_whoami_untracked_session_prints_raw_name) ... ok
+test_t_nvim_12_tag_read_form (test_nvim.TestNvim.test_t_nvim_12_tag_read_form) ... ok
+test_t_nvim_12_tag_unknown_and_set (test_nvim.TestNvim.test_t_nvim_12_tag_unknown_and_set) ... ok
+test_t_nvim_13_diff_review_recipe (test_nvim.TestNvim.test_t_nvim_13_diff_review_recipe) ... ok
+test_t_nvim_14_nav_from_nvim_without_client_tty (test_nvim.TestNvim.test_t_nvim_14_nav_from_nvim_without_client_tty) ... ok
+test_t_nvim_14_nav_keys_off (test_nvim.TestNvim.test_t_nvim_14_nav_keys_off) ... ok
+test_t_nvim_14_no_pane_and_no_tmux_pane (test_nvim.TestNvim.test_t_nvim_14_no_pane_and_no_tmux_pane) ... ok
+test_t_nvim_14_top_level_edge (test_nvim.TestNvim.test_t_nvim_14_top_level_edge) ... ok
+test_t_nvim_14_usage_error (test_nvim.TestNvim.test_t_nvim_14_usage_error) ... ok
+test_t_nvim_15_bubbles_out_of_nested_session (test_nvim.TestNvim.test_t_nvim_15_bubbles_out_of_nested_session) ... ok
+test_t_nvim_15_unattached_outer_session_is_not_a_host (test_nvim.TestNvim.test_t_nvim_15_unattached_outer_session_is_not_a_host) ... ok
+test_t_nvim_16_socket_discovery (test_nvim.TestNvim.test_t_nvim_16_socket_discovery) ... FAIL
+test_t_nvim_17_apply_tour_argv_and_result (test_nvim.TestNvim.test_t_nvim_17_apply_tour_argv_and_result) ... ok
+test_t_nvim_17_socket_not_listening (test_nvim.TestNvim.test_t_nvim_17_socket_not_listening) ... ok
+test_t_nvim_18_nvim_side_state_after_apply (test_nvim.TestNvim.test_t_nvim_18_nvim_side_state_after_apply) ... ok
+test_t_nvim_18_severity_names (test_nvim.TestNvim.test_t_nvim_18_severity_names) ... ok
+test_t_nvim_19_reapply_resets_namespace (test_nvim.TestNvim.test_t_nvim_19_reapply_resets_namespace) ... ok
+test_t_nvim_19_tour_clear (test_nvim.TestNvim.test_t_nvim_19_tour_clear) ... ok
+test_t_nvim_20_fixed_socket_listens_with_real_nvim (test_nvim.TestNvim.test_t_nvim_20_fixed_socket_listens_with_real_nvim) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_nvim_20_fixed_socket_recorded_with_fake_nvim (test_nvim.TestNvim.test_t_nvim_20_fixed_socket_recorded_with_fake_nvim) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_recon_01_match_key_is_tx_id (test_recon.TestRecon.test_t_recon_01_match_key_is_tx_id) ... ok
+test_t_recon_01_no_server_drives_every_non_terminal_record_to_exited (test_recon.TestRecon.test_t_recon_01_no_server_drives_every_non_terminal_record_to_exited) ... ok
+test_t_recon_02_every_non_terminal_state_and_role (test_recon.TestRecon.test_t_recon_02_every_non_terminal_state_and_role) ... ok
+test_t_recon_02_vanished_to_exited (test_recon.TestRecon.test_t_recon_02_vanished_to_exited) ... ok
+test_t_recon_03_terminal_records_skipped (test_recon.TestRecon.test_t_recon_03_terminal_records_skipped) ... ok
+test_t_recon_04_stuck_working_demotion (test_recon.TestRecon.test_t_recon_04_stuck_working_demotion) ... ok
+test_t_recon_04_young_turn_is_not_demoted (test_recon.TestRecon.test_t_recon_04_young_turn_is_not_demoted) ... ok
+test_t_recon_05_agent_command_keeps_working (test_recon.TestRecon.test_t_recon_05_agent_command_keeps_working) ... FAIL
+test_t_recon_05_non_agent_command_is_demoted (test_recon.TestRecon.test_t_recon_05_non_agent_command_is_demoted) ... FAIL
+test_t_recon_06_stuck_guards (test_recon.TestRecon.test_t_recon_06_stuck_guards) ... ok
+test_t_recon_07_config_without_key_uses_default (test_recon.TestRecon.test_t_recon_07_config_without_key_uses_default) ... ok
+test_t_recon_07_large_threshold_keeps_working (test_recon.TestRecon.test_t_recon_07_large_threshold_keeps_working) ... ok
+test_t_recon_07_threshold_from_config (test_recon.TestRecon.test_t_recon_07_threshold_from_config) ... ok
+test_t_recon_08_launch_script_sweep (test_recon.TestRecon.test_t_recon_08_launch_script_sweep) ... ok
+test_t_recon_08_missing_launch_dir (test_recon.TestRecon.test_t_recon_08_missing_launch_dir) ... ok
+test_t_recon_09_dirty_set_in_store_order (test_recon.TestRecon.test_t_recon_09_dirty_set_in_store_order) ... ok
+test_t_recon_10_fixed_skip_line_printed_once (test_recon.TestRecon.test_t_recon_10_fixed_skip_line_printed_once) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_recon_10_parity_unreadable_record_does_not_abort (test_recon.TestRecon.test_t_recon_10_parity_unreadable_record_does_not_abort) ... ok
+test_t_render_01_reltime (test_render.TestRender.test_t_render_01_reltime) ... ok
+test_t_render_02_location_text (test_render.TestRender.test_t_render_02_location_text) ... ok
+test_t_render_03_long_name_not_truncated_and_empty (test_render.TestRender.test_t_render_03_long_name_not_truncated_and_empty) ... ok
+test_t_render_03_render_ls (test_render.TestRender.test_t_render_03_render_ls) ... ok
+test_t_render_04_picker_namew (test_render.TestRender.test_t_render_04_picker_namew) ... skipped 'setsid not on PATH'
+test_t_render_05_trunc (test_render.TestRender.test_t_render_05_trunc) ... ok
+test_t_render_06_default_namew_18 (test_render.TestRender.test_t_render_06_default_namew_18) ... ok
+test_t_render_06_picker_row_local_llm (test_render.TestRender.test_t_render_06_picker_row_local_llm) ... ok
+test_t_render_07_picker_row_nvim_truncated (test_render.TestRender.test_t_render_07_picker_row_nvim_truncated) ... ok
+test_t_render_08_no_live_records (test_render.TestRender.test_t_render_08_no_live_records) ... ok
+test_t_render_08_picker_display_rows (test_render.TestRender.test_t_render_08_picker_display_rows) ... ok
+test_t_render_09_no_terminal_records (test_render.TestRender.test_t_render_09_no_terminal_records) ... ok
+test_t_render_09_render_history (test_render.TestRender.test_t_render_09_render_history) ... ok
+test_t_render_10_no_chats_and_unknown (test_render.TestRender.test_t_render_10_no_chats_and_unknown) ... ok
+test_t_render_10_render_chats (test_render.TestRender.test_t_render_10_render_chats) ... ok
+test_t_render_11_actor_label (test_render.TestRender.test_t_render_11_actor_label) ... ok
+test_t_render_12_no_artifacts (test_render.TestRender.test_t_render_12_no_artifacts) ... ok
+test_t_render_12_render_artifacts (test_render.TestRender.test_t_render_12_render_artifacts) ... ok
+test_t_render_13_explicit_group_clean_and_prefix (test_render.TestRender.test_t_render_13_explicit_group_clean_and_prefix) ... ok
+test_t_render_13_render_artifact_show (test_render.TestRender.test_t_render_13_render_artifact_show) ... ok
+test_t_render_14_tag_color_index_hash (test_render.TestRender.test_t_render_14_tag_color_index_hash) ... ok
+test_t_render_15_tag_cube_tag_ansi (test_render.TestRender.test_t_render_15_tag_cube_tag_ansi) ... ok
+test_t_render_16_semantic_palette_constants (test_render.TestRender.test_t_render_16_semantic_palette_constants) ... skipped 'setsid not on PATH'
+test_t_render_17_role_cell_colour (test_render.TestRender.test_t_render_17_role_cell_colour) ... ok
+test_t_ro_01_boundary_minimisation (test_ro.TestRo.test_t_ro_01_boundary_minimisation) ... skipped 'linux-only case'
+test_t_ro_02_linux_bwrap_argv (test_ro.TestRo.test_t_ro_02_linux_bwrap_argv) ... skipped 'linux-only case'
+test_t_ro_02_no_bwrap_refused_and_worktree_removed (test_ro.TestRo.test_t_ro_02_no_bwrap_refused_and_worktree_removed) ... skipped 'linux-only case'
+test_t_ro_03_macos_sandbox_exec_profile (test_ro.TestRo.test_t_ro_03_macos_sandbox_exec_profile) ... ok
+test_t_ro_03_no_sandbox_exec_refused_and_worktree_removed (test_ro.TestRo.test_t_ro_03_no_sandbox_exec_refused_and_worktree_removed) ... /Users/Sok205/PycharmProjects/tx-ide/port-tests/test_ro.py:69: ResourceWarning: unclosed scandir iterator <posix.ScandirIterator object at 0x1079284b0>
+  if entry.name == binary or os.path.lexists(link) or entry.is_dir() or not os.access(entry.path, os.X_OK):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ERROR
+test_t_role_01_common_prepended_duplicates_dropped (test_role.TestRole.test_t_role_01_common_prepended_duplicates_dropped) ... ok
+test_t_role_01_empty_role_rejected (test_role.TestRole.test_t_role_01_empty_role_rejected) ... ok
+test_t_role_01_no_role_still_grants_common_skills (test_role.TestRole.test_t_role_01_no_role_still_grants_common_skills) ... ok
+test_t_role_02_local_never_stands_alone (test_role.TestRole.test_t_role_02_local_never_stands_alone) ... ok
+test_t_role_02_user_override_replaces_local_extends (test_role.TestRole.test_t_role_02_user_override_replaces_local_extends) ... ok
+test_t_role_03_path_components_rejected (test_role.TestRole.test_t_role_03_path_components_rejected) ... ok
+test_t_role_03_validation_precedes_file_lookup (test_role.TestRole.test_t_role_03_validation_precedes_file_lookup) ... ok
+test_t_role_04_missing_common_surfaces_without_role_flag (test_role.TestRole.test_t_role_04_missing_common_surfaces_without_role_flag) ... ok
+test_t_role_04_unknown_role_error_text (test_role.TestRole.test_t_role_04_unknown_role_error_text) ... ok
+test_t_role_05_codex_priming_travels_as_developer_instructions (test_role.TestRole.test_t_role_05_codex_priming_travels_as_developer_instructions) ... ok
+test_t_role_05_padded_opening_delimiter_is_not_frontmatter (test_role.TestRole.test_t_role_05_padded_opening_delimiter_is_not_frontmatter) ... ok
+test_t_role_05_priming_strips_frontmatter_joins_with_blank_line (test_role.TestRole.test_t_role_05_priming_strips_frontmatter_joins_with_blank_line) ... ok
+test_t_role_06_padded_closing_delimiter_closes (test_role.TestRole.test_t_role_06_padded_closing_delimiter_closes) ... ok
+test_t_role_06_unclosed_frontmatter (test_role.TestRole.test_t_role_06_unclosed_frontmatter) ... ok
+test_t_role_07_grant_line_edges (test_role.TestRole.test_t_role_07_grant_line_edges) ... ok
+test_t_role_07_skill_grant_line_parsing (test_role.TestRole.test_t_role_07_skill_grant_line_parsing) ... ok
+test_t_role_08_skill_directory_resolution_user_override (test_role.TestRole.test_t_role_08_skill_directory_resolution_user_override) ... ok
+test_t_role_09_fixed_hand_grant_link_failure_has_no_traceback (test_role.TestRole.test_t_role_09_fixed_hand_grant_link_failure_has_no_traceback) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_role_09_frontmatter_edges (test_role.TestRole.test_t_role_09_frontmatter_edges) ... ok
+test_t_role_09_parity_hand_grant_fails_at_link_time (test_role.TestRole.test_t_role_09_parity_hand_grant_fails_at_link_time) ... ok
+test_t_role_09_skill_validation_errors (test_role.TestRole.test_t_role_09_skill_validation_errors) ... ok
+test_t_role_10_ghost_grant_fails_spawn (test_role.TestRole.test_t_role_10_ghost_grant_fails_spawn) ... ok
+test_t_role_10_role_skill_union (test_role.TestRole.test_t_role_10_role_skill_union) ... ok
+test_t_role_11_empty_grant_writes_no_exclude_line (test_role.TestRole.test_t_role_11_empty_grant_writes_no_exclude_line) ... ok
+test_t_role_11_fixed_unvalidated_list_link_failure_has_no_traceback (test_role.TestRole.test_t_role_11_fixed_unvalidated_list_link_failure_has_no_traceback) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_role_11_granted_skills_env_semantics (test_role.TestRole.test_t_role_11_granted_skills_env_semantics) ... ok
+test_t_role_11_parity_unvalidated_list_fails_at_link_time (test_role.TestRole.test_t_role_11_parity_unvalidated_list_fails_at_link_time) ... ok
+test_t_role_12_codex_links_under_agents_skills (test_role.TestRole.test_t_role_12_codex_links_under_agents_skills) ... ok
+test_t_role_12_link_skills_creates_symlinks_and_git_exclude (test_role.TestRole.test_t_role_12_link_skills_creates_symlinks_and_git_exclude) ... ok
+test_t_role_13_fixed_committed_regular_dir_failure_has_no_traceback (test_role.TestRole.test_t_role_13_fixed_committed_regular_dir_failure_has_no_traceback) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_role_13_link_skills_idempotent_and_repoints (test_role.TestRole.test_t_role_13_link_skills_idempotent_and_repoints) ... ok
+test_t_role_13_parity_committed_regular_dir_fails_spawn (test_role.TestRole.test_t_role_13_parity_committed_regular_dir_fails_spawn) ... ok
+test_t_role_14_exclude_append_rules (test_role.TestRole.test_t_role_14_exclude_append_rules) ... ok
+test_t_role_14_linked_worktree_cwd_writes_main_repo_exclude (test_role.TestRole.test_t_role_14_linked_worktree_cwd_writes_main_repo_exclude) ... ok
+test_create (test_smoke.TestSmokeArtifact.test_create) ... ok
+test_golden_round_trip (test_smoke.TestSmokeCli.test_golden_round_trip) ... ok
+test_help (test_smoke.TestSmokeCli.test_help) ... ok
+test_worker_runs_fake_claude (test_smoke.TestSmokeFakeEngine.test_worker_runs_fake_claude) ... ok
+test_helpers_are_copies_beside_a_tx_link_to_the_binary_under_test (test_smoke.TestSmokeHelpers.test_helpers_are_copies_beside_a_tx_link_to_the_binary_under_test) ... ok
+test_scrubbed_env_drops_operator_knobs_and_keeps_every_socket_under_the_root (test_smoke.TestSmokeHermeticity.test_scrubbed_env_drops_operator_knobs_and_keeps_every_socket_under_the_root) ... ok
+test_teardown_reaper_kills_this_homes_children_but_not_the_server (test_smoke.TestSmokeHermeticity.test_teardown_reaper_kills_this_homes_children_but_not_the_server) ... FAIL
+/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py:1139: ResourceWarning: subprocess 95956 is still running
+  _warn("subprocess %s is still running" % self.pid,
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+test_init_home (test_smoke.TestSmokeHome.test_init_home) ... ok
+test_prompt_submit_flips_crafted_record_to_working (test_smoke.TestSmokeHook.test_prompt_submit_flips_crafted_record_to_working) ... ok
+test_no_server_fixture_means_a_dead_private_socket (test_smoke.TestSmokeSafety.test_no_server_fixture_means_a_dead_private_socket) ... ok
+test_run_tx_refuses_a_home_that_resolves_outside_the_kit_root (test_smoke.TestSmokeSafety.test_run_tx_refuses_a_home_that_resolves_outside_the_kit_root) ... ok
+test_tmux_wrapper_is_passthrough_without_socket_env (test_smoke.TestSmokeSafety.test_tmux_wrapper_is_passthrough_without_socket_env) ... ok
+test_spawn_shell_session (test_smoke.TestSmokeTmux.test_spawn_shell_session) ... ok
+test_t_spawn_01_role_inferred_from_command (test_spawn.TestSpawn.test_t_spawn_01_role_inferred_from_command)
+The antigravity leg (`agy` → llm, visible only as the hooks-not-installed refusal) is ... ok
+test_t_spawn_02_process_spawn_spec_as_persisted (test_spawn.TestSpawn.test_t_spawn_02_process_spawn_spec_as_persisted) ... ok
+test_t_spawn_03_nvim_companion_command_line (test_spawn.TestSpawn.test_t_spawn_03_nvim_companion_command_line) ... ok
+test_t_spawn_05_spawn_creates_uuid_session_with_id_and_option (test_spawn.TestSpawn.test_t_spawn_05_spawn_creates_uuid_session_with_id_and_option) ... ok
+test_t_spawn_06_llm_record_pending_original_chat_ref (test_spawn.TestSpawn.test_t_spawn_06_llm_record_pending_original_chat_ref) ... ok
+test_t_spawn_07_parent_is_executor_tx_id (test_spawn.TestSpawn.test_t_spawn_07_parent_is_executor_tx_id) ... ok
+test_t_spawn_08_live_duplicate_name_refused (test_spawn.TestSpawn.test_t_spawn_08_live_duplicate_name_refused) ... ok
+test_t_spawn_09_live_view_name_refused (test_spawn.TestSpawn.test_t_spawn_09_live_view_name_refused) ... ok
+test_t_spawn_10_launch_script_threshold (test_spawn.TestSpawn.test_t_spawn_10_launch_script_threshold) ... ok
+test_t_spawn_11_dispatch_agent_worker_else_direct (test_spawn.TestSpawn.test_t_spawn_11_dispatch_agent_worker_else_direct) ... ok
+test_t_spawn_12_worker_env_flags (test_spawn.TestSpawn.test_t_spawn_12_worker_env_flags)
+`$FAKE_OUT` reaches the fakes through the private server's global environment (the kit ... ok
+test_t_spawn_14_exited_worker_worktree_on_disk_bumps (test_spawn.TestSpawn.test_t_spawn_14_exited_worker_worktree_on_disk_bumps) ... ok
+test_t_spawn_14_worktree_placement_and_name_bump (test_spawn.TestSpawn.test_t_spawn_14_worktree_placement_and_name_bump) ... ok
+test_t_spawn_16_bwrap_absent_refused (test_spawn.TestSpawn.test_t_spawn_16_bwrap_absent_refused) ... /Users/Sok205/PycharmProjects/tx-ide/port-tests/test_ro.py:69: ResourceWarning: unclosed scandir iterator <posix.ScandirIterator object at 0x10792b230>
+  if entry.name == binary or os.path.lexists(link) or entry.is_dir() or not os.access(entry.path, os.X_OK):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ERROR
+test_t_spawn_16_read_only_wrapper (test_spawn.TestSpawn.test_t_spawn_16_read_only_wrapper) ... FAIL
+test_t_spawn_18_argv_validation (test_spawn.TestSpawn.test_t_spawn_18_argv_validation) ... ok
+test_t_spawn_19_bare_spawn_is_shell_and_cmd_stamps_engine (test_spawn.TestSpawn.test_t_spawn_19_bare_spawn_is_shell_and_cmd_stamps_engine) ... ok
+test_t_spawn_19_fixed_outside_tmux_with_live_server_uses_caller_cwd (test_spawn.TestSpawn.test_t_spawn_19_fixed_outside_tmux_with_live_server_uses_caller_cwd)
+Q20 FIX: outside tmux with a live server, an omitted `--cwd` is the caller's cwd — never the ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_spawn_20_spawn_nvim_cli (test_spawn.TestSpawn.test_t_spawn_20_spawn_nvim_cli) ... ok
+test_t_spawn_21_spawn_view (test_spawn.TestSpawn.test_t_spawn_21_spawn_view) ... ok
+test_t_spawn_13_worker_refusals (test_spawn.TestSpawnCodexHooksMissing.test_t_spawn_13_worker_refusals) ... ok
+test_t_spawn_17_worker_name_resolution_and_worktree_removal (test_spawn.TestSpawnCodexHooksMissing.test_t_spawn_17_worker_name_resolution_and_worktree_removal)
+Spec rev 5 order: live `w` (+ the `w-2` the first leg creates), THEN the refused codex ... ok
+test_t_spawn_15_worker_access_preparation (test_spawn.TestSpawnCustomAgents.test_t_spawn_15_worker_access_preparation) ... ok
+test_t_status_01_full_payload_two_lines (test_status.TestStatus.test_t_status_01_full_payload_two_lines) ... ok
+test_t_status_02_fields_read_exact_paths (test_status.TestStatus.test_t_status_02_fields_read_exact_paths) ... ok
+test_t_status_03_line1_git_toplevel_vs_cwd_basename (test_status.TestStatus.test_t_status_03_line1_git_toplevel_vs_cwd_basename) ... ok
+test_t_status_03_linked_worktree_uses_its_own_basename (test_status.TestStatus.test_t_status_03_linked_worktree_uses_its_own_basename) ... ok
+test_t_status_04_display_name_absent_no_model_segment (test_status.TestStatus.test_t_status_04_display_name_absent_no_model_segment) ... ok
+test_t_status_04_model_name_normalisation (test_status.TestStatus.test_t_status_04_model_name_normalisation) ... ok
+test_t_status_05_effort_mapping (test_status.TestStatus.test_t_status_05_effort_mapping) ... ok
+test_t_status_06_all_usage_fields_absent_no_segment (test_status.TestStatus.test_t_status_06_all_usage_fields_absent_no_segment) ... ok
+test_t_status_06_token_formatting (test_status.TestStatus.test_t_status_06_token_formatting) ... ok
+test_t_status_07_five_hour_only_prints_nothing_about_it (test_status.TestStatus.test_t_status_07_five_hour_only_prints_nothing_about_it) ... ok
+test_t_status_07_resets_at_absent_or_null_no_suffix (test_status.TestStatus.test_t_status_07_resets_at_absent_or_null_no_suffix) ... ok
+test_t_status_07_resets_at_in_the_past (test_status.TestStatus.test_t_status_07_resets_at_in_the_past) ... ok
+test_t_status_07_seven_day_rate_limit_with_reset_countdown (test_status.TestStatus.test_t_status_07_seven_day_rate_limit_with_reset_countdown) ... ok
+test_t_status_07_used_percentage_rounding_and_absence (test_status.TestStatus.test_t_status_07_used_percentage_rounding_and_absence) ... ok
+test_t_status_08_segment_order_and_joining (test_status.TestStatus.test_t_status_08_segment_order_and_joining) ... ok
+test_t_status_09_empty_payload (test_status.TestStatus.test_t_status_09_empty_payload) ... ok
+test_t_status_09_invalid_json (test_status.TestStatus.test_t_status_09_invalid_json) ... ok
+test_t_status_10_background_post_to_sessions_graph (test_status.TestStatus.test_t_status_10_background_post_to_sessions_graph) ... ERROR
+test_t_status_10_listener_hangs_script_returns_promptly (test_status.TestStatus.test_t_status_10_listener_hangs_script_returns_promptly) ... ERROR
+test_t_status_10_missing_limit_posts_null (test_status.TestStatus.test_t_status_10_missing_limit_posts_null) ... ok
+test_t_status_10_no_connection_without_port_or_rate_limits (test_status.TestStatus.test_t_status_10_no_connection_without_port_or_rate_limits) ... 
+  test_t_status_10_no_connection_without_port_or_rate_limits (test_status.TestStatus.test_t_status_10_no_connection_without_port_or_rate_limits) (edge='port file absent') ... ERROR
+  test_t_status_10_no_connection_without_port_or_rate_limits (test_status.TestStatus.test_t_status_10_no_connection_without_port_or_rate_limits) (edge='port file empty') ... ERROR
+  test_t_status_10_no_connection_without_port_or_rate_limits (test_status.TestStatus.test_t_status_10_no_connection_without_port_or_rate_limits) (edge='no rate_limits') ... ERROR
+test_t_status_10_tx_ide_home_unset_uses_home_dot_tx_ide (test_status.TestStatus.test_t_status_10_tx_ide_home_unset_uses_home_dot_tx_ide) ... ok
+test_t_store_01_save_writes_record_atomically (test_store.TestStore.test_t_store_01_save_writes_record_atomically) ... ok
+test_t_store_02_save_overwrites_in_place (test_store.TestStore.test_t_store_02_save_overwrites_in_place) ... ok
+test_t_store_03_fixed_load_errors_are_messages (test_store.TestStore.test_t_store_03_fixed_load_errors_are_messages) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_store_03_parity_load (test_store.TestStore.test_t_store_03_parity_load) ... ok
+test_t_store_04_fixed_ls_history_warn_once (test_store.TestStore.test_t_store_04_fixed_ls_history_warn_once) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_store_04_parity_scan_sorted_and_tolerant (test_store.TestStore.test_t_store_04_parity_scan_sorted_and_tolerant) ... ok
+test_t_store_05_empty_store (test_store.TestStore.test_t_store_05_empty_store) ... ok
+test_t_store_07_names_for_author_chips (test_store.TestStore.test_t_store_07_names_for_author_chips) ... ok
+test_t_store_08_query_predicate_history (test_store.TestStore.test_t_store_08_query_predicate_history) ... ok
+test_t_store_09_delete (test_store.TestStore.test_t_store_09_delete) ... ok
+test_t_store_10_default_directory (test_store.TestStore.test_t_store_10_default_directory) ... ok
+test_t_sync_01_corpus_key_filter (test_sync.TestSync.test_t_sync_01_corpus_key_filter) ... ok
+test_t_sync_02_record_clock_precedence (test_sync.TestSync.test_t_sync_02_record_clock_precedence) ... ok
+test_t_sync_03_verdict_rules (test_sync.TestSync.test_t_sync_03_verdict_rules) ... ok
+test_t_sync_04_push_pull_copy_and_buckets (test_sync.TestSync.test_t_sync_04_push_pull_copy_and_buckets) ... ok
+test_t_sync_05_status_dry_count (test_sync.TestSync.test_t_sync_05_status_dry_count) ... ok
+test_t_sync_06_corpus_status (test_sync.TestSync.test_t_sync_06_corpus_status) ... ok
+test_t_sync_07_fixed_unknown_backend (test_sync.TestSync.test_t_sync_07_fixed_unknown_backend) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_sync_07_remote_from_config_local_and_s3 (test_sync.TestSync.test_t_sync_07_remote_from_config_local_and_s3) ... ok
+test_t_sync_07_remote_from_config_none (test_sync.TestSync.test_t_sync_07_remote_from_config_none) ... ok
+test_t_sync_08_status_output (test_sync.TestSync.test_t_sync_08_status_output) ... ok
+test_t_sync_09_no_remote_bogus_action_precedence (test_sync.TestSync.test_t_sync_09_no_remote_bogus_action_precedence) ... ok
+test_t_sync_09_push_pull_output (test_sync.TestSync.test_t_sync_09_push_pull_output) ... ok
+test_t_sync_10_s3_deferred_error_text (test_sync.TestSync.test_t_sync_10_s3_deferred_error_text) ... ok
+test_t_sync_10_s3_empty_local_corpus (test_sync.TestSync.test_t_sync_10_s3_empty_local_corpus) ... ok
+test_t_tmux_01_command_exits_before_tx_id_stamp (test_tmux.TestTmux.test_t_tmux_01_command_exits_before_tx_id_stamp)
+With `s1` live the server survives the dead pane and tmux reports `no such session`; ... ok
+test_t_tmux_01_env_overrides_truecolor_default (test_tmux.TestTmux.test_t_tmux_01_env_overrides_truecolor_default) ... ok
+test_t_tmux_01_new_session_defaults (test_tmux.TestTmux.test_t_tmux_01_new_session_defaults) ... ok
+test_t_tmux_01_nonexistent_cwd_falls_back_to_home (test_tmux.TestTmux.test_t_tmux_01_nonexistent_cwd_falls_back_to_home)
+Q21 PARITY, gated on the tmux version (spec): tmux 3.4 tolerates a bad `-c` (the pane ... ok
+test_t_tmux_02_has_session_exact_match (test_tmux.TestTmux.test_t_tmux_02_has_session_exact_match) ... ok
+test_t_tmux_02_no_server (test_tmux.TestTmux.test_t_tmux_02_no_server) ... ok
+test_t_tmux_03_kill_quiet_twice (test_tmux.TestTmux.test_t_tmux_03_kill_quiet_twice) ... ok
+test_t_tmux_03_kill_view_then_not_found (test_tmux.TestTmux.test_t_tmux_03_kill_view_then_not_found) ... ok
+test_t_tmux_03_rename_never_touches_tmux (test_tmux.TestTmux.test_t_tmux_03_rename_never_touches_tmux) ... ok
+test_t_tmux_04_list_sessions_liveness_scan (test_tmux.TestTmux.test_t_tmux_04_list_sessions_liveness_scan) ... ok
+test_t_tmux_04_no_server_marks_all_exited (test_tmux.TestTmux.test_t_tmux_04_no_server_marks_all_exited) ... ok
+test_t_tmux_05_send_keys_envelope_then_enter (test_tmux.TestTmux.test_t_tmux_05_send_keys_envelope_then_enter) ... ok
+test_t_tmux_05_send_message_outside_tmux (test_tmux.TestTmux.test_t_tmux_05_send_message_outside_tmux) ... ok
+test_t_tmux_06_options_through_verbs (test_tmux.TestTmux.test_t_tmux_06_options_through_verbs) ... ok
+test_t_tmux_06_set_option_dead_target_raises (test_tmux.TestTmux.test_t_tmux_06_set_option_dead_target_raises) ... ok
+test_t_tmux_06_show_option_missing_target_quiet (test_tmux.TestTmux.test_t_tmux_06_show_option_missing_target_quiet) ... ok
+test_t_tmux_06_unset_option_dead_target_never_raises (test_tmux.TestTmux.test_t_tmux_06_unset_option_dead_target_never_raises) ... ok
+test_t_tmux_07_fixed_short_hex_name_never_prefix_matches (test_tmux.TestTmux.test_t_tmux_07_fixed_short_hex_name_never_prefix_matches)
+FIX (decided 2026-09-23): `show_option` targets `=name`, so a hex display name can no ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_tmux_07_raw_session_with_tx_id_resolves_record (test_tmux.TestTmux.test_t_tmux_07_raw_session_with_tx_id_resolves_record) ... ok
+test_t_tmux_07_tx_id_and_tx_view_markers (test_tmux.TestTmux.test_t_tmux_07_tx_id_and_tx_view_markers) ... ok
+test_t_tmux_07_tx_view_only_literal_one_counts (test_tmux.TestTmux.test_t_tmux_07_tx_view_only_literal_one_counts) ... ok
+test_t_tmux_08_display_message_targeted_and_untargeted (test_tmux.TestTmux.test_t_tmux_08_display_message_targeted_and_untargeted) ... ok
+test_t_tmux_08_pane_gone (test_tmux.TestTmux.test_t_tmux_08_pane_gone)
+3.4: the reference prints an envelope with every pane attr empty; a port may print ``. ... ok
+test_t_tmux_09_fixed_cwd_outside_tmux_with_live_server (test_tmux.TestTmux.test_t_tmux_09_fixed_cwd_outside_tmux_with_live_server)
+Q20 FIX: outside tmux, a live server's current pane path never wins over the caller's ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_tmux_09_pane_path_not_gated (test_tmux.TestTmux.test_t_tmux_09_pane_path_not_gated) ... ok
+test_t_tmux_09_whoami_gated_on_tmux_env (test_tmux.TestTmux.test_t_tmux_09_whoami_gated_on_tmux_env) ... ok
+test_t_tmux_09_whoami_inside_view_and_process_panes (test_tmux.TestTmux.test_t_tmux_09_whoami_inside_view_and_process_panes) ... ok
+test_t_tmux_10_attachment_join (test_tmux.TestTmux.test_t_tmux_10_attachment_join) ... ok
+test_t_tmux_10_outer_client_changes_nothing (test_tmux.TestTmux.test_t_tmux_10_outer_client_changes_nothing) ... ok
+test_t_tmux_10_self_loop_guard (test_tmux.TestTmux.test_t_tmux_10_self_loop_guard) ... ok
+test_t_tmux_11_attached_nowhere (test_tmux.TestTmux.test_t_tmux_11_attached_nowhere) ... ok
+test_t_tmux_11_attachment_order (test_tmux.TestTmux.test_t_tmux_11_attachment_order) ... ok
+test_t_tmux_12_jump_from_other_host_takes_first_sorted (test_tmux.TestTmux.test_t_tmux_12_jump_from_other_host_takes_first_sorted) ... ok
+test_t_tmux_12_jump_nowhere_reports_and_rerenders (test_tmux.TestTmux.test_t_tmux_12_jump_nowhere_reports_and_rerenders) ... ok
+test_t_tmux_12_jump_prefers_current_view (test_tmux.TestTmux.test_t_tmux_12_jump_prefers_current_view) ... ok
+test_t_tmux_12_jump_remote_session_pane_fallback (test_tmux.TestTmux.test_t_tmux_12_jump_remote_session_pane_fallback) ... ok
+test_t_tmux_13_inner_session_for_pane (test_tmux.TestTmux.test_t_tmux_13_inner_session_for_pane) ... ok
+test_t_tmux_13_untracked_session_pane (test_tmux.TestTmux.test_t_tmux_13_untracked_session_pane) ... ok
+test_t_tmux_15_fixed_remote_session_pane_option (test_tmux.TestTmux.test_t_tmux_15_fixed_remote_session_pane_option)
+The spec's leg: the PANE option `@remote-session` (what `tx attach --host` stamps with ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_tmux_15_focus_envelope_attribute_order (test_tmux.TestTmux.test_t_tmux_15_focus_envelope_attribute_order) ... ok
+test_t_tmux_15_parity_remote_session_read_at_session_scope (test_tmux.TestTmux.test_t_tmux_15_parity_remote_session_read_at_session_scope)
+Q30 parity twin (D17): the reference reads `@remote-session` without `-p`, so the host ... ok
+test_t_tmux_15_process_host_and_no_nesting (test_tmux.TestTmux.test_t_tmux_15_process_host_and_no_nesting) ... ok
+test_t_tmux_16_xml_escaping (test_tmux.TestTmux.test_t_tmux_16_xml_escaping) ... ok
+test_t_tmux_17_foreground_attach_from_outside_tmux (test_tmux.TestTmux.test_t_tmux_17_foreground_attach_from_outside_tmux) ... ok
+test_t_tmux_18_in_pane_without_popup_skips_respawn (test_tmux.TestTmux.test_t_tmux_18_in_pane_without_popup_skips_respawn) ... ok
+test_t_tmux_18_respawn_pane_nest_attach (test_tmux.TestTmux.test_t_tmux_18_respawn_pane_nest_attach) ... FAIL
+test_t_tmux_19_select_window_and_pane (test_tmux.TestTmux.test_t_tmux_19_select_window_and_pane) ... ok
+test_t_tmux_19_start_switch_client_failure_surfaces (test_tmux.TestTmux.test_t_tmux_19_start_switch_client_failure_surfaces)
+`tx start` warms the assistant through `bin/tx-assistant --warm`, which would spawn a ... ok
+test_t_tmux_19_switch_client_failure_tolerated (test_tmux.TestTmux.test_t_tmux_19_switch_client_failure_tolerated) ... ok
+test_t_tmux_20_command_size_threshold (test_tmux.TestTmux.test_t_tmux_20_command_size_threshold) ... ok
+test_t_tmuxconf_01_defaults_generate_every_feature (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_01_defaults_generate_every_feature) ... ok
+test_t_tmuxconf_01_resourcing_is_idempotent (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_01_resourcing_is_idempotent) ... ok
+test_t_tmuxconf_02_popup_and_prompt_bindings (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_02_popup_and_prompt_bindings) ... ok
+test_t_tmuxconf_02_popups_off_leaves_keys_alone (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_02_popups_off_leaves_keys_alone) ... ok
+test_t_tmuxconf_03_palette_off_keeps_format_drops_colours (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_03_palette_off_keeps_format_drops_colours) ... ok
+test_t_tmuxconf_03_pane_border_after_new_window_hook (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_03_pane_border_after_new_window_hook) ... ok
+test_t_tmuxconf_03_pane_borders_off_sets_nothing (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_03_pane_borders_off_sets_nothing) ... ok
+test_t_tmuxconf_04_session_labels_bind (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_04_session_labels_bind) ... ok
+test_t_tmuxconf_04_session_labels_off_keeps_stock_bind (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_04_session_labels_off_keeps_stock_bind) ... ok
+test_t_tmuxconf_05_focus_hooks (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_05_focus_hooks) ... ok
+test_t_tmuxconf_05_graph_focus_off_sets_none (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_05_graph_focus_off_sets_none) ... ok
+test_t_tmuxconf_06_agent_scroll_binds (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_06_agent_scroll_binds) ... ok
+test_t_tmuxconf_06_agent_scroll_off_unbound (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_06_agent_scroll_off_unbound) ... ok
+test_t_tmuxconf_07_fixed_prefix_none_skips_prefix_nav_binds (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_07_fixed_prefix_none_skips_prefix_nav_binds) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_tmuxconf_07_nav_keys_generation (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_07_nav_keys_generation) ... ok
+test_t_tmuxconf_07_nav_keys_off_unbinds_only_ours (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_07_nav_keys_off_unbinds_only_ours) ... ok
+test_t_tmuxconf_08_pane_and_window_keys (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_08_pane_and_window_keys) ... ok
+test_t_tmuxconf_08_pane_keys_off (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_08_pane_keys_off) ... ok
+test_t_tmuxconf_08_window_keys_off (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_08_window_keys_off) ... ok
+test_t_tmuxconf_09_pane_info (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_09_pane_info) ... ok
+test_t_tmuxconf_10_tmux_name (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_10_tmux_name) ... ok
+test_t_tmuxconf_11_non_ascii_tag_colour_agrees_with_list (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_11_non_ascii_tag_colour_agrees_with_list)
+Q13 PARITY (Python code points): the helper's `colour<n>` for a non-ASCII tag is the ... FAIL
+test_t_tmuxconf_11_pane_session_name (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_11_pane_session_name) ... ok
+test_t_tmuxconf_11_pane_session_name_fallbacks (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_11_pane_session_name_fallbacks) ... ok
+test_t_tmuxconf_12_nav_argument_and_toggle_guards (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_12_nav_argument_and_toggle_guards) ... ok
+test_t_tmuxconf_12_nav_attach_cycle_stops (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_12_nav_attach_cycle_stops)
+A pathological cycle (Views' pane nests `inner`, whose pane nests Views): every hop finds ... ok
+test_t_tmuxconf_12_nav_edge_walk (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_12_nav_edge_walk) ... ok
+test_t_tmuxconf_13_kill_tx_session_confirm (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_13_kill_tx_session_confirm) ... ok
+test_t_tmuxconf_13_kill_tx_session_declined (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_13_kill_tx_session_declined) ... ok
+test_t_tmuxconf_13_kill_tx_session_view_home_and_plain_session (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_13_kill_tx_session_view_home_and_plain_session) ... FAIL
+test_t_tmuxconf_13_prefix_x_binding_drives_the_helper (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_13_prefix_x_binding_drives_the_helper)
+The rev-5 leg: `prefix+X` on the pty client (the fragment's bind → the kit's helper copy) ... ok
+test_t_tmuxconf_14_edit_popup_geometry (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_14_edit_popup_geometry) ... FAIL
+test_t_tmuxconf_15_session_relabel (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_15_session_relabel) ... ok
+test_t_tmuxconf_16_system_resources (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_16_system_resources) ... skipped 'linux-only case'
+test_t_tmuxconf_17_assistant_unknown_invocation (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_17_assistant_unknown_invocation) ... ok
+test_t_tmuxconf_17_assistant_warm (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_17_assistant_warm) ... ok
+test_t_tmuxconf_18_assistant_from_buffer (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_18_assistant_from_buffer) ... ok
+test_t_tmuxconf_18_assistant_from_buffer_creates_session (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_18_assistant_from_buffer_creates_session) ... ok
+test_t_tmuxconf_18_blank_or_missing_buffer_never_spawns (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_18_blank_or_missing_buffer_never_spawns)
+No live assistant: a whitespace-only / absent buffer exits 0 without spawning anything ... ok
+test_t_tmuxconf_17_assistant_warm_refused_spawn (test_tmuxconf.TestTmuxconfNoHooks.test_t_tmuxconf_17_assistant_warm_refused_spawn) ... ok
+test_t_tmuxconf_19_names_with_comma_or_space_are_verbatim (test_tmuxconf.TestTmuxconfNoHooks.test_t_tmuxconf_19_names_with_comma_or_space_are_verbatim) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_tmuxconf_19_no_server_is_a_no_op (test_tmuxconf.TestTmuxconfNoHooks.test_t_tmuxconf_19_no_server_is_a_no_op) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_tmuxconf_19_relabel_verb_mirrors_names_and_tags_read_only (test_tmuxconf.TestTmuxconfNoHooks.test_t_tmuxconf_19_relabel_verb_mirrors_names_and_tags_read_only) ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_wt_01_cwd_inside_linked_worktree_shares_key (test_wt.TestWt.test_t_wt_01_cwd_inside_linked_worktree_shares_key) ... ok
+test_t_wt_01_dashes_basename_slugs_to_repository (test_wt.TestWt.test_t_wt_01_dashes_basename_slugs_to_repository) ... ok
+test_t_wt_01_path_scheme (test_wt.TestWt.test_t_wt_01_path_scheme) ... ok
+test_t_wt_02_fixed_empty_and_dot_names_refused (test_wt.TestWt.test_t_wt_02_fixed_empty_and_dot_names_refused)
+Q25 FIX: `""`, `.`, `..` are refused. Every leg is a WORKER spawn (`--engine claude`, ... skipped 'asserts the fixed behaviour of a quirk (D9); Python reference keeps the quirk'
+test_t_wt_02_slash_name_refused (test_wt.TestWt.test_t_wt_02_slash_name_refused) ... ok
+test_t_wt_03_existing_path_skipped (test_wt.TestWt.test_t_wt_03_existing_path_skipped) ... ok
+test_t_wt_03_registered_but_deleted_path_skipped (test_wt.TestWt.test_t_wt_03_registered_but_deleted_path_skipped) ... ok
+test_t_wt_04_exited_record_does_not_block (test_wt.TestWt.test_t_wt_04_exited_record_does_not_block) ... ok
+test_t_wt_04_next_name_skips_paths_and_live_names (test_wt.TestWt.test_t_wt_04_next_name_skips_paths_and_live_names) ... ok
+test_t_wt_04_ninety_nine_names_taken_refused (test_wt.TestWt.test_t_wt_04_ninety_nine_names_taken_refused) ... ok
+test_t_wt_04_nothing_taken_keeps_base_name (test_wt.TestWt.test_t_wt_04_nothing_taken_keeps_base_name) ... ok
+test_t_wt_05_is_linked_gates_distiller_worktree_removal (test_wt.TestWt.test_t_wt_05_is_linked_gates_distiller_worktree_removal) ... ok
+test_t_wt_06_pre_launch_failure_removes_fresh_worktree (test_wt.TestWt.test_t_wt_06_pre_launch_failure_removes_fresh_worktree) ... ok
+test_t_wt_06_remove_force_drops_dirty_worktree (test_wt.TestWt.test_t_wt_06_remove_force_drops_dirty_worktree) ... ok
+test_t_wt_07_non_git_cwd_refused (test_wt.TestWt.test_t_wt_07_non_git_cwd_refused) ... ok
+
+======================================================================
+ERROR: test_t_chat_12_rollover_self_catch_up_detaches_the_finish (test_chat.TestChat.test_t_chat_12_rollover_self_catch_up_detaches_the_finish)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_chat.py", line 836, in test_t_chat_12_rollover_self_catch_up_detaches_the_finish
+    holder = self._hold_ingest_lock(source)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_chat.py", line 200, in _hold_ingest_lock
+    holder = subprocess.Popen(["flock", "-x", str(lock), "sleep", "120"], start_new_session=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'flock'
+
+======================================================================
+ERROR: test_t_chat_16_detached_finish_survives_callers_pane (test_chat.TestChat.test_t_chat_16_detached_finish_survives_callers_pane)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_chat.py", line 1136, in test_t_chat_16_detached_finish_survives_callers_pane
+    holder = self._hold_ingest_lock(source)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_chat.py", line 200, in _hold_ingest_lock
+    holder = subprocess.Popen(["flock", "-x", str(lock), "sleep", "120"], start_new_session=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'flock'
+
+======================================================================
+ERROR: test_t_eng_41_codex_schedule_update_interval_flock_log (test_eng.TestEng.test_t_eng_41_codex_schedule_update_interval_flock_log)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_eng.py", line 1108, in test_t_eng_41_codex_schedule_update_interval_flock_log
+    self.wait_until(lambda: self.update_lock_is_free(log), timeout=10)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1681, in wait_until
+    return wait_until(predicate, timeout, interval)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 143, in wait_until
+    value = predicate()
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_eng.py", line 1108, in <lambda>
+    self.wait_until(lambda: self.update_lock_is_free(log), timeout=10)
+                            ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_eng.py", line 1071, in update_lock_is_free
+    return subprocess.run(["flock", "-n", str(log), "true"]).returncode == 0
+           ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 555, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'flock'
+
+======================================================================
+ERROR: test_t_hist_07_hook_ingest_coalesces_while_archive_waits (test_hist.TestHist.test_t_hist_07_hook_ingest_coalesces_while_archive_waits)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_hist.py", line 381, in test_t_hist_07_hook_ingest_coalesces_while_archive_waits
+    holder = self.hold_lock_until_released(bundle_dir / ".ingest.lock")
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_hist.py", line 147, in hold_lock_until_released
+    holder = subprocess.Popen(["flock", "-x", str(lock_path), "sleep", "600"], start_new_session=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'flock'
+
+======================================================================
+ERROR: test_t_hist_08_fresh_reload_before_stamp_preserves_a_rename (test_hist.TestHist.test_t_hist_08_fresh_reload_before_stamp_preserves_a_rename)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_hist.py", line 415, in test_t_hist_08_fresh_reload_before_stamp_preserves_a_rename
+    holder = self.hold_lock_until_released(bundle_dir / ".ingest.lock")
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_hist.py", line 147, in hold_lock_until_released
+    holder = subprocess.Popen(["flock", "-x", str(lock_path), "sleep", "600"], start_new_session=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'flock'
+
+======================================================================
+ERROR: test_t_hist_09_archive_forces_full_ingest_and_prints_count (test_hist.TestHist.test_t_hist_09_archive_forces_full_ingest_and_prints_count)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_hist.py", line 455, in test_t_hist_09_archive_forces_full_ingest_and_prints_count
+    self.hold_lock(self.bundle_dir(session_id, "c1") / ".ingest.lock", 1.0)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_hist.py", line 134, in hold_lock
+    holder = subprocess.Popen(["flock", "-x", str(lock_path), "sleep", str(seconds)])
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'flock'
+
+======================================================================
+ERROR: test_t_ro_03_no_sandbox_exec_refused_and_worktree_removed (test_ro.TestRo.test_t_ro_03_no_sandbox_exec_refused_and_worktree_removed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_ro.py", line 199, in test_t_ro_03_no_sandbox_exec_refused_and_worktree_removed
+    result = self.spawn_read_only("w", checkout.path, env={"PATH": path_without_binary(self, "sandbox-exec")})
+                                                                   ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_ro.py", line 69, in path_without_binary
+    if entry.name == binary or os.path.lexists(link) or entry.is_dir() or not os.access(entry.path, os.X_OK):
+                                                        ~~~~~~~~~~~~^^
+PermissionError: [Errno 13] Permission denied: '/usr/sbin/weakpass_edit'
+
+======================================================================
+ERROR: test_t_spawn_16_bwrap_absent_refused (test_spawn.TestSpawn.test_t_spawn_16_bwrap_absent_refused)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_spawn.py", line 483, in test_t_spawn_16_bwrap_absent_refused
+    path = path_without_binary(self, "bwrap")
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_ro.py", line 69, in path_without_binary
+    if entry.name == binary or os.path.lexists(link) or entry.is_dir() or not os.access(entry.path, os.X_OK):
+                                                        ~~~~~~~~~~~~^^
+PermissionError: [Errno 13] Permission denied: '/usr/sbin/weakpass_edit'
+
+======================================================================
+ERROR: test_t_status_10_background_post_to_sessions_graph (test_status.TestStatus.test_t_status_10_background_post_to_sessions_graph)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 451, in test_t_status_10_background_post_to_sessions_graph
+    self.wait_until(lambda: not self.curl_processes(listener.port), timeout=3.0)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1681, in wait_until
+    return wait_until(predicate, timeout, interval)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 143, in wait_until
+    value = predicate()
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 451, in <lambda>
+    self.wait_until(lambda: not self.curl_processes(listener.port), timeout=3.0)
+                                ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 132, in curl_processes
+    for entry in Path("/proc").iterdir():
+                 ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py", line 836, in iterdir
+    with os.scandir(root_dir) as scandir_it:
+         ~~~~~~~~~~^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/proc'
+
+======================================================================
+ERROR: test_t_status_10_listener_hangs_script_returns_promptly (test_status.TestStatus.test_t_status_10_listener_hangs_script_returns_promptly)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 516, in test_t_status_10_listener_hangs_script_returns_promptly
+    self.wait_until(lambda: not self.curl_processes(listener.port), timeout=3.0)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1681, in wait_until
+    return wait_until(predicate, timeout, interval)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 143, in wait_until
+    value = predicate()
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 516, in <lambda>
+    self.wait_until(lambda: not self.curl_processes(listener.port), timeout=3.0)
+                                ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 132, in curl_processes
+    for entry in Path("/proc").iterdir():
+                 ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py", line 836, in iterdir
+    with os.scandir(root_dir) as scandir_it:
+         ~~~~~~~~~~^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/proc'
+
+======================================================================
+ERROR: test_t_status_10_no_connection_without_port_or_rate_limits (test_status.TestStatus.test_t_status_10_no_connection_without_port_or_rate_limits) (edge='port file absent')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 476, in test_t_status_10_no_connection_without_port_or_rate_limits
+    self.assert_no_connection(listener)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 148, in assert_no_connection
+    self.assertEqual(self.curl_processes(port or listener.port), [])
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 132, in curl_processes
+    for entry in Path("/proc").iterdir():
+                 ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py", line 836, in iterdir
+    with os.scandir(root_dir) as scandir_it:
+         ~~~~~~~~~~^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/proc'
+
+======================================================================
+ERROR: test_t_status_10_no_connection_without_port_or_rate_limits (test_status.TestStatus.test_t_status_10_no_connection_without_port_or_rate_limits) (edge='port file empty')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 483, in test_t_status_10_no_connection_without_port_or_rate_limits
+    self.assert_no_connection(listener)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 148, in assert_no_connection
+    self.assertEqual(self.curl_processes(port or listener.port), [])
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 132, in curl_processes
+    for entry in Path("/proc").iterdir():
+                 ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py", line 836, in iterdir
+    with os.scandir(root_dir) as scandir_it:
+         ~~~~~~~~~~^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/proc'
+
+======================================================================
+ERROR: test_t_status_10_no_connection_without_port_or_rate_limits (test_status.TestStatus.test_t_status_10_no_connection_without_port_or_rate_limits) (edge='no rate_limits')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 491, in test_t_status_10_no_connection_without_port_or_rate_limits
+    self.assert_no_connection(listener)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 148, in assert_no_connection
+    self.assertEqual(self.curl_processes(port or listener.port), [])
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_status.py", line 132, in curl_processes
+    for entry in Path("/proc").iterdir():
+                 ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py", line 836, in iterdir
+    with os.scandir(root_dir) as scandir_it:
+         ~~~~~~~~~~^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/proc'
+
+======================================================================
+FAIL: test_t_attach_05_arm_file_lifecycle (test_attach.TestAttach.test_t_attach_05_arm_file_lifecycle)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_attach.py", line 319, in test_t_attach_05_arm_file_lifecycle
+    self.assertEqual(result.err, "tx: session 'n' does not exist\n")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: "stat: illegal option -- c\nusage: stat [-[195 chars].]\n" != "tx: session 'n' does not exist\n"
+- stat: illegal option -- c
+- usage: stat [-FLnq] [-f format | -l | -r | -s | -x] [-t timefmt] [file ...]
+  tx: session 'n' does not exist
+- stat: illegal option -- c
+- usage: stat [-FLnq] [-f format | -l | -r | -s | -x] [-t timefmt] [file ...]
+
+
+======================================================================
+FAIL: test_t_chat_13_read_only_source_respawns_inside_the_sandbox (test_chat.TestChat.test_t_chat_13_read_only_source_respawns_inside_the_sandbox)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1681, in wait_until
+    return wait_until(predicate, timeout, interval)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 147, in wait_until
+    raise AssertionError(f"condition not met within {timeout}s{': ' + what if what else ''}")
+AssertionError: condition not met within 15s
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_chat.py", line 940, in test_t_chat_13_read_only_source_respawns_inside_the_sandbox
+    dump = self._wait_respawn(source, seed)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_chat.py", line 272, in _wait_respawn
+    self.wait_until(lambda: path.exists() and json.loads(path.read_text())["argv"][-1] == seed, timeout=15)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1683, in wait_until
+    self.fail(str(error))
+    ~~~~~~~~~^^^^^^^^^^^^
+AssertionError: condition not met within 15s
+
+======================================================================
+FAIL: test_t_chat_19_read_only_propagation_rollover (test_chat.TestChat.test_t_chat_19_read_only_propagation_rollover)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1681, in wait_until
+    return wait_until(predicate, timeout, interval)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 147, in wait_until
+    raise AssertionError(f"condition not met within {timeout}s{': ' + what if what else ''}")
+AssertionError: condition not met within 15s
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_chat.py", line 1343, in test_t_chat_19_read_only_propagation_rollover
+    dump = self._wait_respawn(source, seed)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_chat.py", line 272, in _wait_respawn
+    self.wait_until(lambda: path.exists() and json.loads(path.read_text())["argv"][-1] == seed, timeout=15)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1683, in wait_until
+    self.fail(str(error))
+    ~~~~~~~~~^^^^^^^^^^^^
+AssertionError: condition not met within 15s
+
+======================================================================
+FAIL: test_t_cli_03_parity_required_and_exclusive_flags (test_cli.TestCli.test_t_cli_03_parity_required_and_exclusive_flags) (argv=['w', '--tag', 't', '--effort', '0'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_cli.py", line 228, in test_t_cli_03_parity_required_and_exclusive_flags
+    self._assert_spawn_refused([*argv, "--cwd", repo], message)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_cli.py", line 141, in _assert_spawn_refused
+    self.assertTrue(result.err.endswith(f"tx spawn: error: {message}\n"), result.err)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : usage: tx spawn [-h] --tag TAG [--group GROUP] [--cwd CWD] [--cmd CMD]
+                [--engine {claude,codex,antigravity}] [--prompt PROMPT]
+                [--model MODEL] [--effort {1,2,3,4,5}] [--role NAME[,NAME…]]
+                [--read-only] [--chrome] [--env ENV]
+                name
+tx spawn: error: argument --effort: invalid choice: '0' (choose from 1, 2, 3, 4, 5)
+
+
+======================================================================
+FAIL: test_t_cli_03_parity_required_and_exclusive_flags (test_cli.TestCli.test_t_cli_03_parity_required_and_exclusive_flags) (argv=['w', '--tag', 't', '--effort', '6'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_cli.py", line 228, in test_t_cli_03_parity_required_and_exclusive_flags
+    self._assert_spawn_refused([*argv, "--cwd", repo], message)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_cli.py", line 141, in _assert_spawn_refused
+    self.assertTrue(result.err.endswith(f"tx spawn: error: {message}\n"), result.err)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : usage: tx spawn [-h] --tag TAG [--group GROUP] [--cwd CWD] [--cmd CMD]
+                [--engine {claude,codex,antigravity}] [--prompt PROMPT]
+                [--model MODEL] [--effort {1,2,3,4,5}] [--role NAME[,NAME…]]
+                [--read-only] [--chrome] [--env ENV]
+                name
+tx spawn: error: argument --effort: invalid choice: '6' (choose from 1, 2, 3, 4, 5)
+
+
+======================================================================
+FAIL: test_t_cli_03_parity_required_and_exclusive_flags (test_cli.TestCli.test_t_cli_03_parity_required_and_exclusive_flags) (argv=['w', '--tag', 't', '--engine', 'gpt'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_cli.py", line 228, in test_t_cli_03_parity_required_and_exclusive_flags
+    self._assert_spawn_refused([*argv, "--cwd", repo], message)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_cli.py", line 141, in _assert_spawn_refused
+    self.assertTrue(result.err.endswith(f"tx spawn: error: {message}\n"), result.err)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : usage: tx spawn [-h] --tag TAG [--group GROUP] [--cwd CWD] [--cmd CMD]
+                [--engine {claude,codex,antigravity}] [--prompt PROMPT]
+                [--model MODEL] [--effort {1,2,3,4,5}] [--role NAME[,NAME…]]
+                [--read-only] [--chrome] [--env ENV]
+                name
+tx spawn: error: argument --engine: invalid choice: 'gpt' (choose from claude, codex, antigravity)
+
+
+======================================================================
+FAIL: test_t_eng_01_effort_levels_and_default (test_eng.TestEng.test_t_eng_01_effort_levels_and_default)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_eng.py", line 232, in test_t_eng_01_effort_levels_and_default
+    self.assertTrue(
+    ~~~~~~~~~~~~~~~^
+        result.err.rstrip().endswith(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        result.err,
+        ^^^^^^^^^^^
+    )
+    ^
+AssertionError: False is not true : usage: tx spawn [-h] --tag TAG [--group GROUP] [--cwd CWD] [--cmd CMD]
+                [--engine {claude,codex,antigravity}] [--prompt PROMPT]
+                [--model MODEL] [--effort {1,2,3,4,5}] [--role NAME[,NAME…]]
+                [--read-only] [--chrome] [--env ENV]
+                name
+tx spawn: error: argument --effort: invalid choice: '0' (choose from 1, 2, 3, 4, 5)
+
+
+======================================================================
+FAIL: test_t_eng_12_claude_read_only_launch_shape (test_eng.TestEng.test_t_eng_12_claude_read_only_launch_shape)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_eng.py", line 326, in test_t_eng_12_claude_read_only_launch_shape
+    bwrap = self.fakes.wait_dump("bwrap", record["id"])
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 810, in wait_dump
+    raise AssertionError(f"no {name} dump for {key or 'any key'} within {timeout}s")
+AssertionError: no bwrap dump for 1a0475a7-acf0-48f8-a585-28e14a33174d within 10.0s
+
+======================================================================
+FAIL: test_t_model_05_engine_values (test_model.TestModel.test_t_model_05_engine_values)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_model.py", line 157, in test_t_model_05_engine_values
+    self.assertTrue(result.err.endswith(
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+        "tx spawn: error: argument --engine: invalid choice: 'gemini' "
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "(choose from 'claude', 'codex', 'antigravity')\n"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ), result.err)
+    ^^^^^^^^^^^^^^
+AssertionError: False is not true : usage: tx spawn [-h] --tag TAG [--group GROUP] [--cwd CWD] [--cmd CMD]
+                [--engine {claude,codex,antigravity}] [--prompt PROMPT]
+                [--model MODEL] [--effort {1,2,3,4,5}] [--role NAME[,NAME…]]
+                [--read-only] [--chrome] [--env ENV]
+                name
+tx spawn: error: argument --engine: invalid choice: 'gemini' (choose from claude, codex, antigravity)
+
+
+======================================================================
+FAIL: test_t_nvim_16_socket_discovery (test_nvim.TestNvim.test_t_nvim_16_socket_discovery)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1681, in wait_until
+    return wait_until(predicate, timeout, interval)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 147, in wait_until
+    raise AssertionError(f"condition not met within {timeout}s{': ' + what if what else ''}")
+AssertionError: condition not met within 10.0s
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_nvim.py", line 765, in test_t_nvim_16_socket_discovery
+    nvim_pid = self.nvim_pid_of(record["id"])
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_nvim.py", line 750, in nvim_pid_of
+    nvim_pid = self.wait_until(child)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1683, in wait_until
+    self.fail(str(error))
+    ~~~~~~~~~^^^^^^^^^^^^
+AssertionError: condition not met within 10.0s
+
+======================================================================
+FAIL: test_t_recon_05_agent_command_keeps_working (test_recon.TestRecon.test_t_recon_05_agent_command_keeps_working)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1681, in wait_until
+    return wait_until(predicate, timeout, interval)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 147, in wait_until
+    raise AssertionError(f"condition not met within {timeout}s{': ' + what if what else ''}")
+AssertionError: condition not met within 10.0s
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_recon.py", line 191, in test_t_recon_05_agent_command_keeps_working
+    probes = self.stuck_probes(self.AGENT_COMMANDS)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_recon.py", line 187, in stuck_probes
+    self.wait_pane_commands(expected)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_recon.py", line 41, in wait_pane_commands
+    self.wait_until(
+    ~~~~~~~~~~~~~~~^
+        lambda: all(self.tmux.pane_commands().get(key) == value for key, value in expected.items())
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1683, in wait_until
+    self.fail(str(error))
+    ~~~~~~~~~^^^^^^^^^^^^
+AssertionError: condition not met within 10.0s
+
+======================================================================
+FAIL: test_t_recon_05_non_agent_command_is_demoted (test_recon.TestRecon.test_t_recon_05_non_agent_command_is_demoted)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1681, in wait_until
+    return wait_until(predicate, timeout, interval)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 147, in wait_until
+    raise AssertionError(f"condition not met within {timeout}s{': ' + what if what else ''}")
+AssertionError: condition not met within 10.0s
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_recon.py", line 200, in test_t_recon_05_non_agent_command_is_demoted
+    probes = self.stuck_probes(self.NON_AGENT_COMMANDS)
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_recon.py", line 187, in stuck_probes
+    self.wait_pane_commands(expected)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_recon.py", line 41, in wait_pane_commands
+    self.wait_until(
+    ~~~~~~~~~~~~~~~^
+        lambda: all(self.tmux.pane_commands().get(key) == value for key, value in expected.items())
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 1683, in wait_until
+    self.fail(str(error))
+    ~~~~~~~~~^^^^^^^^^^^^
+AssertionError: condition not met within 10.0s
+
+======================================================================
+FAIL: test_teardown_reaper_kills_this_homes_children_but_not_the_server (test_smoke.TestSmokeHermeticity.test_teardown_reaper_kills_this_homes_children_but_not_the_server)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_smoke.py", line 216, in test_teardown_reaper_kills_this_homes_children_but_not_the_server
+    self.assertIn(straggler.pid, killed)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 95955 not found in []
+
+======================================================================
+FAIL: test_t_spawn_16_read_only_wrapper (test_spawn.TestSpawn.test_t_spawn_16_read_only_wrapper)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_spawn.py", line 464, in test_t_spawn_16_read_only_wrapper
+    self.assertTrue(
+    ~~~~~~~~~~~~~~~^
+        start_command.startswith(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        start_command,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: False is not true : /usr/bin/sandbox-exec -p '(version 1)\n(allow default)\n(deny file-write* (subpath \"/private/tmp/txkit-hq4ltygt/repo\") (subpath \"/private/tmp/txkit-hq4ltygt/home/worktrees/repo-7f301b8d\"))' claude --effort high --no-chrome --allowedTools Bash --disallowedTools Edit Write NotebookEdit --permission-mode dontAsk --setting-sources user
+
+======================================================================
+FAIL: test_t_tmux_18_respawn_pane_nest_attach (test_tmux.TestTmux.test_t_tmux_18_respawn_pane_nest_attach)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_tmux.py", line 711, in test_t_tmux_18_respawn_pane_nest_attach
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        _start_command(self, pane),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        f"bash -c 'set -m; TMUX= tmux attach -t {record['id']}; exec ${{SHELL:-zsh}}'",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: "bash[31 chars]-t 36bc28ab-ae95-41d8-a1be-18a5b2ae6179; exec \\${SHELL:-zsh}'" != "bash[31 chars]-t 36bc28ab-ae95-41d8-a1be-18a5b2ae6179; exec ${SHELL:-zsh}'"
+- bash -c 'set -m; TMUX= tmux attach -t 36bc28ab-ae95-41d8-a1be-18a5b2ae6179; exec \${SHELL:-zsh}'
+?                                                                                  -
++ bash -c 'set -m; TMUX= tmux attach -t 36bc28ab-ae95-41d8-a1be-18a5b2ae6179; exec ${SHELL:-zsh}'
+
+
+======================================================================
+FAIL: test_t_tmuxconf_11_non_ascii_tag_colour_agrees_with_list (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_11_non_ascii_tag_colour_agrees_with_list)
+Q13 PARITY (Python code points): the helper's `colour<n>` for a non-ASCII tag is the
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_tmuxconf.py", line 460, in test_t_tmuxconf_11_non_ascii_tag_colour_agrees_with_list
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        result.out,
+        ^^^^^^^^^^^
+        f"#[bold]w#[default] #[fg=colour{chips['é']},#{{?pane_active,bold,nobold}}][é]#[default] "
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        f"#[fg=colour{chips['ab']},#{{?pane_active,bold,nobold}}][ab]#[default]",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: '#[bo[21 chars]olour,#{?pane_active,bold,nobold}][é]#[default[55 chars]ult]' != '#[bo[21 chars]olour73,#{?pane_active,bold,nobold}][é]#[defau[57 chars]ult]'
+- #[bold]w#[default] #[fg=colour,#{?pane_active,bold,nobold}][é]#[default] #[fg=colour141,#{?pane_active,bold,nobold}][ab]#[default]
++ #[bold]w#[default] #[fg=colour73,#{?pane_active,bold,nobold}][é]#[default] #[fg=colour141,#{?pane_active,bold,nobold}][ab]#[default]
+?                               ++
+
+
+======================================================================
+FAIL: test_t_tmuxconf_13_kill_tx_session_view_home_and_plain_session (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_13_kill_tx_session_view_home_and_plain_session)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_tmuxconf.py", line 614, in test_t_tmuxconf_13_kill_tx_session_view_home_and_plain_session
+    plain_client.expect("tx kill: session 'p' not found (no live @tx_id, no store record)")
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/txkit.py", line 583, in expect
+    raise AssertionError(f"{text!r} not seen on the pty within {timeout}s; got {strip_ansi(self.output)!r}")
+AssertionError: "tx kill: session 'p' not found (no live @tx_id, no store record)" not seen on the pty within 10.0s; got '\x1b=\x1b(B\r\nThe default interactive shell is now zsh.\r\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\r\nFor more details, please visit https://support.apple.com/kb/HT208050.\r\nbash-3.2$ \r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n[p] 0:tmux*                                                                                                                                                             "MacFilip.local" 19:33 24-Sep-26\x1b(B\x1b(B\r\nThe default interactive shell is now zsh.\r\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\r\nFor more details, please visit https://support.apple.com/kb/HT208050.\r\nbash-3.2$ \r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n[p] 0:tmux*                                                                                                                                                             "MacFilip.local" 19:33 24-Sep-26\x1b(Bkill tx session "p"? (y/n)  \x1b(B                                                                                                                                                                            \x1b(B\r\nThe default interactive shell is now zsh.\r\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\r\nFor more details, please visit https://support.apple.com/kb/HT208050.\r\nbash-3.2$ \r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n[p] 0:tmux*                                                                                                                                                             "MacFilip.local" 19:33 24-Sep-26\x1b(B[p] 0:bash*                                                                                                                                                             "MacFilip.local" 19:33 24-Sep-26\x1b(B\x1b(B\r\nThe default interactive shell is now zsh.\r\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\r\nFor more details, please visit https://support.apple.com/kb/HT208050.\r\nbash-3.2$ \r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n[p] 0:bash*                                                                                                                                                             "MacFilip.local" 19:33 24-Sep-26\x1b(B'
+
+======================================================================
+FAIL: test_t_tmuxconf_14_edit_popup_geometry (test_tmuxconf.TestTmuxconf.test_t_tmuxconf_14_edit_popup_geometry)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_tmuxconf.py", line 630, in test_t_tmuxconf_14_edit_popup_geometry
+    self.assert_popup(client, pane, popup_width)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Sok205/PycharmProjects/tx-ide/port-tests/test_tmuxconf.py", line 647, in assert_popup
+    self.assertRegex(text, r"› Name:\s+w")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Regex didn't match: '› Name:\\s+w' not found in '0 "MacFilip.local"──────────────────────────────────────────────────────────────────────────────\x1b(B1\x1b(B "MacFilip.local"─────────────────────────────────────────────────────────────────────────────────┬────││││││││││││││││││││││││││││││││││││││││││││││││\x1b(B                                                                                                    \r\n                    \r\n                    \r\n                    \r\n                    \r\n                    \r\n                    \r\n                    \r\n                    \r\n                    \r\n                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n                                                                                                    \r\n[2375e3f2-0:bash*                                                   "MacFilip.local" 19:33 24-Sep-26                                                                                                   The default interactive shell is now zsh.                                                          To update your account to use zsh, please run `chsh -s /bin/zsh`.                                  For more details, please visit https://support.apple.com/kb/HT208050.                              bash-3.2$                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           [Views] 0:bash*                                                                                                                                                         "MacFilip.local" 19:33 24-Sep-26╭─ Edit session ───────────────────────────────────────────────────────────────╮││││││││││││││││╰──────────────────────────────────────────────────────────────────────────────╯\x1b(B╭─ Edit session ───────────────────────────────────────────────────────────────╮││││││││││││││││╰──────────────────────────────────────────────────────────────────────────────╯\x1b(B\n\n\n\n\n\n\n    Name:\x1b(B   w                                                                  Tags:\x1b(B   a,bComma-separated  empty clears tags   switch   Enter save   Esc cancel\x1b(B'
+
+----------------------------------------------------------------------
+Ran 847 tests in 925.936s
+
+FAILED (failures=18, errors=13, skipped=75)
