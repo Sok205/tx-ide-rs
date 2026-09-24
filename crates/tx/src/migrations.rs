@@ -22,7 +22,7 @@ use crate::artifact::{ARTIFACT_SCHEMA_VERSION, Artifact};
 use crate::artifact_store::ArtifactStore;
 use crate::session::{RecordError, SCHEMA_VERSION, Session, py_repr};
 use crate::store::{IgnoreSkips, SessionStore, StoreError};
-use crate::tmux::Tmux;
+use crate::tmux::{Tmux, TmuxError};
 
 const UPGRADABLE_FROM: [u64; 3] = [3, 4, 5];
 const ARTIFACT_UPGRADABLE_FROM: [u64; 1] = [1];
@@ -74,7 +74,10 @@ enum Step {
 }
 
 /// Migrate every upgradable session record under `directory` in place.
-pub fn migrate_sessions(directory: &Path, tmux: &Tmux) -> SessionsReport {
+/// A `TmuxError` while stamping a live view aborts the run, as in the reference (it is outside the
+/// migrator's `except` list): files already handled stay handled, later ones are untouched, and
+/// the CLI prints `tx migrate: <error>`.
+pub fn migrate_sessions(directory: &Path, tmux: &Tmux) -> Result<SessionsReport, TmuxError> {
     let store = SessionStore::new(directory, Rc::new(IgnoreSkips));
     let mut report = SessionsReport::default();
     for (name, path) in json_files(directory) {
@@ -82,13 +85,25 @@ pub fn migrate_sessions(directory: &Path, tmux: &Tmux) -> SessionsReport {
             Ok(Step::Migrated) => report.migrated.push(name),
             Ok(Step::ViewRemoved(view)) => report.views_removed.push(view),
             Ok(Step::Untouched(reason)) => report.skipped.push((name, reason)),
-            Err(skip) => report.skipped.push((name, skip.reason())),
+            Err(Failure::Skip(skip)) => report.skipped.push((name, skip.reason())),
+            Err(Failure::Abort(error)) => return Err(error),
         }
     }
-    report
+    Ok(report)
 }
 
-fn migrate_session(path: &Path, store: &SessionStore, tmux: &Tmux) -> Result<Step, Skip> {
+enum Failure {
+    Skip(Skip),
+    Abort(TmuxError),
+}
+
+impl From<Skip> for Failure {
+    fn from(skip: Skip) -> Self {
+        Self::Skip(skip)
+    }
+}
+
+fn migrate_session(path: &Path, store: &SessionStore, tmux: &Tmux) -> Result<Step, Failure> {
     let raw = read_json(path)?;
     let data = as_dict(&raw)?;
     let version = data.get("schema_version").unwrap_or(&Value::Null);
@@ -104,7 +119,7 @@ fn migrate_session(path: &Path, store: &SessionStore, tmux: &Tmux) -> Result<Ste
     }
     if data.get("kind").and_then(Value::as_str) == Some(VIEW_KIND) {
         let name = match data.get("name") {
-            None => return Err(Skip::new("KeyError", "'name'")),
+            None => return Err(Skip::new("KeyError", "'name'").into()),
             Some(Value::String(name)) => name.clone(),
             Some(other) => {
                 return Err(Skip::new(
@@ -113,12 +128,12 @@ fn migrate_session(path: &Path, store: &SessionStore, tmux: &Tmux) -> Result<Ste
                         "expected str, bytes or os.PathLike object, not {}",
                         py_type_name(other)
                     ),
-                ));
+                )
+                .into());
             }
         };
         if tmux.has_session(&name) {
-            tmux.set_tx_view(&name)
-                .map_err(|error| Skip::new("CalledProcessError", error.to_string()))?;
+            tmux.set_tx_view(&name).map_err(Failure::Abort)?;
         }
         std::fs::remove_file(path).map_err(|error| os_error(&error, path))?;
         return Ok(Step::ViewRemoved(name));
@@ -748,6 +763,45 @@ mod tests {
         Tmux::new("/nonexistent/tmux", TmuxEnv::default())
     }
 
+    #[test]
+    fn a_view_stamp_failure_aborts_the_run() {
+        // migrate_sessions lets TmuxError escape (it is not in the except list): earlier files are
+        // done, the view file and every later file are untouched (Cursor review of wave 3).
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let view = serde_json::json!({"schema_version": 3, "kind": "view", "name": "Views"});
+        std::fs::write(sessions.join("b-view.json"), view.to_string()).unwrap();
+        std::fs::write(sessions.join("c-later.json"), "{}").unwrap();
+        // A tmux whose has-session succeeds and whose set-option fails; staged through `cp` so a
+        // sibling test forking mid-write cannot make its exec fail with ETXTBSY.
+        let staged = dir.path().join("tmux.staged");
+        std::fs::write(
+            &staged,
+            "#!/bin/sh\n[ \"$1\" = has-session ] && exit 0\necho boom >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&staged, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let fake = dir.path().join("tmux");
+        assert!(
+            std::process::Command::new("cp")
+                .arg("-p")
+                .arg(&staged)
+                .arg(&fake)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let error = migrate_sessions(&sessions, &Tmux::new(&fake, TmuxEnv::default())).unwrap_err();
+        assert!(error.to_string().contains("boom"), "{error}");
+        assert!(sessions.join("b-view.json").exists());
+        assert_eq!(
+            std::fs::read_to_string(sessions.join("c-later.json")).unwrap(),
+            "{}"
+        );
+    }
+
     fn skipped(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
             .iter()
@@ -766,7 +820,7 @@ mod tests {
         std::fs::write(sessions.join("utf.json"), b"{\"a\": \"\xff\"}").unwrap();
         std::fs::create_dir(sessions.join("dir.json")).unwrap();
 
-        let report = migrate_sessions(&sessions, &no_server());
+        let report = migrate_sessions(&sessions, &no_server()).unwrap();
 
         assert_eq!(
             report.migrated,
@@ -833,7 +887,7 @@ mod tests {
         assert_eq!(read("bad.json"), "{not json");
 
         // Idempotent: a second run migrates nothing.
-        let again = migrate_sessions(&sessions, &no_server());
+        let again = migrate_sessions(&sessions, &no_server()).unwrap();
         assert!(again.migrated.is_empty() && again.views_removed.is_empty());
         assert!(
             again
@@ -849,7 +903,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("v.json");
         std::fs::write(&path, r#"{"schema_version": 5, "kind": "view", "name": 5}"#).unwrap();
-        let report = migrate_sessions(dir.path(), &no_server());
+        let report = migrate_sessions(dir.path(), &no_server()).unwrap();
         assert_eq!(
             report.skipped,
             skipped(&[(

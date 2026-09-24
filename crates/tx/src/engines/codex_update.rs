@@ -649,7 +649,17 @@ mod tests {
             }
             assert!(check());
         };
-        wait_for(&|| std::fs::read_to_string(&log).unwrap().ends_with("ok\n"));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !std::fs::read_to_string(&log).unwrap().ends_with("ok\n") && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            std::fs::read_to_string(&log).unwrap().ends_with("ok\n"),
+            "log={:?} marker={:?}",
+            std::fs::read_to_string(&log),
+            std::fs::read_to_string(&marker)
+        );
         let text = std::fs::read_to_string(&log).unwrap();
         let (header, rest) = text.split_once('\n').unwrap();
         assert!(header.starts_with('[') && header.ends_with("Z] Checking for Codex updates"));

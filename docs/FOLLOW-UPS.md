@@ -9,3 +9,9 @@
 - Installer scripts call `tx` hidden verbs through a scratch `TX_IDE_HOME` because the core creates
   the home skeleton on every start; a core flag to skip `ensure` would remove the `tx_seam` wrapper.
 - `setup/iterm.sh` still edits iTerm prefs with `python3` (optional path).
+- migrations: CPython-only JSON tokens (`NaN`, `Infinity`) in a record give a JSONDecodeError skip
+  reason instead of Python's `not an upgradable record (schema_version=nan)` (corrupt input only).
+- messages: the composer count uses ASCII digits; Python's `\d` is Unicode; a non-string truthy
+  `uuid` is replaced by the synthetic key (Python keeps it).
+- codex_update schedule test: rare flake under the full parallel suite (~1/25), not reproduced
+  in isolation; the assertion now prints the log + marker when it fires.

@@ -4,9 +4,9 @@
 //!   never the pid).
 //! - C4: terminal records are skipped and only real transitions are saved + logged.
 //! - C5: a stuck `WORKING` llm (turn older than the threshold, pane no longer the agent) is
-//!   demoted to `IDLE`. The threshold comes from `config.json`, read only when a live `WORKING`
-//!   llm needs it (the reference reads it every pass; only its crash on a malformed file is
-//!   observable, and that becomes an error here).
+//!   demoted to `IDLE`. The threshold comes from `config.json`, read once per pass as the
+//!   reference does, so a malformed file fails every reconciling read (as an error, not a
+//!   traceback — Q26).
 //! - Q32: reconcile never revives — a terminal record stays terminal (`SessionService::revive`
 //!   is the explicit way back).
 //! - Launch scripts of sessions gone from tmux are swept after a grace period.
@@ -61,7 +61,8 @@ impl Reconciler<'_> {
     pub fn reconcile(&self) -> Result<Vec<Session>, ReconcileError> {
         let live = self.live_by_id();
         self.sweep_launch_scripts(&live);
-        let mut threshold: Option<f64> = None;
+        let threshold =
+            Config::load(&self.home.config_path())?.stuck_working_threshold_seconds()?;
         let mut changed = Vec::new();
         for mut session in self.store.all() {
             if session.state.is_terminal() {
@@ -69,7 +70,7 @@ impl Reconciler<'_> {
             }
             let dirty = match live.get(&session.id) {
                 None => self.mark_exited(&mut session)?,
-                Some(command) => self.demote_if_stuck(&mut session, command, &mut threshold)?,
+                Some(command) => self.demote_if_stuck(&mut session, command, threshold)?,
             };
             if dirty {
                 changed.push(session);
@@ -136,7 +137,7 @@ impl Reconciler<'_> {
         &self,
         session: &mut Session,
         command: &str,
-        threshold: &mut Option<f64>,
+        threshold: f64,
     ) -> Result<bool, ReconcileError> {
         let Some(turn_started_at) = session
             .llm()
@@ -145,11 +146,6 @@ impl Reconciler<'_> {
             .and_then(Number::as_f64)
         else {
             return Ok(false);
-        };
-        let threshold = match *threshold {
-            Some(value) => value,
-            None => *threshold
-                .insert(Config::load(&self.home.config_path())?.stuck_working_threshold_seconds()?),
         };
         if events::now() - turn_started_at < threshold || self.is_agent_command(command) {
             return Ok(false);
@@ -198,6 +194,35 @@ fn modified_secs(path: &Path) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_malformed_config_fails_every_pass_even_without_candidates() {
+        // reconcile.py reads config.json before looking at any record, so `{oops` fails `tx ls`
+        // even when no WORKING llm exists (Cursor review of wave 3).
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        home.ensure().unwrap();
+        std::fs::write(home.config_path(), "{oops").unwrap();
+        let store = SessionStore::new(
+            home.sessions_dir(),
+            std::rc::Rc::new(crate::store::IgnoreSkips),
+        );
+        let tmux = Tmux::new("/usr/bin/false", crate::tmux::TmuxEnv { tmux: None });
+        let events = EventLog::new(home.log_path());
+        let engines = EngineRegistry::new();
+        let reconciler = Reconciler {
+            store: &store,
+            tmux: &tmux,
+            events: &events,
+            engines: &engines,
+            home: &home,
+            actor: "",
+        };
+        assert!(matches!(
+            reconciler.reconcile(),
+            Err(ReconcileError::Config(_))
+        ));
+    }
 
     #[test]
     fn version_commands() {

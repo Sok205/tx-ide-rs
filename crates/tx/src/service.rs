@@ -1191,11 +1191,8 @@ mod tests {
         assert!(changed[0].ended_at.is_none());
         assert_eq!(fx.log().last().unwrap().2, "w working → idle (stuck)");
 
-        // A malformed config is an error only when a stuck candidate needs the threshold.
+        // A malformed config fails every pass, candidate or not (reconcile.py reads it first).
         std::fs::write(fx.home.config_path(), "{").unwrap();
-        assert!(service.reconcile().unwrap().is_empty());
-        session.state = State::Working;
-        service.store().save(&session).unwrap();
         assert!(matches!(
             service.reconcile().unwrap_err(),
             ServiceError::Reconcile(ReconcileError::Config(_))
