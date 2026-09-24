@@ -716,7 +716,7 @@ fn send_user_message(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32
 
 fn migrate(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxError> {
     parse!(parser, argv);
-    let sessions = migrate_sessions(&deps.home.sessions_dir(), deps.service.tmux());
+    let sessions = migrate_sessions(&deps.home.sessions_dir(), deps.service.tmux())?;
     for name in &sessions.migrated {
         println!("  migrated {name} → v{SCHEMA_VERSION}");
     }
