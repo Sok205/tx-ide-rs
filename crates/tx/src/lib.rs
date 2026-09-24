@@ -6,6 +6,7 @@ pub mod artifact;
 pub mod artifact_service;
 pub mod artifact_store;
 pub mod chat;
+pub mod difflib;
 pub mod engines;
 pub mod events;
 pub mod grouping;
