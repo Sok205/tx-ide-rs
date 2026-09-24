@@ -23,6 +23,42 @@ because the default macOS `$TMPDIR` (`/var/folders/…`) makes tmux socket paths
 **Totals:** 847 tests: 710 ok, 75 skipped, 67 FAIL, 14 ERROR. That is **81 failing entries**,
 subtests counted separately.
 
+## Rerun with `TMPDIR=/private/tmp` (the target denominator)
+
+`TMPDIR=/private/tmp python3.14 -m unittest discover port-tests -v` — log in
+`docs/baseline-python.log`. **847 tests: 745 ok, 75 skipped, 18 FAIL + 11 ERROR entries
+(27 distinct methods).** These 27 are what the reference itself cannot pass on this Mac; the
+remaining buckets below still explain them (argparse wording, Linux-only kit code, bash 3.2,
+tmux < 3.6). Distinct failing methods:
+
+- `test_t_attach_05_arm_file_lifecycle`
+- `test_t_chat_12_rollover_self_catch_up_detaches_the_finish`
+- `test_t_chat_13_read_only_source_respawns_inside_the_sandbox`
+- `test_t_chat_16_detached_finish_survives_callers_pane`
+- `test_t_chat_19_read_only_propagation_rollover`
+- `test_t_cli_03_parity_required_and_exclusive_flags`
+- `test_t_eng_01_effort_levels_and_default`
+- `test_t_eng_12_claude_read_only_launch_shape`
+- `test_t_eng_41_codex_schedule_update_interval_flock_log`
+- `test_t_hist_07_hook_ingest_coalesces_while_archive_waits`
+- `test_t_hist_08_fresh_reload_before_stamp_preserves_a_rename`
+- `test_t_hist_09_archive_forces_full_ingest_and_prints_count`
+- `test_t_model_05_engine_values`
+- `test_t_nvim_16_socket_discovery`
+- `test_t_recon_05_agent_command_keeps_working`
+- `test_t_recon_05_non_agent_command_is_demoted`
+- `test_t_ro_03_no_sandbox_exec_refused_and_worktree_removed`
+- `test_t_spawn_16_bwrap_absent_refused`
+- `test_t_spawn_16_read_only_wrapper`
+- `test_t_status_10_background_post_to_sessions_graph`
+- `test_t_status_10_listener_hangs_script_returns_promptly`
+- `test_t_status_10_no_connection_without_port_or_rate_limits`
+- `test_t_tmux_18_respawn_pane_nest_attach`
+- `test_t_tmuxconf_11_non_ascii_tag_colour_agrees_with_list`
+- `test_t_tmuxconf_13_kill_tx_session_view_home_and_plain_session`
+- `test_t_tmuxconf_14_edit_popup_geometry`
+- `test_teardown_reaper_kills_this_homes_children_but_not_the_server`
+
 **Main finding:** 50 of the 81 entries go away if you run with **`TMPDIR=/private/tmp`**. This was
 verified by re-running all 38 affected methods: every one passed except the argparse-wording ones
 in bucket 2. Use `TMPDIR=/private/tmp` for every run on this host, for both the reference and the port.
