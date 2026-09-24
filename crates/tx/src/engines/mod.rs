@@ -3,6 +3,7 @@
 //! self-registration).
 
 pub mod adapter;
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod codex_rollout;
@@ -13,6 +14,7 @@ pub use adapter::{
     CapturedChat, DEFAULT_EFFORT, Effort, EngineAdapter, EngineError, LaunchEnv, LaunchOptions,
     StateSource,
 };
+pub use antigravity::AntigravityEngine;
 pub use claude::ClaudeEngine;
 pub use codex::{CodexEngine, CodexHostEnv};
 pub use registry::{EngineRegistry, RegistrationId};

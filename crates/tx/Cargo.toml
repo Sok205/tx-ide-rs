@@ -17,7 +17,9 @@ thiserror.workspace = true
 libc = "0.2"
 tempfile = "3"
 sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 [lints]
 workspace = true
