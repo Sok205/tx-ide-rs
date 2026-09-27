@@ -3,6 +3,7 @@
 pub mod http;
 pub mod pack;
 pub mod progress;
+pub mod tx_check;
 
 use std::path::PathBuf;
 
