@@ -1,5 +1,7 @@
 # 05. Delegate to an agent worker
 
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+
 ## The idea
 
 Responses can carry structured data, not just text. The common format is **JSON** — like
@@ -10,8 +12,8 @@ sent before the body.
 ## The tx skill
 
 `tx spawn` with `--prompt` starts a Claude Code **worker** on a task (the default engine is
-`claude`). tx gives it its own git **worktree** — a separate copy of your project on its own
-branch — so it cannot trample your files.
+`claude`). tx gives it its own git **worktree** — a separate copy of your project, checked out
+on a detached commit — so it cannot trample your files.
 
 ## Your task
 

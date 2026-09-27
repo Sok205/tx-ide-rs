@@ -1,5 +1,7 @@
 # 08. POST, and trying two ideas at once
 
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+
 ## The idea
 
 `GET` asks for something. **POST** sends something — the data travels in the request **body**,
@@ -19,7 +21,9 @@ a branch of the chat. Use it to try two designs side by side, then keep the bett
 2. `tx fork time` — the fork (named `time-fork` by default) starts from the same conversation.
    In the fork, ask for the same feature but storing notes in a `notes.json` file instead.
    Commit.
-3. Review both (lesson 06), merge the one you prefer, restart `server`, and try:
+3. Review both (lesson 06): for the one you prefer, `tx show <its name>`, note its `cwd`, then
+   `git -C <that cwd> switch -c tutor/notes` and `git merge tutor/notes` in the project shell.
+   Restart `server` and try:
    `curl -i -X POST localhost:8000/notes -d '{"text": "buy milk"}'`
 
 ## Check

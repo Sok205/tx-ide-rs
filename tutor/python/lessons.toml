@@ -76,6 +76,7 @@ id = "10-assistant-tests"
 file = "lessons/10-assistant-tests.md"
 requires = ["claude"]
 checks = [
+  { kind = "file", label = "test_server.py exists", path = "test_server.py" },
   { kind = "command", label = "python3 -m unittest passes", argv = ["python3", "-m", "unittest", "-v"] },
 ]
 

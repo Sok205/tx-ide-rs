@@ -10,11 +10,15 @@ web API.
 - `tx kill NAME` stops a session; its record stays.
 - `tx archive NAME` files a finished record away from `tx ls`.
 - `tx revive NAME` brings back an exited record whose tmux session is still alive.
+- `prefix+X`, from inside a session's pane, is the same kill through the picker: it asks you to
+  confirm ("kill tx session ..."), then runs `tx kill` on it (so the record is marked exited, not
+  a raw tmux kill that would leave the store stale).
 
 ## Your task
 
 1. `tx ls` — list what is left (it shows only live sessions).
-2. Kill every tutor worker: `tx kill NAME` for each.
+2. Kill every tutor worker: jump to it (`prefix+t`) and press `prefix+X`, confirm with `y` — or
+   `tx kill NAME` from the shell.
 3. Archive them: `tx archive NAME` for each.
 4. Keep `server` if you like — it is a shell, not a worker.
 

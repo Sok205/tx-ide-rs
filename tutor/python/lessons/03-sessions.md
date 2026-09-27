@@ -18,9 +18,10 @@ outlives the pane you started it from.
 ## Your task
 
 1. Stop the server from lesson 02: go to its pane and press `Ctrl-C`.
-2. In the shell: `tx spawn server --tag tutor --cwd "$PWD" --cmd "python3 server.py"`
+2. In the shell: `tx spawn server --tag tutor --cwd "$PWD" --cmd "$SHELL"`
 3. `tx ls` — find `server`.
-4. `prefix+t`, type `serv`, Enter. You are now inside the `server` session, seeing its output.
+4. `prefix+t`, type `serv`, Enter. You are now inside the `server` session, a shell. Run
+   `python3 server.py` — from now on this session hosts your server.
 5. Still there, press `prefix+e`. The cursor starts in `Name`; press `↓` to move to `Tags` —
    its cursor lands at the end of the existing `tutor` — and type `,http-tutor`. Press `Enter`
    to save (`Esc` would cancel). The CLI equivalent is `tx tag server tutor,http-tutor`.

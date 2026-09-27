@@ -1,5 +1,7 @@
 # 11. Handover: a fresh mind with the context
 
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+
 ## The idea
 
 Long conversations get slow and muddled. Better: summarize what matters and start fresh.
