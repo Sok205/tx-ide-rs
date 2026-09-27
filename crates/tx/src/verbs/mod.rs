@@ -8,3 +8,4 @@ pub mod hooks;
 pub mod install;
 pub mod listing;
 pub mod sessions;
+pub mod tutor;

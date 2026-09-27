@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-const ALL: [&str; 10] = [
+const ALL: [&str; 11] = [
     "engine.claude",
     "engine.codex",
     "engine.antigravity",
@@ -14,6 +14,7 @@ const ALL: [&str; 10] = [
     "verbs.hooks",
     "verbs.chat",
     "verbs.artifacts",
+    "verbs.tutor",
     "verbs.install",
 ];
 

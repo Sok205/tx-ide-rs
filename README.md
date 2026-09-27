@@ -94,6 +94,7 @@ tx spawn review --tag api --engine codex --effort 4 --cwd ~/code/app    # a Code
 tx spawn-nvim notes --tag api --cwd ~/code/app --diff                   # nvim with a diffview
 tx ls                                                  # what is running
 tx attach                                              # the fzf picker (prefix+t in tmux)
+tx tutor start                                         # the interactive walkthrough (builds an HTTP server)
 ```
 
 Inside tmux: `prefix+t` opens the picker, `prefix+/` sends a line to the tx-assistant,
@@ -114,6 +115,7 @@ Inside tmux: `prefix+t` opens the picker, `prefix+/` sends a line to the tx-assi
 | Artifacts | `artifact create / modify / group / ls / show / diff / open / doctor` |
 | Sync | `sync push / pull / status` |
 | Home base | `start` |
+| Learn | `tutor` (`start`, `check`, `next`, `prev`, `goto`, `status`, `hint`, `reset`) |
 
 Hidden helpers used by the tmux fragment, hooks and installer start with `_` (`tx _plugins`,
 `tx hook …`, `tx _list`, …). Two verbs are new compared with the Python version: `tx revive
@@ -122,6 +124,14 @@ Hidden helpers used by the tmux fragment, hooks and installer start with `_` (`t
 Agents launch from a detached worktree under `$TX_IDE_HOME/worktrees/`. Roles (`--role NAME`)
 come from `agents/` in this repo, overridden or extended by `$TX_IDE_HOME/user-agents/NAME.md`
 and `NAME.local.md`.
+
+## Tutorial
+
+`tx tutor start` is tx-ide's vimtutor: 12 lessons that teach the picker, spawning, reviewing,
+chat operations, the tx-assistant and cleanup while you build a small Python HTTP server (no
+networking knowledge needed). It scaffolds `~/tx-tutor/python`, opens the `tutor-python` view
+(lesson on the left, shell on the right); `tx tutor check` verifies each step. Lessons live in
+`tutor/<lang>/` — see `tutor/python/lessons.toml` for the check format.
 
 ## Configuration
 
@@ -143,7 +153,7 @@ and `NAME.local.md`.
 - `sync` — the remote for `tx sync` (`local` with `path`, or `s3` with `bucket` / `prefix`).
 - `plugins` — switch components off. Entries: `engine.claude`, `engine.codex`,
   `engine.antigravity`, `verbs.home`, `verbs.sessions`, `verbs.listing`, `verbs.hooks`,
-  `verbs.chat`, `verbs.artifacts`, `verbs.install`. A disabled verb group's commands disappear
+  `verbs.chat`, `verbs.artifacts`, `verbs.tutor`, `verbs.install`. A disabled verb group's commands disappear
   (from `--help` too); a disabled engine cannot be spawned. `tx _plugins` shows each entry's
   status. A malformed `config.json` falls back to the defaults.
 

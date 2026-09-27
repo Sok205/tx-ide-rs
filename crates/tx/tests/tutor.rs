@@ -93,3 +93,98 @@ fn the_reference_solution_completes_the_curriculum() {
         assert!(passes(&pack, project.path(), &lesson.id), "{} failed", lesson.id);
     }
 }
+
+// ----- CLI tests (`tx tutor …`) --------------------------------------------------------------
+
+fn tx(home: &Path, args: &[&str]) -> std::process::Output {
+    let tx_home = home.join("tx-home");
+    std::fs::create_dir_all(&tx_home).unwrap();
+    Command::new(env!("CARGO_BIN_EXE_tx"))
+        .args(args)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", home)
+        .env("TX_IDE_HOME", &tx_home)
+        .env("TMUX_TMPDIR", home)
+        .output()
+        .unwrap()
+}
+
+fn out(output: &std::process::Output) -> String {
+    format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))
+}
+
+/// A started tutorial without tmux: the skeleton copied into `<home>/proj`, progress on lesson 01.
+fn started(home: &Path) -> PathBuf {
+    let project = home.join("proj");
+    copy_dir(&pack().skeleton(), &project);
+    std::fs::write(project.join(".tx-tutor"), "python\n").unwrap();
+    let progress = serde_json::json!({"dir": project, "current": "01-what-is-a-server", "passed": []});
+    std::fs::create_dir_all(home.join("tx-home/tutor")).unwrap();
+    std::fs::write(home.join("tx-home/tutor/python.json"), progress.to_string()).unwrap();
+    project
+}
+
+#[test]
+fn verbs_need_a_started_tutorial() {
+    let home = tempfile::tempdir().unwrap();
+    let output = tx(home.path(), &["tutor", "status"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(out(&output).contains("no python tutorial in progress; run `tx tutor start`"), "{}", out(&output));
+}
+
+#[test]
+fn goto_status_hint_move_through_lessons() {
+    let home = tempfile::tempdir().unwrap();
+    started(home.path());
+    let goto = tx(home.path(), &["tutor", "goto", "4"]);
+    assert_eq!(goto.status.code(), Some(0), "{}", out(&goto));
+    assert!(out(&goto).contains("Lesson 4/12: 04-first-route"));
+    let status = out(&tx(home.path(), &["tutor", "status"]));
+    assert!(status.contains("▶  4. 04-first-route"), "{status}");
+    assert!(status.contains("   1. 01-what-is-a-server"), "{status}");
+    assert!(out(&tx(home.path(), &["tutor", "hint"])).contains("self.path == \"/hello\""));
+    assert!(out(&tx(home.path(), &["tutor", "next"])).contains("Lesson 5/12: 05-spawn-worker"));
+    assert!(out(&tx(home.path(), &["tutor", "hint"])).contains("no hint for this lesson"));
+    assert!(out(&tx(home.path(), &["tutor", "prev"])).contains("Lesson 4/12"));
+    assert_eq!(tx(home.path(), &["tutor", "goto", "99"]).status.code(), Some(1));
+}
+
+#[test]
+fn check_advances_only_on_pass() {
+    if !has_python() {
+        eprintln!("skipped: python3 not on PATH");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    started(home.path());
+    tx(home.path(), &["tutor", "goto", "4"]);
+    let failed = tx(home.path(), &["tutor", "check"]);
+    assert_eq!(failed.status.code(), Some(1), "{}", out(&failed));
+    assert!(out(&failed).contains("✗ GET /hello answers 200 with 'hello'"));
+    tx(home.path(), &["tutor", "goto", "2"]);
+    let passed = tx(home.path(), &["tutor", "check"]);
+    assert_eq!(passed.status.code(), Some(0), "{}", out(&passed));
+    assert!(out(&passed).contains("✓ GET / answers 200"));
+    assert!(out(&passed).contains("Lesson 3/12: 03-sessions"));
+    assert!(out(&tx(home.path(), &["tutor", "status"])).contains("✓  2. 02-request-response"));
+}
+
+#[test]
+fn reset_rewinds_progress() {
+    let home = tempfile::tempdir().unwrap();
+    started(home.path());
+    tx(home.path(), &["tutor", "goto", "6"]);
+    let reset = tx(home.path(), &["tutor", "reset"]);
+    assert_eq!(reset.status.code(), Some(0), "{}", out(&reset));
+    assert!(out(&tx(home.path(), &["tutor", "status"])).contains("▶  1. 01-what-is-a-server"));
+}
+
+#[test]
+fn the_verb_can_be_switched_off() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join("tx-home")).unwrap();
+    std::fs::write(home.path().join("tx-home/config.json"), r#"{"plugins": {"verbs.tutor": {"disabled": true}}}"#).unwrap();
+    let help = out(&tx(home.path(), &["--help"]));
+    assert!(!help.contains("tutor"), "{help}");
+}
