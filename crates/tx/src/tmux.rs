@@ -4,7 +4,7 @@
 //! - Q27: calls that address a session BY NAME use exact targets — `=name` for session-typed
 //!   targets (`has-session`, `kill-session`, `rename-session`, `switch-client`) and `=name:` for
 //!   pane-typed ones (`show-options` / `set-option` behind `get_tx_id` /
-//!   `set_tx_view` / `is_view`; tmux rejects a bare `=name` there). Generic target-taking methods
+//!   `set_tx_view` / `is_view` / `split_window`; tmux rejects a bare `=name` there). Generic target-taking methods
 //!   (`set_option`, `send_keys`, `display_message`, …) pass the caller's target through untouched.
 //! - Q30: `@remote-session` is read at PANE scope (`show-options -p`).
 

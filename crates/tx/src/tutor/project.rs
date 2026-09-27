@@ -27,27 +27,47 @@ pub fn is_tutor_project(dir: &Path) -> bool {
 
 /// Copy `skeleton` into `dir` (created if needed), write the marker, `git init -b main` and
 /// commit. Refuses a non-empty directory that is not already a tutor project.
+///
+/// All work is done in a staging directory; if any step fails, `dir` is left untouched.
 pub fn scaffold(skeleton: &Path, dir: &Path, lang: &str) -> Result<(), ProjectError> {
     let io_error = |path: &Path| {
         let path = path.to_path_buf();
         move |source| ProjectError::Io { path, source }
     };
+    // Up-front check: if dir exists, is non-empty, and is not a tutor project, refuse.
     let occupied = std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some());
     if occupied && !is_tutor_project(dir) {
         return Err(ProjectError::NotEmpty(dir.to_path_buf()));
     }
-    copy_dir(skeleton, dir).map_err(io_error(dir))?;
-    std::fs::write(dir.join(MARKER), format!("{lang}\n")).map_err(io_error(dir))?;
-    git(dir, &["init", "-q", "-b", "main"])?;
-    git(dir, &["add", "-A"])?;
+    // Create parent directory.
+    let parent = dir.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(io_error(parent))?;
+    // Create staging directory.
+    let staging = tempfile::Builder::new()
+        .prefix(".tx-tutor-staging-")
+        .tempdir_in(parent)
+        .map_err(|source| ProjectError::Io { path: parent.to_path_buf(), source })?;
+    let staging_path = staging.path();
+    // Do all work in staging directory.
+    copy_dir(skeleton, staging_path).map_err(io_error(staging_path))?;
+    std::fs::write(staging_path.join(MARKER), format!("{lang}\n")).map_err(io_error(staging_path))?;
+    git(staging_path, &["init", "-q", "-b", "main"])?;
+    git(staging_path, &["add", "-A"])?;
     git(
-        dir,
+        staging_path,
         &[
             "-c", "user.name=tx tutor",
             "-c", "user.email=tutor@tx-ide.invalid",
             "commit", "-q", "-m", "tutor: skeleton",
         ],
-    )
+    )?;
+    // On success: remove target if it exists (empty only), then move staging to target.
+    if dir.exists() {
+        std::fs::remove_dir(dir).map_err(io_error(dir))?;
+    }
+    let staging_path = staging.keep();
+    std::fs::rename(staging_path, dir).map_err(io_error(dir))?;
+    Ok(())
 }
 
 fn copy_dir(from: &Path, to: &Path) -> io::Result<()> {
@@ -112,5 +132,22 @@ mod tests {
         std::fs::write(dir.path().join("mine.txt"), "x").unwrap();
         assert!(matches!(scaffold(skeleton.path(), dir.path(), "python"), Err(ProjectError::NotEmpty(_))));
         assert!(!is_tutor_project(dir.path()));
+    }
+
+    #[test]
+    fn failure_leaves_dir_untouched_and_retry_succeeds() {
+        let skeleton = skeleton();
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("python");
+        // First attempt: scaffold from a non-existent skeleton path.
+        let nonexistent = root.path().join("nonexistent");
+        let err = scaffold(nonexistent.as_path(), &dir, "python").unwrap_err();
+        assert!(matches!(err, ProjectError::Io { .. }));
+        // Target dir should not exist after failure.
+        assert!(!dir.exists(), "target dir should not exist after failure");
+        // Second attempt: scaffold from the valid skeleton should now succeed.
+        scaffold(skeleton.path(), &dir, "python").unwrap();
+        assert!(is_tutor_project(&dir));
+        assert_eq!(std::fs::read_to_string(dir.join("static/a.txt")).unwrap(), "a");
     }
 }
