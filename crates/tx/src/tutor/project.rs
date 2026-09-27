@@ -58,6 +58,7 @@ pub fn scaffold(skeleton: &Path, dir: &Path, lang: &str) -> Result<(), ProjectEr
         &[
             "-c", "user.name=tx tutor",
             "-c", "user.email=tutor@tx-ide.invalid",
+            "-c", "commit.gpgsign=false",
             "commit", "-q", "-m", "tutor: skeleton",
         ],
     )?;
