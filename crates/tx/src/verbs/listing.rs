@@ -67,19 +67,13 @@ impl Deps {
 
     /// This binary, canonical (the reference's `<repo>/bin/tx`, resolved).
     fn bin_tx(&self) -> PathBuf {
-        std::fs::canonicalize(&self.env.exe).unwrap_or_else(|_| self.env.exe.clone())
+        crate::verbs::common::bin_tx(&self.env)
     }
 
     /// `_repo_root()`: the checkout holding `bin/tx-assistant` — the first ancestor of this binary
     /// that has one (a cargo build lives under `<repo>/target/<profile>/`).
     fn repo_root(&self) -> PathBuf {
-        let exe = self.bin_tx();
-        exe.ancestors()
-            .skip(1)
-            .find(|dir| dir.join("bin").join("tx-assistant").is_file())
-            .map(Path::to_path_buf)
-            .or_else(|| exe.parent().and_then(Path::parent).map(Path::to_path_buf))
-            .unwrap_or_default()
+        crate::verbs::common::repo_root(&self.env)
     }
 
     fn inside_tmux(&self) -> bool {
