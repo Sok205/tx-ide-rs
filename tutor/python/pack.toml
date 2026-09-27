@@ -1,0 +1,3 @@
+name = "Python (stdlib http.server)"
+run = ["python3", "server.py"]
+requires = ["python3"]
