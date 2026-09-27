@@ -38,7 +38,7 @@ the project directory. Re-running `start` resumes at the saved lesson.
 |---|---|---|---|---|
 | 01 | What a server is | `tx tutor start`, tutor view, `C-h/j/k/l` | Look around | `confirm` |
 | 02 | Request → response, `curl` | shell pane | ✍ run `python3 server.py`, `curl localhost:8000` | `http GET / → 200` |
-| 03 | — | `prefix+t`, `tx ls`, `prefix+e`, `prefix+s` | Tag the tutor session `http-tutor` | `tx`: session has tag |
+| 03 | — | `tx spawn --cmd`, `prefix+t`, `tx ls`, `prefix+e`, `prefix+s` | Run the server in its own tx session `server` (views are not records, so they cannot be tagged), then tag it `http-tutor` with `prefix+e` | `tx`: session `server` has tag `http-tutor` |
 | 04 | Paths, status codes | nvim editing | ✍ `GET /hello` → `hello` | `http` |
 | 05 | JSON, `Content-Type` | `tx spawn --prompt --tag` | 🤖 worker adds `GET /time` (JSON) | `tx`: claude worker tagged `tutor` |
 | 06 | — | worktrees, `spawn-nvim --diff`, merge | Review the worker's diff, merge its branch into the main checkout | `http GET /time` 200, `application/json`, valid JSON |
@@ -47,7 +47,7 @@ the project directory. Re-running `start` resumes at the saved lesson.
 | 09 | — | `tx history`, `chat ls`, `tx resume` | Find and resume the discarded fork | `tx`: a chat with origin `resume` |
 | 10 | Testing a server | `prefix+/` tx-assistant | 🤖 ask the assistant to spawn a test-writing worker; merge | `command`: `python3 -m unittest` exits 0 |
 | 11 | — | `handover` / `rollover` | Hand the test worker's context to a fresh chat | `tx`: a chat with origin `handover` |
-| 12 | Recap | `kill` / `archive` / `revive`, `prefix+X` | Archive the tutorial workers | `tx`: no live `tutor`-tagged workers; ≥1 archived |
+| 12 | Recap | `kill` / `archive` / `revive`, `prefix+X` | Archive the tutorial workers | `tx`: `absent` llm records tagged `tutor` in a live state; ≥1 archived |
 
 Rules:
 - Checks on agent-written work assert **behaviour** (status, headers, JSON shape, substrings),
@@ -105,8 +105,8 @@ checks = [
 | kind | fields | passes when |
 |---|---|---|
 | `http` | `method`, `path`, `body?`, `status`, `headers?` (glob values), `contains?`, `json?` | the pack's server, started in the main checkout on a free port, answers as specified |
-| `tx` | `session = { tag?, name?, engine?, role?, state?, has_parent?, archived?, chat_origin? }`, `count?` (default ≥1) | enough records from `SessionService` match every given field; `chat_origin` matches any chat's `origin.how` (`fork`, `handover`, `resume`, …) |
-| `file` | `path`, `matches?` (regex) | file exists in the main checkout (and matches) |
+| `tx` | `session = { tag?, name?, engine?, role?, state? (list, any-of), has_parent?, chat_origin? }`, `count?` (default ≥1), `absent?` | enough records from `SessionService::reconcile()` match every given field (with `absent = true`: none match); `chat_origin` matches any chat's `origin.how` (`fork`, `handover`, `resume`, …) |
+| `file` | `path`, `contains?` (substring; no regex crate) | file exists in the main checkout (and contains the text) |
 | `command` | `argv` | exits 0 in the main checkout; output shown on failure |
 | `confirm` | `prompt` | the user answers `y` |
 
@@ -122,13 +122,15 @@ Checks in one lesson share one server start. No new crate dependencies.
 `crates/tx/src/verbs/tutor.rs` (+ `crates/tx/src/tutor/` for pack loading, checks, progress),
 registered in `plugins::MANIFEST` as `verbs.tutor`, and so can be switched off in `config.json`.
 It injects `home`, `commands`, `service`, `tmux`, like the other verb groups, and registers one
-visible verb, `tutor`, with subcommands.
+visible verb, `tutor`, with subcommands. (`tx --help` lists it after the reference's verbs,
+like `revive`.)
 
 - **Pack loading**: `tutor/<lang>/` resolved from the repo root (`deps.repo_root()`); parsed with
   the existing `toml` + `serde`.
-- **View**: `start` creates `tutor-<lang>` through `SpawnSpec::for_view` and the existing pane
-  helpers; the nvim pane uses the per-session nvim socket (D11) so `check` / `next` can reopen
-  the current lesson file with `nvim --server <sock> --remote`.
+- **View**: `start` creates `tutor-<lang>` through `SpawnSpec::for_view` (a view is a live tmux
+  session, not a record). Pane 0 runs `nvim --listen $TX_IDE_HOME/tutor/<lang>.sock <lesson>`;
+  a new `Tmux::split_window` adds the shell pane. `check` / `next` / … reopen the current lesson
+  with `nvim --server <sock> --remote <file>` (silently skipped when nvim is not listening).
 - **Progress**: `$TX_IDE_HOME/tutor/<lang>.json` = `{ "dir": ..., "current": "<id>",
   "passed": ["<id>", ...] }`, written atomically through the storage helpers.
 
@@ -158,9 +160,10 @@ Subcommands:
 - Unit: `lessons.toml` / `pack.toml` parsing (every shipped pack loads, every referenced file
   exists); `tx` predicate against fixture records; HTTP client + matcher against a throwaway
   `TcpListener`; progress transitions.
-- Integration: copy the Python skeleton to a temp dir, apply each ✍ solution and a canned patch
-  for each 🤖 step in order, run all `http` / `file` / `command` checks — proves the curriculum is
-  completable. `tx` checks are covered by fixtures, not live tmux.
+- Integration: copy the Python skeleton to a temp dir; assert lesson 02 passes and lessons 04 / 07
+  fail against the bare skeleton (checks are not vacuous); then drop in a reference solution
+  (`crates/tx/tests/fixtures/tutor-python/`) and assert every `http` / `file` / `command` check of
+  every lesson passes — proves the curriculum is completable. `tx` checks are covered by fixtures, not live tmux.
 - `cargo check`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`.
 
 ## Out of scope (v1)
