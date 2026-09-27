@@ -36,6 +36,8 @@ A case the reference itself fails on the host is not a parity target until expla
 - Behaviour of quirks whose spec decision is **FIX** (Appendix B): the port implements the fixed
   behaviour, pinned by the `@expected_failure_on_python` legs. `@python_reference_only` legs are
   skipped for the port by design.
+- `tx tutor`: a new public verb with no reference counterpart, so `tx --help` gains one line
+  (see `docs/FOLLOW-UPS.md`).
 
 ## Quirk decisions (from port-tests NOTES)
 

@@ -131,7 +131,9 @@ and `NAME.local.md`.
 chat operations, the tx-assistant and cleanup while you build a small Python HTTP server (no
 networking knowledge needed). It scaffolds `~/tx-tutor/python`, opens the `tutor-python` view
 (lesson on the left, shell on the right); `tx tutor check` verifies each step. Lessons live in
-`tutor/<lang>/` — see `tutor/python/lessons.toml` for the check format.
+`tutor/<lang>/` — see `tutor/python/lessons.toml` for the check format. Pack servers must answer
+with a `Content-Length` (not chunked) body — the checker's HTTP client does not decode chunked
+transfer-encoding.
 
 ## Configuration
 

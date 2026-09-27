@@ -41,7 +41,7 @@ the project directory. Re-running `start` resumes at the saved lesson.
 | 03 | — | `tx spawn --cmd`, `prefix+t`, `tx ls`, `prefix+e`, `prefix+s` | Run the server in its own tx session `server` (views are not records, so they cannot be tagged), then tag it `http-tutor` with `prefix+e` | `tx`: session `server` has tag `http-tutor` |
 | 04 | Paths, status codes | nvim editing | ✍ `GET /hello` → `hello` | `http` |
 | 05 | JSON, `Content-Type` | `tx spawn --prompt --tag` | 🤖 worker adds `GET /time` (JSON) | `tx`: claude worker tagged `tutor` |
-| 06 | — | worktrees, `spawn-nvim --diff`, merge | Review the worker's diff, merge its branch into the main checkout | `http GET /time` 200, `application/json`, valid JSON |
+| 06 | — | worktrees, `spawn-nvim --diff`, merge | Review the worker's diff, name its detached commit with a branch (`git switch -c`), merge that branch into the main checkout | `http GET /time` 200, `application/json`, valid JSON |
 | 07 | 404, error handling | attach via picker, `send-message` | Ask the worker to explain status codes; ✍ 404 for unknown paths | `http GET /nope → 404` |
 | 08 | POST, request body, 201 | `tx fork` | 🤖 fork the worker's chat, try two `POST /notes` designs, merge one | `tx`: a chat with origin `fork`; `http POST /notes → 201`; `GET /notes` body contains the posted note |
 | 09 | — | `tx history`, `chat ls`, `tx resume` | Find and resume the discarded fork | `tx`: a chat with origin `resume` |
@@ -52,8 +52,10 @@ the project directory. Re-running `start` resumes at the saved lesson.
 Rules:
 - Checks on agent-written work assert **behaviour** (status, headers, JSON shape, substrings),
   never exact code.
-- Agent workers run in tx worktrees (`$TX_IDE_HOME/worktrees/`); their code reaches the project
-  only after the user merges. All `http` / `file` / `command` checks run against the **main
+- Agent workers run in tx worktrees (`$TX_IDE_HOME/worktrees/`), each on a detached commit (worker
+  worktrees are created with `git worktree add --detach`, and worktrees of one repo share branches);
+  their code reaches the project only after the user names that commit with a branch
+  (`git switch -c`) and merges it. All `http` / `file` / `command` checks run against the **main
   checkout**. Lesson 06 teaches this explicitly.
 - Lessons 01–04 and all ✍ parts work without an agent engine.
 - Every ✍ lesson has a hint block in its markdown; `tx tutor hint` prints the solution snippet
@@ -122,8 +124,8 @@ Checks in one lesson share one server start. No new crate dependencies.
 `crates/tx/src/verbs/tutor.rs` (+ `crates/tx/src/tutor/` for pack loading, checks, progress),
 registered in `plugins::MANIFEST` as `verbs.tutor`, and so can be switched off in `config.json`.
 It injects `home`, `commands`, `service`, `tmux`, like the other verb groups, and registers one
-visible verb, `tutor`, with subcommands. (`tx --help` lists it after the reference's verbs,
-like `revive`.)
+visible verb, `tutor`, with subcommands. `tutor` is a public verb, so `tx --help` gains one line —
+a deliberate difference from the Python reference, recorded in docs/FOLLOW-UPS.md.
 
 - **Pack loading**: `tutor/<lang>/` resolved from the repo root (`deps.repo_root()`); parsed with
   the existing `toml` + `serde`.
