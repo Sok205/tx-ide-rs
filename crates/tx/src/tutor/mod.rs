@@ -1,5 +1,6 @@
 //! `tx tutor`: lesson packs, progress and checks for the vimtutor-style walkthrough.
 
+pub mod http;
 pub mod pack;
 pub mod progress;
 
