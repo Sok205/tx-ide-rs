@@ -38,6 +38,17 @@ enum TutorError {
     NoLesson(String),
     #[error("saved lesson '{0}' is not in the pack; run `tx tutor reset`")]
     StaleLesson(String),
+    #[error(
+        "a {lang} tutorial is already in progress in {}; run `tx tutor reset --hard` to start \
+         over there, or delete {} to start somewhere else",
+        dir.display(),
+        path.display()
+    )]
+    AlreadyStarted {
+        lang: String,
+        dir: PathBuf,
+        path: PathBuf,
+    },
 }
 
 struct Deps {
@@ -115,6 +126,24 @@ impl Command for Tutor {
         let path = Progress::path(&deps.home, lang);
         let mut progress =
             Progress::load(&path)?.ok_or_else(|| TutorError::NotStarted(lang.to_owned()))?;
+        // `reset` must work even when `progress.current` no longer resolves in the pack (a
+        // renumbered/renamed lesson) — it is the only way out of that dead end.
+        if action == "reset" {
+            if args.get_flag("hard") {
+                if !confirm(&format!("Delete {} and start over?", progress.dir.display())) {
+                    return Ok(1);
+                }
+                if project::is_tutor_project(&progress.dir) {
+                    std::fs::remove_dir_all(&progress.dir)?;
+                }
+                project::scaffold(&pack.skeleton(), &progress.dir, &pack.lang)?;
+            }
+            progress.passed.clear();
+            progress.current = pack.lessons[0].id.clone();
+            progress.save(&path)?;
+            deps.announce(&pack, 0);
+            return Ok(0);
+        }
         let current = pack
             .index_of(&progress.current)
             .ok_or_else(|| TutorError::StaleLesson(progress.current.clone()))?;
@@ -140,19 +169,6 @@ impl Command for Tutor {
                 pack.resolve(key)
                     .ok_or_else(|| TutorError::NoLesson(key.to_owned()))?
             }
-            "reset" => {
-                if args.get_flag("hard") {
-                    if !confirm(&format!("Delete {} and start over?", progress.dir.display())) {
-                        return Ok(1);
-                    }
-                    if project::is_tutor_project(&progress.dir) {
-                        std::fs::remove_dir_all(&progress.dir)?;
-                    }
-                    project::scaffold(&pack.skeleton(), &progress.dir, &pack.lang)?;
-                }
-                progress.passed.clear();
-                0
-            }
             _ => unreachable!("argparse restricts the action"),
         };
         progress.current = pack.lessons[moved_to].id.clone();
@@ -164,6 +180,23 @@ impl Command for Tutor {
 
 impl Deps {
     fn start(&self, pack: &Pack, args: &Matches) -> Result<i32, BoxError> {
+        // Check for a conflicting `--dir` before anything else (requires, tmux, scaffold): a
+        // saved tutorial in progress elsewhere must not be silently split across two dirs.
+        let path = Progress::path(&self.home, &pack.lang);
+        let home_dir = self.env.var("HOME").map(Path::new);
+        let requested = args.get_one("dir").map(|dir| expand_user(dir, home_dir));
+        let saved = Progress::load(&path)?;
+        if let (Some(saved), Some(dir)) = (&saved, &requested)
+            && dir != &saved.dir
+        {
+            return Err(TutorError::AlreadyStarted {
+                lang: pack.lang.clone(),
+                dir: saved.dir.clone(),
+                path: path.clone(),
+            }
+            .into());
+        }
+
         let missing: Vec<&str> = BASE_REQUIRES
             .iter()
             .copied()
@@ -179,16 +212,9 @@ impl Deps {
                  pass; skip them with `tx tutor goto N`"
             );
         }
-        let path = Progress::path(&self.home, &pack.lang);
-        let home_dir = self.env.var("HOME").map(Path::new);
-        let requested = args.get_one("dir").map(|dir| expand_user(dir, home_dir));
-        let mut progress = match (Progress::load(&path)?, requested) {
-            (Some(mut saved), Some(dir)) => {
-                saved.dir = dir;
-                saved
-            }
-            (Some(saved), None) => saved,
-            (None, requested) => Progress {
+        let mut progress = match saved {
+            Some(saved) => saved,
+            None => Progress {
                 dir: requested.unwrap_or_else(|| {
                     expand_user(&format!("~/tx-tutor/{}", pack.lang), home_dir)
                 }),
@@ -218,7 +244,11 @@ impl Deps {
             let cwd = progress.dir.to_string_lossy().into_owned();
             let spec = SpawnSpec::for_view(&view, cwd.clone(), nvim, &self.engines.borrow());
             self.service.spawn_view(spec)?;
-            self.tmux.split_window(&view, &cwd, &default_shell(&self.env))?;
+            if let Err(error) = self.tmux.split_window(&view, &cwd, &default_shell(&self.env)) {
+                // Half-built view: kill it so a re-run of `start` rebuilds it cleanly.
+                self.tmux.kill_session(&view);
+                return Err(error.into());
+            }
             println!("{view} view created.");
         }
         if self.env.var("TMUX").is_some_and(|value| !value.is_empty()) {

@@ -162,6 +162,8 @@ fn check_advances_only_on_pass() {
     let failed = tx(home.path(), &["tutor", "check"]);
     assert_eq!(failed.status.code(), Some(1), "{}", out(&failed));
     assert!(out(&failed).contains("✗ GET /hello answers 200 with 'hello'"));
+    // A failed check never advances progress (global constraint): still on lesson 4.
+    assert!(out(&tx(home.path(), &["tutor", "status"])).contains("▶  4. 04-first-route"));
     tx(home.path(), &["tutor", "goto", "2"]);
     let passed = tx(home.path(), &["tutor", "check"]);
     assert_eq!(passed.status.code(), Some(0), "{}", out(&passed));
@@ -178,6 +180,40 @@ fn reset_rewinds_progress() {
     let reset = tx(home.path(), &["tutor", "reset"]);
     assert_eq!(reset.status.code(), Some(0), "{}", out(&reset));
     assert!(out(&tx(home.path(), &["tutor", "status"])).contains("▶  1. 01-what-is-a-server"));
+}
+
+/// A stale `current` (no longer in the pack) must not be a dead end: `reset` is the way out.
+#[test]
+fn reset_recovers_from_a_stale_lesson() {
+    let home = tempfile::tempdir().unwrap();
+    let project = started(home.path());
+    let progress = serde_json::json!({"dir": project, "current": "99-gone", "passed": []});
+    std::fs::write(home.path().join("tx-home/tutor/python.json"), progress.to_string()).unwrap();
+    let status = tx(home.path(), &["tutor", "status"]);
+    assert_eq!(status.status.code(), Some(1), "{}", out(&status));
+    assert!(out(&status).contains("tx tutor reset"), "{}", out(&status));
+    let reset = tx(home.path(), &["tutor", "reset"]);
+    assert_eq!(reset.status.code(), Some(0), "{}", out(&reset));
+    assert!(out(&tx(home.path(), &["tutor", "status"])).contains("▶  1. 01-what-is-a-server"));
+}
+
+/// `start --dir` must refuse to silently split an in-progress tutorial across two directories.
+#[test]
+fn start_refuses_a_different_dir_than_the_saved_one() {
+    let home = tempfile::tempdir().unwrap();
+    let project = started(home.path());
+    let other = home.path().join("elsewhere");
+    let start = tx(
+        home.path(),
+        &["tutor", "start", "--dir", other.to_str().unwrap()],
+    );
+    assert_eq!(start.status.code(), Some(1), "{}", out(&start));
+    let message = out(&start);
+    assert!(message.contains("already in progress"), "{message}");
+    assert!(message.contains(&project.display().to_string()), "{message}");
+    assert!(message.contains("tx tutor reset --hard"), "{message}");
+    assert!(message.contains("tutor/python.json"), "{message}");
+    assert!(!other.exists(), "start must not touch the other dir");
 }
 
 #[test]
