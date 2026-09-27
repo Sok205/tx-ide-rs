@@ -340,6 +340,12 @@ impl Tmux {
             .map(drop)
     }
 
+    /// Split `session`'s active pane side by side, running `command` in `cwd`.
+    pub fn split_window(&self, session: &str, cwd: &str, command: &str) -> Result<(), TmuxError> {
+        self.run(&["split-window", "-h", "-t", &exact_session_pane(session), "-c", cwd, command])
+            .map(drop)
+    }
+
     /// Attach `name` in the foreground from outside tmux: real stdio, `$TMUX` removed. Returns
     /// the attach exit code (-1 when killed by a signal).
     pub fn attach_session(&self, name: &str) -> Result<i32, TmuxError> {
@@ -717,6 +723,13 @@ mod tests {
         assert_eq!(bare, "tmux switch-client -t Views failed: ");
         let exact = tmux.switch_client("Views").unwrap_err().to_string();
         assert_eq!(exact, "tmux switch-client -t =Views failed: ");
+    }
+
+    #[test]
+    fn split_window_targets_the_session_exactly() {
+        let tmux = Tmux::new("/usr/bin/false", TmuxEnv::default());
+        let error = tmux.split_window("tutor-python", "/p", "zsh").unwrap_err().to_string();
+        assert_eq!(error, "tmux split-window -h -t =tutor-python: -c /p zsh failed: ");
     }
 
     #[test]

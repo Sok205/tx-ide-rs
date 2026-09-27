@@ -4,6 +4,7 @@ pub mod checks;
 pub mod http;
 pub mod pack;
 pub mod progress;
+pub mod project;
 pub mod tx_check;
 
 use std::path::PathBuf;
