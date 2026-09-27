@@ -3,6 +3,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use crate::session::Session;
 use crate::tutor::http::{self, Server};
@@ -16,6 +17,8 @@ pub struct Context<'a> {
     pub project: &'a Path,
     /// The pack's server command.
     pub run: &'a [String],
+    /// The `http` check's server-readiness timeout (pack.toml `ready_timeout_seconds`, default 5 s).
+    pub ready_timeout: Duration,
     pub sessions: &'a dyn Fn() -> Result<Vec<Session>, String>,
     pub confirm: &'a mut dyn FnMut(&str) -> bool,
 }
@@ -55,7 +58,7 @@ pub fn run(checks: &[Check], ctx: &mut Context<'_>) -> Report {
     for check in checks {
         let outcome = match check {
             Check::Http(check) => {
-                match server.get_or_insert_with(|| Server::start(ctx.run, ctx.project)) {
+                match server.get_or_insert_with(|| Server::start(ctx.run, ctx.project, Some(ctx.ready_timeout))) {
                     Ok(server) => http::request(server.port, &check.method, &check.path, check.body.as_deref())
                         .map_err(|error| format!("request failed: {error}\n{}", server.stderr_tail()))
                         .and_then(|response| http::evaluate(check, &response)),
@@ -154,7 +157,7 @@ mod tests {
             tx("two"),
         ];
         let run_cmd: Vec<String> = Vec::new();
-        let report = run(&checks, &mut Context { project: dir.path(), run: &run_cmd, sessions: &sessions, confirm: &mut confirm });
+        let report = run(&checks, &mut Context { project: dir.path(), run: &run_cmd, ready_timeout: Duration::from_secs(5), sessions: &sessions, confirm: &mut confirm });
         let outcomes: Vec<bool> = report.results.iter().map(|(_, result)| result.is_ok()).collect();
         assert_eq!(outcomes, [true, false, false, true, false, true, false, false]);
         assert!(!report.passed());
@@ -170,7 +173,7 @@ mod tests {
     fn no_checks_pass() {
         let sessions = || -> Result<Vec<Session>, String> { Ok(Vec::new()) };
         let mut confirm = |_: &str| false;
-        let report = run(&[], &mut Context { project: Path::new("."), run: &[], sessions: &sessions, confirm: &mut confirm });
+        let report = run(&[], &mut Context { project: Path::new("."), run: &[], ready_timeout: Duration::from_secs(5), sessions: &sessions, confirm: &mut confirm });
         assert!(report.passed());
     }
 
@@ -182,7 +185,7 @@ mod tests {
         let sessions = || -> Result<Vec<Session>, String> { Ok(Vec::new()) };
         let mut confirm = |_: &str| true;
         let run_cmd = ["sh".to_owned(), "-c".to_owned(), "echo nope >&2; exit 1".to_owned()];
-        let report = run(&[http.clone(), http], &mut Context { project: Path::new("."), run: &run_cmd, sessions: &sessions, confirm: &mut confirm });
+        let report = run(&[http.clone(), http], &mut Context { project: Path::new("."), run: &run_cmd, ready_timeout: Duration::from_secs(5), sessions: &sessions, confirm: &mut confirm });
         assert!(report.results.iter().all(|(_, result)| result.as_ref().is_err_and(|e| e.contains("nope"))));
     }
 }

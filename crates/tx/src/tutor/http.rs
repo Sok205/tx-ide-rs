@@ -4,13 +4,14 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::tutor::pack::HttpCheck;
 
-const READY_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const TAIL_LINES: usize = 20;
 
@@ -131,11 +132,13 @@ pub struct Server {
     child: Child,
     pub port: u16,
     stderr_path: PathBuf,
+    ready_timeout: Duration,
     _scratch: tempfile::TempDir,
 }
 
 impl Server {
-    pub fn start(run: &[String], cwd: &Path) -> Result<Self, String> {
+    /// `ready_timeout`: `None` defaults to 5 s (`DEFAULT_READY_TIMEOUT`).
+    pub fn start(run: &[String], cwd: &Path, ready_timeout: Option<Duration>) -> Result<Self, String> {
         let (program, args) = run
             .split_first()
             .ok_or("pack.toml `run` is empty")?;
@@ -153,12 +156,16 @@ impl Server {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)
+            // Its own process group, so the server's own children (e.g. a shell's grandchildren
+            // spawning the real listener) are killed with it on drop instead of being leaked.
+            .process_group(0)
             .spawn()
             .map_err(|error| format!("could not run {program}: {error}"))?;
         let mut server = Self {
             child,
             port,
             stderr_path,
+            ready_timeout: ready_timeout.unwrap_or(DEFAULT_READY_TIMEOUT),
             _scratch: scratch,
         };
         server.wait_ready()?;
@@ -166,7 +173,7 @@ impl Server {
     }
 
     fn wait_ready(&mut self) -> Result<(), String> {
-        let deadline = Instant::now() + READY_TIMEOUT;
+        let deadline = Instant::now() + self.ready_timeout;
         let mut delay = Duration::from_millis(25);
         loop {
             if TcpStream::connect(("127.0.0.1", self.port)).is_ok() {
@@ -182,7 +189,7 @@ impl Server {
                 return Err(format!(
                     "the server did not listen on port {} within {}s\n{}",
                     self.port,
-                    READY_TIMEOUT.as_secs(),
+                    self.ready_timeout.as_secs(),
                     self.stderr_tail()
                 ));
             }
@@ -200,6 +207,12 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
+        // Kill the whole process group (the server's own children with it); `child.kill()` as a
+        // fallback if the group is already gone or the kill otherwise fails.
+        let pid = self.child.id() as i32;
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -286,7 +299,7 @@ mod tests {
     #[test]
     fn a_server_that_dies_reports_its_stderr() {
         let run = ["sh".into(), "-c".into(), "echo boom >&2; exit 3".into()];
-        let error = Server::start(&run, Path::new(".")).err().unwrap();
+        let error = Server::start(&run, Path::new("."), None).err().unwrap();
         assert!(error.contains("exited") && error.contains("boom"), "{error}");
     }
 
@@ -303,8 +316,40 @@ mod tests {
             "-c".into(),
             "exec python3 -m http.server --bind 127.0.0.1 \"$PORT\"".into(),
         ];
-        let server = Server::start(&run, dir.path()).unwrap();
+        let server = Server::start(&run, dir.path(), None).unwrap();
         let response = request(server.port, "GET", "/index.html", None).unwrap();
         assert_eq!((response.status, response.body.as_str()), (200, "tutor"));
+    }
+
+    #[test]
+    fn dropping_the_server_kills_its_process_group() {
+        if Command::new("python3").arg("--version").output().is_err() {
+            eprintln!("skipped: python3 not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let pid_path = dir.path().join("pid");
+        let run = [
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "sleep 60 & echo $! > '{}' ; exec python3 -m http.server --bind 127.0.0.1 \"$PORT\"",
+                pid_path.display()
+            ),
+        ];
+        let server = Server::start(&run, dir.path(), None).unwrap();
+        let grandchild_pid: i32 = std::fs::read_to_string(&pid_path)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let alive = || unsafe { libc::kill(grandchild_pid, 0) == 0 };
+        assert!(alive(), "the background sleep should still be alive before drop");
+        drop(server);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while alive() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!alive(), "the whole process group should be dead within 2s of drop");
     }
 }

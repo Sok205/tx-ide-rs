@@ -48,7 +48,13 @@ fn passes(pack: &Pack, project: &Path, id: &str) -> bool {
     let mut confirm = |_: &str| true;
     let report = run(
         &automatable(pack, id),
-        &mut Context { project, run: &pack.meta.run, sessions: &sessions, confirm: &mut confirm },
+        &mut Context {
+            project,
+            run: &pack.meta.run,
+            ready_timeout: std::time::Duration::from_secs(5),
+            sessions: &sessions,
+            confirm: &mut confirm,
+        },
     );
     if !report.passed() {
         eprintln!("{id}:\n{}", report.render());
@@ -175,11 +181,21 @@ fn check_advances_only_on_pass() {
 #[test]
 fn reset_rewinds_progress() {
     let home = tempfile::tempdir().unwrap();
-    started(home.path());
-    tx(home.path(), &["tutor", "goto", "6"]);
+    let project = started(home.path());
+    // Seed some passed lessons (rather than relying on `check` actually passing one) so reset has
+    // something to rewind.
+    let progress = serde_json::json!({
+        "dir": project,
+        "current": "06-review-and-merge",
+        "passed": ["01-what-is-a-server", "02-request-response", "03-sessions", "04-first-route", "05-spawn-worker"],
+    });
+    std::fs::write(home.path().join("tx-home/tutor/python.json"), progress.to_string()).unwrap();
+    assert!(out(&tx(home.path(), &["tutor", "status"])).contains("✓  4. 04-first-route"));
     let reset = tx(home.path(), &["tutor", "reset"]);
     assert_eq!(reset.status.code(), Some(0), "{}", out(&reset));
-    assert!(out(&tx(home.path(), &["tutor", "status"])).contains("▶  1. 01-what-is-a-server"));
+    let status = out(&tx(home.path(), &["tutor", "status"]));
+    assert!(status.contains("▶  1. 01-what-is-a-server"), "{status}");
+    assert!(!status.lines().any(|line| line.starts_with('✓')), "{status}");
 }
 
 /// A stale `current` (no longer in the pack) must not be a dead end: `reset` is the way out.
@@ -214,6 +230,30 @@ fn start_refuses_a_different_dir_than_the_saved_one() {
     assert!(message.contains("tx tutor reset --hard"), "{message}");
     assert!(message.contains("tutor/python.json"), "{message}");
     assert!(!other.exists(), "start must not touch the other dir");
+}
+
+/// `--dir` is relative to the caller's cwd; it must not be compared/saved as-is (it would then
+/// never match a saved absolute dir, wrongly refusing as `AlreadyStarted` — or the reverse).
+#[test]
+fn start_resolves_a_relative_dir_against_the_caller_cwd() {
+    let home = tempfile::tempdir().unwrap();
+    // `tx`'s child-process cwd is reported resolved (macOS: /var -> /private/var); canonicalize
+    // here so the seeded progress dir matches it, or the comparison would spuriously differ.
+    let home = home.path().canonicalize().unwrap();
+    started(&home); // seeds progress with dir = <home>/proj
+    let tx_home = home.join("tx-home");
+    let output = Command::new(env!("CARGO_BIN_EXE_tx"))
+        .args(["tutor", "start", "--dir", "proj"])
+        .current_dir(&home)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", &home)
+        .env("TX_IDE_HOME", &tx_home)
+        .env("TMUX_TMPDIR", &home)
+        .output()
+        .unwrap();
+    let message = out(&output);
+    assert!(!message.contains("already in progress"), "{message}");
 }
 
 #[test]

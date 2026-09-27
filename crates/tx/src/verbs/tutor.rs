@@ -6,6 +6,7 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
 use std::rc::Rc;
+use std::time::Duration;
 
 use cordis::{BoxError, Component, Ctx};
 
@@ -184,7 +185,15 @@ impl Deps {
         // saved tutorial in progress elsewhere must not be silently split across two dirs.
         let path = Progress::path(&self.home, &pack.lang);
         let home_dir = self.env.var("HOME").map(Path::new);
-        let requested = args.get_one("dir").map(|dir| expand_user(dir, home_dir));
+        // A relative `--dir` is relative to the caller's cwd, not wherever `tx` happens to run
+        // from later — absolutize it now so it is used consistently below and when saved.
+        let requested = args.get_one("dir").map(|dir| expand_user(dir, home_dir)).map(|dir| {
+            if dir.is_relative() {
+                self.env.cwd.join(dir)
+            } else {
+                dir
+            }
+        });
         let saved = Progress::load(&path)?;
         if let (Some(saved), Some(dir)) = (&saved, &requested)
             && dir != &saved.dir
@@ -271,7 +280,10 @@ impl Deps {
         println!("Checking lesson {}/{}: {}", current + 1, pack.lessons.len(), lesson.id);
         for program in &lesson.requires {
             if !on_path(&self.env, program) {
-                eprintln!("tx tutor: this lesson needs `{program}`, which is not on PATH");
+                eprintln!(
+                    "tx tutor: this lesson needs `{program}`, which is not on PATH; skip this \
+                     lesson with `tx tutor next`"
+                );
             }
         }
         let sessions = || self.service.reconcile().map_err(|error| error.to_string());
@@ -281,6 +293,10 @@ impl Deps {
             &mut Context {
                 project: &progress.dir,
                 run: &pack.meta.run,
+                ready_timeout: pack
+                    .meta
+                    .ready_timeout_seconds
+                    .map_or(crate::tutor::http::DEFAULT_READY_TIMEOUT, Duration::from_secs),
                 sessions: &sessions,
                 confirm: &mut ask,
             },

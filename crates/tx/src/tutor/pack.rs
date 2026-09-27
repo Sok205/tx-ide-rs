@@ -36,6 +36,9 @@ pub struct Meta {
     pub run: Vec<String>,
     #[serde(default)]
     pub requires: Vec<String>,
+    /// Overrides the check runner's default 5 s server-readiness timeout.
+    #[serde(default)]
+    pub ready_timeout_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -175,6 +178,12 @@ pub struct Pack {
 impl Pack {
     /// The pack `<repo_root>/tutor/<lang>/`.
     pub fn find(repo_root: &Path, lang: &str) -> Result<Self, PackError> {
+        if lang.is_empty() || lang.contains('/') || lang.contains('\\') || lang.contains("..") {
+            return Err(PackError::UnknownLang {
+                lang: lang.to_owned(),
+                available: available(repo_root).join(", "),
+            });
+        }
         let dir = repo_root.join("tutor").join(lang);
         if !dir.join("pack.toml").is_file() {
             return Err(PackError::UnknownLang {
@@ -369,6 +378,19 @@ checks = [
         assert_eq!(pack.resolve("02-b"), Some(1));
         assert_eq!(pack.resolve("01-"), Some(0));
         assert_eq!(pack.resolve("0-nope"), None);
+    }
+
+    #[test]
+    fn find_rejects_a_pack_name_with_path_traversal_before_touching_the_filesystem() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("tutor")).unwrap();
+        // A pack outside `tutor/`, reachable only by escaping `tutor/<lang>` with `..`.
+        let dir = pack_dir(TWO);
+        std::fs::rename(dir.path(), root.path().join("evil")).unwrap();
+        for lang in ["", "../evil", "a/b", "a\\b", "sub/../../evil"] {
+            let error = Pack::find(root.path(), lang).unwrap_err();
+            assert!(matches!(error, PackError::UnknownLang { .. }), "{lang}: {error}");
+        }
     }
 
     #[test]
