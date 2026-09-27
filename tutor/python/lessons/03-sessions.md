@@ -11,7 +11,9 @@ outlives the pane you started it from.
 - `tx spawn NAME --tag TAG --cmd "COMMAND"` starts a tracked session running COMMAND.
 - `prefix+t` opens the **picker**: every tx session, fuzzy-searchable. Enter jumps to one.
 - `tx ls` lists sessions in the shell. `prefix+s` shows them in tmux's tree with names and tags.
-- `tx tag NAME TAG` reads or sets the tags of a session (comma-separated).
+- `prefix+e` opens a small popup form to rename a session or edit its tags: a `Name` field and
+  a `Tags` field (comma-separated). `↑`/`↓` (or Tab) switches field, `Enter` saves, `Esc`
+  cancels. The CLI equivalent is `tx tag NAME TAG`.
 
 ## Your task
 
@@ -19,8 +21,9 @@ outlives the pane you started it from.
 2. In the shell: `tx spawn server --tag tutor --cwd "$PWD" --cmd "python3 server.py"`
 3. `tx ls` — find `server`.
 4. `prefix+t`, type `serv`, Enter. You are now inside the `server` session, seeing its output.
-5. Still there, run `tx tag server tutor,http-tutor` to add the tag `http-tutor` (tags are
-   comma-separated).
+5. Still there, press `prefix+e`. The cursor starts in `Name`; press `↓` to move to `Tags` —
+   its cursor lands at the end of the existing `tutor` — and type `,http-tutor`. Press `Enter`
+   to save (`Esc` would cancel). The CLI equivalent is `tx tag server tutor,http-tutor`.
 6. `prefix+t` again and jump back to `tutor-python`.
 
 From now on `curl localhost:8000/…` talks to the `server` session. After you change
