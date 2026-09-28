@@ -355,6 +355,22 @@ impl Tmux {
             .map(drop)
     }
 
+    /// A paste buffer's contents; `None` when it does not exist.
+    pub fn show_buffer(&self, name: &str) -> Option<String> {
+        let (ok, out) = self.run_quiet(&["show-buffer", "-b", name]);
+        ok.then_some(out)
+    }
+
+    pub fn delete_buffer(&self, name: &str) {
+        let _ = self.run_quiet(&["delete-buffer", "-b", name]);
+    }
+
+    /// Show `message` on `client`'s status line (best effort).
+    pub fn display_status(&self, client: &str, message: &str) {
+        eprintln!("{message}");
+        let _ = self.run_quiet(&["display-message", "-c", client, message]);
+    }
+
     /// A global server option (`show-options -gvq`); `None` when unset / no server.
     pub fn global_option(&self, option: &str) -> Option<String> {
         let (_, out) = self.run_quiet(&["show-options", "-gvq", option]);
