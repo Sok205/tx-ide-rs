@@ -15,7 +15,7 @@ use crate::argparse::{Arg, Matches, Parser};
 use crate::engines::EngineRegistry;
 use crate::service::SessionService;
 use crate::shlex::shlex_quote;
-use crate::spawn::SpawnSpec;
+use crate::spawn::{NVIM_BASE_COMMAND, SpawnSpec, nvim_listen_command};
 use crate::storage::{Home, expand_user};
 use crate::tmux::Tmux;
 use crate::tutor::checks::{self, Context};
@@ -248,11 +248,7 @@ impl Deps {
             let socket = socket_path(&self.home, &pack.lang);
             let _ = std::fs::remove_file(&socket);
             let lesson = pack.lesson_path(pack.index_of(&progress.current).unwrap_or(0));
-            let nvim = format!(
-                "nvim --listen {} {}",
-                shlex_quote(&socket.to_string_lossy()),
-                shlex_quote(&lesson.to_string_lossy())
-            );
+            let nvim = lesson_nvim_command(&socket, &lesson);
             let cwd = progress.dir.to_string_lossy().into_owned();
             let spec = SpawnSpec::for_view(&view, cwd.clone(), nvim, &self.engines.borrow());
             self.service.spawn_view(spec)?;
@@ -365,6 +361,16 @@ impl Deps {
     }
 }
 
+/// The lesson pane: tx-ide's nvim (as `tx spawn-nvim` launches it), listening on the tutor
+/// socket so `check` / `next` can switch lessons.
+fn lesson_nvim_command(socket: &Path, lesson: &Path) -> String {
+    format!(
+        "{} {}",
+        nvim_listen_command(NVIM_BASE_COMMAND, &socket.to_string_lossy()),
+        shlex_quote(&lesson.to_string_lossy())
+    )
+}
+
 fn render_status(pack: &Pack, progress: &Progress, current: usize) -> String {
     pack.lessons
         .iter()
@@ -402,4 +408,19 @@ fn confirm(prompt: &str) -> bool {
     let mut answer = String::new();
     let _ = std::io::stdin().lock().read_line(&mut answer);
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_lesson_opens_in_tx_ides_nvim_listening_on_the_tutor_socket() {
+        let command = lesson_nvim_command(Path::new("/h/tutor/python.sock"), Path::new("/r/l 01.md"));
+        assert_eq!(
+            command,
+            "nvim --listen /h/tutor/python.sock \
+             +'set background=dark | colorscheme tokyonight-moon' '/r/l 01.md'"
+        );
+    }
 }
