@@ -248,7 +248,7 @@ impl Deps {
             let socket = socket_path(&self.home, &pack.lang);
             let _ = std::fs::remove_file(&socket);
             let lesson = pack.lesson_path(pack.index_of(&progress.current).unwrap_or(0));
-            let nvim = lesson_nvim_command(&socket, &lesson);
+            let nvim = lesson_nvim_command(&socket, &pack.dir.join("lessons"), &lesson);
             let cwd = progress.dir.to_string_lossy().into_owned();
             let spec = SpawnSpec::for_view(&view, cwd.clone(), nvim, &self.engines.borrow());
             self.service.spawn_view(spec)?;
@@ -362,11 +362,17 @@ impl Deps {
 }
 
 /// The lesson pane: tx-ide's nvim (as `tx spawn-nvim` launches it), listening on the tutor
-/// socket so `check` / `next` can switch lessons.
-fn lesson_nvim_command(socket: &Path, lesson: &Path) -> String {
+/// socket so `check` / `next` can switch lessons. Lesson buffers get no diagnostics: they are
+/// read-only docs, and the markdown linter would otherwise flag them.
+fn lesson_nvim_command(socket: &Path, lessons: &Path, lesson: &Path) -> String {
+    let pattern = lessons.join("*").to_string_lossy().replace(' ', "\\ ");
+    // `--cmd`, not `+cmd`: it must exist before the first lesson's BufEnter fires.
+    let quiet =
+        format!("autocmd BufEnter {pattern} lua vim.diagnostic.enable(false, {{ bufnr = 0 }})");
     format!(
-        "{} {}",
+        "{} --cmd {} {}",
         nvim_listen_command(NVIM_BASE_COMMAND, &socket.to_string_lossy()),
+        shlex_quote(&quiet),
         shlex_quote(&lesson.to_string_lossy())
     )
 }
@@ -416,11 +422,17 @@ mod tests {
 
     #[test]
     fn the_lesson_opens_in_tx_ides_nvim_listening_on_the_tutor_socket() {
-        let command = lesson_nvim_command(Path::new("/h/tutor/python.sock"), Path::new("/r/l 01.md"));
+        let command = lesson_nvim_command(
+            Path::new("/h/tutor/python.sock"),
+            Path::new("/r/my pack/lessons"),
+            Path::new("/r/my pack/lessons/01.md"),
+        );
         assert_eq!(
             command,
             "nvim --listen /h/tutor/python.sock \
-             +'set background=dark | colorscheme tokyonight-moon' '/r/l 01.md'"
+             +'set background=dark | colorscheme tokyonight-moon' \
+             --cmd 'autocmd BufEnter /r/my\\ pack/lessons/* lua vim.diagnostic.enable(false, { bufnr = 0 })' \
+             '/r/my pack/lessons/01.md'"
         );
     }
 }

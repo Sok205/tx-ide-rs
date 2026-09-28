@@ -1,0 +1,3 @@
+# Lessons are prose read in a wrapping nvim pane; 80-column reflow is churn, not clarity.
+config:
+  MD013: false

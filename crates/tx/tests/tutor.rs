@@ -304,3 +304,17 @@ fn every_prefix_key_on_the_cheat_sheet_is_bound() {
         assert!(bound.contains(&key), "keys.txt lists {{prefix}} {key}, not bound in tx-ide.tmux");
     }
 }
+
+/// The lessons open in tx-ide's nvim, whose markdown extra runs markdownlint-cli2 on them.
+#[test]
+fn lessons_pass_markdownlint() {
+    let linter = std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".local/share/nvim/mason/bin/markdownlint-cli2"))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("markdownlint-cli2"));
+    let Ok(output) = Command::new(&linter).arg("**/*.md").current_dir(repo().join("tutor")).output() else {
+        eprintln!("skipped: markdownlint-cli2 not installed");
+        return;
+    };
+    assert!(output.status.success(), "{}", out(&output));
+}
