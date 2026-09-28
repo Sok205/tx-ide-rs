@@ -8,14 +8,16 @@ we get there in lesson 07.
 
 ## The tx skill
 
-Editing in nvim, right here. `:e server.py`, find `do_GET`. `:w` saves.
+Editing in nvim, right here, next to the lesson: `:vsplit server.py` opens the file beside this
+lesson (`C-h` / `C-l` move between the two halves), find `do_GET`, `:w` saves, `:q` closes it.
 
 ## Your task
 
-1. Open `server.py` in this nvim (`:e server.py`).
+1. Open `server.py` beside this lesson: `:vsplit server.py`.
 2. In `do_GET`, before the welcome line, add: if `self.path == "/hello"`, answer
    `self.send_text(200, "hello\n")` and `return`.
 3. Save, restart the server (end of lesson 03), and try `curl -i localhost:8000/hello`.
+4. Commit your work, so agents you start later build on it: `git commit -am "hello route"`.
 
 Stuck? `tx tutor hint` prints the snippet.
 

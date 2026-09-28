@@ -1,6 +1,6 @@
 # 01. What is a server?
 
-Welcome to tx tutor. Over 12 short lessons you will build a small web server in Python and
+Welcome to tx tutor. Over 13 short lessons you will build a small web server in Python and
 learn tx-ide along the way. No networking knowledge needed.
 
 ## The idea

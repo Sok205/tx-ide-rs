@@ -54,8 +54,17 @@ checks = [
 ]
 
 [[lesson]]
-id = "08-fork-post"
-file = "lessons/08-fork-post.md"
+id = "08-ask-from-code"
+file = "lessons/08-ask-from-code.md"
+requires = ["claude"]
+checks = [
+  { kind = "confirm", label = "you asked from nvim", prompt = "Did you send the request from nvim with Space a c?" },
+  { kind = "http", label = "every response says X-Served-By: tx-tutor", path = "/", status = 200, headers = { "X-Served-By" = "tx-tutor" } },
+]
+
+[[lesson]]
+id = "09-fork-post"
+file = "lessons/09-fork-post.md"
 requires = ["claude"]
 checks = [
   { kind = "tx", label = "you forked a tutor worker's chat", session = { tag = "tutor", chat_origin = "fork" } },
@@ -64,16 +73,16 @@ checks = [
 ]
 
 [[lesson]]
-id = "09-history-resume"
-file = "lessons/09-history-resume.md"
+id = "10-history-resume"
+file = "lessons/10-history-resume.md"
 requires = ["claude"]
 checks = [
   { kind = "tx", label = "you resumed a tutor chat", session = { tag = "tutor", chat_origin = "resume" } },
 ]
 
 [[lesson]]
-id = "10-assistant-tests"
-file = "lessons/10-assistant-tests.md"
+id = "11-assistant-tests"
+file = "lessons/11-assistant-tests.md"
 requires = ["claude"]
 checks = [
   { kind = "file", label = "test_server.py exists", path = "test_server.py" },
@@ -81,16 +90,16 @@ checks = [
 ]
 
 [[lesson]]
-id = "11-handover"
-file = "lessons/11-handover.md"
+id = "12-handover"
+file = "lessons/12-handover.md"
 requires = ["claude"]
 checks = [
   { kind = "tx", label = "you handed a tutor chat over", session = { tag = "tutor", chat_origin = "handover" } },
 ]
 
 [[lesson]]
-id = "12-cleanup"
-file = "lessons/12-cleanup.md"
+id = "13-cleanup"
+file = "lessons/13-cleanup.md"
 checks = [
   { kind = "tx", label = "no tutor workers are still running", absent = true, session = { tag = "tutor", role = "llm", state = ["alive", "working", "waiting", "idle"] } },
   { kind = "tx", label = "at least one tutor worker is archived", session = { tag = "tutor", state = ["archived"] } },

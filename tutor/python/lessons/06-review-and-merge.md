@@ -1,6 +1,6 @@
 # 06. Review the diff, then merge
 
-> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 13`.
 
 ## The idea
 
@@ -17,12 +17,16 @@ merging, you review it.
 
 ## Your task
 
-1. In the shell: `git branch` — you should see `tutor/time`. (Missing? Ask the worker:
+1. In the shell: `git status`. If `server.py` shows as modified (your lesson-04 work), commit it
+   first — `git merge` refuses to run over uncommitted changes: `git commit -am "hello route"`.
+2. `git branch` — you should see `tutor/time`. (Missing? Ask the worker:
    `tx send-message time "put your commit on a new branch named tutor/time"`.)
-2. `tx spawn-nvim review --tag tutor --diff main...tutor/time`, then in the viewer `prefix+t` →
+3. `tx spawn-nvim review --tag tutor --diff main...tutor/time`, then in the viewer `prefix+t` →
    `review`. Read the change. Close with `:qa`.
-3. In the shell: `git merge tutor/time`.
-4. Restart the server (end of lesson 03) and `curl -i localhost:8000/time`. Look for
+4. In the shell: `git merge tutor/time`. If git says **CONFLICT** (you and the worker both
+   changed `do_GET`): `:vsplit server.py`, keep both routes, delete the `<<<<<<<` / `=======` /
+   `>>>>>>>` marker lines, `:w`, then `git commit -am "merge tutor/time"`.
+5. Restart the server (end of lesson 03) and `curl -i localhost:8000/time`. Look for
    `Content-Type: application/json`.
 
 ## Check

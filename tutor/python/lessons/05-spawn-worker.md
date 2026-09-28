@@ -1,6 +1,6 @@
 # 05. Delegate to an agent worker
 
-> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 13`.
 
 ## The idea
 

@@ -1,6 +1,6 @@
-# 11. Handover: a fresh mind with the context
+# 12. Handover: a fresh mind with the context
 
-> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 13`.
 
 ## The idea
 

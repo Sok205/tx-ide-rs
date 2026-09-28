@@ -1,6 +1,6 @@
-# 09. History: nothing is lost
+# 10. History: nothing is lost
 
-> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 13`.
 
 ## The idea
 

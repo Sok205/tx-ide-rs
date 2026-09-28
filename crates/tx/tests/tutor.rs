@@ -63,9 +63,9 @@ fn passes(pack: &Pack, project: &Path, id: &str) -> bool {
 }
 
 #[test]
-fn the_python_pack_loads_with_twelve_lessons() {
+fn the_python_pack_loads_with_thirteen_lessons() {
     let pack = pack();
-    assert_eq!(pack.lessons.len(), 12);
+    assert_eq!(pack.lessons.len(), 13);
     assert_eq!(pack.meta.run, ["python3", "server.py"]);
     assert!(pack.skeleton().join("server.py").is_file());
 }
@@ -80,7 +80,7 @@ fn the_bare_skeleton_passes_lesson_02_only() {
     let project = tempfile::tempdir().unwrap();
     copy_dir(&pack.skeleton(), project.path());
     assert!(passes(&pack, project.path(), "02-request-response"));
-    for id in ["04-first-route", "06-review-and-merge", "07-not-found", "08-fork-post", "10-assistant-tests"] {
+    for id in ["04-first-route", "06-review-and-merge", "07-not-found", "08-ask-from-code", "09-fork-post", "11-assistant-tests"] {
         assert!(!passes(&pack, project.path(), id), "{id} passed against the bare skeleton");
     }
 }
@@ -145,14 +145,14 @@ fn goto_status_hint_move_through_lessons() {
     started(home.path());
     let goto = tx(home.path(), &["tutor", "goto", "4"]);
     assert_eq!(goto.status.code(), Some(0), "{}", out(&goto));
-    assert!(out(&goto).contains("Lesson 4/12: 04-first-route"));
+    assert!(out(&goto).contains("Lesson 4/13: 04-first-route"));
     let status = out(&tx(home.path(), &["tutor", "status"]));
     assert!(status.contains("▶  4. 04-first-route"), "{status}");
     assert!(status.contains("   1. 01-what-is-a-server"), "{status}");
     assert!(out(&tx(home.path(), &["tutor", "hint"])).contains("self.path == \"/hello\""));
-    assert!(out(&tx(home.path(), &["tutor", "next"])).contains("Lesson 5/12: 05-spawn-worker"));
+    assert!(out(&tx(home.path(), &["tutor", "next"])).contains("Lesson 5/13: 05-spawn-worker"));
     assert!(out(&tx(home.path(), &["tutor", "hint"])).contains("no hint for this lesson"));
-    assert!(out(&tx(home.path(), &["tutor", "prev"])).contains("Lesson 4/12"));
+    assert!(out(&tx(home.path(), &["tutor", "prev"])).contains("Lesson 4/13"));
     assert_eq!(tx(home.path(), &["tutor", "goto", "99"]).status.code(), Some(1));
 }
 
@@ -174,7 +174,7 @@ fn check_advances_only_on_pass() {
     let passed = tx(home.path(), &["tutor", "check"]);
     assert_eq!(passed.status.code(), Some(0), "{}", out(&passed));
     assert!(out(&passed).contains("✓ GET / answers 200"));
-    assert!(out(&passed).contains("Lesson 3/12: 03-sessions"));
+    assert!(out(&passed).contains("Lesson 3/13: 03-sessions"));
     assert!(out(&tx(home.path(), &["tutor", "status"])).contains("✓  2. 02-request-response"));
 }
 

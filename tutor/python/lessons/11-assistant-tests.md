@@ -1,6 +1,6 @@
-# 10. Tests, via the tx-assistant
+# 11. Tests, via the tx-assistant
 
-> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 13`.
 
 ## The idea
 

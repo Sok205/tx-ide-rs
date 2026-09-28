@@ -15,9 +15,12 @@ does not know instead of pretending everything is fine.
 
 1. `tx send-message time "Explain HTTP status code families in three lines. Do not change code."`
    Then, in the viewer, `prefix+t` → `time` to read the answer.
-2. Yourself, in nvim: make `do_GET` answer `self.send_text(404, "not found\n")` for any path
-   it does not handle. Keep `/`, `/hello`, `/time` working.
-3. Restart the server (end of lesson 03); `curl -i localhost:8000/nope` should say `404`.
+2. Yourself: `:vsplit server.py` in this lesson pane, then make `do_GET` answer
+   `self.send_text(404, "not found\n")` for any path it does not handle. Keep `/`, `/hello`,
+   `/time` working.
+3. Restart the server (end of lesson 03); `curl -i localhost:8000/nope` should say `404` and
+   `curl -i localhost:8000/hello` still `200`.
+4. Commit it: `git commit -am "404 for unknown paths"`.
 
 Stuck? `tx tutor hint`.
 

@@ -43,11 +43,12 @@ the project directory. Re-running `start` resumes at the saved lesson.
 | 05 | JSON, `Content-Type` | `tx spawn --prompt --tag` | 🤖 worker adds `GET /time` (JSON) | `tx`: claude worker tagged `tutor` |
 | 06 | — | worktrees, `spawn-nvim --diff`, merge | Review the worker's branch (`tx spawn-nvim --diff main...tutor/time`), merge it into the main checkout | `http GET /time` 200, `application/json`, valid JSON |
 | 07 | 404, error handling | attach via picker, `send-message` | Ask the worker to explain status codes; ✍ 404 for unknown paths | `http GET /nope → 404` |
-| 08 | POST, request body, 201 | `tx fork` | 🤖 fork the worker's chat, try two `POST /notes` designs, merge one | `tx`: a chat with origin `fork`; `http POST /notes → 201`; `GET /notes` body contains the posted note |
-| 09 | — | `tx history`, `chat ls`, `tx resume` | Find and resume the discarded fork | `tx`: a chat with origin `resume` |
-| 10 | Testing a server | `prefix+/` tx-assistant | 🤖 ask the assistant to spawn a test-writing worker; merge | `command`: `python3 -m unittest` exits 0 |
-| 11 | — | `handover` / `rollover` | Hand the test worker's context to a fresh chat | `tx`: a chat with origin `handover` |
-| 12 | Recap | `kill` / `archive` / `revive`, `prefix+X` | Archive the tutorial workers | `tx`: `absent` llm records tagged `tutor` in a live state; ≥1 archived |
+| 08 | Custom headers (`X-…`) | `tx spawn-nvim --open`, `Space a C` / `Space a c` (ask an agent from the code), `Space a i` inline diff, `Space a n` AINote | 🤖 from an nvim tx session, ask the worker to add `X-Served-By: tx-tutor`; review, merge, view inline | `confirm`; `http GET /` has `X-Served-By: tx-tutor` |
+| 09 | POST, request body, 201 | `tx fork` | 🤖 fork the worker's chat, try two `POST /notes` designs, merge one | `tx`: a chat with origin `fork`; `http POST /notes → 201`; `GET /notes` body contains the posted note |
+| 10 | — | `tx history`, `chat ls`, `tx resume` | Find and resume the discarded fork | `tx`: a chat with origin `resume` |
+| 11 | Testing a server | `prefix+/` tx-assistant | 🤖 ask the assistant to spawn a test-writing worker; merge | `command`: `python3 -m unittest` exits 0 |
+| 12 | — | `handover` / `rollover` | Hand the test worker's context to a fresh chat | `tx`: a chat with origin `handover` |
+| 13 | Recap | `kill` / `archive` / `revive`, `prefix+X` | Archive the tutorial workers | `tx`: `absent` llm records tagged `tutor` in a live state; ≥1 archived |
 
 Rules:
 - Checks on agent-written work assert **behaviour** (status, headers, JSON shape, substrings),

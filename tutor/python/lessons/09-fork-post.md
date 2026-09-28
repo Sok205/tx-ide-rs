@@ -1,6 +1,6 @@
-# 08. POST, and trying two ideas at once
+# 09. POST, and trying two ideas at once
 
-> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 12`.
+> Needs Claude Code (`claude`). Without it, skip ahead with `tx tutor goto 13`.
 
 ## The idea
 

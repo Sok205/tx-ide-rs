@@ -128,7 +128,7 @@ and `NAME.local.md`.
 
 ## Tutorial
 
-`tx tutor start` is tx-ide's vimtutor: 12 lessons that teach the picker, spawning, reviewing,
+`tx tutor start` is tx-ide's vimtutor: 13 lessons that teach the picker, spawning, reviewing,
 chat operations, the tx-assistant and cleanup while you build a small Python HTTP server (no
 networking knowledge needed). It scaffolds `~/tx-tutor/python`, opens the `tutor-python` view
 (lesson on the left, shell on the right); `tx tutor check` verifies each step. `tx start --tutor
