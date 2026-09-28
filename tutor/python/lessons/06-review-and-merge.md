@@ -20,7 +20,7 @@ merging, you review it.
 ## Your task
 
 1. `tx show time` — note the worker's `cwd` (its worktree).
-2. `tx spawn-nvim review --tag tutor --cwd <that cwd> --diff` then `prefix+t` → `review`.
+2. `tx spawn-nvim review --tag tutor --cwd <that cwd> --diff` then, from this lesson pane, `prefix+t` → `review`.
    Read the change. Close with `:qa`.
 3. Name the worker's commit: `git -C <that cwd> switch -c tutor/time`. (The worker committed on
    a detached HEAD, which has no name to merge; a branch gives it one, and worktrees share

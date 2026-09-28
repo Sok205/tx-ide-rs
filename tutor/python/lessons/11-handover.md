@@ -16,7 +16,8 @@ Long conversations get slow and muddled. Better: summarize what matters and star
 ## Your task
 
 1. `tx handover <the test worker> "keep improving test coverage for server.py"`
-2. `prefix+t` → the new session. Ask: "What would you test next?" It should know the project.
+2. From this lesson pane, `prefix+t` → the new session. Ask: "What would you test next?" It
+   should know the project. Come back: `prefix+s` → `tutor-python`.
 
 ## Check
 

@@ -14,7 +14,8 @@ does not know instead of pretending everything is fine.
 ## Your task
 
 1. `tx send-message time "Explain HTTP status code families in three lines. Do not change code."`
-   Then `prefix+t` → `time` to read the answer. Come back.
+   Then, from this lesson pane, `prefix+t` → `time` to read the answer. Come back:
+   `prefix+s` → `tutor-python`.
 2. Yourself, in nvim: make `do_GET` answer `self.send_text(404, "not found\n")` for any path
    it does not handle. Keep `/`, `/hello`, `/time` working.
 3. Restart `server`; `curl -i localhost:8000/nope` should say `404`.

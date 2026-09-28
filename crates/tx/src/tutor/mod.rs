@@ -31,7 +31,7 @@ pub fn render_keys(text: &str, prefix: Option<&str>) -> String {
     let mut out = String::new();
     for line in text.lines() {
         if let Some(title) = line.strip_prefix("# ") {
-            out.push_str(&format!(" {title}\n"));
+            out.push_str(&format!(" {}\n", title.replace("{prefix}", prefix)));
         }
     }
     for (keys, what) in rows {
@@ -52,6 +52,12 @@ mod tests {
             render_keys(KEYS, Some("C-a")),
             " tx-ide keys\n C-h/j/k/l  move\n C-a t      picker\n"
         );
+    }
+
+    #[test]
+    fn the_title_gets_the_prefix_too() {
+        assert!(render_keys("# keys · {prefix} t = prefix then t\n", Some("C-a"))
+            .starts_with(" keys · C-a t = prefix then t\n"));
     }
 
     #[test]

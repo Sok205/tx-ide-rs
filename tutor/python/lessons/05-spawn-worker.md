@@ -23,9 +23,9 @@ on a detached commit — so it cannot trample your files.
    tx spawn time --tag tutor --cwd "$PWD" --prompt "In server.py add a GET /time route that answers JSON {\"now\": <current UTC time, ISO 8601>} with Content-Type application/json. Keep the existing routes. Commit your change."
    ```
 
-2. `prefix+t`, jump to `time`, and watch it work. You can type to it like any Claude session —
+2. From this lesson pane, `prefix+t`, jump to `time`, and watch it work. You can type to it like any Claude session —
    ask it *why* it set that header.
-3. Jump back here when it has committed.
+3. Come back when it has committed. Back to the tutorial from anywhere: `prefix+s` → `tutor-python`, or `tx tutor start` in any shell.
 
 ## Check
 

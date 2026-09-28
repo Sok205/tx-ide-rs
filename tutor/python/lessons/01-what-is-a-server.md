@@ -11,10 +11,20 @@ browser does this every time you open a page: it asks a server, the server answe
 
 ## The tx skill
 
-You are inside a tx **view** called `tutor-python`: a tmux session with two panes.
-Left: this lesson, in nvim. Right: a shell in your project, `~/tx-tutor/python`.
+You are inside a tx **view** called `tutor-python`: a tmux session with three panes.
+Top left: this lesson, in nvim. Below it: a cheat sheet of tx-ide keys. Right: a shell in
+your project, `~/tx-tutor/python`.
 
-- `C-l` moves right, `C-h` moves left (also `C-j` / `C-k` for down / up). The same keys
+How keys are written in these lessons:
+
+- `C-l` means hold **Ctrl** and press `l` — one chord, **no prefix** first.
+- `prefix+t` means press your tmux **prefix** (`C-b` by default; the cheat sheet shows yours),
+  release it, then press `t`.
+- Careful: if your tmux config binds `prefix` + `h/j/k/l` to resize panes (a common setup),
+  pressing the prefix before `C-h/j/k/l` resizes instead of moving. Just use Ctrl alone.
+
+- `C-l` moves right, `C-h` moves left, `C-j` / `C-k` move down / up (try `C-j` to reach the
+  cheat sheet). The same keys
   move between nvim splits, tmux panes and nested sessions — you never need to think about
   which one you are in.
 
