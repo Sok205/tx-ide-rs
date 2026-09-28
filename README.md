@@ -95,6 +95,7 @@ tx spawn-nvim notes --tag api --cwd ~/code/app --diff                   # nvim w
 tx ls                                                  # what is running
 tx attach                                              # the fzf picker (prefix+t in tmux)
 tx tutor start                                         # the interactive walkthrough (builds an HTTP server)
+tx start --tutor                                       # boot tx-ide straight into the walkthrough
 ```
 
 Inside tmux: `prefix+t` opens the picker, `prefix+/` sends a line to the tx-assistant,
@@ -130,7 +131,8 @@ and `NAME.local.md`.
 `tx tutor start` is tx-ide's vimtutor: 12 lessons that teach the picker, spawning, reviewing,
 chat operations, the tx-assistant and cleanup while you build a small Python HTTP server (no
 networking knowledge needed). It scaffolds `~/tx-tutor/python`, opens the `tutor-python` view
-(lesson on the left, shell on the right); `tx tutor check` verifies each step. Lessons live in
+(lesson on the left, shell on the right); `tx tutor check` verifies each step. `tx start --tutor
+[LANG]` boots tx-ide (tx-assistant + Views) and lands in the walkthrough instead of Views. Lessons live in
 `tutor/<lang>/` — see `tutor/python/lessons.toml` for the check format. Pack servers must answer
 with a `Content-Length` (not chunked) body — the checker's HTTP client does not decode chunked
 transfer-encoding.

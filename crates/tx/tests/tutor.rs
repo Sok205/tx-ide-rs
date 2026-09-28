@@ -264,3 +264,22 @@ fn the_verb_can_be_switched_off() {
     let help = out(&tx(home.path(), &["--help"]));
     assert!(!help.contains("tutor"), "{help}");
 }
+
+#[test]
+fn start_offers_a_tutor_flag() {
+    let home = tempfile::tempdir().unwrap();
+    let help = out(&tx(home.path(), &["start", "-h"]));
+    assert!(help.contains("--tutor [LANG]"), "{help}");
+}
+
+#[test]
+fn start_tutor_fails_fast_when_the_tutor_is_disabled() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join("tx-home")).unwrap();
+    std::fs::write(home.path().join("tx-home/config.json"), r#"{"plugins": {"verbs.tutor": {"disabled": true}}}"#).unwrap();
+    let output = tx(home.path(), &["start", "--tutor"]);
+    assert_eq!(output.status.code(), Some(1), "{}", out(&output));
+    let text = out(&output);
+    assert!(text.contains("tx start: the tutor is disabled (plugins.verbs.tutor)"), "{text}");
+    assert!(!text.contains("tx-assistant"), "nothing is started before the check: {text}");
+}

@@ -19,4 +19,4 @@
   reference's claude.sh / statusline step; skip the write when the serialized document is unchanged.
 - tx tutor: decode chunked HTTP responses before adding non-Python packs.
 - tx tutor: `tutor` is a public verb with no reference counterpart, so `tx --help` gains one line —
-  a deliberate difference from the Python reference.
+  a deliberate difference from the Python reference. Likewise `tx start -h` gains `--tutor [LANG]`.
