@@ -4,7 +4,10 @@ use crate::session::Session;
 use crate::tutor::pack::{SessionFilter, TxCheck};
 
 pub fn matches(filter: &SessionFilter, session: &Session) -> bool {
-    filter.tag.as_ref().is_none_or(|tag| session.tags.contains(tag))
+    filter
+        .tag
+        .as_ref()
+        .is_none_or(|tag| session.tags.iter().any(|have| have.trim() == tag))
         && filter.name.as_ref().is_none_or(|name| &session.name == name)
         && filter.role.as_ref().is_none_or(|role| session.role().as_str() == role)
         && filter.engine.as_ref().is_none_or(|engine| {

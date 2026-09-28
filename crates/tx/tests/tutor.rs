@@ -318,3 +318,27 @@ fn lessons_pass_markdownlint() {
     };
     assert!(output.status.success(), "{}", out(&output));
 }
+
+/// `tx` checks read every stored record (not just the ones reconcile changed), and a tag typed
+/// with a space after the comma (`tutor, http-tutor` in the prefix+e form) still counts.
+#[test]
+fn check_sees_existing_records_and_tolerates_tag_spaces() {
+    let home = tempfile::tempdir().unwrap();
+    started(home.path());
+    tx(home.path(), &["tutor", "goto", "3"]);
+    let sessions = home.path().join("tx-home/sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let record = serde_json::json!({
+        "schema_version": 6, "id": "srv-1", "name": "server", "role": "shell", "state": "exited",
+        "cwd": "/r", "cmd": "/bin/zsh", "tags": ["tutor", " http-tutor"], "group": null, "env": {},
+        "parent": null, "pid": null, "attached_to": [], "created_at": 1.0, "ended_at": null,
+        "artifact_id": null
+    });
+    // Exited with no tmux server: reconcile leaves it unchanged, as a live in-sync record would be.
+    std::fs::write(sessions.join("srv-1.json"), record.to_string()).unwrap();
+    let output = tx(home.path(), &["tutor", "check"]);
+    let text = out(&output);
+    assert!(text.contains("✓ a tx session named server exists"), "{text}");
+    assert!(text.contains("✓ server is tagged http-tutor"), "{text}");
+    assert_eq!(output.status.code(), Some(0), "{text}");
+}

@@ -308,7 +308,13 @@ impl Deps {
                 );
             }
         }
-        let sessions = || self.service.reconcile().map_err(|error| error.to_string());
+        // reconcile() returns only the records it changed; the check needs every record.
+        let sessions = || {
+            self.service
+                .reconcile()
+                .map(|_| self.service.store().all())
+                .map_err(|error| error.to_string())
+        };
         let mut ask = confirm;
         let report = checks::run(
             &lesson.checks,
