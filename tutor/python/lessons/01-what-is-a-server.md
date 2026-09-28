@@ -31,6 +31,10 @@ How keys are written in these lessons:
   cheat sheet). The same keys
   move between nvim splits, tmux panes and nested sessions — you never need to think about
   which one you are in.
+- **Enter on a command in a lesson types it into the shell** (top right) without running it:
+  put the cursor on a `` `command` `` or on a line inside a code block and press Enter, then
+  `C-l` to the shell, check it, and press Enter there. To copy text instead: `V` to select
+  lines, `"+y` to copy to the clipboard, `Cmd+V` to paste.
 - Lost (the tutorial is gone from your screen)? `prefix+s`, pick `tutor-python`, Enter — or
   run `tx tutor start` in any shell.
 

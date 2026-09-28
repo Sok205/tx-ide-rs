@@ -28,7 +28,9 @@ const ACTIONS: [&str; 8] = ["start", "check", "next", "prev", "goto", "status", 
 const DEFAULT_LANG: &str = "python";
 /// The cheat sheet shared by every pack (`tutor/keys.txt`) and the height of its pane.
 const KEYS_FILE: &str = "keys.txt";
-const KEYS_LINES: u16 = 11;
+/// Lesson-buffer behaviour for the view's nvim, shared by every pack.
+const LESSON_LUA: &str = "lesson.lua";
+const KEYS_LINES: u16 = 12;
 /// Always needed besides the pack's own `requires`.
 const BASE_REQUIRES: [&str; 2] = ["git", "nvim"];
 
@@ -248,7 +250,13 @@ impl Deps {
             let socket = socket_path(&self.home, &pack.lang);
             let _ = std::fs::remove_file(&socket);
             let lesson = pack.lesson_path(pack.index_of(&progress.current).unwrap_or(0));
-            let nvim = lesson_nvim_command(&socket, &pack.dir.join("lessons"), &lesson);
+            let nvim = lesson_nvim_command(
+                &socket,
+                &pack.dir.join("lessons"),
+                &pack.dir.join("..").join(LESSON_LUA),
+                &format!("={view}:.{{top-right}}"),
+                &lesson,
+            );
             let cwd = progress.dir.to_string_lossy().into_owned();
             let spec = SpawnSpec::for_view(&view, cwd.clone(), nvim, &self.engines.borrow());
             self.service.spawn_view(spec)?;
@@ -372,17 +380,26 @@ impl Deps {
 }
 
 /// The lesson pane: tx-ide's nvim (as `tx spawn-nvim` launches it), listening on the tutor
-/// socket so `check` / `next` can switch lessons. Lesson buffers get no diagnostics: they are
-/// read-only docs, and the markdown linter would otherwise flag them.
-fn lesson_nvim_command(socket: &Path, lessons: &Path, lesson: &Path) -> String {
-    let pattern = lessons.join("*").to_string_lossy().replace(' ', "\\ ");
-    // `--cmd`, not `+cmd`: it must exist before the first lesson's BufEnter fires.
-    let quiet =
-        format!("autocmd BufEnter {pattern} lua vim.diagnostic.enable(false, {{ bufnr = 0 }})");
+/// socket so `check` / `next` can switch lessons. `tutor/lesson.lua` makes lesson buffers
+/// diagnostics-free and lets Enter type a lesson command into the view's `shell` pane.
+fn lesson_nvim_command(
+    socket: &Path,
+    lessons: &Path,
+    lua: &Path,
+    shell: &str,
+    lesson: &Path,
+) -> String {
+    // `--cmd`, not `+cmd`: the autocmd must exist before the first lesson's BufEnter fires.
+    let globals = format!(
+        "lua vim.g.tx_tutor_lessons = [[{}]]; vim.g.tx_tutor_shell = [[{shell}]]",
+        lessons.join("*").to_string_lossy()
+    );
+    let load = format!("luafile {}", lua.to_string_lossy().replace(' ', "\\ "));
     format!(
-        "{} --cmd {} {}",
+        "{} --cmd {} --cmd {} {}",
         nvim_listen_command(NVIM_BASE_COMMAND, &socket.to_string_lossy()),
-        shlex_quote(&quiet),
+        shlex_quote(&globals),
+        shlex_quote(&load),
         shlex_quote(&lesson.to_string_lossy())
     )
 }
@@ -435,13 +452,17 @@ mod tests {
         let command = lesson_nvim_command(
             Path::new("/h/tutor/python.sock"),
             Path::new("/r/my pack/lessons"),
+            Path::new("/r/my pack/lesson.lua"),
+            "=tutor-python:.{top-right}",
             Path::new("/r/my pack/lessons/01.md"),
         );
         assert_eq!(
             command,
             "nvim --listen /h/tutor/python.sock \
              +'set background=dark | colorscheme tokyonight-moon' \
-             --cmd 'autocmd BufEnter /r/my\\ pack/lessons/* lua vim.diagnostic.enable(false, { bufnr = 0 })' \
+             --cmd 'lua vim.g.tx_tutor_lessons = [[/r/my pack/lessons/*]]; \
+             vim.g.tx_tutor_shell = [[=tutor-python:.{top-right}]]' \
+             --cmd 'luafile /r/my\\ pack/lesson.lua' \
              '/r/my pack/lessons/01.md'"
         );
     }

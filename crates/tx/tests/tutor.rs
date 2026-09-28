@@ -342,3 +342,39 @@ fn check_sees_existing_records_and_tolerates_tag_spaces() {
     assert!(text.contains("✓ server is tagged http-tutor"), "{text}");
     assert_eq!(output.status.code(), Some(0), "{text}");
 }
+
+/// `tutor/lesson.lua`: Enter on a lesson line picks the command under the cursor — the inline
+/// code span it sits in, or the whole line inside a fenced block; prose gives nothing.
+#[test]
+fn lesson_enter_picks_the_command_under_the_cursor() {
+    if Command::new("nvim").arg("--version").output().is_err() {
+        eprintln!("skipped: nvim not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let lesson = dir.path().join("lesson.md");
+    std::fs::write(
+        &lesson,
+        "Some prose here.\n2. In the shell: `tx spawn server --tag tutor` then `tx ls`\n\n   ```sh\n   tx spawn time --prompt \"a b\"\n   ```\n",
+    )
+    .unwrap();
+    let probe = |line: usize, col: usize| -> String {
+        let output = Command::new("nvim")
+            .args(["--clean", "--headless"])
+            .arg("--cmd")
+            .arg(format!("luafile {}", repo().join("tutor/lesson.lua").display()))
+            .arg(format!(
+                "+call cursor({line}, {col}) | lua io.stdout:write(tostring(tx_tutor_command()))"
+            ))
+            .arg("+qa!")
+            .arg(&lesson)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    assert_eq!(probe(2, 22), "tx spawn server --tag tutor");
+    assert_eq!(probe(2, 55), "tx ls");
+    assert_eq!(probe(5, 6), "tx spawn time --prompt \"a b\"");
+    assert_eq!(probe(1, 3), "nil");
+    assert_eq!(probe(2, 4), "nil");
+}

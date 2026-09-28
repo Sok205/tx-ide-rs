@@ -7,4 +7,5 @@ M-1..9	jump to pane N
 {prefix} s	session tree — lost? pick tutor-python
 {prefix} X	kill this pane's session
 C-u / C-d	scroll an agent (claude / codex) pane
+Enter	on a lesson command: type it into the shell (not run)
 tx tutor	check · hint · status · next · prev
