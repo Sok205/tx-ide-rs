@@ -12,15 +12,16 @@ sent before the body.
 ## The tx skill
 
 `tx spawn` with `--prompt` starts a Claude Code **worker** on a task (the default engine is
-`claude`). tx gives it its own git **worktree** — a separate copy of your project, checked out
-on a detached commit — so it cannot trample your files.
+`claude`). tx gives it its own git **worktree** — a separate copy of your project — so it
+cannot trample your files. Worktrees share branches with your project, so asking the worker to
+commit on a named branch lets you merge its work later with one command.
 
 ## Your task
 
 1. In the shell:
 
    ```sh
-   tx spawn time --tag tutor --cwd "$PWD" --prompt "In server.py add a GET /time route that answers JSON {\"now\": <current UTC time, ISO 8601>} with Content-Type application/json. Keep the existing routes. Commit your change."
+   tx spawn time --tag tutor --cwd "$PWD" --prompt "In server.py add a GET /time route that answers JSON {\"now\": <current UTC time, ISO 8601>} with Content-Type application/json. Keep the existing routes. Commit your change on a new branch named tutor/time."
    ```
 
 2. In the viewer (bottom right), `prefix+t` → `time`, and watch it work. You can type to it like any Claude session —

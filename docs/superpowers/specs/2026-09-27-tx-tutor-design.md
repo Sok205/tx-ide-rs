@@ -41,7 +41,7 @@ the project directory. Re-running `start` resumes at the saved lesson.
 | 03 | — | `tx spawn --cmd`, `prefix+t`, `tx ls`, `prefix+e`, `prefix+s` | Run the server in its own tx session `server` (views are not records, so they cannot be tagged), then tag it `http-tutor` with `prefix+e` | `tx`: session `server` has tag `http-tutor` |
 | 04 | Paths, status codes | nvim editing | ✍ `GET /hello` → `hello` | `http` |
 | 05 | JSON, `Content-Type` | `tx spawn --prompt --tag` | 🤖 worker adds `GET /time` (JSON) | `tx`: claude worker tagged `tutor` |
-| 06 | — | worktrees, `spawn-nvim --diff`, merge | Review the worker's diff, name its detached commit with a branch (`git switch -c`), merge that branch into the main checkout | `http GET /time` 200, `application/json`, valid JSON |
+| 06 | — | worktrees, `spawn-nvim --diff`, merge | Review the worker's branch (`tx spawn-nvim --diff main...tutor/time`), merge it into the main checkout | `http GET /time` 200, `application/json`, valid JSON |
 | 07 | 404, error handling | attach via picker, `send-message` | Ask the worker to explain status codes; ✍ 404 for unknown paths | `http GET /nope → 404` |
 | 08 | POST, request body, 201 | `tx fork` | 🤖 fork the worker's chat, try two `POST /notes` designs, merge one | `tx`: a chat with origin `fork`; `http POST /notes → 201`; `GET /notes` body contains the posted note |
 | 09 | — | `tx history`, `chat ls`, `tx resume` | Find and resume the discarded fork | `tx`: a chat with origin `resume` |
@@ -52,11 +52,13 @@ the project directory. Re-running `start` resumes at the saved lesson.
 Rules:
 - Checks on agent-written work assert **behaviour** (status, headers, JSON shape, substrings),
   never exact code.
-- Agent workers run in tx worktrees (`$TX_IDE_HOME/worktrees/`), each on a detached commit (worker
-  worktrees are created with `git worktree add --detach`, and worktrees of one repo share branches);
-  their code reaches the project only after the user names that commit with a branch
-  (`git switch -c`) and merges it. All `http` / `file` / `command` checks run against the **main
-  checkout**. Lesson 06 teaches this explicitly.
+- Agent workers run in tx worktrees (`$TX_IDE_HOME/worktrees/`, created detached). Each lesson
+  prompt asks the worker to commit on a named branch (`tutor/time`, `tutor/notes-*`,
+  `tutor/tests`); worktrees of one repo share branches, so the user reviews
+  (`spawn-nvim --diff main...<branch>`) and merges by name from the main checkout, with no
+  worktree paths involved. If a worker skips the branch, the lesson's fallback is a
+  `tx send-message` asking for it. All `http` / `file` / `command` checks run against the
+  **main checkout**. Lesson 06 teaches this explicitly.
 - Lessons 01–04 and all ✍ parts work without an agent engine.
 - Every ✍ lesson has a hint block in its markdown; `tx tutor hint` prints the solution snippet
   from `solutions/`.
