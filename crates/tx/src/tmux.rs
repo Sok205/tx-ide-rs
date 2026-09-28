@@ -340,6 +340,26 @@ impl Tmux {
             .map(drop)
     }
 
+    /// Split `session`'s top-left pane, the new pane `lines` tall below it, running `command`.
+    pub fn split_below(
+        &self,
+        session: &str,
+        lines: u16,
+        cwd: &str,
+        command: &str,
+    ) -> Result<(), TmuxError> {
+        let target = format!("{}.{{top-left}}", exact_session_pane(session));
+        let lines = lines.to_string();
+        self.run(&["split-window", "-v", "-l", &lines, "-t", &target, "-c", cwd, command])
+            .map(drop)
+    }
+
+    /// A global server option (`show-options -gvq`); `None` when unset / no server.
+    pub fn global_option(&self, option: &str) -> Option<String> {
+        let (_, out) = self.run_quiet(&["show-options", "-gvq", option]);
+        non_empty(out.trim())
+    }
+
     /// Split `session`'s active pane side by side, running `command` in `cwd`.
     pub fn split_window(&self, session: &str, cwd: &str, command: &str) -> Result<(), TmuxError> {
         self.run(&["split-window", "-h", "-t", &exact_session_pane(session), "-c", cwd, command])
@@ -730,6 +750,16 @@ mod tests {
         let tmux = Tmux::new("/usr/bin/false", TmuxEnv::default());
         let error = tmux.split_window("tutor-python", "/p", "zsh").unwrap_err().to_string();
         assert_eq!(error, "tmux split-window -h -t =tutor-python: -c /p zsh failed: ");
+    }
+
+    #[test]
+    fn split_below_targets_the_top_left_pane_exactly() {
+        let tmux = Tmux::new("/usr/bin/false", TmuxEnv::default());
+        let error = tmux.split_below("tutor-python", 12, "/p", "cat k").unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "tmux split-window -v -l 12 -t =tutor-python:.{top-left} -c /p cat k failed: "
+        );
     }
 
     #[test]

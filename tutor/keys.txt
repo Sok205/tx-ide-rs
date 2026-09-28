@@ -1,0 +1,10 @@
+# tx-ide keys
+C-h/j/k/l	move between panes, nvim splits, nested sessions
+M-1..9	jump to pane N
+{prefix} t	picker: find and jump to any session
+{prefix} /	ask the tx-assistant
+{prefix} e	rename / tag this pane's session
+{prefix} s	session tree with names and tags
+{prefix} X	kill this pane's session
+C-u / C-d	scroll an agent (claude / codex) pane
+tx tutor	check · hint · status · next · prev

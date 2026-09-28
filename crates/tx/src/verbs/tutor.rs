@@ -21,11 +21,14 @@ use crate::tmux::Tmux;
 use crate::tutor::checks::{self, Context};
 use crate::tutor::pack::Pack;
 use crate::tutor::progress::Progress;
-use crate::tutor::{project, socket_path};
+use crate::tutor::{project, render_keys, socket_path};
 use crate::verbs::common::{default_shell, repo_root};
 
 const ACTIONS: [&str; 8] = ["start", "check", "next", "prev", "goto", "status", "hint", "reset"];
 const DEFAULT_LANG: &str = "python";
+/// The cheat sheet shared by every pack (`tutor/keys.txt`) and the height of its pane.
+const KEYS_FILE: &str = "keys.txt";
+const KEYS_LINES: u16 = 11;
 /// Always needed besides the pack's own `requires`.
 const BASE_REQUIRES: [&str; 2] = ["git", "nvim"];
 
@@ -253,10 +256,10 @@ impl Deps {
             let cwd = progress.dir.to_string_lossy().into_owned();
             let spec = SpawnSpec::for_view(&view, cwd.clone(), nvim, &self.engines.borrow());
             self.service.spawn_view(spec)?;
-            if let Err(error) = self.tmux.split_window(&view, &cwd, &default_shell(&self.env)) {
+            if let Err(error) = self.add_panes(pack, &view, &cwd) {
                 // Half-built view: kill it so a re-run of `start` rebuilds it cleanly.
                 self.tmux.kill_session(&view);
-                return Err(error.into());
+                return Err(error);
             }
             println!("{view} view created.");
         }
@@ -267,6 +270,29 @@ impl Deps {
             let _ = std::io::stdout().flush();
             Ok(self.tmux.attach_session(&view)?)
         }
+    }
+
+    /// The shell on the right, the key cheat sheet under the lesson; focus back on the lesson.
+    fn add_panes(&self, pack: &Pack, view: &str, cwd: &str) -> Result<(), BoxError> {
+        self.tmux.split_window(view, cwd, &default_shell(&self.env))?;
+        let source = pack.dir.join("..").join(KEYS_FILE);
+        let keys = render_keys(
+            &std::fs::read_to_string(&source)?,
+            self.tmux.global_option("prefix").as_deref(),
+        );
+        let rendered = self.home.root().join("tutor").join(KEYS_FILE);
+        std::fs::write(&rendered, keys)?;
+        // Redraw on every resize: the view is born detached at 80x24 and grows on attach.
+        let show = format!(
+            "sh -c 'draw() {{ [ \"$(tput lines)\" -ne {KEYS_LINES} ] && \
+             tmux resize-pane -t \"$TMUX_PANE\" -y {KEYS_LINES}; clear; cat \"$0\"; }}; \
+             trap draw WINCH; draw; \
+             while :; do sleep 3600 & wait $!; done' {}",
+            shlex_quote(&rendered.to_string_lossy())
+        );
+        self.tmux.split_below(view, KEYS_LINES, cwd, &show)?;
+        self.tmux.select_pane(&format!("={view}:.{{top-left}}"));
+        Ok(())
     }
 
     fn check(

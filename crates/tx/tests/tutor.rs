@@ -283,3 +283,24 @@ fn start_tutor_fails_fast_when_the_tutor_is_disabled() {
     assert!(text.contains("tx start: the tutor is disabled (plugins.verbs.tutor)"), "{text}");
     assert!(!text.contains("tx-assistant"), "nothing is started before the check: {text}");
 }
+
+#[test]
+fn every_prefix_key_on_the_cheat_sheet_is_bound() {
+    let keys = std::fs::read_to_string(repo().join("tutor/keys.txt")).unwrap();
+    let conf = std::fs::read_to_string(repo().join("tmux/tx-ide.tmux")).unwrap();
+    let bound: Vec<&str> = conf
+        .lines()
+        .filter_map(|line| line.strip_prefix("bind "))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .map(|key| key.trim_matches('\''))
+        .collect();
+    let listed: Vec<&str> = keys
+        .lines()
+        .filter_map(|line| line.strip_prefix("{prefix} "))
+        .filter_map(|rest| rest.split('\t').next())
+        .collect();
+    assert!(!listed.is_empty());
+    for key in listed {
+        assert!(bound.contains(&key), "keys.txt lists {{prefix}} {key}, not bound in tx-ide.tmux");
+    }
+}
