@@ -30,7 +30,7 @@ const DEFAULT_LANG: &str = "python";
 const KEYS_FILE: &str = "keys.txt";
 /// Lesson-buffer behaviour for the view's nvim, shared by every pack.
 const LESSON_LUA: &str = "lesson.lua";
-const KEYS_LINES: u16 = 12;
+const KEYS_LINES: u16 = 13;
 /// Always needed besides the pack's own `requires`.
 const BASE_REQUIRES: [&str; 2] = ["git", "nvim"];
 
