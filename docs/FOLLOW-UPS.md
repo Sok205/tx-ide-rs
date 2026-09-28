@@ -20,3 +20,6 @@
 - tx tutor: decode chunked HTTP responses before adding non-Python packs.
 - tx tutor: `tutor` is a public verb with no reference counterpart, so `tx --help` gains one line —
   a deliberate difference from the Python reference. Likewise `tx start -h` gains `--tutor [LANG]`.
+- tx attach (picker): from a view pane that already hosts a nested session (`tmux`), the pick
+  replaces what that pane shows (the old session keeps running); the reference only nested into
+  shell panes and switched the client otherwise. Deliberate — the tutor view's viewer pane relies on it.

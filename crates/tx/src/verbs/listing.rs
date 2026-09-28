@@ -463,6 +463,13 @@ impl Command for Start {
     }
 }
 
+/// Whether a view pane running `cmd` takes the picked session in place: a shell, or a pane
+/// already hosting a nested session (`tmux`) — then the pick swaps what it shows; the session it
+/// showed keeps running. Deliberate difference from the reference, which only took shells.
+fn hosts_in_view_pane(cmd: &str) -> bool {
+    cmd == "tmux" || SHELL_COMMANDS.contains(&cmd)
+}
+
 /// The argv `start --tutor LANG` hands to the `tutor` verb.
 fn tutor_argv(lang: &str) -> Vec<String> {
     vec!["start".to_owned(), lang.to_owned()]
@@ -786,8 +793,9 @@ impl Picker<'_> {
         Ok(tmux.switch_client(target).is_ok())
     }
 
-    /// From a shell pane of a Views home, nest-attach `target` into that pane (`respawn-pane -k`
-    /// with a `set -m` bash wrapper that keeps the pane alive after detach).
+    /// From a shell pane of a view (or one already hosting a nested session), nest-attach
+    /// `target` into that pane (`respawn-pane -k` with a `set -m` bash wrapper that keeps the
+    /// pane alive after detach).
     fn respawn_into_view_pane(&self, target: &str) -> Result<bool, BoxError> {
         let tmux = &self.deps.tmux;
         if !self.deps.inside_tmux() {
@@ -802,7 +810,7 @@ impl Picker<'_> {
             return Ok(false);
         }
         let origin_cmd = tmux.display_message("#{pane_current_command}", Some(&origin_pane));
-        if !origin_cmd.is_some_and(|cmd| SHELL_COMMANDS.contains(&cmd.as_str())) {
+        if !origin_cmd.is_some_and(|cmd| hosts_in_view_pane(&cmd)) {
             return Ok(false);
         }
         let wrapper = format!(
@@ -937,6 +945,16 @@ impl Command for EditTag {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_view_pane_hosts_the_pick_when_it_runs_a_shell_or_already_hosts_a_session() {
+        for cmd in ["zsh", "bash", "sh", "fish", "dash", "tmux"] {
+            assert!(hosts_in_view_pane(cmd), "{cmd}");
+        }
+        for cmd in ["nvim", "claude", "python3", ""] {
+            assert!(!hosts_in_view_pane(cmd), "{cmd}");
+        }
+    }
 
     #[test]
     fn start_tutor_hands_the_pack_to_tutor_start() {
