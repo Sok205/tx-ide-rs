@@ -268,9 +268,12 @@ impl Deps {
         }
     }
 
-    /// The shell on the right, the key cheat sheet under the lesson; focus back on the lesson.
+    /// Right: a shell over the viewer (where `prefix+t` opens sessions); under the lesson: the
+    /// key cheat sheet. Focus goes back to the lesson, which never leaves the screen.
     fn add_panes(&self, pack: &Pack, view: &str, cwd: &str) -> Result<(), BoxError> {
-        self.tmux.split_window(view, cwd, &default_shell(&self.env))?;
+        let shell = default_shell(&self.env);
+        self.tmux.split_window(view, cwd, &shell)?;
+        self.tmux.split_below(view, "top-right", "50%", cwd, &shell)?;
         let source = pack.dir.join("..").join(KEYS_FILE);
         let keys = render_keys(
             &std::fs::read_to_string(&source)?,
@@ -286,7 +289,8 @@ impl Deps {
              while :; do sleep 3600 & wait $!; done' {}",
             shlex_quote(&rendered.to_string_lossy())
         );
-        self.tmux.split_below(view, KEYS_LINES, cwd, &show)?;
+        self.tmux
+            .split_below(view, "top-left", &KEYS_LINES.to_string(), cwd, &show)?;
         self.tmux.select_pane(&format!("={view}:.{{top-left}}"));
         Ok(())
     }

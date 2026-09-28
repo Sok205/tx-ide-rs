@@ -340,17 +340,18 @@ impl Tmux {
             .map(drop)
     }
 
-    /// Split `session`'s top-left pane, the new pane `lines` tall below it, running `command`.
+    /// Split `session`'s `pane` (a position token: `top-left`, `top-right`, …), the new pane
+    /// `size` tall (`11`, `50%`) below it, running `command`.
     pub fn split_below(
         &self,
         session: &str,
-        lines: u16,
+        pane: &str,
+        size: &str,
         cwd: &str,
         command: &str,
     ) -> Result<(), TmuxError> {
-        let target = format!("{}.{{top-left}}", exact_session_pane(session));
-        let lines = lines.to_string();
-        self.run(&["split-window", "-v", "-l", &lines, "-t", &target, "-c", cwd, command])
+        let target = format!("{}.{{{pane}}}", exact_session_pane(session));
+        self.run(&["split-window", "-v", "-l", size, "-t", &target, "-c", cwd, command])
             .map(drop)
     }
 
@@ -753,12 +754,15 @@ mod tests {
     }
 
     #[test]
-    fn split_below_targets_the_top_left_pane_exactly() {
+    fn split_below_targets_the_named_pane_exactly() {
         let tmux = Tmux::new("/usr/bin/false", TmuxEnv::default());
-        let error = tmux.split_below("tutor-python", 12, "/p", "cat k").unwrap_err().to_string();
+        let error = tmux
+            .split_below("tutor-python", "top-right", "50%", "/p", "zsh")
+            .unwrap_err()
+            .to_string();
         assert_eq!(
             error,
-            "tmux split-window -v -l 12 -t =tutor-python:.{top-left} -c /p cat k failed: "
+            "tmux split-window -v -l 50% -t =tutor-python:.{top-right} -c /p zsh failed: "
         );
     }
 

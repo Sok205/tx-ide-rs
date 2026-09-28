@@ -9,32 +9,31 @@ outlives the pane you started it from.
 ## The tx skill
 
 - `tx spawn NAME --tag TAG --cmd "COMMAND"` starts a tracked session running COMMAND.
-- `prefix+t` opens the **picker**: every tx session, fuzzy-searchable. Enter jumps to one.
-  Open it from **this lesson pane**: your whole terminal then switches to that session. (From
-  the shell pane it would instead open the session *inside* that pane.)
-- `tx ls` lists sessions in the shell. `prefix+s` shows every tmux session — including this
-  view, `tutor-python`, which the picker does not list (views are not tx sessions).
-- Back to the tutorial from anywhere: `prefix+s` → `tutor-python`, or `tx tutor start` in any shell.
+- `prefix+t` opens the **picker**: every tx session, fuzzy-searchable. Open it from the
+  **viewer** (bottom right) and the session you pick appears *inside the viewer*; the lesson
+  and the shell stay where they are. Picking another session later swaps what the viewer
+  shows — the session it showed keeps running in the background.
+- `tx ls` lists sessions in the shell. `prefix+s` shows every tmux session in a tree.
 - `prefix+e` opens a small popup form to rename a session or edit its tags: a `Name` field and
   a `Tags` field (comma-separated). `↑`/`↓` (or Tab) switches field, `Enter` saves, `Esc`
   cancels. The CLI equivalent is `tx tag NAME TAG`.
 
 ## Your task
 
-1. Stop the server from lesson 02: go to its pane and press `Ctrl-C`.
+1. Stop the server from lesson 02: in the shell pane (top right) press `Ctrl-C`.
 2. In the shell: `tx spawn server --tag tutor --cwd "$PWD" --cmd "$SHELL"`
 3. `tx ls` — find `server`.
-4. `C-h` to this lesson pane, then `prefix+t`, type `serv`, Enter. Your terminal is now in the
-   `server` session, a shell. Run
-   `python3 server.py` — from now on this session hosts your server.
-5. Still there, press `prefix+e`. The cursor starts in `Name`; press `↓` to move to `Tags` —
+4. `C-j` down to the viewer, then `prefix+t`, type `serv`, Enter. The viewer now shows the
+   `server` session, a shell. Run `python3 server.py` there — from now on this session hosts
+   your server.
+5. Still in the viewer, press `prefix+e`. The cursor starts in `Name`; press `↓` to move to `Tags` —
    its cursor lands at the end of the existing `tutor` — and type `,http-tutor`. Press `Enter`
    to save (`Esc` would cancel). The CLI equivalent is `tx tag server tutor,http-tutor`.
-6. Come back: `prefix+s`, move to `tutor-python`, Enter.
+6. `C-k` back up to the shell. The lesson never left the screen.
 
-From now on `curl localhost:8000/…` talks to the `server` session. After you change
-`server.py`, restart it: jump to `server` and press `Ctrl-C`, then run `python3 server.py`
-again.
+From now on `curl localhost:8000/…` talks to the `server` session. To **restart the server**
+after you change `server.py`: in the viewer (if it shows another session, `prefix+t` →
+`server` first) press `Ctrl-C`, then run `python3 server.py` again.
 
 ## Check
 

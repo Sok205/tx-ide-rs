@@ -17,9 +17,8 @@ web API.
 ## Your task
 
 1. `tx ls` — list what is left (it shows only live sessions).
-2. Kill every tutor worker: jump to it (`prefix+t` from this lesson pane) and press `prefix+X`,
-   confirm with `y` (tmux then moves you to another session; come back with `prefix+s` →
-   `tutor-python`) — or `tx kill NAME` from the shell.
+2. Kill every tutor worker: open it in the viewer (`prefix+t`), press `prefix+X`, confirm with
+   `y` — the viewer drops back to a shell — or run `tx kill NAME` in the shell.
 3. Archive them: `tx archive NAME` for each.
 4. Keep `server` if you like — it is a shell, not a worker.
 

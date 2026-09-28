@@ -10,14 +10,15 @@ and *where* (a **path**, like `/` or `/hello`). The server sends back a **respon
 
 ## The tx skill
 
-The shell pane is an ordinary shell — anything you would do in a terminal works here.
+The shell pane (top right) and the viewer (bottom right) are ordinary shells — anything you
+would do in a terminal works there.
 
 ## Your task
 
 1. In the shell pane: `python3 server.py`. It prints `Serving on http://127.0.0.1:8000`.
    The server is now waiting; this pane is busy.
-2. You need a second shell. Press `prefix` then `"` to split the pane (tmux's split key).
-3. In the new pane: `curl -i localhost:8000/`. `-i` shows the status line and headers too.
+2. You need a second shell: `C-j` down to the viewer.
+3. In the viewer: `curl -i localhost:8000/`. `-i` shows the status line and headers too.
    Find `200 OK` and the welcome text.
 4. Try `curl -i localhost:8000/anything`. Same answer — the server answers every path the same
    way. We fix that in lesson 04.

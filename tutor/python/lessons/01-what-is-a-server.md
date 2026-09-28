@@ -11,9 +11,13 @@ browser does this every time you open a page: it asks a server, the server answe
 
 ## The tx skill
 
-You are inside a tx **view** called `tutor-python`: a tmux session with three panes.
-Top left: this lesson, in nvim. Below it: a cheat sheet of tx-ide keys. Right: a shell in
-your project, `~/tx-tutor/python`.
+You are inside a tx **view** called `tutor-python`: a tmux session with four panes.
+
+- Top left: this lesson, in nvim. It stays on screen the whole tutorial.
+- Below it: a cheat sheet of tx-ide keys.
+- Top right: a **shell** in your project, `~/tx-tutor/python`, for commands.
+- Bottom right: the **viewer**, also a shell for now. From lesson 03 on, sessions you open with
+  the picker appear here, so nothing ever covers the lesson.
 
 How keys are written in these lessons:
 
@@ -27,6 +31,8 @@ How keys are written in these lessons:
   cheat sheet). The same keys
   move between nvim splits, tmux panes and nested sessions — you never need to think about
   which one you are in.
+- Lost (the tutorial is gone from your screen)? `prefix+s`, pick `tutor-python`, Enter — or
+  run `tx tutor start` in any shell.
 
 ## Your task
 

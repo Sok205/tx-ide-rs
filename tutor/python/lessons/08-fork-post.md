@@ -23,7 +23,7 @@ a branch of the chat. Use it to try two designs side by side, then keep the bett
    Commit.
 3. Review both (lesson 06): for the one you prefer, `tx show <its name>`, note its `cwd`, then
    `git -C <that cwd> switch -c tutor/notes` and `git merge tutor/notes` in the project shell.
-   Restart `server` and try:
+   Restart the server (end of lesson 03) and try:
    `curl -i -X POST localhost:8000/notes -d '{"text": "buy milk"}'`
 
 ## Check

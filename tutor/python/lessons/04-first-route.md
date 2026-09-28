@@ -15,7 +15,7 @@ Editing in nvim, right here. `:e server.py`, find `do_GET`. `:w` saves.
 1. Open `server.py` in this nvim (`:e server.py`).
 2. In `do_GET`, before the welcome line, add: if `self.path == "/hello"`, answer
    `self.send_text(200, "hello\n")` and `return`.
-3. Save, restart the `server` session (lesson 03), and try `curl -i localhost:8000/hello`.
+3. Save, restart the server (end of lesson 03), and try `curl -i localhost:8000/hello`.
 
 Stuck? `tx tutor hint` prints the snippet.
 

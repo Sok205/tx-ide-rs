@@ -20,13 +20,13 @@ merging, you review it.
 ## Your task
 
 1. `tx show time` — note the worker's `cwd` (its worktree).
-2. `tx spawn-nvim review --tag tutor --cwd <that cwd> --diff` then, from this lesson pane, `prefix+t` → `review`.
+2. `tx spawn-nvim review --tag tutor --cwd <that cwd> --diff` then, in the viewer, `prefix+t` → `review`.
    Read the change. Close with `:qa`.
 3. Name the worker's commit: `git -C <that cwd> switch -c tutor/time`. (The worker committed on
    a detached HEAD, which has no name to merge; a branch gives it one, and worktrees share
    branches with your project.)
 4. In the project shell: `git merge tutor/time`.
-5. Restart the `server` session and `curl -i localhost:8000/time`. Look for
+5. Restart the server (end of lesson 03) and `curl -i localhost:8000/time`. Look for
    `Content-Type: application/json`.
 
 ## Check
