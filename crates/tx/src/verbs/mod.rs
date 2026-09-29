@@ -7,4 +7,6 @@ pub mod home;
 pub mod hooks;
 pub mod install;
 pub mod listing;
+pub mod new_agent;
 pub mod sessions;
+pub mod tutor;

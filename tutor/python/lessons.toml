@@ -1,0 +1,106 @@
+[[lesson]]
+id = "01-what-is-a-server"
+file = "lessons/01-what-is-a-server.md"
+checks = [
+  { kind = "confirm", label = "you moved between the lesson and the shell", prompt = "Did you jump between the two panes with C-h and C-l?" },
+]
+
+[[lesson]]
+id = "02-request-response"
+file = "lessons/02-request-response.md"
+checks = [
+  { kind = "http", label = "GET / answers 200", path = "/", status = 200 },
+]
+
+[[lesson]]
+id = "03-sessions"
+file = "lessons/03-sessions.md"
+checks = [
+  { kind = "tx", label = "a tx session named server exists", session = { name = "server" } },
+  { kind = "tx", label = "server is tagged http-tutor", session = { name = "server", tag = "http-tutor" } },
+]
+
+[[lesson]]
+id = "04-first-route"
+file = "lessons/04-first-route.md"
+solution = "solutions/04-first-route.py"
+checks = [
+  { kind = "http", label = "GET /hello answers 200 with 'hello'", path = "/hello", status = 200, contains = "hello" },
+]
+
+[[lesson]]
+id = "05-spawn-worker"
+file = "lessons/05-spawn-worker.md"
+requires = ["claude"]
+checks = [
+  { kind = "tx", label = "a Claude worker tagged tutor exists", session = { tag = "tutor", role = "llm", engine = "claude" } },
+]
+
+[[lesson]]
+id = "06-review-and-merge"
+file = "lessons/06-review-and-merge.md"
+requires = ["claude"]
+checks = [
+  { kind = "http", label = "GET /time answers JSON", path = "/time", status = 200, headers = { "Content-Type" = "application/json*" }, json = true },
+]
+
+[[lesson]]
+id = "07-not-found"
+file = "lessons/07-not-found.md"
+solution = "solutions/07-not-found.py"
+checks = [
+  { kind = "http", label = "GET /nope answers 404", path = "/nope", status = 404 },
+  { kind = "http", label = "GET /hello still works", path = "/hello", status = 200, contains = "hello" },
+]
+
+[[lesson]]
+id = "08-ask-from-code"
+file = "lessons/08-ask-from-code.md"
+requires = ["claude"]
+checks = [
+  { kind = "confirm", label = "you asked from nvim", prompt = "Did you send the request from nvim with Space a c?" },
+  { kind = "http", label = "every response says X-Served-By: tx-tutor", path = "/", status = 200, headers = { "X-Served-By" = "tx-tutor" } },
+]
+
+[[lesson]]
+id = "09-fork-post"
+file = "lessons/09-fork-post.md"
+requires = ["claude"]
+checks = [
+  { kind = "tx", label = "you forked a tutor worker's chat", session = { tag = "tutor", chat_origin = "fork" } },
+  { kind = "http", label = "POST /notes answers 201", method = "POST", path = "/notes", body = '{"text": "buy milk"}', status = 201 },
+  { kind = "http", label = "GET /notes lists the note as JSON", path = "/notes", status = 200, contains = "buy milk", json = true },
+]
+
+[[lesson]]
+id = "10-history-resume"
+file = "lessons/10-history-resume.md"
+requires = ["claude"]
+checks = [
+  { kind = "tx", label = "you resumed a tutor chat", session = { tag = "tutor", chat_origin = "resume" } },
+]
+
+[[lesson]]
+id = "11-assistant-tests"
+file = "lessons/11-assistant-tests.md"
+requires = ["claude"]
+checks = [
+  { kind = "file", label = "test_server.py exists", path = "test_server.py" },
+  { kind = "command", label = "python3 -m unittest passes", argv = ["python3", "-m", "unittest", "-v"] },
+]
+
+[[lesson]]
+id = "12-handover"
+file = "lessons/12-handover.md"
+requires = ["claude"]
+checks = [
+  { kind = "tx", label = "you handed a tutor chat over", session = { tag = "tutor", chat_origin = "handover" } },
+]
+
+[[lesson]]
+id = "13-cleanup"
+file = "lessons/13-cleanup.md"
+checks = [
+  { kind = "tx", label = "no tutor workers are still running", absent = true, session = { tag = "tutor", role = "llm", state = ["alive", "working", "waiting", "idle"] } },
+  { kind = "tx", label = "at least one tutor worker is archived", session = { tag = "tutor", state = ["archived"] } },
+]

@@ -17,3 +17,12 @@
   in isolation; the assertion now prints the log + marker when it fires.
 - Reinstall rewrites settings.json (+ `.bak.<stamp>`) even when nothing changed — same as the
   reference's claude.sh / statusline step; skip the write when the serialized document is unchanged.
+- tx tutor: decode chunked HTTP responses before adding non-Python packs.
+- tx tutor: `tutor` is a public verb with no reference counterpart, so `tx --help` gains one line —
+  a deliberate difference from the Python reference. Likewise `tx start -h` gains `--tutor [LANG]`.
+- tx attach (picker): from a view pane that already hosts a nested session (`tmux`), the pick
+  replaces what that pane shows (the old session keeps running); the reference only nested into
+  shell panes and switched the client otherwise. Deliberate — the tutor view's viewer pane relies on it.
+- prefix+n (new agent: name / tags / prompt → `tx spawn`, then a `send-message` to the tx-assistant)
+  and the hidden `tx _new-agent` behind it are new here; the reference has no spawn key. The key
+  replaces tmux's stock next-window on `n`.

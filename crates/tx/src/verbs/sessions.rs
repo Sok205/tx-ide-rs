@@ -217,6 +217,14 @@ impl Component for SessionVerbs {
                 },
             );
         }
+        table.register(
+            ctx,
+            Visibility::Hidden,
+            super::new_agent::NewAgent {
+                service: Rc::clone(&deps.service),
+                commands: Rc::downgrade(&table),
+            },
+        );
         Ok(())
     }
 }

@@ -3,7 +3,8 @@
 # which is sourced from the user's ~/.tmux.conf by install.sh.
 #
 # Reads @tx-ide-* options to decide which view features to enable:
-#   @tx-ide-popups          on|off   prefix+t (tx), prefix+e (edit), prefix+/ (assistant), prefix+X (kill)
+#   @tx-ide-popups          on|off   prefix+t (tx), prefix+e (edit), prefix+/ (assistant), prefix+X (kill),
+#                                    prefix+n (new agent; replaces tmux's next-window on that key)
 #   @tx-ide-pane-borders    on|off   pane-border-format integration + colors
 #   @tx-ide-agent-scroll    on|off   C-u/C-d → PageUp/PageDown in agent panes
 #   @tx-ide-nav-keys        on|off   C-h/j/k/l seamless nav: nvim splits ↔ panes ↔ nested sessions
@@ -63,6 +64,12 @@ bind t display-popup -E -w 118 -h 30 -x C -y 1 -T " tx " "tx attach"
 bind '/' command-prompt -p "tx-assistant>" {
   set-buffer -b tx-assistant-input "%%"
   run-shell -b "tx-assistant --from-buffer"
+}
+bind n command-prompt -p "new agent name:,tags (comma-separated):,prompt:" {
+  set-buffer -b tx-new-agent-name "%1"
+  set-buffer -b tx-new-agent-tags "%2"
+  set-buffer -b tx-new-agent-prompt "%3"
+  run-shell -b "tx _new-agent '#{pane_id}' '#{client_name}' >/dev/null 2>&1"
 }
 EOF
   # prefix+X: kill the active pane's tx session behind a stock-style confirm-before prompt

@@ -28,7 +28,7 @@ use crate::verbs;
 type Factory = fn() -> Rc<dyn Component>;
 
 /// Every feature component, in load order.
-const MANIFEST: [(&str, Factory); 10] = [
+const MANIFEST: [(&str, Factory); 11] = [
     ("engine.claude", || {
         engine("engine.claude", Engine::Claude, claude)
     }),
@@ -46,6 +46,7 @@ const MANIFEST: [(&str, Factory); 10] = [
     ("verbs.artifacts", || {
         Rc::new(verbs::artifacts::ArtifactVerbs)
     }),
+    ("verbs.tutor", || Rc::new(verbs::tutor::TutorVerbs)),
     ("verbs.install", || Rc::new(verbs::install::InstallVerbs)),
 ];
 

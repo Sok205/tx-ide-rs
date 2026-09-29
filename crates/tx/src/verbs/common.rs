@@ -85,6 +85,23 @@ pub fn env_namew(env: &Env) -> i64 {
         .unwrap_or(18)
 }
 
+/// This binary, canonical (the reference's `<repo>/bin/tx`, resolved).
+pub fn bin_tx(env: &Env) -> std::path::PathBuf {
+    std::fs::canonicalize(&env.exe).unwrap_or_else(|_| env.exe.clone())
+}
+
+/// `_repo_root()`: the checkout holding `bin/tx-assistant` — the first ancestor of this binary
+/// that has one (a cargo build lives under `<repo>/target/<profile>/`).
+pub fn repo_root(env: &Env) -> std::path::PathBuf {
+    let exe = bin_tx(env);
+    exe.ancestors()
+        .skip(1)
+        .find(|dir| dir.join("bin").join("tx-assistant").is_file())
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| exe.parent().and_then(std::path::Path::parent).map(std::path::Path::to_path_buf))
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

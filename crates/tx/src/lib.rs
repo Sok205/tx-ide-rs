@@ -31,6 +31,7 @@ pub mod storage;
 pub mod store;
 pub mod sync;
 pub mod tmux;
+pub mod tutor;
 pub mod verbs;
 pub mod worktree;
 

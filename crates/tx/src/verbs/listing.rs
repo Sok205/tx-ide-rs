@@ -6,13 +6,15 @@ use std::io::{Read, Write};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitStatus, Stdio};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cordis::{BoxError, Component, Ctx};
 use serde_json::Value;
 
-use crate::app::{COMMANDS, Command, ENGINES, ENV, Env, HOME, SERVICE, TMUX, Visibility};
+use crate::app::{
+    COMMANDS, Command, CommandTable, ENGINES, ENV, Env, HOME, SERVICE, TMUX, Visibility,
+};
 use crate::argparse::{Arg, Matches, ParseExit, Parser};
 use crate::engines::EngineRegistry;
 use crate::palette;
@@ -39,6 +41,8 @@ enum ListingError {
     NoSessionInPane,
     #[error("the session in this pane is not tx-managed")]
     NotTxManaged,
+    #[error("the tutor is disabled (plugins.verbs.tutor)")]
+    TutorDisabled,
     #[error("could not run {program}: {source}")]
     Run {
         program: String,
@@ -58,6 +62,8 @@ struct Deps {
     env: Rc<Env>,
     home: Rc<Home>,
     engines: Rc<RefCell<EngineRegistry>>,
+    /// Weak: the table owns the verbs that own these deps.
+    commands: Weak<CommandTable>,
 }
 
 impl Deps {
@@ -67,19 +73,13 @@ impl Deps {
 
     /// This binary, canonical (the reference's `<repo>/bin/tx`, resolved).
     fn bin_tx(&self) -> PathBuf {
-        std::fs::canonicalize(&self.env.exe).unwrap_or_else(|_| self.env.exe.clone())
+        crate::verbs::common::bin_tx(&self.env)
     }
 
     /// `_repo_root()`: the checkout holding `bin/tx-assistant` — the first ancestor of this binary
     /// that has one (a cargo build lives under `<repo>/target/<profile>/`).
     fn repo_root(&self) -> PathBuf {
-        let exe = self.bin_tx();
-        exe.ancestors()
-            .skip(1)
-            .find(|dir| dir.join("bin").join("tx-assistant").is_file())
-            .map(Path::to_path_buf)
-            .or_else(|| exe.parent().and_then(Path::parent).map(Path::to_path_buf))
-            .unwrap_or_default()
+        crate::verbs::common::repo_root(&self.env)
     }
 
     fn inside_tmux(&self) -> bool {
@@ -114,6 +114,7 @@ impl Component for ListingVerbs {
             env: ctx.get(ENV)?,
             home: ctx.get(HOME)?,
             engines: ctx.get(ENGINES)?,
+            commands: Rc::downgrade(&ctx.get(COMMANDS)?),
         });
         let table = ctx.get(COMMANDS)?;
         let d = || Rc::clone(&deps);
@@ -384,16 +385,37 @@ impl Command for Start {
         "Ensure the Views home base + tx-assistant exist, then attach Views."
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
-        let parser = self.0.parser(self.name(), self.summary()).arg(
-            Arg::options(&["-r", "--restart"])
-                .flag()
-                .help("kill an existing tx-assistant first so warmup recreates it"),
-        );
+        let parser = self
+            .0
+            .parser(self.name(), self.summary())
+            .arg(
+                Arg::options(&["-r", "--restart"])
+                    .flag()
+                    .help("kill an existing tx-assistant first so warmup recreates it"),
+            )
+            .arg(
+                Arg::option("--tutor")
+                    .optional()
+                    .constant("python")
+                    .metavar("LANG")
+                    .help("open the tx tutor walkthrough (default: python) instead of Views"),
+            );
         let args = match parse(&parser, argv) {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
         let (deps, tmux) = (&self.0, &self.0.tmux);
+        // Looked up before any tmux work, so a disabled tutor fails with nothing started.
+        let tutor = match args.get_one("tutor") {
+            Some(lang) => Some((
+                deps.commands
+                    .upgrade()
+                    .and_then(|table| table.get("tutor"))
+                    .ok_or(ListingError::TutorDisabled)?,
+                tutor_argv(lang),
+            )),
+            None => None,
+        };
         let repo = deps.repo_root();
 
         let assistant_target = deps
@@ -425,6 +447,9 @@ impl Command for Start {
             println!("Views session created.");
         }
 
+        if let Some((tutor, argv)) = tutor {
+            return tutor.run(&argv);
+        }
         if deps.inside_tmux() {
             tmux.switch_client_bare("Views")?;
         } else {
@@ -436,6 +461,18 @@ impl Command for Start {
         }
         Ok(0)
     }
+}
+
+/// Whether a view pane running `cmd` takes the picked session in place: a shell, or a pane
+/// already hosting a nested session (`tmux`) — then the pick swaps what it shows; the session it
+/// showed keeps running. Deliberate difference from the reference, which only took shells.
+fn hosts_in_view_pane(cmd: &str) -> bool {
+    cmd == "tmux" || SHELL_COMMANDS.contains(&cmd)
+}
+
+/// The argv `start --tutor LANG` hands to the `tutor` verb.
+fn tutor_argv(lang: &str) -> Vec<String> {
+    vec!["start".to_owned(), lang.to_owned()]
 }
 
 // ----- attach (the fzf picker) ---------------------------------------------------------------
@@ -756,8 +793,9 @@ impl Picker<'_> {
         Ok(tmux.switch_client(target).is_ok())
     }
 
-    /// From a shell pane of a Views home, nest-attach `target` into that pane (`respawn-pane -k`
-    /// with a `set -m` bash wrapper that keeps the pane alive after detach).
+    /// From a shell pane of a view (or one already hosting a nested session), nest-attach
+    /// `target` into that pane (`respawn-pane -k` with a `set -m` bash wrapper that keeps the
+    /// pane alive after detach).
     fn respawn_into_view_pane(&self, target: &str) -> Result<bool, BoxError> {
         let tmux = &self.deps.tmux;
         if !self.deps.inside_tmux() {
@@ -772,7 +810,7 @@ impl Picker<'_> {
             return Ok(false);
         }
         let origin_cmd = tmux.display_message("#{pane_current_command}", Some(&origin_pane));
-        if !origin_cmd.is_some_and(|cmd| SHELL_COMMANDS.contains(&cmd.as_str())) {
+        if !origin_cmd.is_some_and(|cmd| hosts_in_view_pane(&cmd)) {
             return Ok(false);
         }
         let wrapper = format!(
@@ -907,6 +945,22 @@ impl Command for EditTag {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_view_pane_hosts_the_pick_when_it_runs_a_shell_or_already_hosts_a_session() {
+        for cmd in ["zsh", "bash", "sh", "fish", "dash", "tmux"] {
+            assert!(hosts_in_view_pane(cmd), "{cmd}");
+        }
+        for cmd in ["nvim", "claude", "python3", ""] {
+            assert!(!hosts_in_view_pane(cmd), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn start_tutor_hands_the_pack_to_tutor_start() {
+        assert_eq!(tutor_argv("python"), ["start", "python"]);
+        assert_eq!(tutor_argv("go"), ["start", "go"]);
+    }
 
     #[test]
     fn parse_ymd_follows_strptime() {

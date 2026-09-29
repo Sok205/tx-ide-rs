@@ -1,0 +1,13 @@
+# tx-ide keys    C-x = hold Ctrl + x (no prefix) · {prefix} t = prefix, release, then t
+C-h/j/k/l	move between panes, nvim splits, nested sessions
+M-1..9	jump to pane N
+{prefix} t	picker — from the viewer (bottom right): opens the session there
+{prefix} n	new agent: name, tags, prompt (tx-assistant is told)
+{prefix} /	ask the tx-assistant
+{prefix} e	rename / tag this pane's session
+{prefix} s	session tree — lost? pick tutor-python
+{prefix} X	kill this pane's session
+C-u / C-d	scroll an agent (claude / codex) pane
+Enter	on a lesson command: type it into the shell (not run)
+Space a C / a c	in a tx nvim: ask an agent about the code / send
+tx tutor	check · hint · status · next · prev

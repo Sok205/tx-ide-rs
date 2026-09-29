@@ -4,7 +4,7 @@
 //! - Q27: calls that address a session BY NAME use exact targets — `=name` for session-typed
 //!   targets (`has-session`, `kill-session`, `rename-session`, `switch-client`) and `=name:` for
 //!   pane-typed ones (`show-options` / `set-option` behind `get_tx_id` /
-//!   `set_tx_view` / `is_view`; tmux rejects a bare `=name` there). Generic target-taking methods
+//!   `set_tx_view` / `is_view` / `split_window`; tmux rejects a bare `=name` there). Generic target-taking methods
 //!   (`set_option`, `send_keys`, `display_message`, …) pass the caller's target through untouched.
 //! - Q30: `@remote-session` is read at PANE scope (`show-options -p`).
 
@@ -337,6 +337,49 @@ impl Tmux {
     /// Replace a pane's process with `command` (`respawn-pane -k`).
     pub fn respawn_pane(&self, pane_id: &str, command: &str) -> Result<(), TmuxError> {
         self.run(&["respawn-pane", "-k", "-t", pane_id, command])
+            .map(drop)
+    }
+
+    /// Split `session`'s `pane` (a position token: `top-left`, `top-right`, …), the new pane
+    /// `size` tall (`11`, `50%`) below it, running `command`.
+    pub fn split_below(
+        &self,
+        session: &str,
+        pane: &str,
+        size: &str,
+        cwd: &str,
+        command: &str,
+    ) -> Result<(), TmuxError> {
+        let target = format!("{}.{{{pane}}}", exact_session_pane(session));
+        self.run(&["split-window", "-v", "-l", size, "-t", &target, "-c", cwd, command])
+            .map(drop)
+    }
+
+    /// A paste buffer's contents; `None` when it does not exist.
+    pub fn show_buffer(&self, name: &str) -> Option<String> {
+        let (ok, out) = self.run_quiet(&["show-buffer", "-b", name]);
+        ok.then_some(out)
+    }
+
+    pub fn delete_buffer(&self, name: &str) {
+        let _ = self.run_quiet(&["delete-buffer", "-b", name]);
+    }
+
+    /// Show `message` on `client`'s status line (best effort).
+    pub fn display_status(&self, client: &str, message: &str) {
+        eprintln!("{message}");
+        let _ = self.run_quiet(&["display-message", "-c", client, message]);
+    }
+
+    /// A global server option (`show-options -gvq`); `None` when unset / no server.
+    pub fn global_option(&self, option: &str) -> Option<String> {
+        let (_, out) = self.run_quiet(&["show-options", "-gvq", option]);
+        non_empty(out.trim())
+    }
+
+    /// Split `session`'s active pane side by side, running `command` in `cwd`.
+    pub fn split_window(&self, session: &str, cwd: &str, command: &str) -> Result<(), TmuxError> {
+        self.run(&["split-window", "-h", "-t", &exact_session_pane(session), "-c", cwd, command])
             .map(drop)
     }
 
@@ -717,6 +760,26 @@ mod tests {
         assert_eq!(bare, "tmux switch-client -t Views failed: ");
         let exact = tmux.switch_client("Views").unwrap_err().to_string();
         assert_eq!(exact, "tmux switch-client -t =Views failed: ");
+    }
+
+    #[test]
+    fn split_window_targets_the_session_exactly() {
+        let tmux = Tmux::new("/usr/bin/false", TmuxEnv::default());
+        let error = tmux.split_window("tutor-python", "/p", "zsh").unwrap_err().to_string();
+        assert_eq!(error, "tmux split-window -h -t =tutor-python: -c /p zsh failed: ");
+    }
+
+    #[test]
+    fn split_below_targets_the_named_pane_exactly() {
+        let tmux = Tmux::new("/usr/bin/false", TmuxEnv::default());
+        let error = tmux
+            .split_below("tutor-python", "top-right", "50%", "/p", "zsh")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "tmux split-window -v -l 50% -t =tutor-python:.{top-right} -c /p zsh failed: "
+        );
     }
 
     #[test]

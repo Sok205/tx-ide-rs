@@ -29,7 +29,7 @@ out of **components** loaded into a `cordis::Runtime` — the paradigm in `cordi
 ```
 
 Entries: `engine.claude`, `engine.codex`, `engine.antigravity`, `verbs.home`, `verbs.sessions`,
-`verbs.listing`, `verbs.hooks`, `verbs.chat`, `verbs.artifacts`, `verbs.install`. A disabled verb
+`verbs.listing`, `verbs.hooks`, `verbs.chat`, `verbs.artifacts`, `verbs.tutor`, `verbs.install`. A disabled verb
 group's verbs disappear from the command table and `--help`; a disabled engine makes spawns that
 name it fail with `no engine adapter is registered for <engine>`. `tx _plugins` lists every entry
 and its status (active / waiting / disabled / failed). Keys other than `disabled` are the entry's
