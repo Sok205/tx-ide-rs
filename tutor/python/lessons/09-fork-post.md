@@ -29,6 +29,17 @@ a branch of the chat. Use it to try two designs side by side, then keep the bett
    Restart the server (end of lesson 03) and try:
    `curl -i -X POST localhost:8000/notes -d '{"text": "buy milk"}'`
 
+## With the tx-assistant
+
+From the shell pane, `prefix+/`, one request at a time:
+
+- Step 1: "tell time: add POST /notes storing {text} in memory and answering 201 with the note,
+  and GET /notes answering the JSON list; commit on a new branch named tutor/notes-memory"
+- Step 2: "fork time", then "tell time-fork: same notes feature, but store the notes in
+  notes.json; commit on a new branch named tutor/notes-file"
+- Step 3: "spawn nvim here named review-memory tagged tutor with a diff of
+  main...tutor/notes-memory", and the same for `review-file` and `tutor/notes-file`
+
 ## Check
 
 `tx tutor check`

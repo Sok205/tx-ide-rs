@@ -19,6 +19,12 @@ Long conversations get slow and muddled. Better: summarize what matters and star
 2. In the viewer, `prefix+t` → the new session. Ask: "What would you test next?" It should
    know the project.
 
+## With the tx-assistant
+
+Step 1 as a request — `prefix+/` → "hand the test worker over to a new session to keep
+improving test coverage for server.py". For the in-place variant, press `prefix+/` from the
+viewer while it shows a worker and ask "roll this session over".
+
 ## Check
 
 `tx tutor check`

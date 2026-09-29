@@ -31,6 +31,16 @@ The quick way next time: `prefix+n` asks for a name, tags and a prompt, then run
    ask it *why* it set that header.
 3. Carry on when it has committed.
 
+## With the tx-assistant
+
+Step 1 as a request — from the shell pane, `prefix+/`:
+
+"spawn a Claude worker here named time tagged tutor with the prompt: In server.py add a GET
+/time route that answers JSON {now: current UTC time, ISO 8601} with Content-Type
+application/json. Keep the existing routes. Commit your change on a new branch named tutor/time."
+
+It runs the same `tx spawn` and tells you how to reach the worker.
+
 ## Check
 
 `tx tutor check` — it looks for a Claude worker tagged `tutor`.

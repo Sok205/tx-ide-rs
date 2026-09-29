@@ -35,6 +35,16 @@ From now on `curl localhost:8000/…` talks to the `server` session. To **restar
 after you change `server.py`: in the viewer (if it shows another session, `prefix+t` →
 `server` first) press `Ctrl-C`, then run `python3 server.py` again.
 
+## With the tx-assistant
+
+From the shell pane, `prefix+/`, one request at a time:
+
+- Step 2: "spawn a shell here named server tagged tutor"
+- Step 3: "list my tx sessions"
+- Step 5: "tag server with tutor and http-tutor"
+
+Opening `server` in the viewer (`prefix+t`) and starting `python3 server.py` there stay yours.
+
 ## Check
 
 `tx tutor check`

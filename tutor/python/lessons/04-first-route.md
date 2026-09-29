@@ -21,6 +21,12 @@ lesson (`C-h` / `C-l` move between the two halves), find `do_GET`, `:w` saves, `
 
 Stuck? `tx tutor hint` prints the snippet.
 
+## With the tx-assistant
+
+Rather edit in a full-size nvim? From the shell pane, `prefix+/` → "spawn nvim here named
+editor with server.py open", then in the viewer `prefix+t` → `editor`. The edit itself is still
+yours — the assistant runs tx, it does not write your code.
+
 ## Check
 
 `tx tutor check`

@@ -48,6 +48,15 @@ Leader below means `Space` (LazyVim's leader key).
 Instead of step 2–3 you could have run `tx send-message time "…"` from the shell — but
 asking from the code sends the agent *where* you are looking, too.
 
+## With the tx-assistant
+
+From the shell pane, `prefix+/`:
+
+- Step 1: "spawn nvim here named edit tagged tutor with server.py open"
+- Step 4: "spawn nvim here named review-header tagged tutor with a diff of main...tutor/header"
+
+Steps 2–3 stay in nvim: `Space a C` / `Space a c` are how you talk to an agent *from the code*.
+
 ## Check
 
 `tx tutor check`, then answer `y`.

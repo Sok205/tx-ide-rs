@@ -29,6 +29,15 @@ merging, you review it.
 5. Restart the server (end of lesson 03) and `curl -i localhost:8000/time`. Look for
    `Content-Type: application/json`.
 
+## With the tx-assistant
+
+From the shell pane, `prefix+/`:
+
+- Step 2, branch missing: "tell time to put its commit on a new branch named tutor/time"
+- Step 3: "spawn nvim here named review tagged tutor with a diff of main...tutor/time"
+
+`git merge` stays yours: merging is your decision, not the assistant's.
+
 ## Check
 
 `tx tutor check`

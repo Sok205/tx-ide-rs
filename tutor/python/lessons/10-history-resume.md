@@ -20,6 +20,14 @@ not merge still holds a working design and all the reasoning behind it.
 3. `tx resume <its name>` and ask it:
    "Summarize the difference between your notes design and the merged one."
 
+## With the tx-assistant
+
+From the shell pane, `prefix+/`, one request at a time:
+
+- Step 1: "kill the fork I did not merge" (or name it)
+- Step 2: "show the tx history" — read it in `tx-assistant` (`prefix+t` in the viewer)
+- Step 3: "resume the fork I killed"
+
 ## Check
 
 `tx tutor check`

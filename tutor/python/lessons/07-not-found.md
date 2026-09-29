@@ -24,6 +24,11 @@ does not know instead of pretending everything is fine.
 
 Stuck? `tx tutor hint`.
 
+## With the tx-assistant
+
+Step 1 as a request — `prefix+/` → "tell time: explain HTTP status code families in three
+lines, do not change code". The assistant relays it; the answer still appears in `time`.
+
 ## Check
 
 `tx tutor check`

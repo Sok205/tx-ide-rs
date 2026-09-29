@@ -24,6 +24,12 @@ would do in a terminal works there.
    way. We fix that in lesson 04.
 5. Leave the server running for now.
 
+## With the tx-assistant
+
+The server and `curl` are yours to type — that is the point of this lesson. But whenever you
+need one more shell, ask instead of hunting for a free pane: from the shell pane, `prefix+/`
+→ "spawn a shell here named scratch". Open it in the viewer with `prefix+t` → `scratch`.
+
 ## Check
 
 `tx tutor check` — it starts its own copy of your server on a spare port, sends `GET /` and

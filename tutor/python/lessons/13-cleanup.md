@@ -22,6 +22,13 @@ web API.
 3. Archive them: `tx archive NAME` for each.
 4. Keep `server` if you like — it is a shell, not a worker.
 
+## With the tx-assistant
+
+From the shell pane, `prefix+/`:
+
+- Steps 1–2: "kill every tutor worker, keep server"
+- Step 3: "archive every exited tutor session"
+
 ## Check
 
 `tx tutor check` — then you are done. `tx tutor status` shows your run.

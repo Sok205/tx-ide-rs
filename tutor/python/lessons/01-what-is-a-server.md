@@ -38,12 +38,28 @@ How keys are written in these lessons:
 - Lost (the tutorial is gone from your screen)? `prefix+s`, pick `tutor-python`, Enter — or
   run `tx tutor start` in any shell.
 
+## The tx-assistant
+
+Almost every tx command in these lessons can also be *asked for* in plain words. `prefix+/`
+opens a one-line prompt; type a request and press Enter. The **tx-assistant** — a Claude agent
+that runs tx for you — does it: spawns agent workers, shells and nvim sessions, tags, forks,
+kills. It knows where you pressed `prefix+/`: "here" means that pane's directory, "this session"
+the session it shows. Press it from the shell pane (top right), so "here" is your project.
+
+- Its answer lands in its own session: from the viewer, `prefix+t` → `tx-assistant` to read it.
+- Every lesson ends with a **With the tx-assistant** section: the same steps, as requests.
+  Requests are in "double quotes" — type them into the `prefix+/` prompt, not the shell (Enter
+  in the lesson only types `commands`).
+- It needs Claude Code (`claude`). Without it, type the commands as shown.
+
 ## Your task
 
 1. Press `C-l` to go to the shell. Run `ls` — you will see `server.py`.
 2. Press `C-h` to come back here.
 3. In nvim, `:e server.py` opens the file (`:b#` brings you back to this lesson). Skim it —
    you do not need to understand it yet.
+4. Optional: from the shell pane, `prefix+/` and ask "what tx sessions are running?". Read the
+   answer in the viewer: `C-j`, then `prefix+t` → `tx-assistant`.
 
 ## Check
 
