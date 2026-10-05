@@ -6,13 +6,6 @@ Claude Code / Codex / Antigravity workers and nvim companions, **chat operations
 handover / rollover) over the conversations behind a session, a central **history** of every
 chat, and a repo/branch/model **statusline**.
 
-This is a drop-in replacement for the Python [tx-ide](https://github.com/wiktordaniec/tx-ide):
-same verbs, same output, same `~/.tx-ide` records (schema v6), so an existing install switches
-over with its sessions and history intact. It needs no Python. Inside, it is built as
-**components** on a small runtime after the *spatiotemporal composability* paradigm (Cordis):
-engines and verb groups are components you can switch off in `config.json`, and unloading one
-removes exactly what it added.
-
 There is no daemon. State lives in plain JSON records under `$TX_IDE_HOME` (default
 `~/.tx-ide`); every read reconciles those records against the live tmux server, and engine hooks
 drive each session's state as you work.
