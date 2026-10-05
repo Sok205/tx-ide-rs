@@ -1,5 +1,5 @@
 # tx-ide
-A tmux + Claude Code session controller, rewritten in Rust. One CLI (`tx`) gives every tmux
+A tmux + Claude Code session controller One CLI (`tx`) gives every tmux
 session a **durable record**, an fzf **picker** to find and attach them, verbs to **spawn**
 Claude Code / Codex / Antigravity workers and nvim companions, **chat operations** (fork /
 handover / rollover) over the conversations behind a session, a central **history** of every
