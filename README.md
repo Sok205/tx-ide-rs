@@ -1,5 +1,4 @@
-# tx-ide (Rust)
-
+# tx-ide
 A tmux + Claude Code session controller, rewritten in Rust. One CLI (`tx`) gives every tmux
 session a **durable record**, an fzf **picker** to find and attach them, verbs to **spawn**
 Claude Code / Codex / Antigravity workers and nvim companions, **chat operations** (fork /
@@ -60,15 +59,6 @@ git pull && cargo build --release && ./install
 
 `bin/tx` points at `target/release/tx`, so a rebuild is picked up at once; re-running
 `./install` refreshes the shims and hooks.
-
-### Switching from the Python tx-ide
-
-Run the Rust `./install` over the existing install. It re-points `~/.local/bin/tx`, the hook
-shims, the tmux hook and the statusline at this repo; your records, history and roles in
-`~/.tx-ide` are reused as they are. Running agent panes keep going and their hooks now call the
-Rust `tx`. Do not run the Python checkout's `./uninstall` first — it deletes `log.jsonl`.
-
-To go back, run the Python checkout's `./install`: it re-points everything the same way.
 
 ## Uninstall
 
