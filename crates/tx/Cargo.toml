@@ -21,6 +21,8 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+ratatui = "0.30"
+regex = "1"
 
 [lints]
 workspace = true

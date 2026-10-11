@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-const ALL: [&str; 11] = [
+const ALL: [&str; 12] = [
     "engine.claude",
     "engine.codex",
     "engine.antigravity",
@@ -16,6 +16,7 @@ const ALL: [&str; 11] = [
     "verbs.artifacts",
     "verbs.tutor",
     "verbs.install",
+    "verbs.timeline",
 ];
 
 fn tx(home: &Path, config: Option<&str>, args: &[&str]) -> Output {

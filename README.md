@@ -93,7 +93,7 @@ Inside tmux: `prefix+t` opens the picker, `prefix+/` sends a line to the tx-assi
 | Area | Commands |
 |---|---|
 | Spawn | `spawn` (worker or shell; `--engine`, `--prompt`, `--model`, `--effort 1-5`, `--role`, `--read-only`), `spawn-nvim`, `spawn-view` |
-| Inspect | `ls` (`--json`), `show`, `history`, `chat ls`, `whoami`, `attach` |
+| Inspect | `ls` (`--json`), `show`, `history`, `chat ls`, `whoami`, `attach`, `timeline` (swimlane TUI; `--last 30m`, `--days`) |
 | Chat operations | `fork`, `handover`, `rollover`, `resume` |
 | Manage | `tag`, `group`, `rename`, `kill`, `archive`, `rm`, `send-message`, `send-user-message`, `migrate` |
 | Artifacts | `artifact create / modify / group / ls / show / diff / open / doctor` |

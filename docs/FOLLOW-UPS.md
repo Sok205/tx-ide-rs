@@ -29,3 +29,14 @@
 - prefix+f (fork the pane's session: the popup only asks the name, the fork runs in the background, outcome on the status line; unlike prefix+n, the tx-assistant is not told) and the
   hidden `tx _fork-pane` behind it are new here; the reference has no fork key. The key
   replaces tmux's stock find-window on `f`.
+- tx timeline (prototype): a public verb with no reference counterpart — the artifact-browser
+  prototype's HTML timeline as a ratatui TUI (`crates/tx/src/plugins/timeline/`); `tx --help` gains one
+  line. The data layer diffs byte-for-byte against `prototypes/artifact-browser/timeline.py` via
+  the hidden `tx _timeline-json`. The view deliberately shows less than the HTML: working / idle
+  bars per lane and peer messages (who → who) only. You-spoke rings, milestone diamonds, spawn
+  edges, the dialogue drawer, group drag-reorder and the reply box are in the payload (or the
+  HTML) but not drawn. New deps: ratatui, regex.
+- tx timeline row taxonomy: a peer envelope the harness delivered inside `<pasted_content id=…>`
+  (long messages arrive like that) is unwrapped before classification; the Python prototype
+  counts such rows as the human typing and loses the edge (19 of 68 edges on 2026-10-11).
+  Kit fix to propose upstream in `timeline.py` (`ukind` / `clean_user`).
