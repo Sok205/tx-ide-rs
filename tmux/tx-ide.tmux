@@ -97,11 +97,14 @@ set -g pane-border-style "fg=#3b4261"
 set -g pane-active-border-style "fg=#7aa2f7,bold"
 EOF
   fi
+  # tmux caches a #() job by its command text and re-runs it at most once a second, so a label
+  # change waits for the next second. `@tx_label_rev` is part of the command: tx bumps it after
+  # an edit (Tmux::refresh_labels), which makes a new job that runs on the next redraw.
   cat >>"$CONF" <<'EOF'
 set -g pane-border-lines heavy
 set -g pane-border-indicators both
 set -g pane-border-status off
-set -g pane-border-format " [#P] #(tmux-pane-session-name #D) "
+set -g pane-border-format " [#P] #(tmux-pane-session-name #D #{@tx_label_rev}) "
 EOF
   # A new window in a VIEW gets window-top pane borders (so nested panes carry a labelled border).
   # A view is marked by the @tx_view session option, so the hook reads it directly with `if-shell

@@ -372,12 +372,15 @@ impl Tmux {
         self.run(&["run-shell", "-b", command]).map(drop)
     }
 
-    /// Re-run every client's status and border `#()` jobs now (`refresh-client -S`), so a label
-    /// reading the store shows an edit at once instead of on its next once-a-second run.
+    /// Show a store edit in the pane-border labels now. tmux re-runs a `#()` job at most once a
+    /// second, but caches it by its command text: bumping `@tx_label_rev` (part of the label's
+    /// command, tmux/tx-ide.tmux) makes a new job, which the redraw runs at once.
     pub fn refresh_labels(&self) {
+        let revision = crate::events::now().to_string();
+        let _ = self.run_quiet(&["set-option", "-g", "@tx_label_rev", &revision]);
         let (_, clients) = self.run_quiet(&["list-clients", "-F", "#{client_name}"]);
         for client in clients.lines() {
-            let _ = self.run_quiet(&["refresh-client", "-S", "-t", client]);
+            let _ = self.run_quiet(&["refresh-client", "-t", client]);
         }
     }
 
