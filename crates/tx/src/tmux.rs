@@ -367,6 +367,11 @@ impl Tmux {
         let _ = self.run_quiet(&["delete-buffer", "-b", name]);
     }
 
+    /// Run `command` on the server in the background (`run-shell -b`), outliving the caller.
+    pub fn run_shell_background(&self, command: &str) -> Result<(), TmuxError> {
+        self.run(&["run-shell", "-b", command]).map(drop)
+    }
+
     /// Show `message` on `client`'s status line for `STATUS_MILLISECONDS` (best effort).
     pub fn display_status(&self, client: &str, message: &str) {
         eprintln!("{message}");
