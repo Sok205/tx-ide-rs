@@ -882,7 +882,10 @@ impl Command for EditSession {
 }
 
 /// `_prompt_with_default`: fzf's query editor prefilled with `default`; `None` when cancelled.
+/// Coloured like the picker; `prompt` may carry ANSI styling.
 pub(super) fn prompt_with_default(prompt: &str, default: &str) -> Result<Option<String>, ListingError> {
+    use palette::{DIM_FG_HEX, FG_HEX};
+    let color = format!("fg:{DIM_FG_HEX},header:{DIM_FG_HEX},prompt:{DIM_FG_HEX},query:{FG_HEX}");
     let output = Process::new("fzf")
         .args([
             "--disabled",
@@ -897,6 +900,8 @@ pub(super) fn prompt_with_default(prompt: &str, default: &str) -> Result<Option<
             "--no-separator",
             "--bind",
             "enter:accept-or-print-query",
+            "--color",
+            &color,
         ])
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())

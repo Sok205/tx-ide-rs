@@ -8,6 +8,7 @@ use std::rc::{Rc, Weak};
 use cordis::BoxError;
 
 use crate::app::{Command, CommandTable};
+use crate::palette::{ACCENT_ANSI, BOLD, RESET};
 use crate::service::SessionService;
 
 use super::listing::prompt_with_default;
@@ -51,7 +52,7 @@ impl Command for ForkPane {
             tmux.display_status(client, "prefix+F: the fork verb is disabled");
             return Ok(1);
         };
-        let prompt = format!("Fork {} as: ", source.name);
+        let prompt = format!("Fork {ACCENT_ANSI}{BOLD}{}{RESET} as: ", source.name);
         let Some(name) = prompt_with_default(&prompt, &format!("{}-fork", source.name))? else {
             return Ok(0);
         };
