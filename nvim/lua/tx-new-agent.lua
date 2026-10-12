@@ -11,10 +11,10 @@
 -- start with "none" (COMMON alone), and spec.role is preselected.
 --
 -- Panels: [1] Name  [2] Tags  [3] Prompt  [4] Engine  [5] Model  [6] Effort  [7] Role. The form
--- opens in insert mode on Name; moving to a panel lands in normal mode. Tab / S-Tab step through
--- the panels and 1-7 jump to one (normal mode); in a list the cursor line is the pick, so j/k or the
--- arrows choose. Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
--- cancels.
+-- opens in insert mode on Name, and moving between panels keeps the mode. Tab / S-Tab step
+-- through the panels and 1-7 jump to one (normal mode); in a list the cursor line is the pick, so
+-- j/k or the arrows choose, in either mode. Enter spawns from any panel; Esc leaves insert mode, and
+-- Esc or q in normal mode cancels.
 
 local M = {}
 
@@ -205,8 +205,12 @@ function M.open()
     vim.api.nvim_set_current_win(panel.window)
     say(HELP, "TxFormHelp")
     vim.wo[panel.window].cursorline = panel.key ~= nil
-    -- Moving lands in normal mode; only opening the form starts in insert mode.
-    vim.cmd("stopinsert")
+    -- The mode carries over; in a text panel the cursor goes to the end of the text.
+    if not panel.key then
+      local last = vim.api.nvim_buf_line_count(panel.buffer)
+      local line = vim.api.nvim_buf_get_lines(panel.buffer, last - 1, last, false)[1]
+      vim.api.nvim_win_set_cursor(panel.window, { last, #line })
+    end
   end
 
   local function text(panel, separator)
@@ -257,7 +261,7 @@ function M.open()
     vim.wo[panel.window].linebreak = panel.wrap or false
     if panel.key then
       render_list(panel)
-      vim.api.nvim_create_autocmd("CursorMoved", {
+      vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
         buffer = panel.buffer,
         callback = function()
           pick_at_cursor(panel)
@@ -265,10 +269,12 @@ function M.open()
       })
     elseif panel.hint then
       hint(panel)
-      vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-        buffer = panel.buffer,
-        callback = function()
-          hint(panel)
+      -- on every edit: TextChangedI is skipped when a key moves on before it fires
+      vim.api.nvim_buf_attach(panel.buffer, false, {
+        on_lines = function()
+          vim.schedule(function()
+            hint(panel)
+          end)
         end,
       })
     end
@@ -288,6 +294,11 @@ function M.open()
       end)
     end
     map({ "n", "i" }, "<CR>", spawn)
+    if panel.key then
+      -- A list cannot take text: in insert mode j / k still move the pick.
+      map("i", "j", "<Down>")
+      map("i", "k", "<Up>")
+    end
     map("n", "<Esc>", function()
       vim.cmd("qall!")
     end)
@@ -313,7 +324,7 @@ function M.open()
   })
 
   focus(1)
-  vim.cmd("startinsert")
+  vim.cmd("startinsert!")
 end
 
 return M
