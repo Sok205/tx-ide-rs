@@ -843,8 +843,8 @@ impl Command for EditSession {
         "_edit-session"
     }
     fn summary(&self) -> &'static str {
-        "Internal: prefix+e — edit the focused pane's tx session name and tags in the popup, \
-         report the outcome on the firing client's status line."
+        "Internal: prefix+e — edit the focused pane's tx session name and tags in the popup; \
+         failures reach the firing client's status line."
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let parser = self
@@ -863,7 +863,7 @@ impl Command for EditSession {
         let target = tmux
             .inner_for_pane(pane)
             .or_else(|| tmux.display_message("#{session_name}", Some(pane)));
-        // The popup closes as soon as this exits: every outcome goes to the status line.
+        // The popup closes as soon as this exits: failures go to the status line.
         let Some(target) = target.filter(|target| !tmux.is_view(target)) else {
             tmux.display_status(
                 client,
@@ -884,40 +884,15 @@ impl Command for EditSession {
         let tags = split_tags(&edited_tags);
         let written = service.rename(&session.id, &name).and_then(|_| {
             if tags != session.tags {
-                service.tag(&session.id, tags.clone())?;
+                service.tag(&session.id, tags)?;
             }
             Ok(())
         });
-        match written {
-            Ok(()) => {
-                tmux.display_status(client, &edit_outcome(&session, &name, &tags));
-                Ok(0)
-            }
-            Err(error) => {
-                tmux.display_status(client, &format!("edit of {} failed: {error}", session.name));
-                Ok(1)
-            }
+        if let Err(error) = written {
+            tmux.display_status(client, &format!("edit of {} failed: {error}", session.name));
+            return Ok(1);
         }
-    }
-}
-
-/// The status line after a saved edit: what changed on `session`.
-fn edit_outcome(session: &Session, name: &str, tags: &[String]) -> String {
-    let mut changes = Vec::new();
-    if name != session.name {
-        changes.push(format!("renamed → {name}"));
-    }
-    if tags != session.tags {
-        changes.push(if tags.is_empty() {
-            "tags cleared".to_owned()
-        } else {
-            format!("tags → {}", tags.join(","))
-        });
-    }
-    if changes.is_empty() {
-        format!("{} unchanged", session.name)
-    } else {
-        format!("{}: {}", session.name, changes.join(", "))
+        Ok(0)
     }
 }
 

@@ -42,4 +42,4 @@
   Kit fix to propose upstream in `timeline.py` (`ukind` / `clean_user`).
 - prefix+e (`_edit-session`): the popup (still over the firing pane) has prefix+f's heavy yellow border, the form is
   drawn in the palette's truecolor (the reference used basic ANSI blue / dim white / yellow), and the
-  popup closes on exit with the outcome on the status line (the reference kept it open on errors).
+  popup closes on exit with a failure on the status line (the reference kept it open on errors).

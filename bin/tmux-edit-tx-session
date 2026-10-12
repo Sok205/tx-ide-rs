@@ -13,7 +13,7 @@ popup_width=$((pane_width - 4))
 # run-shell expands pane/client formats before the popup starts. display-popup's
 # shell-command does not expand them, so pass the captured pane and client as literal arguments.
 # Placed over the firing pane; the form needs 7 rows. The popup closes when the editor exits —
-# the outcome is reported on the status line.
+# a failure is reported on the status line.
 printf -v edit_command '%q _edit-session %q %q' "$SCRIPT_DIR/tx" "$pane_id" "$client_name"
 exec tmux display-popup -c "$client_name" -t "$pane_id" -E -w "$popup_width" -h 9 \
   -x '#{e|+:#{popup_pane_left},#{e|/:#{e|-:#{pane_width},#{popup_width}},2}}' \
