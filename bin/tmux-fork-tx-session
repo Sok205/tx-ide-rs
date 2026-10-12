@@ -3,7 +3,6 @@
 set -eu
 
 SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-. "$SCRIPT_DIR/../shared/palette.sh"
 pane_id="$1"
 client_name="$2"
 
@@ -12,5 +11,5 @@ client_name="$2"
 # Centred on the client screen, not over the firing pane.
 printf -v fork_command '%q _fork-pane %q %q' "$SCRIPT_DIR/tx" "$pane_id" "$client_name"
 exec tmux display-popup -c "$client_name" -E -w 80 -h 5 -x C -y C -b heavy \
-  -S "fg=$ACCENT_HEX,bold" \
+  -S "fg=yellow,bold" \
   -T ' Fork session ' "$fork_command"
