@@ -10,9 +10,10 @@
 -- Each model list starts with the engine's default, which is what the form preselects.
 --
 -- Panels: [1] Name  [2] Prompt  [3] Engine  [4] Model  [5] Effort  [6] Tags. The form opens in
--- insert mode on Name. Tab / S-Tab step through the panels and 1-6 jump to one (normal mode); in
--- a list the cursor line is the pick, so j/k or the arrows choose. Enter spawns from any panel;
--- Esc leaves insert mode, and Esc or q in normal mode cancels.
+-- insert mode on Name; moving to a panel lands in normal mode. Tab / S-Tab step through the
+-- panels and 1-6 jump to one (normal mode); in a list the cursor line is the pick, so j/k or the
+-- arrows choose. Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
+-- cancels.
 
 local M = {}
 
@@ -181,12 +182,9 @@ function M.open()
     vim.wo[panel.window].winhighlight = "FloatBorder:TxFormBorderActive"
     vim.api.nvim_set_current_win(panel.window)
     say(HELP, "TxFormHelp")
-    if panel.key then
-      vim.wo[panel.window].cursorline = true
-      vim.cmd("stopinsert")
-    else
-      vim.cmd("startinsert!")
-    end
+    vim.wo[panel.window].cursorline = panel.key ~= nil
+    -- Moving lands in normal mode; only opening the form starts in insert mode.
+    vim.cmd("stopinsert")
   end
 
   local function text(panel, separator)
@@ -291,6 +289,7 @@ function M.open()
   })
 
   focus(1)
+  vim.cmd("startinsert")
 end
 
 return M
