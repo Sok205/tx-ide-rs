@@ -5,10 +5,10 @@
 -- and quits; cancelling quits without writing it.
 --
 --   spec = { result, engines = { … }, models = { [engine] = { … } }, efforts = { [engine] = { … } },
---            engine, effort, roles = { … }, tags_hint }
+--            engine, effort, roles = { … }, role, tags_hint }
 --
 -- Each model list starts with the engine's default, which is what the form preselects; the roles
--- start with "none" (COMMON alone).
+-- start with "none" (COMMON alone), and spec.role is preselected.
 --
 -- Panels: [1] Name  [2] Prompt  [3] Engine  [4] Model  [5] Effort  [6] Role  [7] Tags. The form
 -- opens in insert mode on Name; moving to a panel lands in normal mode. Tab / S-Tab step through
@@ -59,7 +59,7 @@ function M.open()
     engine = spec.engine,
     model = spec.models[spec.engine][1],
     effort = spec.effort,
-    role = spec.roles[1],
+    role = spec.role,
   }
   local function options(key)
     if key == "engine" then

@@ -27,6 +27,8 @@ use super::common::{bin_tx, repo_root, split_tags};
 const DEFAULT_TAG: &str = "agent";
 /// The role option that passes no `--role`: COMMON alone.
 const NO_ROLE: &str = "none";
+/// Preselected when the home has it (it ships in agents/), else none.
+const DEFAULT_ROLE: &str = "DEVELOPER";
 const TAGS_HELP: &str = "Comma-separated · empty means agent";
 const ENGINES: &[&str] = &["claude", "codex", "antigravity"];
 /// Fixed lists: claude's aliases, and the codex and agy models offered at the time of writing.
@@ -239,6 +241,11 @@ fn form_spec(result: &Path, roles: &[String]) -> Value {
     let role_options: Vec<&str> = std::iter::once(NO_ROLE)
         .chain(roles.iter().map(String::as_str))
         .collect();
+    let role = if role_options.contains(&DEFAULT_ROLE) {
+        DEFAULT_ROLE
+    } else {
+        NO_ROLE
+    };
     json!({
         "result": result,
         "engines": ENGINES,
@@ -247,6 +254,7 @@ fn form_spec(result: &Path, roles: &[String]) -> Value {
         "engine": ENGINES[0],
         "effort": DEFAULT_EFFORT.level().to_string(),
         "roles": role_options,
+        "role": role,
         "tags_hint": TAGS_HELP,
     })
 }
@@ -314,7 +322,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_spec_preselects_claude_its_default_model_and_effort_3() {
+    fn the_spec_preselects_claude_its_default_model_effort_3_and_developer() {
         let spec = form_spec(Path::new("/t/answers.json"), &["DEVELOPER".to_owned()]);
         assert_eq!(spec["result"], "/t/answers.json");
         assert_eq!(spec["engines"], json!(["claude", "codex", "antigravity"]));
@@ -324,6 +332,9 @@ mod tests {
         assert_eq!(spec["efforts"]["antigravity"], json!(["1", "2", "3"]));
         assert_eq!(spec["effort"], "3");
         assert_eq!(spec["roles"], json!(["none", "DEVELOPER"]));
+        assert_eq!(spec["role"], "DEVELOPER");
+        let without_developer = form_spec(Path::new("/t/answers.json"), &["REVIEWER".to_owned()]);
+        assert_eq!(without_developer["role"], "none");
     }
 
     #[test]
