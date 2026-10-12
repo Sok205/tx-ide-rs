@@ -1,5 +1,5 @@
 //! `_fork-pane`: the prefix+f seam, run inside the key's popup (bin/tmux-fork-tx-session). It
-//! asks for the fork's name (prefilled `<source>-fork`), forks the tx session shown in the firing
+//! asks for the fork's name (blank: the verb's `<source>-fork` default), forks the tx session shown in the firing
 //! pane through the `fork` verb, and reports the outcome on the firing client's status line —
 //! the popup is gone by then.
 
@@ -51,8 +51,11 @@ impl Command for ForkPane {
             tmux.display_status(client, "prefix+f: the fork verb is disabled");
             return Ok(1);
         };
-        let label = format!("Fork {ACCENT_ANSI}{BOLD}{}{RESET} as", source.name);
-        let Some(name) = prompt_with_default(&label, &format!("{}-fork", source.name))? else {
+        let label = format!(
+            "Fork {ACCENT_ANSI}{BOLD}{}{RESET} as (default: {}-fork)",
+            source.name, source.name
+        );
+        let Some(name) = prompt_with_default(&label, "")? else {
             return Ok(0);
         };
         let name = name.trim();
