@@ -29,7 +29,7 @@ const DEFAULT_TAG: &str = "agent";
 const NO_ROLE: &str = "none";
 /// Preselected when the home has it (it ships in agents/), else none.
 const DEFAULT_ROLE: &str = "DEVELOPER";
-const TAGS_HELP: &str = "Comma-separated · empty means agent";
+const TAGS_HELP: &str = "Comma-separated (default: agent)";
 const ENGINES: &[&str] = &["claude", "codex", "antigravity"];
 /// Fixed lists: claude's aliases, and the codex and agy models offered at the time of writing.
 /// Each starts with what the engine runs without `--model` (claude's and codex's configured model,
