@@ -11,6 +11,6 @@ client_name="$2"
 # shell-command does not expand them, so pass the captured pane and client as literal arguments.
 # Centred on the client screen, not over the firing pane.
 printf -v fork_command '%q _fork-pane %q %q' "$SCRIPT_DIR/tx" "$pane_id" "$client_name"
-exec tmux display-popup -c "$client_name" -E -w 80 -h 5 -x C -y C -b rounded \
-  -s "fg=$FG_HEX,bg=$BG_HEX" -S "fg=$ACCENT_HEX,bg=$BG_HEX" \
+exec tmux display-popup -c "$client_name" -E -w 80 -h 5 -x C -y C -b heavy \
+  -S "fg=$ACCENT_HEX,bold" \
   -T ' Fork session ' "$fork_command"
