@@ -1,7 +1,7 @@
 //! `_new-agent`: the prefix+n seam. In the key's popup (bin/tmux-new-agent) it asks for the
 //! agent's name, tags and prompt, then hands the spawn to a background `run-shell`, so the popup
-//! closes at once; the background half spawns the agent through the `spawn` verb, tells the
-//! tx-assistant, and reports on the firing client's status line.
+//! closes at once; the background half spawns the agent through the `spawn` verb and reports on
+//! the firing client's status line.
 
 use std::rc::{Rc, Weak};
 
@@ -16,7 +16,6 @@ use crate::storage::Home;
 use super::common::{bin_tx, split_tags};
 use super::listing::prompt_with_default;
 
-const ASSISTANT: &str = "tx-assistant";
 const DEFAULT_TAG: &str = "agent";
 
 pub struct NewAgent {
@@ -33,8 +32,7 @@ impl Command for NewAgent {
     }
     fn summary(&self) -> &'static str {
         "Internal: prefix+n — ask for a new agent's name, tags and prompt in the popup, then spawn \
-         it in the background and tell the tx-assistant. Usage: _new-agent PANE CLIENT \
-         [NAME TAGS PROMPT]"
+         it in the background. Usage: _new-agent PANE CLIENT [NAME TAGS PROMPT]"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         match argv {
@@ -94,7 +92,7 @@ impl NewAgent {
         Ok(0)
     }
 
-    /// The background half: spawn in the pane's directory, tell the tx-assistant, report.
+    /// The background half: spawn in the pane's directory and report.
     fn spawn(
         &self,
         pane: &str,
@@ -113,25 +111,19 @@ impl NewAgent {
             return Ok(1);
         };
         match spawn.run(&spawn_argv(name, tags, &cwd, prompt)) {
-            Ok(0) => {}
+            Ok(0) => {
+                tmux.display_status(client, &format!("spawned {name}"));
+                Ok(0)
+            }
             Ok(code) => {
                 tmux.display_status(client, &format!("spawn of {name} failed (exit {code})"));
-                return Ok(code);
+                Ok(code)
             }
             Err(error) => {
                 tmux.display_status(client, &format!("spawn of {name} failed: {error}"));
-                return Ok(1);
+                Ok(1)
             }
         }
-        let status = match self
-            .service
-            .send_message(ASSISTANT, &notice(name, tags, &cwd, prompt))
-        {
-            Ok(()) => format!("spawned {name}; tx-assistant notified"),
-            Err(_) => format!("spawned {name} (tx-assistant not running — not notified)"),
-        };
-        tmux.display_status(client, &status);
-        Ok(0)
     }
 }
 
@@ -140,14 +132,6 @@ fn spawn_argv(name: &str, tags: &str, cwd: &str, prompt: &str) -> Vec<String> {
     [name, "--tag", &clean_tags(tags), "--cwd", cwd, "--prompt", prompt]
         .map(str::to_owned)
         .to_vec()
-}
-
-/// What the tx-assistant is told.
-fn notice(name: &str, tags: &str, cwd: &str, prompt: &str) -> String {
-    format!(
-        "spawned agent {name} (tags {}, cwd {cwd}): {prompt}",
-        clean_tags(tags)
-    )
 }
 
 /// `tutor, api` → `tutor,api`.
@@ -177,14 +161,6 @@ mod tests {
                 "--prompt",
                 "add GET /health"
             ]
-        );
-    }
-
-    #[test]
-    fn the_assistant_hears_what_was_spawned_where() {
-        assert_eq!(
-            notice("health", "tutor, api", "/p", "add GET /health"),
-            "spawned agent health (tags tutor,api, cwd /p): add GET /health"
         );
     }
 }

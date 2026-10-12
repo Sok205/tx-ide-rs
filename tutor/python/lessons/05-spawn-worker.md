@@ -17,7 +17,7 @@ cannot trample your files. Worktrees share branches with your project, so asking
 commit on a named branch lets you merge its work later with one command.
 
 The quick way next time: `prefix+n` asks for a name, tags and a prompt, then runs this same
-`tx spawn` in the pane's directory and tells the tx-assistant that the agent exists.
+`tx spawn` in the pane's directory.
 
 ## Your task
 

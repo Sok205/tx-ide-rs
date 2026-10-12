@@ -23,10 +23,10 @@
 - tx attach (picker): from a view pane that already hosts a nested session (`tmux`), the pick
   replaces what that pane shows (the old session keeps running); the reference only nested into
   shell panes and switched the client otherwise. Deliberate — the tutor view's viewer pane relies on it.
-- prefix+n (new agent: a popup asks name / tags / prompt, then a background `tx spawn` and a `send-message` to the tx-assistant)
+- prefix+n (new agent: a popup asks name / tags / prompt, then a background `tx spawn`, outcome on the status line)
   and the hidden `tx _new-agent` behind it are new here; the reference has no spawn key. The key
   replaces tmux's stock next-window on `n`.
-- prefix+f (fork the pane's session: the popup only asks the name, the fork runs in the background, outcome on the status line; unlike prefix+n, the tx-assistant is not told) and the
+- prefix+f (fork the pane's session: the popup only asks the name, the fork runs in the background, outcome on the status line) and the
   hidden `tx _fork-pane` behind it are new here; the reference has no fork key. The key
   replaces tmux's stock find-window on `f`.
 - tx timeline (prototype): a public verb with no reference counterpart — the artifact-browser
