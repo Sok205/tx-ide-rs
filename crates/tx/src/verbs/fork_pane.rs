@@ -49,11 +49,15 @@ impl ForkPane {
         let Some(name) = prompt_with_default(&label, "")? else {
             return Ok(0);
         };
-        // `run-shell` runs in the server's environment: bake the home into the command.
+        // `run-shell` runs in the server's environment: bake the home into the command. A nonzero
+        // exit would echo the whole command; the outcome is already on the status line.
         let home = format!("TX_IDE_HOME={}", self.0.home.root().display());
         let tx = bin_tx(&self.0.env).display().to_string();
         let command = shlex_join(&["env", &home, &tx, "_fork-pane", pane, client, name.trim()]);
-        self.0.service.tmux().run_shell_background(&command)?;
+        self.0
+            .service
+            .tmux()
+            .run_shell_background(&format!("{command} || true"))?;
         Ok(0)
     }
 

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# prefix+n: spawn a new agent in the firing pane's directory, asking name / tags / prompt in a popup
+# on the firing client.
+set -eu
+
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+pane_id="$1"
+client_name="$2"
+
+# run-shell expands pane/client formats before the popup starts. display-popup's
+# shell-command does not expand them, so pass the captured pane and client as literal arguments.
+# Centred on the client screen, styled like the prefix+f fork popup; the nvim form
+# (nvim/lua/tx-new-agent.lua) needs 92 columns and 21 rows.
+printf -v new_agent_command '%q _new-agent %q %q' "$SCRIPT_DIR/tx" "$pane_id" "$client_name"
+exec tmux display-popup -c "$client_name" -E -w 94 -h 23 -x C -y C -b heavy \
+  -S "fg=yellow,bold" \
+  -T ' New agent ' "$new_agent_command"

@@ -153,6 +153,23 @@ fn split_frontmatter(path: &Path) -> Result<(Vec<String>, String), RoleError> {
     Ok((frontmatter, lines[close + 1..].join("\n")))
 }
 
+/// The roles `--role` accepts: every `NAME.md` under `user-agents/` and `agents/`, sorted, without
+/// COMMON (always included) and the `.local.md` extensions. A missing directory holds none.
+pub fn role_names(home: &Home) -> Vec<String> {
+    let mut names: Vec<String> = [home.user_agents_dir(), home.agents_dir()]
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flatten()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|file_name| !file_name.ends_with(LOCAL_SUFFIX))
+        .filter_map(|file_name| file_name.strip_suffix(ROLE_SUFFIX).map(str::to_owned))
+        .filter(|name| name != COMMON_ROLE)
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// `Path(name).name == name and name not in (".", "..")`: no separator, not a dot-name. The empty
 /// string passes (it then fails as an unknown role, as in the Python).
 fn is_bare_name(name: &str) -> bool {
@@ -211,6 +228,20 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn role_names_lists_both_directories_without_common_or_local_extensions() {
+        let fixture = Fixture::new();
+        fixture.agent("COMMON.md", "c");
+        fixture.agent("DEVELOPER.md", "d");
+        fixture.agent("README.txt", "r");
+        fixture.user("DEVELOPER.md", "override");
+        fixture.user("DEVELOPER.local.md", "extend");
+        fixture.user("REVIEWER.md", "r");
+        assert_eq!(role_names(&fixture.home), names(&["DEVELOPER", "REVIEWER"]));
+        fs::remove_dir_all(fixture.home.user_agents_dir()).unwrap();
+        assert_eq!(role_names(&fixture.home), names(&["DEVELOPER"]));
     }
 
     #[test]
