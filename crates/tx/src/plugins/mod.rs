@@ -10,6 +10,8 @@
 //! `config.json` loads the defaults: only the readers the reference has (reconcile, sync) may fail
 //! on it, so a broken config never breaks a verb the reference would run.
 
+pub mod timeline;
+
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -28,7 +30,7 @@ use crate::verbs;
 type Factory = fn() -> Rc<dyn Component>;
 
 /// Every feature component, in load order.
-const MANIFEST: [(&str, Factory); 11] = [
+const MANIFEST: [(&str, Factory); 12] = [
     ("engine.claude", || {
         engine("engine.claude", Engine::Claude, claude)
     }),
@@ -48,6 +50,7 @@ const MANIFEST: [(&str, Factory); 11] = [
     }),
     ("verbs.tutor", || Rc::new(verbs::tutor::TutorVerbs)),
     ("verbs.install", || Rc::new(verbs::install::InstallVerbs)),
+    ("verbs.timeline", || Rc::new(timeline::verbs::TimelineVerbs)),
 ];
 
 /// What `tx _plugins` prints: each entry and its status after loading.

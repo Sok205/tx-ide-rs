@@ -22,6 +22,10 @@ out of **components** loaded into a `cordis::Runtime` — the paradigm in `cordi
 3. The CLI resolves argv against the command table and runs the verb.
 4. `Runtime::shutdown` unwinds everything, consumers before providers.
 
+Layout: `crates/tx/src/plugins/` holds the manifest (`mod.rs`) and a folder per feature that is
+more than a verb group — `timeline/` carries its data layer, TUI, and its `verbs.rs`. The verb
+groups the reference ships stay under `verbs/`.
+
 ## Configuring components
 
 ```json
@@ -29,7 +33,8 @@ out of **components** loaded into a `cordis::Runtime` — the paradigm in `cordi
 ```
 
 Entries: `engine.claude`, `engine.codex`, `engine.antigravity`, `verbs.home`, `verbs.sessions`,
-`verbs.listing`, `verbs.hooks`, `verbs.chat`, `verbs.artifacts`, `verbs.tutor`, `verbs.install`. A disabled verb
+`verbs.listing`, `verbs.hooks`, `verbs.chat`, `verbs.artifacts`, `verbs.tutor`, `verbs.install`,
+`verbs.timeline`. A disabled verb
 group's verbs disappear from the command table and `--help`; a disabled engine makes spawns that
 name it fail with `no engine adapter is registered for <engine>`. `tx _plugins` lists every entry
 and its status (active / waiting / disabled / failed). Keys other than `disabled` are the entry's

@@ -575,7 +575,7 @@ fn py_splitlines(text: &str) -> Vec<&str> {
 /// `datetime.fromisoformat(s).timestamp()` (CPython 3.14 grammar: extended/basic calendar and
 /// week dates, any single separator char, `HH[:MM[:SS[.f…]]]` or basic, `24:00`, offsets). A naive
 /// value is local time (`mktime`).
-fn fromisoformat_timestamp(s: &str) -> Option<f64> {
+pub(crate) fn fromisoformat_timestamp(s: &str) -> Option<f64> {
     let (date, rest) = parse_date(s)?;
     let (days, time) = match rest {
         None => (date, Time::default()),
