@@ -4,7 +4,8 @@
 #
 # Reads @tx-ide-* options to decide which view features to enable:
 #   @tx-ide-popups          on|off   prefix+t (tx), prefix+e (edit), prefix+/ (assistant), prefix+X (kill),
-#                                    prefix+n (new agent; replaces tmux's next-window on that key)
+#                                    prefix+n (new agent; replaces tmux's next-window on that key),
+#                                    prefix+f (fork the pane's session; replaces tmux's find-window)
 #   @tx-ide-pane-borders    on|off   pane-border-format integration + colors
 #   @tx-ide-agent-scroll    on|off   C-u/C-d → PageUp/PageDown in agent panes
 #   @tx-ide-nav-keys        on|off   C-h/j/k/l seamless nav: nvim splits ↔ panes ↔ nested sessions
@@ -30,6 +31,8 @@ NAV="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-nav"
 KILL="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-kill-tx-session"
 # Repo-relative editor for the focused session's name and tags.
 EDIT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-edit-tx-session"
+# Repo-relative fork popup for the focused session.
+FORK="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-fork-tx-session"
 
 option() {
   tmux show-option -gv "$1" 2>/dev/null || printf '%s' "$2"
@@ -78,6 +81,7 @@ EOF
   cat >>"$CONF" <<EOF
 bind X run-shell "$KILL '#{pane_id}' '#{session_name}'"
 bind e run-shell -b "$EDIT '#{pane_id}' '#{client_name}'"
+bind f run-shell -b "$FORK '#{pane_id}' '#{client_name}'"
 EOF
 fi
 

@@ -3,6 +3,7 @@
 pub mod artifacts;
 pub mod chat;
 pub mod common;
+pub mod fork_pane;
 pub mod home;
 pub mod hooks;
 pub mod install;

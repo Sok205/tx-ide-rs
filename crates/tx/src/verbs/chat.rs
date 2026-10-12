@@ -48,22 +48,23 @@ impl Component for ChatVerbs {
         table.register(ctx, Visibility::Public, Handover(deps.clone()));
         table.register(ctx, Visibility::Public, Rollover(deps.clone()));
         table.register(ctx, Visibility::Hidden, ChatOpFinish(deps.clone()));
-        table.register(ctx, Visibility::Hidden, ChatOpWatch(deps));
+        table.register(ctx, Visibility::Hidden, ChatOpWatch(deps.clone()));
+        table.register(ctx, Visibility::Hidden, super::fork_pane::ForkPane(deps));
         Ok(())
     }
 }
 
 #[derive(Clone)]
-struct Deps {
-    service: Rc<SessionService>,
+pub(super) struct Deps {
+    pub(super) service: Rc<SessionService>,
     engines: Rc<RefCell<EngineRegistry>>,
-    home: Rc<Home>,
+    pub(super) home: Rc<Home>,
     events: Rc<EventLog>,
-    env: Rc<Env>,
+    pub(super) env: Rc<Env>,
 }
 
 impl Deps {
-    fn ops(&self) -> ChatOps<'_> {
+    pub(super) fn ops(&self) -> ChatOps<'_> {
         ChatOps {
             service: &self.service,
             engines: &self.engines,

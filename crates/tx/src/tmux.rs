@@ -21,6 +21,8 @@ pub const TRUECOLOR_ENV: [(&str, &str); 2] =
 /// tmux rejects a client command past one imsg; commands over this conservative half-limit go
 /// through a launch script instead.
 pub const MAX_COMMAND_BYTES: usize = 8192;
+/// How long `display_status` keeps a message on the status line.
+const STATUS_MILLISECONDS: &str = "5000";
 
 /// Ordered attribute list rendered by [`format_envelope`] (the Python's ordered dict).
 pub type EnvelopeAttrs = Vec<(String, String)>;
@@ -365,10 +367,15 @@ impl Tmux {
         let _ = self.run_quiet(&["delete-buffer", "-b", name]);
     }
 
-    /// Show `message` on `client`'s status line (best effort).
+    /// Run `command` on the server in the background (`run-shell -b`), outliving the caller.
+    pub fn run_shell_background(&self, command: &str) -> Result<(), TmuxError> {
+        self.run(&["run-shell", "-b", command]).map(drop)
+    }
+
+    /// Show `message` on `client`'s status line for `STATUS_MILLISECONDS` (best effort).
     pub fn display_status(&self, client: &str, message: &str) {
         eprintln!("{message}");
-        let _ = self.run_quiet(&["display-message", "-c", client, message]);
+        let _ = self.run_quiet(&["display-message", "-c", client, "-d", STATUS_MILLISECONDS, message]);
     }
 
     /// A global server option (`show-options -gvq`); `None` when unset / no server.

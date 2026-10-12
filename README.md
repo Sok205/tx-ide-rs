@@ -82,7 +82,7 @@ tx start --tutor                                       # boot tx-ide straight in
 ```
 
 Inside tmux: `prefix+t` opens the picker, `prefix+/` sends a line to the tx-assistant,
-`prefix+n` spawns a new agent (name, tags, prompt — the tx-assistant is told), `prefix+e` edits a session's name and tags, `prefix+X` kills the active pane's session,
+`prefix+n` spawns a new agent (name, tags, prompt — the tx-assistant is told), `prefix+f` forks the active pane's session (a popup asks the name; blank = `<source>-fork`), `prefix+e` edits a session's name and tags, `prefix+X` kills the active pane's session,
 `prefix+s` lists sessions with their names and tags, and `C-h/j/k/l` move between panes
 (passing through into nvim and nested tmux).
 
