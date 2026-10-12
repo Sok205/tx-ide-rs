@@ -16,6 +16,7 @@ use super::app::App;
 use super::clock;
 use super::model::Builder;
 use super::ui;
+use crate::tmux::Tmux;
 
 /// How often the store and transcripts are re-read while idle.
 pub const TICK: Duration = Duration::from_secs(3);
@@ -23,12 +24,18 @@ pub const TICK: Duration = Duration::from_secs(3);
 /// once per this interval.
 pub const WHEEL_ZOOM_INTERVAL: Duration = Duration::from_millis(150);
 
-pub fn run(mut builder: Builder, days: f64, window: f64) -> io::Result<()> {
+pub fn run(
+    mut builder: Builder,
+    days: f64,
+    window: f64,
+    resident: Option<(&Tmux, &str)>,
+) -> io::Result<()> {
+    let days = days.max(window / 1440.0);
     let payload = builder.build(days, clock::now());
     let mut app = App::new(payload, clock::now(), window);
     let mut terminal = ratatui::try_init()?;
     execute!(io::stdout(), EnableMouseCapture)?;
-    let result = event_loop(&mut terminal, &mut app, &mut builder, days);
+    let result = event_loop(&mut terminal, &mut app, &mut builder, days, resident);
     let _ = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
@@ -39,6 +46,7 @@ fn event_loop(
     app: &mut App,
     builder: &mut Builder,
     days: f64,
+    resident: Option<(&Tmux, &str)>,
 ) -> io::Result<()> {
     terminal.draw(|frame| ui::render(app, frame))?;
     app.fit_initial();
@@ -58,6 +66,10 @@ fn event_loop(
             let payload = builder.build(days, clock::now());
             app.refresh(payload, clock::now());
             next_tick = Instant::now() + TICK;
+        }
+        if app.quit && let Some((tmux, session)) = resident {
+            tmux.detach_session(session).map_err(io::Error::other)?;
+            app.quit = false;
         }
     }
     Ok(())
@@ -106,6 +118,7 @@ pub fn snapshot(
     columns: u16,
     rows: u16,
 ) -> io::Result<String> {
+    let days = days.max(window / 1440.0);
     let payload = builder.build(days, clock::now());
     let mut app = App::new(payload, clock::now(), window);
     let mut terminal = Terminal::new(TestBackend::new(columns, rows)).expect("test backend");

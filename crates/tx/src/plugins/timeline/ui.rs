@@ -1,5 +1,6 @@
-//! Drawing the timeline: axis, group bands, swimlanes, message arrows, the message list and the
-//! footer. The canvas is a cell grid: `━` working, `╌` idle, `×` killed, `▸` live, red `┃` now;
+//! Drawing the timeline: axis, group bands, swimlanes, message arrows and the
+//! footer. The canvas is a cell grid: `━` working, `╌` idle, `×` killed, red `┃` now;
+//! live sessions have a `▸` in a one-column gutter beyond the time axis.
 //! a message is a green `●` on the sender's row, `│` down/up, `▼`/`▲` on the receiver's row.
 
 use ratatui::Frame;
@@ -7,9 +8,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use super::app::{App, Geometry, RowItem, first_line};
+use super::app::{App, Geometry, RowItem};
 use super::clock;
-use super::model::EdgeKind;
 
 const AXIS_ROWS: u16 = 3;
 const FOOTER_ROWS: u16 = 2;
@@ -17,7 +17,6 @@ const MAX_LABEL_WIDTH: u16 = 28;
 
 const AMBER: Color = Color::Rgb(224, 175, 104);
 const CURSOR_BG: Color = Color::Indexed(236);
-const TITLE_BG: Color = Color::Indexed(237);
 const IDLE: Color = Color::DarkGray;
 const NOW: Color = Color::Red;
 const MESSAGE: Color = Color::Green;
@@ -42,12 +41,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         area.width,
         FOOTER_ROWS.min(area.height),
     );
-    let mut body_height = area.height.saturating_sub(FOOTER_ROWS);
-    let drawer = app.drawer.then(|| {
-        let height = (body_height * 2 / 5).max(5).min(body_height);
-        body_height -= height;
-        Rect::new(area.x, area.y + body_height, area.width, height)
-    });
+    let body_height = area.height.saturating_sub(FOOTER_ROWS);
     let axis = Rect::new(area.x, area.y, area.width, AXIS_ROWS.min(body_height));
     let lanes = Rect::new(
         area.x,
@@ -59,7 +53,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let canvas = Rect::new(
         area.x + label_width,
         lanes.y,
-        area.width.saturating_sub(label_width),
+        area.width.saturating_sub(label_width + 1),
         lanes.height,
     );
     app.geometry = Geometry {
@@ -67,7 +61,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         axis,
         lanes,
         canvas,
-        drawer,
         footer,
     };
     if app.geometry.canvas.width == 0 {
@@ -76,9 +69,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let buffer = frame.buffer_mut();
     draw_axis(app, buffer);
     draw_rows(app, buffer);
-    if let Some(rect) = drawer {
-        draw_messages(app, buffer, rect);
-    }
     draw_footer(app, buffer, footer);
 }
 
@@ -186,11 +176,12 @@ fn draw_now_column(app: &App, buffer: &mut Buffer, top: u16, bottom: u16, label:
         put(buffer, x, y, "┃", Style::new().fg(NOW));
     }
     if label {
+        let label_x = x.min(app.geometry.canvas.x + app.geometry.canvas.width.saturating_sub(3));
         buffer.set_stringn(
-            x,
+            label_x,
             top,
             "now",
-            3,
+            usize::from(app.geometry.canvas.width.min(3)),
             Style::new().fg(NOW).add_modifier(Modifier::BOLD),
         );
     }
@@ -251,10 +242,9 @@ fn draw_group_header(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
         .fg(Color::Indexed(group.cube))
         .add_modifier(Modifier::BOLD);
     let count = app
-        .payload
-        .lanes
-        .iter()
-        .filter(|lane| lane.group == group.key)
+        .visible_lanes()
+        .into_iter()
+        .filter(|index| app.payload.lanes[*index].group == group.key)
         .count();
     let text = format!("{} ({count})", group.key.to_uppercase());
     buffer.set_stringn(
@@ -285,14 +275,20 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
         }
     }
 
-    // label: ▌name engine
+    // State marker replaces the group stripe; group headings and bars carry the group color.
     let label_width = usize::from(app.geometry.label_width);
+    let indicator = match (lane.live, lane.state.as_str()) {
+        (false, _) => "×",
+        (true, "working") => "●",
+        (true, "idle" | "waiting") => "○",
+        (true, _) => "·",
+    };
     put(
         buffer,
         app.geometry.lanes.x,
         y,
-        "▌",
-        Style::new().fg(group_color).add_modifier(dim),
+        indicator,
+        Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD | dim),
     );
     let name_style = Style::new()
         .fg(if lane.live { Color::White } else { Color::Gray })
@@ -303,10 +299,10 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
         })
         .add_modifier(dim);
     let engine = lane.meta.split(" · ").next().unwrap_or("");
-    let name_room = label_width.saturating_sub(2);
+    let name_room = label_width.saturating_sub(3);
     let name: String = lane.name.chars().take(name_room).collect();
-    buffer.set_stringn(app.geometry.lanes.x + 1, y, &name, name_room, name_style);
-    let after_name = name.chars().count() + 2;
+    buffer.set_stringn(app.geometry.lanes.x + 2, y, &name, name_room, name_style);
+    let after_name = name.chars().count() + 3;
     if label_width > after_name + engine.len() + 1 {
         buffer.set_stringn(
             app.geometry.lanes.x + after_name as u16,
@@ -324,8 +320,9 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     let tail = lane.kill.unwrap_or(app.now);
     let first = segments.first().map_or(lane.a, |segment| segment.0);
     for (x, minute) in canvas_columns(app) {
-        let next = app.minute_at(i64::from(x - canvas.x) + 1);
-        if next <= first || minute >= tail {
+        let next = app.minute_at(i64::from(x - canvas.x) + 1).min(app.now);
+        let minute = minute.max(app.observation_start());
+        if next <= minute || next <= first || minute >= tail {
             continue;
         }
         let active = segments
@@ -339,7 +336,7 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     }
     if let Some(kill) = lane.kill {
         let column = app.column_of(kill);
-        if app.on_canvas(column) {
+        if app.observes(kill) && app.on_canvas(column) {
             put(
                 buffer,
                 canvas.x + column as u16,
@@ -351,17 +348,15 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
             );
         }
     }
-    if lane.live {
-        let column = app.column_of(app.now) + 1;
-        if app.on_canvas(column) {
-            put(
-                buffer,
-                canvas.x + column as u16,
-                y,
-                "▸",
-                Style::new().fg(group_color).add_modifier(Modifier::BOLD),
-            );
-        }
+    let now_column = app.column_of(app.now);
+    if lane.live && app.on_canvas(now_column) {
+        put(
+            buffer,
+            canvas.x + now_column as u16 + 1,
+            y,
+            "▸",
+            Style::new().fg(group_color).add_modifier(Modifier::BOLD),
+        );
     }
 }
 
@@ -369,9 +364,7 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
 /// The selected message is amber; a bar the line crosses keeps its heavy horizontal (`┿`).
 fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>]) {
     let canvas = app.geometry.canvas;
-    let mut ordered: Vec<usize> = (0..app.payload.edges.len())
-        .filter(|index| app.payload.edges[*index].kind == EdgeKind::Message)
-        .collect();
+    let mut ordered = app.messages();
     // the selected message draws last so nothing covers it
     ordered.sort_by_key(|index| app.message == Some(*index));
     for index in ordered {
@@ -401,64 +394,6 @@ fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>])
             // a self-message, or a sender without a row: mark the arrival only
             _ => put(buffer, x, to_row, "▾", style),
         }
-    }
-}
-
-/// The message log: every peer message, `time  from → to  snippet`; the selected row amber,
-/// rows outside the canvas window dim.
-fn draw_messages(app: &App, buffer: &mut Buffer, rect: Rect) {
-    let messages = app.messages();
-    let title_style = Style::new()
-        .fg(Color::White)
-        .bg(TITLE_BG)
-        .add_modifier(Modifier::BOLD);
-    for x in rect.x..rect.x + rect.width {
-        put(buffer, x, rect.y, " ", title_style);
-    }
-    let title = format!(
-        " messages · {}   (tab / shift-tab select · wheel scrolls · enter hides)",
-        messages.len()
-    );
-    buffer.set_stringn(rect.x, rect.y, &title, usize::from(rect.width), title_style);
-
-    let height = usize::from(rect.height.saturating_sub(1));
-    let selected = app
-        .message
-        .and_then(|index| messages.iter().position(|candidate| *candidate == index));
-    // keep the selected message in view, else show the tail
-    let scroll = match selected {
-        Some(position) => position
-            .saturating_sub(height / 2)
-            .min(messages.len().saturating_sub(height)),
-        None => messages.len().saturating_sub(height),
-    };
-    let (left, right) = (app.left, app.right());
-    for (offset, index) in messages.iter().skip(scroll).take(height).enumerate() {
-        let y = rect.y + 1 + offset as u16;
-        let edge = &app.payload.edges[*index];
-        let (sender, receiver) = app.message_parties(edge);
-        let line = format!(
-            "{}  {sender} → {receiver}  {}",
-            clock::short_time(app.payload.timestamp(edge.at)),
-            first_line(&edge.snippet)
-        );
-        let in_window = edge.at >= left && edge.at <= right;
-        let style = if selected == Some(scroll + offset) {
-            Style::new()
-                .fg(Color::Black)
-                .bg(AMBER)
-                .add_modifier(Modifier::BOLD)
-        } else if in_window {
-            Style::new().fg(MESSAGE)
-        } else {
-            Style::new().fg(Color::DarkGray)
-        };
-        if selected == Some(scroll + offset) {
-            for x in rect.x..rect.x + rect.width {
-                put(buffer, x, y, " ", style);
-            }
-        }
-        buffer.set_stringn(rect.x, y, &line, usize::from(rect.width), style);
     }
 }
 

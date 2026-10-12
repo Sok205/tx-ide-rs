@@ -9,13 +9,15 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use super::rows::{Row, parse_line};
+use super::metadata::Metadata;
+use super::rows::{Row, parse_entry};
 
 struct Entry {
     size: u64,
     mtime: SystemTime,
     offset: u64,
     rows: Vec<Row>,
+    metadata: Metadata,
 }
 
 #[derive(Default)]
@@ -24,6 +26,11 @@ pub struct TranscriptCache {
 }
 
 impl TranscriptCache {
+    /// Metadata collected with the most recent read of this transcript.
+    pub fn metadata(&self, path: &Path) -> Option<&Metadata> {
+        self.entries.get(path).map(|entry| &entry.metadata)
+    }
+
     /// The rows of `path`, re-parsing only what was appended since the last call.
     pub fn rows(&mut self, path: &Path) -> &[Row] {
         let Ok(metadata) = std::fs::metadata(path) else {
@@ -39,9 +46,9 @@ impl TranscriptCache {
         if fresh {
             return &self.entries[path].rows;
         }
-        let (start, mut rows) = match self.entries.remove(path) {
-            Some(entry) if size >= entry.offset => (entry.offset, entry.rows),
-            _ => (0, Vec::new()),
+        let (start, mut rows, mut metadata) = match self.entries.remove(path) {
+            Some(entry) if size >= entry.offset => (entry.offset, entry.rows, entry.metadata),
+            _ => (0, Vec::new(), Metadata::default()),
         };
         let mut chunk = Vec::new();
         let read = File::open(path).and_then(|mut file| {
@@ -56,7 +63,10 @@ impl TranscriptCache {
             .rposition(|byte| *byte == b'\n')
             .map_or(0, |newline| newline + 1);
         for line in String::from_utf8_lossy(&chunk[..consumed]).lines() {
-            parse_line(line, &mut rows);
+            if let Ok(entry) = serde_json::from_str(line) {
+                parse_entry(&entry, &mut rows);
+                metadata.update(&entry);
+            }
         }
         self.entries.insert(
             path.to_owned(),
@@ -65,6 +75,7 @@ impl TranscriptCache {
                 mtime,
                 offset: start + consumed as u64,
                 rows,
+                metadata,
             },
         );
         &self.entries[path].rows

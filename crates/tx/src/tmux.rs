@@ -413,6 +413,11 @@ impl Tmux {
         Ok(status.code().unwrap_or(-1))
     }
 
+    /// Close clients of a resident popup without stopping its process or discarding its state.
+    pub fn detach_session(&self, name: &str) -> Result<(), TmuxError> {
+        self.run(&["detach-client", "-s", &exact_session(name)]).map(drop)
+    }
+
     /// A pane hosting `name` as `session:window.pane`, preferring a host in the comma-separated
     /// `prefer` set; the `@remote-session` pane is the fallback. `None` when no pane hosts it.
     pub fn pane_for_session(&self, name: &str, prefer: &str) -> Option<String> {
