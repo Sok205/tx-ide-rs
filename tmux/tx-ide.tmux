@@ -3,7 +3,7 @@
 # which is sourced from the user's ~/.tmux.conf by install.sh.
 #
 # Reads @tx-ide-* options to decide which view features to enable:
-#   @tx-ide-popups          on|off   prefix+t (tx), prefix+e (edit), prefix+/ (assistant), prefix+X (kill),
+#   @tx-ide-popups          on|off   prefix+t (tx), prefix+T (timeline), prefix+e (edit), prefix+/ (assistant), prefix+X (kill),
 #                                    prefix+n (new agent; replaces tmux's next-window on that key),
 #                                    prefix+f (fork the pane's session; replaces tmux's find-window)
 #   @tx-ide-pane-borders    on|off   pane-border-format integration + colors
@@ -51,11 +51,12 @@ palette=$(option @tx-ide-palette tokyonight-night)
 CONF=$(mktemp -t tx-ide-bindings.XXXXXX)
 trap 'rm -f "$CONF"' EXIT
 
-# --- Popups (prefix+t / prefix+/) ---
+# --- Popups (prefix+t / prefix+T / prefix+/) ---
 # prefix+t opens the tx picker; prefix+/ forwards a line to the tx-assistant. tx attach figures
 # out the pane to glue into by asking tmux directly (`display-message -p #{pane_id}`), so the bind
 # doesn't need to plumb anything through. There is no mailbox anymore, so prefix+m is left bound to
 # its native `select-pane -m` (tx-ide no longer overrides it).
+# prefix+T attaches a resident timeline in a popup; q detaches while its cache stays warm.
 #
 # The picker popup is `-w 118`: wide enough for NAME + the 25-col LOCATION + STARTED/IDLE/ROLE + tag
 # chips without wrapping, with ~5 cols of extra NAME headroom. Keep it in lockstep with
@@ -64,6 +65,7 @@ trap 'rm -f "$CONF"' EXIT
 if [ "$popups" = on ]; then
   cat >>"$CONF" <<'EOF'
 bind t display-popup -E -w 118 -h 30 -x C -y 1 -T " tx " "tx attach"
+bind T display-popup -E -w 118 -h 30 -x C -y 1 -T " timeline " "tx _timeline-attach"
 bind '/' command-prompt -p "tx-assistant>" {
   set-buffer -b tx-assistant-input "%%"
   run-shell -b "tx-assistant --from-buffer"

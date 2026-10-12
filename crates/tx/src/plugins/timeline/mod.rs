@@ -5,6 +5,7 @@
 pub mod app;
 pub mod cache;
 pub mod clock;
+pub mod metadata;
 pub mod model;
 pub mod rows;
 pub mod run;

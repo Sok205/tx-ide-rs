@@ -18,9 +18,7 @@ pub const ZOOM_LEVELS: [f64; 12] = [
 /// At or below this many minutes per column the fine segment tier (`fsegs`, > 10 min idle)
 /// is drawn — the HTML view's 60 px/h switch.
 pub const FINE_TIER_MAX: f64 = 10.0;
-/// Columns kept free right of "now" while following.
-pub const FOLLOW_MARGIN: f64 = 3.0;
-/// The default initial viewport: the last 4.5 h, glued to now (`--last` overrides).
+/// The default rolling observation window: the last 4.5 h, glued to now (`--last` overrides).
 pub const DEFAULT_WINDOW_MIN: f64 = 270.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +34,6 @@ pub struct Geometry {
     pub axis: Rect,
     pub lanes: Rect,
     pub canvas: Rect,
-    pub drawer: Option<Rect>,
     pub footer: Rect,
 }
 
@@ -44,7 +41,7 @@ pub struct App {
     pub payload: Payload,
     /// Minutes from the payload epoch.
     pub now: f64,
-    /// The initial viewport length, minutes — what `fit_initial` makes fit.
+    /// Rolling observation window, minutes — also what `fit_initial` makes fit.
     pub window: f64,
     pub zoom: usize,
     /// The user zoomed by hand: a resize keeps that zoom instead of re-fitting the window.
@@ -61,7 +58,6 @@ pub struct App {
     pub hide_idle: bool,
     pub search: String,
     pub searching: bool,
-    pub drawer: bool,
     pub geometry: Geometry,
     pub quit: bool,
     drag: Option<(u16, f64)>,
@@ -85,7 +81,6 @@ impl App {
             hide_idle: false,
             search: String::new(),
             searching: false,
-            drawer: true,
             geometry: Geometry::default(),
             quit: false,
             drag: None,
@@ -97,7 +92,12 @@ impl App {
     // ----- time ↔ column ---------------------------------------------------------------------
 
     pub fn minutes_per_column(&self) -> f64 {
-        ZOOM_LEVELS[self.zoom]
+        let fitted = self.window / self.canvas_width();
+        if self.custom_zoom {
+            ZOOM_LEVELS[self.zoom].min(fitted)
+        } else {
+            fitted
+        }
     }
 
     pub fn canvas_width(&self) -> f64 {
@@ -106,7 +106,12 @@ impl App {
 
     /// Canvas column (may be off-canvas) of a minute.
     pub fn column_of(&self, minute: f64) -> i64 {
-        ((minute - self.left) / self.minutes_per_column()).floor() as i64
+        let column = ((minute - self.left) / self.minutes_per_column()).floor() as i64;
+        if minute <= self.right() {
+            column.min(self.canvas_width() as i64 - 1)
+        } else {
+            column
+        }
     }
 
     pub fn on_canvas(&self, column: i64) -> bool {
@@ -122,6 +127,14 @@ impl App {
         self.left + self.canvas_width() * self.minutes_per_column()
     }
 
+    pub fn observation_start(&self) -> f64 {
+        self.now - self.window
+    }
+
+    pub fn observes(&self, minute: f64) -> bool {
+        minute >= self.observation_start() && minute <= self.now
+    }
+
     pub fn uses_fine_tier(&self) -> bool {
         self.minutes_per_column() <= FINE_TIER_MAX
     }
@@ -134,9 +147,10 @@ impl App {
         }
     }
 
-    /// Pick the finest zoom that fits the initial window, glue to now.
+    /// Fit exactly the observation window, with now at the right edge.
     pub fn fit_initial(&mut self) {
         let width = self.canvas_width();
+        self.custom_zoom = false;
         self.zoom = ZOOM_LEVELS
             .iter()
             .position(|level| level * width >= self.window)
@@ -145,28 +159,30 @@ impl App {
     }
 
     pub fn jump_to_now(&mut self) {
-        self.left = self.now + FOLLOW_MARGIN * self.minutes_per_column()
-            - self.canvas_width() * self.minutes_per_column();
+        self.left = self.now - self.canvas_width() * self.minutes_per_column();
         self.follow = true;
     }
 
     fn pan(&mut self, minutes: f64) {
         self.left += minutes;
-        let right_limit = self.now + FOLLOW_MARGIN * self.minutes_per_column();
+        let right_limit = self.now;
+        let latest_left = right_limit - self.canvas_width() * self.minutes_per_column();
+        self.left = self.left.max(self.observation_start().min(latest_left));
         if self.right() >= right_limit {
-            self.left = right_limit - self.canvas_width() * self.minutes_per_column();
+            self.left = latest_left;
             self.follow = true;
         } else {
             self.follow = false;
         }
-        if self.left < 0.0 {
-            self.left = 0.0;
-        }
     }
 
     fn zoom_to(&mut self, zoom: usize, anchor_minute: f64, anchor_column: f64) {
-        self.custom_zoom = true;
         self.zoom = zoom.min(ZOOM_LEVELS.len() - 1);
+        if ZOOM_LEVELS[self.zoom] * self.canvas_width() >= self.window {
+            self.fit_initial();
+            return;
+        }
+        self.custom_zoom = true;
         self.left = anchor_minute - anchor_column * self.minutes_per_column();
         self.pan(0.0);
     }
@@ -218,7 +234,7 @@ impl App {
             .any(|field| field.to_lowercase().contains(&needle))
     }
 
-    /// Group headers and lanes in display order, after the sys / idle toggles.
+    /// Group headers and recently active lanes, after the sys / idle toggles.
     pub fn rows(&self) -> Vec<RowItem> {
         let mut rows = Vec::new();
         for (group_index, group) in self.payload.groups.iter().enumerate() {
@@ -228,6 +244,7 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, lane)| lane.group == group.key)
+                .filter(|(_, lane)| lane.b >= self.observation_start() && lane.a <= self.now)
                 .filter(|(_, lane)| self.show_sys || !lane.sys)
                 .filter(|(_, lane)| !self.hide_idle || !self.lane_dim(lane))
                 .map(|(index, _)| index)
@@ -287,13 +304,14 @@ impl App {
 
     // ----- messages --------------------------------------------------------------------------
 
-    /// Edge indices of every peer message, in time order — the bottom panel's log.
+    /// Peer messages in the observation window, in time order for selection and arrows.
     pub fn messages(&self) -> Vec<usize> {
         self.payload
             .edges
             .iter()
             .enumerate()
             .filter(|(_, edge)| edge.kind == EdgeKind::Message)
+            .filter(|(_, edge)| self.observes(edge.at))
             .map(|(index, _)| index)
             .collect()
     }
@@ -303,13 +321,12 @@ impl App {
         let Some(cursor) = self.cursor else {
             return Vec::new();
         };
-        self.payload
-            .edges
-            .iter()
-            .enumerate()
-            .filter(|(_, edge)| edge.kind == EdgeKind::Message)
-            .filter(|(_, edge)| edge.to == cursor || edge.from == Some(cursor))
-            .map(|(index, _)| index)
+        self.messages()
+            .into_iter()
+            .filter(|index| {
+                let edge = &self.payload.edges[*index];
+                edge.to == cursor || edge.from == Some(cursor)
+            })
             .collect()
     }
 
@@ -379,14 +396,11 @@ impl App {
             KeyCode::BackTab | KeyCode::Char(',') => self.select_message(-1),
             KeyCode::Char('n') => self.jump_to_now(),
             KeyCode::Char('g') => self.pan(-self.left),
-            KeyCode::Enter => self.drawer = !self.drawer,
             KeyCode::Esc => {
                 if self.message.is_some() {
                     self.message = None;
-                } else if !self.search.is_empty() {
-                    self.search.clear();
                 } else {
-                    self.drawer = false;
+                    self.search.clear();
                 }
             }
             KeyCode::Char('s') => self.show_sys = !self.show_sys,
@@ -441,10 +455,6 @@ impl App {
         let control = mouse.modifiers.contains(KeyModifiers::CONTROL);
         let over_canvas = Self::inside(self.geometry.canvas, column, row)
             || Self::inside(self.geometry.axis, column, row);
-        let over_drawer = self
-            .geometry
-            .drawer
-            .is_some_and(|rect| Self::inside(rect, column, row));
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let direction: i64 = if mouse.kind == MouseEventKind::ScrollUp {
@@ -458,8 +468,6 @@ impl App {
                     let zoom =
                         (self.zoom as i64 + direction).clamp(0, ZOOM_LEVELS.len() as i64 - 1);
                     self.zoom_to(zoom as usize, minute, canvas_column as f64);
-                } else if over_drawer {
-                    self.select_message(direction);
                 } else if over_canvas {
                     self.pan(direction as f64 * 3.0 * self.minutes_per_column());
                 } else {
@@ -510,7 +518,7 @@ impl App {
 
     /// The terminal changed size: re-fit the window (unless zoomed by hand), re-glue to now.
     pub fn resized(&mut self) {
-        if !self.custom_zoom {
+        if !self.custom_zoom || ZOOM_LEVELS[self.zoom] * self.canvas_width() >= self.window {
             self.fit_initial();
         } else if self.follow {
             self.jump_to_now();
@@ -524,17 +532,24 @@ impl App {
         let message_at = self.selected_message().map(|edge| edge.at);
         self.payload = payload;
         self.now = self.payload.minutes(now_seconds);
+        if self.follow {
+            self.jump_to_now();
+        } else {
+            self.pan(0.0);
+        }
+        let visible = self.visible_lanes();
         self.cursor = cursor_sid
             .and_then(|sid| self.payload.lanes.iter().position(|lane| lane.sid == sid))
-            .or_else(|| self.visible_lanes().first().copied());
+            .filter(|index| visible.contains(index))
+            .or_else(|| visible.first().copied());
         self.message = message_at.and_then(|at| {
             self.messages()
                 .into_iter()
                 .find(|index| self.payload.edges[*index].at == at)
         });
-        if self.follow {
-            self.jump_to_now();
-        }
+        let height = usize::from(self.geometry.lanes.height.max(1));
+        self.row_scroll = self.row_scroll.min(self.rows().len().saturating_sub(height));
+        self.ensure_cursor_row_visible();
     }
 
     // ----- footer text -----------------------------------------------------------------------
@@ -543,18 +558,19 @@ impl App {
         let Some(lane) = self.cursor_lane() else {
             return "no lanes in the window".to_owned();
         };
+        let metadata = lane.metadata.summary();
         match self.selected_message() {
             Some(edge) => {
                 let (sender, receiver) = self.message_parties(edge);
                 format!(
-                    "{} · {sender} → {receiver}: {}",
+                    "{metadata} · {} · {sender} → {receiver}: {}",
                     super::clock::short_time(self.payload.timestamp(edge.at)),
                     first_line(&edge.snippet)
                 )
             }
             None => {
                 let messages = self.lane_messages().len();
-                format!("{} · {} · {messages} messages", lane.name, lane.meta)
+                format!("{metadata} · {} · {} · {messages} messages", lane.name, lane.meta)
             }
         }
     }
@@ -563,14 +579,16 @@ impl App {
         if self.searching {
             return format!("search: {}▏", self.search);
         }
-        let mpc = self.minutes_per_column();
-        let zoom = if mpc >= 60.0 {
-            format!("{}h/col", mpc / 60.0)
-        } else if mpc >= 1.0 {
-            format!("{mpc}m/col")
+        let minutes_per_column = self.minutes_per_column();
+        let (scale, unit) = if minutes_per_column >= 60.0 {
+            (minutes_per_column / 60.0, "h")
+        } else if minutes_per_column >= 1.0 {
+            (minutes_per_column, "m")
         } else {
-            format!("{}s/col", mpc * 60.0)
+            (minutes_per_column * 60.0, "s")
         };
+        let scale = format!("{scale:.1}");
+        let zoom = format!("{}{unit}/col", scale.trim_end_matches('0').trim_end_matches('.'));
         let flags = [
             (self.show_sys, "sys"),
             (self.hide_idle, "no-idle"),
@@ -582,7 +600,7 @@ impl App {
         .collect::<Vec<_>>()
         .join(" ");
         format!(
-            "h/l pan  [ ] zoom  j/k lane  tab/shift-tab message  enter panel  / search  s sys  i idle  n now  q   {zoom} {flags}"
+            "h/l pan  [ ] zoom  j/k lane  tab/shift-tab message  / search  s sys  i idle  n now  q   {zoom} {flags}"
         )
     }
 }
@@ -608,6 +626,7 @@ mod tests {
             name: name.into(),
             group: group.into(),
             meta: "claude · alive · 3 msgs".into(),
+            metadata: Default::default(),
             blurb: "hello".into(),
             state: "alive".into(),
             sys: false,
@@ -642,12 +661,12 @@ mod tests {
                 },
             ],
             lanes: vec![
-                lane("one", "alpha", 10.0, 300.0),
+                lane("one", "alpha", 10.0, 500.0),
                 lane("two", "beta", 50.0, 600.0),
             ],
             edges: vec![
                 Edge {
-                    at: 100.0,
+                    at: 450.0,
                     from: Some(0),
                     to: 1,
                     token: "one".into(),
@@ -663,7 +682,7 @@ mod tests {
                     kind: EdgeKind::Spawn,
                 },
                 Edge {
-                    at: 400.0,
+                    at: 600.0,
                     from: Some(1),
                     to: 0,
                     token: "two".into(),
@@ -685,9 +704,10 @@ mod tests {
     #[test]
     fn initial_fit_glues_to_now() {
         let app = app();
-        assert_eq!(app.minutes_per_column(), 5.0);
+        assert_eq!(app.minutes_per_column(), 4.5);
         assert!(app.follow);
-        assert!((app.right() - (700.0 + 15.0)).abs() < 1e-9);
+        assert!((app.right() - 700.0).abs() < 1e-9);
+        assert!((app.left - 430.0).abs() < 1e-9);
     }
 
     #[test]
@@ -716,7 +736,7 @@ mod tests {
         assert_eq!(app.lane_messages(), vec![0, 2]);
         app.handle_key(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.message, Some(2));
-        assert!(app.on_canvas(app.column_of(400.0)));
+        assert!(app.on_canvas(app.column_of(600.0)));
         assert!(app.status_line().ends_with("two → one: pong ⏎"));
         app.handle_key(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.message, Some(0));
@@ -724,13 +744,17 @@ mod tests {
     }
 
     #[test]
-    fn a_thirty_minute_window_fits_at_half_a_minute_per_column() {
+    fn a_thirty_minute_window_fits_exactly() {
         let mut app = App::new(payload(), 700.0 * 60.0, 30.0);
-        app.geometry.canvas = Rect::new(20, 3, 60, 10);
+        app.geometry.canvas = Rect::new(28, 3, 88, 10);
         app.fit_initial();
-        assert_eq!(app.minutes_per_column(), 0.5);
+        assert_eq!(app.minutes_per_column(), 30.0 / 88.0);
+        assert!((app.now - app.left - 30.0).abs() < 1e-9);
+        assert!((app.right() - app.now).abs() < 1e-9);
+        assert_eq!(app.column_of(app.now), 87);
+        assert!(app.hint_line().contains("20.5s/col"));
+        app.handle_key(KeyEvent::from(KeyCode::Char('[')));
         assert!((app.right() - app.left - 30.0).abs() < 1e-9);
-        assert!(app.hint_line().contains("30s/col"));
     }
 
     #[test]
@@ -739,23 +763,30 @@ mod tests {
         app.geometry.canvas = Rect::new(20, 3, 60, 10);
         app.fit_initial();
         assert_eq!(app.minutes_per_column(), 0.5);
-        app.geometry.canvas = Rect::new(20, 3, 122, 10);
+        app.geometry.canvas.width = 120;
         app.resized();
         assert_eq!(app.minutes_per_column(), 0.25);
-        app.handle_key(KeyEvent::from(KeyCode::Char('[')));
-        app.geometry.canvas = Rect::new(20, 3, 60, 10);
+        app.geometry.canvas.width = 60;
         app.resized();
-        assert_eq!(app.minutes_per_column(), 0.5);
+        app.handle_key(KeyEvent::from(KeyCode::Char(']')));
+        app.geometry.canvas.width = 80;
+        app.resized();
+        assert_eq!(app.minutes_per_column(), 0.25);
+        assert!(app.custom_zoom);
+        app.geometry.canvas.width = 140;
+        app.resized();
+        assert!((app.right() - app.left - 30.0).abs() < 1e-9);
+        assert!(!app.custom_zoom);
     }
 
     #[test]
     fn zoom_keeps_anchor_column() {
         let mut app = app();
         app.handle_key(KeyEvent::from(KeyCode::Tab));
-        let before = app.column_of(400.0);
+        let before = app.column_of(600.0);
         app.handle_key(KeyEvent::from(KeyCode::Char(']')));
         assert_eq!(app.minutes_per_column(), 2.0);
-        assert_eq!(app.column_of(400.0), before);
+        assert_eq!(app.column_of(600.0), before);
         for _ in 0..4 {
             app.handle_key(KeyEvent::from(KeyCode::Char(']')));
         }

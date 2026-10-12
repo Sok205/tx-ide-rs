@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 
 use super::cache::TranscriptCache;
 use super::clock;
+use super::metadata::Metadata;
 use super::rows::{BLURB_CAP, EV_TEXT, Kind, Row, cap, milestone_label, peer_parts};
 use crate::artifact::Artifact;
 use crate::artifact_store::ArtifactStore;
@@ -102,6 +103,7 @@ pub struct Lane {
     pub name: String,
     pub group: String,
     pub meta: String,
+    pub metadata: Metadata,
     pub blurb: String,
     pub state: String,
     pub sys: bool,
@@ -112,7 +114,7 @@ pub struct Lane {
     pub segs: Vec<(f64, f64)>,
     pub fsegs: Vec<(f64, f64)>,
     pub events: Vec<Event>,
-    /// Every parsed row (the drawer feed), time-sorted; epoch seconds.
+    /// Every parsed row, time-sorted; epoch seconds.
     pub rows: Vec<Row>,
 }
 
@@ -624,11 +626,19 @@ impl Builder {
                 "killed".to_owned()
             };
             let blurb = cap(first_user, BLURB_CAP);
+            let metadata = self
+                .transcript_paths(primary)
+                .last()
+                .and_then(|path| self.cache.metadata(path))
+                .cloned()
+                .unwrap_or_default()
+                .with_launch_fallback(&primary.initial_cmd);
             lanes.push(Lane {
                 sid: primary.id.clone(),
                 name: seed.name.clone(),
                 group: resolver.session_group(primary),
                 meta: format!("{} · {state} · {message_count} msgs", engines.join("/")),
+                metadata,
                 blurb: if blurb.is_empty() {
                     "(no user messages recorded)".to_owned()
                 } else {

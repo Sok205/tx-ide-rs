@@ -453,13 +453,17 @@ pub fn parse_line(line: &str, out: &mut Vec<Row>) {
     let Ok(entry) = serde_json::from_str::<Value>(line) else {
         return;
     };
+    parse_entry(&entry, out);
+}
+
+pub(super) fn parse_entry(entry: &Value, out: &mut Vec<Row>) {
     if !entry.is_object() {
         return;
     }
     if entry.get("payload").is_some() {
-        rows_from_codex(&entry, out);
+        rows_from_codex(entry, out);
     } else {
-        rows_from_claude(&entry, out);
+        rows_from_claude(entry, out);
     }
 }
 
