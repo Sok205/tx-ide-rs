@@ -2,7 +2,7 @@
 C-h/j/k/l	move between panes, nvim splits, nested sessions
 M-1..9	jump to pane N
 {prefix} t	picker — from the viewer (bottom right): opens the session there
-{prefix} n	new agent: nvim form (name, prompt, engine, model, effort, role, tags)
+{prefix} n	new agent: nvim form (name, tags, prompt, engine, model, effort, role)
 {prefix} f	fork this pane's session (popup asks the name)
 {prefix} /	ask the tx-assistant
 {prefix} e	rename / tag this pane's session

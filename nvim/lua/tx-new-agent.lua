@@ -10,7 +10,7 @@
 -- Each model list starts with the engine's default, which is what the form preselects; the roles
 -- start with "none" (COMMON alone), and spec.role is preselected.
 --
--- Panels: [1] Name  [2] Prompt  [3] Engine  [4] Model  [5] Effort  [6] Role  [7] Tags. The form
+-- Panels: [1] Name  [2] Tags  [3] Prompt  [4] Engine  [5] Model  [6] Effort  [7] Role. The form
 -- opens in insert mode on Name; moving to a panel lands in normal mode. Tab / S-Tab step through
 -- the panels and 1-7 jump to one (normal mode); in a list the cursor line is the pick, so j/k or the
 -- arrows choose. Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
@@ -85,13 +85,14 @@ function M.open()
   end
 
   local panels = {
-    { label = "Name", row = 0, col = 0, width = width, height = 1 },
-    { label = "Prompt", row = 3, col = 0, width = width, height = 4, wrap = true },
-    { label = "Engine", key = "engine", row = 9, col = 0, width = engine_width, height = list_height },
+    { label = "Name", field = "name", row = 0, col = 0, width = width, height = 1 },
+    { label = "Tags", field = "tags", row = 3, col = 0, width = width, height = 1, hint = spec.tags_hint },
+    { label = "Prompt", field = "prompt", row = 6, col = 0, width = width, height = 4, wrap = true },
+    { label = "Engine", key = "engine", row = 12, col = 0, width = engine_width, height = list_height },
     {
       label = "Model",
       key = "model",
-      row = 9,
+      row = 12,
       col = engine_width + 2,
       width = model_width,
       height = list_height,
@@ -99,7 +100,7 @@ function M.open()
     {
       label = "Effort",
       key = "effort",
-      row = 9,
+      row = 12,
       col = engine_width + model_width + 4,
       width = effort_width,
       height = list_height,
@@ -107,13 +108,20 @@ function M.open()
     {
       label = "Role",
       key = "role",
-      row = 9,
+      row = 12,
       col = engine_width + model_width + effort_width + 6,
       width = role_width,
       height = list_height,
     },
-    { label = "Tags", row = list_height + 11, col = 0, width = width, height = 1, hint = spec.tags_hint },
   }
+  -- the panel showing a text field or a list
+  local function panel_for(name)
+    for _, panel in ipairs(panels) do
+      if panel.field == name or panel.key == name then
+        return panel
+      end
+    end
+  end
 
   local help_buffer = vim.api.nvim_create_buf(false, true)
   local help_window = vim.api.nvim_open_win(help_buffer, false, {
@@ -164,8 +172,8 @@ function M.open()
           picked[key] = options(key)[1]
         end
       end
-      render_list(panels[4])
-      render_list(panels[5])
+      render_list(panel_for("model"))
+      render_list(panel_for("effort"))
     end
     render_list(panel)
   end
@@ -208,18 +216,19 @@ function M.open()
 
   local function spawn()
     local answers = {
-      name = text(panels[1], " "),
-      prompt = text(panels[2], "\n"),
+      name = text(panel_for("name"), " "),
+      prompt = text(panel_for("prompt"), "\n"),
       engine = picked.engine,
       model = picked.model,
       effort = picked.effort,
       role = picked.role,
-      tags = text(panels[7], ","),
+      tags = text(panel_for("tags"), ","),
     }
-    for number, key in ipairs({ "name", "prompt" }) do
-      if answers[key] == "" then
-        focus(number)
-        say((" %s cannot be empty."):format(panels[number].label), "TxFormWarning")
+    for _, field in ipairs({ "name", "prompt" }) do
+      if answers[field] == "" then
+        local panel = panel_for(field)
+        focus(panel.number)
+        say((" %s cannot be empty."):format(panel.label), "TxFormWarning")
         return
       end
     end
