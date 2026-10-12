@@ -225,6 +225,14 @@ impl Component for SessionVerbs {
                 commands: Rc::downgrade(&table),
             },
         );
+        table.register(
+            ctx,
+            Visibility::Hidden,
+            super::fork_pane::ForkPane {
+                service: Rc::clone(&deps.service),
+                commands: Rc::downgrade(&table),
+            },
+        );
         Ok(())
     }
 }

@@ -4,7 +4,8 @@
 #
 # Reads @tx-ide-* options to decide which view features to enable:
 #   @tx-ide-popups          on|off   prefix+t (tx), prefix+e (edit), prefix+/ (assistant), prefix+X (kill),
-#                                    prefix+n (new agent; replaces tmux's next-window on that key)
+#                                    prefix+n (new agent; replaces tmux's next-window on that key),
+#                                    prefix+F (fork the pane's session)
 #   @tx-ide-pane-borders    on|off   pane-border-format integration + colors
 #   @tx-ide-agent-scroll    on|off   C-u/C-d → PageUp/PageDown in agent panes
 #   @tx-ide-nav-keys        on|off   C-h/j/k/l seamless nav: nvim splits ↔ panes ↔ nested sessions
@@ -70,6 +71,10 @@ bind n command-prompt -p "new agent name:,tags (comma-separated):,prompt:" {
   set-buffer -b tx-new-agent-tags "%2"
   set-buffer -b tx-new-agent-prompt "%3"
   run-shell -b "tx _new-agent '#{pane_id}' '#{client_name}' >/dev/null 2>&1"
+}
+bind F command-prompt -p "fork name (blank = <source>-fork):" {
+  set-buffer -b tx-fork-name "%%"
+  run-shell -b "tx _fork-pane '#{pane_id}' '#{client_name}' >/dev/null 2>&1"
 }
 EOF
   # prefix+X: kill the active pane's tx session behind a stock-style confirm-before prompt
