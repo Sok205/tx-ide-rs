@@ -40,3 +40,6 @@
   (long messages arrive like that) is unwrapped before classification; the Python prototype
   counts such rows as the human typing and loses the edge (19 of 68 edges on 2026-10-11).
   Kit fix to propose upstream in `timeline.py` (`ukind` / `clean_user`).
+- prefix+e (`_edit-session`): the popup is centred with a heavy yellow border like prefix+f, the form is
+  drawn in the palette's truecolor (the reference used basic ANSI blue / dim white / yellow), and the
+  popup closes on exit with the outcome on the status line (the reference kept it open on errors).

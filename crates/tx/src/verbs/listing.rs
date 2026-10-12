@@ -843,41 +843,81 @@ impl Command for EditSession {
         "_edit-session"
     }
     fn summary(&self) -> &'static str {
-        "Internal: edit the focused pane's tx session name and tags."
+        "Internal: prefix+e — edit the focused pane's tx session name and tags in the popup, \
+         report the outcome on the firing client's status line."
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let parser = self
             .0
             .parser(self.name(), self.summary())
-            .arg(Arg::positional("pane"));
+            .arg(Arg::positional("pane"))
+            .arg(Arg::positional("client"));
         let args = match parse(&parser, argv) {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
         let pane = args.get_one("pane").unwrap_or_default();
+        let client = args.get_one("client").unwrap_or_default();
         let tmux = &self.0.tmux;
         // The firing pane (captured by the binding), not the popup's own pane.
         let target = tmux
             .inner_for_pane(pane)
             .or_else(|| tmux.display_message("#{session_name}", Some(pane)));
+        // The popup closes as soon as this exits: every outcome goes to the status line.
         let Some(target) = target.filter(|target| !tmux.is_view(target)) else {
-            return Err(ListingError::NoSessionInPane.into());
+            tmux.display_status(
+                client,
+                &format!("prefix+e: {}", ListingError::NoSessionInPane),
+            );
+            return Ok(1);
         };
         let service = &self.0.service;
         let Some(session) = service.get(&target)? else {
-            return Err(ListingError::NotTxManaged.into());
+            tmux.display_status(client, &format!("prefix+e: {}", ListingError::NotTxManaged));
+            return Ok(1);
         };
         let Some((name, edited_tags)) = edit_session(&session.name, &session.tags.join(","))?
         else {
             return Ok(0);
         };
         // Both fields were collected before writing; address by the stable id.
-        service.rename(&session.id, &name)?;
         let tags = split_tags(&edited_tags);
-        if tags != session.tags {
-            service.tag(&session.id, tags)?;
+        let written = service.rename(&session.id, &name).and_then(|_| {
+            if tags != session.tags {
+                service.tag(&session.id, tags.clone())?;
+            }
+            Ok(())
+        });
+        match written {
+            Ok(()) => {
+                tmux.display_status(client, &edit_outcome(&session, &name, &tags));
+                Ok(0)
+            }
+            Err(error) => {
+                tmux.display_status(client, &format!("edit of {} failed: {error}", session.name));
+                Ok(1)
+            }
         }
-        Ok(0)
+    }
+}
+
+/// The status line after a saved edit: what changed on `session`.
+fn edit_outcome(session: &Session, name: &str, tags: &[String]) -> String {
+    let mut changes = Vec::new();
+    if name != session.name {
+        changes.push(format!("renamed → {name}"));
+    }
+    if tags != session.tags {
+        changes.push(if tags.is_empty() {
+            "tags cleared".to_owned()
+        } else {
+            format!("tags → {}", tags.join(","))
+        });
+    }
+    if changes.is_empty() {
+        format!("{} unchanged", session.name)
+    } else {
+        format!("{}: {}", session.name, changes.join(", "))
     }
 }
 

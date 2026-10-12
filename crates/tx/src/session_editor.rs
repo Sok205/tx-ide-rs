@@ -9,7 +9,7 @@
 use std::io::{self, Write};
 use std::os::fd::RawFd;
 
-use crate::palette::SELECTION_BG;
+use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, FG_ANSI, SELECTION_BG, WARN_ANSI};
 
 const HINT: &str = "↑↓ switch   Enter save   Esc cancel";
 const TAGS_HELP: &str = "Comma-separated · empty clears tags";
@@ -49,25 +49,26 @@ pub enum Outcome {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
+    /// Inactive field: the palette's foreground.
     Normal,
-    /// Active label: blue, bold.
+    /// Active label: the palette accent, bold.
     Accent,
-    /// Inactive label, help and hint rows: white, dim.
+    /// Inactive label, help and hint rows: the palette's dim foreground.
     Muted,
-    /// Active field: white on the selection background.
+    /// Active field: the palette's foreground on the selection background.
     Selected,
-    /// Error row: yellow.
+    /// Error row: the palette's warning amber.
     Warning,
 }
 
 impl Style {
     fn sgr(self) -> String {
         match self {
-            Style::Normal => String::new(),
-            Style::Accent => "\x1b[34;1m".into(),
-            Style::Muted => "\x1b[37;2m".into(),
-            Style::Selected => format!("\x1b[37;48;5;{SELECTION_BG}m"),
-            Style::Warning => "\x1b[33m".into(),
+            Style::Normal => FG_ANSI.into(),
+            Style::Accent => format!("{ACCENT_ANSI}{BOLD}"),
+            Style::Muted => DIM_FG_ANSI.into(),
+            Style::Selected => format!("{FG_ANSI}\x1b[48;5;{SELECTION_BG}m"),
+            Style::Warning => WARN_ANSI.into(),
         }
     }
 }
