@@ -663,7 +663,7 @@ impl Attach {
                  >\"$TX_ARM_FILE\")+unbind(y,n)"
             ),
             format!(
-                "--bind=ctrl-t:execute(tmux display-popup -E -h 6 -w 60% \"{edit_tag}\")+{reload}"
+                "--bind=ctrl-t:execute(tmux display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}"
             ),
             format!(
                 "--bind=ctrl-d:execute-silent(printf '%s' {{1}} \
@@ -883,11 +883,11 @@ impl Command for EditSession {
 
 /// `_prompt_with_default`: fzf's query editor prefilled with `default`; `None` when cancelled.
 /// Laid out and coloured like the picker: `label` (may carry ANSI styling) above a `❯` input,
-/// the key hint at the bottom, all on one left edge. Needs four rows.
+/// on one left edge. Needs two rows.
 pub(super) fn prompt_with_default(label: &str, default: &str) -> Result<Option<String>, ListingError> {
     use palette::{DIM_FG_HEX, FG_HEX};
     let color = format!(
-        "fg:{DIM_FG_HEX},header:{DIM_FG_HEX},footer:{DIM_FG_HEX},prompt:{DIM_FG_HEX},query:{FG_HEX}"
+        "fg:{DIM_FG_HEX},header:{DIM_FG_HEX},prompt:{DIM_FG_HEX},query:{FG_HEX}"
     );
     let output = Process::new("fzf")
         .args([
@@ -900,9 +900,6 @@ pub(super) fn prompt_with_default(label: &str, default: &str) -> Result<Option<S
             "--header",
             label,
             "--header-first",
-            "--footer",
-            "Enter accept · Esc cancel",
-            "--footer-border=none",
             "--reverse",
             "--no-info",
             "--no-separator",
