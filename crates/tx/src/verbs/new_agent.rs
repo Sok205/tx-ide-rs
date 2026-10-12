@@ -1,4 +1,4 @@
-//! `_new-agent`: the prefix+n seam. In the key's popup (bin/tmux-new-agent) it asks for the
+//! `_new-agent`: the prefix+n seam. In the key's popup (bin/tmux-new-agent) one form asks for the
 //! agent's name, tags and prompt, then hands the spawn to a background `run-shell`, so the popup
 //! closes at once; the background half spawns the agent through the `spawn` verb and reports on
 //! the firing client's status line.
@@ -8,15 +8,15 @@ use std::rc::{Rc, Weak};
 use cordis::BoxError;
 
 use crate::app::{Command, CommandTable, Env};
-use crate::palette::{ACCENT_ANSI, BOLD, RESET};
 use crate::service::SessionService;
+use crate::session_editor::{Field, Form, run_form};
 use crate::shlex::shlex_join;
 use crate::storage::Home;
 
 use super::common::{bin_tx, split_tags};
-use super::listing::prompt_with_default;
 
 const DEFAULT_TAG: &str = "agent";
+const TAGS_HELP: &str = "Comma-separated · empty means agent";
 
 pub struct NewAgent {
     pub service: Rc<SessionService>,
@@ -47,31 +47,11 @@ impl Command for NewAgent {
 }
 
 impl NewAgent {
-    /// The popup half: ask name, tags and prompt in turn (Esc at any step cancels), then hand the
-    /// spawn to the server and exit.
+    /// The popup half: fill the form (Esc cancels), then hand the spawn to the server and exit.
     fn ask(&self, pane: &str, client: &str) -> Result<i32, BoxError> {
-        let tmux = self.service.tmux();
-        let Some(name) = prompt_with_default("New agent name", "")? else {
+        let Some([name, tags, prompt]) = run_form(new_agent_form())? else {
             return Ok(0);
         };
-        let name = name.trim();
-        if name.is_empty() {
-            tmux.display_status(client, "prefix+n: a name is required");
-            return Ok(1);
-        }
-        let agent = format!("{ACCENT_ANSI}{BOLD}{name}{RESET}");
-        let tags_label = format!("Tags for {agent}, comma-separated (default: {DEFAULT_TAG})");
-        let Some(tags) = prompt_with_default(&tags_label, "")? else {
-            return Ok(0);
-        };
-        let Some(prompt) = prompt_with_default(&format!("Prompt for {agent}"), "")? else {
-            return Ok(0);
-        };
-        let prompt = prompt.trim();
-        if prompt.is_empty() {
-            tmux.display_status(client, "prefix+n: a prompt is required");
-            return Ok(1);
-        }
         // `run-shell` runs in the server's environment: bake the home into the command. Its
         // stdout would open in view mode and a nonzero exit would echo the whole command, so the
         // spawn verb's report and exit status are dropped — the outcome is on the status line.
@@ -84,11 +64,13 @@ impl NewAgent {
             "_new-agent",
             pane,
             client,
-            name,
+            name.trim(),
             tags.trim(),
-            prompt,
+            prompt.trim(),
         ]);
-        tmux.run_shell_background(&format!("{command} >/dev/null 2>&1 || true"))?;
+        self.service
+            .tmux()
+            .run_shell_background(&format!("{command} >/dev/null 2>&1 || true"))?;
         Ok(0)
     }
 
@@ -127,11 +109,37 @@ impl NewAgent {
     }
 }
 
+/// Name and prompt are required; blank tags mean `agent`.
+fn new_agent_form() -> Form<3> {
+    let field = |label, help, required| Field {
+        label,
+        help,
+        required,
+        value: "",
+    };
+    Form::new(
+        [
+            field("Name", None, true),
+            field("Tags", Some(TAGS_HELP), false),
+            field("Prompt", None, true),
+        ],
+        "spawn",
+    )
+}
+
 /// `tx spawn` for an engine worker (default engine) in the pane's directory.
 fn spawn_argv(name: &str, tags: &str, cwd: &str, prompt: &str) -> Vec<String> {
-    [name, "--tag", &clean_tags(tags), "--cwd", cwd, "--prompt", prompt]
-        .map(str::to_owned)
-        .to_vec()
+    [
+        name,
+        "--tag",
+        &clean_tags(tags),
+        "--cwd",
+        cwd,
+        "--prompt",
+        prompt,
+    ]
+    .map(str::to_owned)
+    .to_vec()
 }
 
 /// `tutor, api` → `tutor,api`.
@@ -147,6 +155,40 @@ fn clean_tags(tags: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session_editor::{Key, Outcome};
+
+    #[test]
+    fn one_form_asks_name_tags_and_prompt() {
+        let mut form = new_agent_form();
+        let rows = form.render(9, 60).rows(9, 60);
+        assert_eq!(rows[1], "  › Name:");
+        assert_eq!(rows[3], "    Tags:");
+        assert_eq!(rows[4], "              Comma-separated · empty means agent");
+        assert_eq!(rows[5], "    Prompt:");
+        assert_eq!(rows[8], "  ↑↓ switch   Enter spawn   Esc cancel");
+        let type_text = |form: &mut Form<3>, text: &str| {
+            text.chars()
+                .for_each(|c| drop(form.handle(Key::Char(c), 9, 60)))
+        };
+        type_text(&mut form, "health");
+        // Up from the first field wraps to the prompt; Enter refuses while it is blank.
+        assert_eq!(form.handle(Key::Up, 9, 60), None);
+        type_text(&mut form, " ");
+        assert_eq!(form.handle(Key::Enter, 9, 60), None);
+        assert_eq!(
+            form.render(9, 60).rows(9, 60)[8],
+            "  Prompt cannot be empty."
+        );
+        type_text(&mut form, "add GET /health");
+        assert_eq!(
+            form.handle(Key::Enter, 9, 60),
+            Some(Outcome::Save([
+                "health".into(),
+                "".into(),
+                " add GET /health".into()
+            ]))
+        );
+    }
 
     #[test]
     fn spawns_an_engine_worker_in_the_pane_directory() {

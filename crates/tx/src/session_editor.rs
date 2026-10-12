@@ -1,9 +1,9 @@
-//! Port of lib/tx/session_editor.py — the two-field terminal form (name + tags) behind
-//! `tx _edit-session`.
+//! Port of lib/tx/session_editor.py — the terminal form of single-line fields behind
+//! `tx _edit-session` (name + tags) and `tx _new-agent` (name + tags + prompt).
 //!
 //! The reference is a `curses.wrapper` form in raw mode with keypad on and a 25 ms escape delay.
 //! Here the form logic ([`Form`]) is pure — keys in, a [`Frame`] of positioned text out — and
-//! [`edit_session`] is the terminal shell around it: termios raw mode on stdin, the alternate
+//! [`run_form`] is the terminal shell around it: termios raw mode on stdin, the alternate
 //! screen and keypad mode on stdout, and a small keypad/UTF-8 decoder for the input bytes.
 
 use std::io::{self, Write};
@@ -11,11 +11,8 @@ use std::os::fd::RawFd;
 
 use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, FG_ANSI, SELECTION_BG, WARN_ANSI};
 
-const HINT: &str = "↑↓ switch   Enter save   Esc cancel";
 const TAGS_HELP: &str = "Comma-separated · empty clears tags";
-const EMPTY_NAME: &str = "Name cannot be empty.";
 const TOO_SMALL: &str = "Resize to edit";
-const LABELS: [&str; 2] = ["Name", "Tags"];
 const ESC_DELAY_MS: i32 = 25;
 const RESIZE_POLL_MS: i32 = 100;
 
@@ -41,10 +38,10 @@ pub enum Key {
 
 /// How the form finished.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Outcome {
+pub enum Outcome<const N: usize> {
     Cancel,
-    /// `(name, tags)` as typed — the name is not stripped.
-    Save(String, String),
+    /// The values as typed, in field order — not stripped.
+    Save([String; N]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -332,56 +329,99 @@ fn is_printable(character: char) -> bool {
         .any(|&(low, high)| (low..=high).contains(&code))
 }
 
-/// The form state (`values`, `positions`, `offsets`, `active`, `error` of `_form`).
+/// One single-line field of a [`Form`].
+#[derive(Clone, Copy, Debug)]
+pub struct Field<'a> {
+    pub label: &'static str,
+    /// A muted line under the field.
+    pub help: Option<&'static str>,
+    /// Enter refuses to finish while this field is blank.
+    pub required: bool,
+    /// The starting text.
+    pub value: &'a str,
+}
+
+/// A field being edited.
 #[derive(Clone, Debug)]
-pub struct Form {
-    values: [Vec<char>; 2],
-    positions: [usize; 2],
-    offsets: [usize; 2],
+struct Input {
+    label: &'static str,
+    help: Option<&'static str>,
+    required: bool,
+    value: Vec<char>,
+    position: usize,
+    offset: usize,
+}
+
+/// The form state (`values`, `positions`, `offsets`, `active`, `error` of `_form`). Each field
+/// takes two rows — the field, then its help line — and the hint row closes the form.
+#[derive(Clone, Debug)]
+pub struct Form<const N: usize> {
+    inputs: [Input; N],
+    /// What Enter does, for the hint row.
+    action: &'static str,
     active: usize,
+    /// Enter found the active field required and blank; cleared by the next key.
     error: bool,
 }
 
-impl Form {
-    pub fn new(name: &str, tags: &str) -> Self {
-        let values = [name.chars().collect::<Vec<_>>(), tags.chars().collect()];
+impl<const N: usize> Form<N> {
+    pub fn new(fields: [Field; N], action: &'static str) -> Self {
+        let inputs = fields.map(|field| {
+            let value: Vec<char> = field.value.chars().collect();
+            Input {
+                label: field.label,
+                help: field.help,
+                required: field.required,
+                position: value.len(),
+                value,
+                offset: 0,
+            }
+        });
         Self {
-            positions: [values[0].len(), values[1].len()],
-            values,
-            offsets: [0, 0],
+            inputs,
+            action,
             active: 0,
             error: false,
         }
     }
 
-    fn too_small(height: usize, width: usize) -> bool {
-        height < 7 || width < 24
+    /// The column of the fields' leading pad cell: two past the widest `› Label:`.
+    fn field_col(&self) -> usize {
+        let widest = self
+            .inputs
+            .iter()
+            .map(|input| input.label.chars().count())
+            .max()
+            .unwrap_or(0);
+        widest + 7
+    }
+
+    fn too_small(&self, height: usize, width: usize) -> bool {
+        height < N * 2 + 3 || width < self.field_col() + 13
     }
 
     /// Paint the form for a `height`×`width` screen (also scrolls each field's offset so its
     /// cursor stays visible, as the reference does while drawing).
     pub fn render(&mut self, height: usize, width: usize) -> Frame {
         let mut frame = Frame::default();
-        if Self::too_small(height, width) {
+        if self.too_small(height, width) {
             frame.addn(0, 0, TOO_SMALL, width.saturating_sub(1), Style::Normal);
             // curses leaves the cursor after the last write.
             let written = TOO_SMALL.chars().count().min(width.saturating_sub(1));
             frame.cursor = Some((0, written));
             return frame;
         }
-        let available = width - 14;
-        for (index, label) in LABELS.iter().enumerate() {
+        let field_col = self.field_col();
+        let available = width - field_col - 3;
+        for (index, input) in self.inputs.iter_mut().enumerate() {
             let row = index * 2 + 1;
-            let value = &self.values[index];
-            let position = self.positions[index];
-            let offset = &mut self.offsets[index];
-            *offset = (*offset).min(position);
-            while text_width(&value[*offset..position]) >= available {
-                *offset += 1;
+            input.offset = input.offset.min(input.position);
+            while text_width(&input.value[input.offset..input.position]) >= available {
+                input.offset += 1;
             }
             let mut visible: Vec<char> = Vec::new();
             let mut used = 0;
-            for &character in &value[*offset..] {
+            for &character in &input.value[input.offset..] {
                 if used + char_width(character) > available {
                     break;
                 }
@@ -391,67 +431,89 @@ impl Form {
             let active = index == self.active;
             let marker = if active { '›' } else { ' ' };
             let label_style = if active { Style::Accent } else { Style::Muted };
-            frame.add(row, 2, format!("{marker} {label}:"), label_style);
+            frame.add(row, 2, format!("{marker} {}:", input.label), label_style);
             let field_style = if active {
                 Style::Selected
             } else {
                 Style::Normal
             };
-            frame.add(row, 11, " ".repeat(available + 2), field_style);
-            frame.add(row, 12, visible.iter().collect::<String>(), field_style);
+            frame.add(row, field_col, " ".repeat(available + 2), field_style);
+            frame.add(
+                row,
+                field_col + 1,
+                visible.iter().collect::<String>(),
+                field_style,
+            );
+            if let Some(help) = input.help {
+                frame.addn(row + 1, field_col + 1, help, available, Style::Muted);
+            }
         }
-        frame.addn(4, 12, TAGS_HELP, width - 14, Style::Muted);
+        let active = &self.inputs[self.active];
         let (message, style) = if self.error {
-            (EMPTY_NAME, Style::Warning)
+            (format!("{} cannot be empty.", active.label), Style::Warning)
         } else {
-            (HINT, Style::Muted)
+            let action = self.action;
+            (
+                format!("↑↓ switch   Enter {action}   Esc cancel"),
+                Style::Muted,
+            )
         };
-        frame.addn(6, 2, message, width - 4, style);
-        let active = self.active;
-        let cursor_col =
-            12 + text_width(&self.values[active][self.offsets[active]..self.positions[active]]);
-        frame.cursor = Some((active * 2 + 1, cursor_col));
+        frame.addn(N * 2 + 2, 2, &message, width - 4, style);
+        let cursor_col = field_col + 1 + text_width(&active.value[active.offset..active.position]);
+        frame.cursor = Some((self.active * 2 + 1, cursor_col));
         frame
     }
 
     /// Apply one key read while the screen was `height`×`width` (the size of the last paint).
     /// `Some` when the form is done.
-    pub fn handle(&mut self, key: Key, height: usize, width: usize) -> Option<Outcome> {
+    pub fn handle(&mut self, key: Key, height: usize, width: usize) -> Option<Outcome<N>> {
         if matches!(key, Key::Char('\x1b' | '\x03')) {
             return Some(Outcome::Cancel);
         }
-        if Self::too_small(height, width) {
+        if self.too_small(height, width) {
             return None;
         }
         if matches!(key, Key::Char('\n' | '\r') | Key::Enter) {
-            if self.values[0].iter().all(|c| c.is_whitespace()) {
+            let blank = self
+                .inputs
+                .iter()
+                .position(|input| input.required && input.value.iter().all(|c| c.is_whitespace()));
+            if let Some(blank) = blank {
                 self.error = true;
-                self.active = 0;
+                self.active = blank;
                 return None;
             }
-            return Some(Outcome::Save(
-                self.values[0].iter().collect(),
-                self.values[1].iter().collect(),
-            ));
+            let values = self
+                .inputs
+                .each_ref()
+                .map(|input| input.value.iter().collect());
+            return Some(Outcome::Save(values));
         }
         self.error = false;
-        if matches!(key, Key::Up | Key::Down | Key::BackTab | Key::Char('\t')) {
-            self.active = 1 - self.active;
-            return None;
-        }
-        let active = self.active;
-        let position = self.positions[active];
-        let value = &mut self.values[active];
         match key {
-            Key::Left | Key::Char('\x02') => self.positions[active] = position.saturating_sub(1),
-            Key::Right | Key::Char('\x06') => {
-                self.positions[active] = value.len().min(position + 1);
+            Key::Down | Key::Char('\t') => {
+                self.active = (self.active + 1) % N;
+                return None;
             }
-            Key::Home | Key::Char('\x01') => self.positions[active] = 0,
-            Key::End | Key::Char('\x05') => self.positions[active] = value.len(),
+            Key::Up | Key::BackTab => {
+                self.active = (self.active + N - 1) % N;
+                return None;
+            }
+            _ => {}
+        }
+        let input = &mut self.inputs[self.active];
+        let position = input.position;
+        let value = &mut input.value;
+        match key {
+            Key::Left | Key::Char('\x02') => input.position = position.saturating_sub(1),
+            Key::Right | Key::Char('\x06') => {
+                input.position = value.len().min(position + 1);
+            }
+            Key::Home | Key::Char('\x01') => input.position = 0,
+            Key::End | Key::Char('\x05') => input.position = value.len(),
             Key::Char('\x7f' | '\x08') if position > 0 => {
                 value.remove(position - 1);
-                self.positions[active] -= 1;
+                input.position -= 1;
             }
             Key::Delete => {
                 if position < value.len() {
@@ -460,12 +522,12 @@ impl Form {
             }
             Key::Char('\x15') => {
                 value.drain(..position);
-                self.positions[active] = 0;
+                input.position = 0;
             }
             Key::Char('\x0b') => value.truncate(position),
             Key::Char(character) if is_printable(character) => {
                 value.insert(position, character);
-                self.positions[active] += 1;
+                input.position += 1;
             }
             _ => {}
         }
@@ -669,11 +731,36 @@ fn write_all(bytes: &[u8]) -> io::Result<()> {
     stdout.flush()
 }
 
-/// Run the form on the controlling terminal (stdin/stdout); `Some((name, tags))` on save, `None`
-/// on Esc / Ctrl-C.
+/// The prefix+e form: the session's name (required) and tags.
+pub fn session_form(name: &str, tags: &str) -> Form<2> {
+    Form::new(
+        [
+            Field {
+                label: "Name",
+                help: None,
+                required: true,
+                value: name,
+            },
+            Field {
+                label: "Tags",
+                help: Some(TAGS_HELP),
+                required: false,
+                value: tags,
+            },
+        ],
+        "save",
+    )
+}
+
+/// Run the prefix+e form; `Some((name, tags))` on save, `None` on Esc / Ctrl-C.
 pub fn edit_session(name: &str, tags: &str) -> io::Result<Option<(String, String)>> {
+    Ok(run_form(session_form(name, tags))?.map(|[name, tags]| (name, tags)))
+}
+
+/// Run `form` on the controlling terminal (stdin/stdout); the values on Enter, `None` on Esc /
+/// Ctrl-C.
+pub fn run_form<const N: usize>(mut form: Form<N>) -> io::Result<Option<[String; N]>> {
     let _terminal = Terminal::open()?;
-    let mut form = Form::new(name, tags);
     let mut decoder = Decoder::default();
     loop {
         let (height, width) = Terminal::size();
@@ -702,7 +789,7 @@ pub fn edit_session(name: &str, tags: &str) -> io::Result<Option<(String, String
         };
         match form.handle(key, height, width) {
             Some(Outcome::Cancel) => return Ok(None),
-            Some(Outcome::Save(name, tags)) => return Ok(Some((name, tags))),
+            Some(Outcome::Save(values)) => return Ok(Some(values)),
             None => {}
         }
     }
@@ -712,7 +799,7 @@ pub fn edit_session(name: &str, tags: &str) -> io::Result<Option<(String, String
 mod tests {
     use super::*;
 
-    fn keys(form: &mut Form, keys: &[Key]) -> Option<Outcome> {
+    fn keys(form: &mut Form<2>, keys: &[Key]) -> Option<Outcome<2>> {
         keys.iter().find_map(|&key| form.handle(key, 24, 80))
     }
 
@@ -722,7 +809,7 @@ mod tests {
 
     #[test]
     fn rendered_rows_match_the_reference_layout() {
-        let mut form = Form::new("abc", "t");
+        let mut form = session_form("abc", "t");
         let rows = form.render(24, 80).rows(24, 80);
         assert_eq!(rows[1], "  › Name:   abc");
         assert_eq!(rows[3], "    Tags:   t");
@@ -734,14 +821,14 @@ mod tests {
     #[test]
     fn cancel_keys() {
         for key in [Key::Char('\x1b'), Key::Char('\x03')] {
-            let mut form = Form::new("w", "a");
+            let mut form = session_form("w", "a");
             assert_eq!(form.handle(key, 24, 80), Some(Outcome::Cancel));
         }
     }
 
     #[test]
     fn empty_name_refused_then_any_key_clears_the_error() {
-        let mut form = Form::new("abc", "t");
+        let mut form = session_form("abc", "t");
         assert_eq!(keys(&mut form, &[Key::Down, Key::Char('\x15')]), None);
         assert_eq!(keys(&mut form, &[Key::Up, Key::Char('\x15')]), None);
         assert_eq!(form.handle(Key::Char('\r'), 24, 80), None);
@@ -756,21 +843,21 @@ mod tests {
         );
         assert_eq!(
             keys(&mut form, &typed("  x \r")),
-            Some(Outcome::Save("  x ".into(), "".into()))
+            Some(Outcome::Save(["  x ".into(), "".into()]))
         );
     }
 
     #[test]
     fn editing_keys() {
-        let mut form = Form::new("abc", "t");
+        let mut form = session_form("abc", "t");
         keys(&mut form, &[Key::Left, Key::Left, Key::Char('\x0b')]);
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   a");
 
-        let mut form = Form::new("abc", "t");
+        let mut form = session_form("abc", "t");
         keys(&mut form, &[Key::Home, Key::Delete]);
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   bc");
 
-        let mut form = Form::new("abc", "t");
+        let mut form = session_form("abc", "t");
         keys(
             &mut form,
             &[Key::Char('\x01'), Key::Char('\x06'), Key::Char('\x7f')],
@@ -781,17 +868,17 @@ mod tests {
         );
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   bXc");
 
-        let mut form = Form::new("abc", "t");
+        let mut form = session_form("abc", "t");
         keys(
             &mut form,
             &[Key::Home, Key::Char('Y'), Key::Char('\x08'), Key::End],
         );
         assert_eq!(
             keys(&mut form, &typed("X\n")),
-            Some(Outcome::Save("abcX".into(), "t".into()))
+            Some(Outcome::Save(["abcX".into(), "t".into()]))
         );
 
-        let mut form = Form::new("w", "a");
+        let mut form = session_form("w", "a");
         let mut sequence = vec![Key::Char('\x15')];
         sequence.extend(typed("w2"));
         sequence.extend([Key::Char('\t'), Key::End]);
@@ -804,13 +891,13 @@ mod tests {
         );
         assert_eq!(
             form.handle(Key::Enter, 24, 80),
-            Some(Outcome::Save("w2".into(), "a,b".into()))
+            Some(Outcome::Save(["w2".into(), "a,b".into()]))
         );
     }
 
     #[test]
     fn too_small_only_cancels() {
-        let mut form = Form::new("abc", "t");
+        let mut form = session_form("abc", "t");
         let rows = form.render(5, 20).rows(5, 20);
         assert_eq!(rows[0], "Resize to edit");
         assert_eq!(form.handle(Key::Char('\r'), 5, 20), None);
@@ -820,7 +907,7 @@ mod tests {
     #[test]
     fn long_value_scrolls_to_keep_the_cursor_visible() {
         let name = "x".repeat(100);
-        let mut form = Form::new(&name, "");
+        let mut form = session_form(&name, "");
         let frame = form.render(24, 40);
         // available = 26: the cursor sits at the end, 25 characters shown before it.
         assert_eq!(
