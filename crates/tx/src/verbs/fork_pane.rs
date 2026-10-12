@@ -1,7 +1,7 @@
 //! `_fork-pane`: the prefix+F seam, run inside the key's popup (bin/tmux-fork-tx-session). It
 //! asks for the fork's name (prefilled `<source>-fork`), forks the tx session shown in the firing
-//! pane through the `fork` verb. Only a failure reaches the firing client's status line — the
-//! popup is gone by then.
+//! pane through the `fork` verb, and reports the outcome on the firing client's status line —
+//! the popup is gone by then.
 
 use std::rc::{Rc, Weak};
 
@@ -10,6 +10,7 @@ use cordis::BoxError;
 use crate::app::{Command, CommandTable};
 use crate::palette::{ACCENT_ANSI, BOLD, RESET};
 use crate::service::SessionService;
+use crate::session::Session;
 
 use super::listing::prompt_with_default;
 
@@ -55,17 +56,45 @@ impl Command for ForkPane {
             return Ok(0);
         };
         let name = name.trim();
+        let earlier_forks: Vec<String> = self
+            .forks_of(&source.id)
+            .into_iter()
+            .map(|fork| fork.id)
+            .collect();
         match fork.run(&fork_argv(&source.id, name)) {
-            Ok(0) => Ok(0),
+            Ok(0) => {
+                let forked = self
+                    .forks_of(&source.id)
+                    .into_iter()
+                    .find(|fork| !earlier_forks.contains(&fork.id))
+                    .expect("the fork verb records the new session");
+                tmux.display_status(client, &format!("forked {} → {}", source.name, forked.name));
+                Ok(0)
+            }
             Ok(code) => {
-                tmux.display_status(client, &format!("prefix+F: fork failed (exit {code})"));
+                tmux.display_status(
+                    client,
+                    &format!("fork of {} failed (exit {code})", source.name),
+                );
                 Ok(code)
             }
             Err(error) => {
-                tmux.display_status(client, &format!("prefix+F: {error}"));
+                tmux.display_status(client, &format!("fork of {} failed: {error}", source.name));
                 Ok(1)
             }
         }
+    }
+}
+
+impl ForkPane {
+    /// The sessions forked (parented) from `source_id`.
+    fn forks_of(&self, source_id: &str) -> Vec<Session> {
+        self.service
+            .store()
+            .all()
+            .into_iter()
+            .filter(|session| session.parent.as_deref() == Some(source_id))
+            .collect()
     }
 }
 
