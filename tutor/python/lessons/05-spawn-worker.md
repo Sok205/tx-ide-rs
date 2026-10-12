@@ -16,8 +16,8 @@ sent before the body.
 cannot trample your files. Worktrees share branches with your project, so asking the worker to
 commit on a named branch lets you merge its work later with one command.
 
-The quick way next time: `prefix+n` opens an nvim form — name, prompt, engine, model, effort and
-tags — then runs this same `tx spawn` in the pane's directory.
+The quick way next time: `prefix+n` opens an nvim form — name, prompt, engine, model, effort,
+role and tags — then runs this same `tx spawn` in the pane's directory.
 
 ## Your task
 

@@ -5,13 +5,14 @@
 -- and quits; cancelling quits without writing it.
 --
 --   spec = { result, engines = { … }, models = { [engine] = { … } }, efforts = { [engine] = { … } },
---            engine, effort, tags_hint }
+--            engine, effort, roles = { … }, tags_hint }
 --
--- Each model list starts with the engine's default, which is what the form preselects.
+-- Each model list starts with the engine's default, which is what the form preselects; the roles
+-- start with "none" (COMMON alone).
 --
--- Panels: [1] Name  [2] Prompt  [3] Engine  [4] Model  [5] Effort  [6] Tags. The form opens in
--- insert mode on Name; moving to a panel lands in normal mode. Tab / S-Tab step through the
--- panels and 1-6 jump to one (normal mode); in a list the cursor line is the pick, so j/k or the
+-- Panels: [1] Name  [2] Prompt  [3] Engine  [4] Model  [5] Effort  [6] Role  [7] Tags. The form
+-- opens in insert mode on Name; moving to a panel lands in normal mode. Tab / S-Tab step through
+-- the panels and 1-7 jump to one (normal mode); in a list the cursor line is the pick, so j/k or the
 -- arrows choose. Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
 -- cancels.
 
@@ -25,7 +26,7 @@ local WARN = "#e0af68"
 local BORDER = "#3b4261"
 local SELECTION = "#303030"
 
-local HELP = " Tab next · 1-6 jump · j/k pick · Enter spawn · Esc cancel"
+local HELP = " Tab next · 1-7 jump · j/k pick · Enter spawn · Esc cancel"
 
 local function highlights()
   local set = vim.api.nvim_set_hl
@@ -58,25 +59,30 @@ function M.open()
     engine = spec.engine,
     model = spec.models[spec.engine][1],
     effort = spec.effort,
+    role = spec.roles[1],
   }
   local function options(key)
     if key == "engine" then
       return spec.engines
+    elseif key == "role" then
+      return spec.roles
     end
     return spec[key .. "s"][picked.engine]
   end
 
-  -- Geometry: full-width text panels around a row of three lists; a help line under them.
+  -- Geometry: full-width text panels around a row of four lists; a help line under them.
   local width = vim.o.columns - 2
-  local engine_width, effort_width = 15, 12
-  local model_width = width - engine_width - effort_width - 4
-  local list_height = 0
+  local engine_width, effort_width, role_width = 15, 12, 12
+  for _, role in ipairs(spec.roles) do
+    role_width = math.max(role_width, #role + 4)
+  end
+  local model_width = width - engine_width - effort_width - role_width - 6
+  local list_height = math.max(#spec.engines, #spec.roles)
   for _, key in ipairs({ "models", "efforts" }) do
     for _, list in pairs(spec[key]) do
       list_height = math.max(list_height, #list)
     end
   end
-  list_height = math.max(list_height, #spec.engines)
 
   local panels = {
     { label = "Name", row = 0, col = 0, width = width, height = 1 },
@@ -96,6 +102,14 @@ function M.open()
       row = 9,
       col = engine_width + model_width + 4,
       width = effort_width,
+      height = list_height,
+    },
+    {
+      label = "Role",
+      key = "role",
+      row = 9,
+      col = engine_width + model_width + effort_width + 6,
+      width = role_width,
       height = list_height,
     },
     { label = "Tags", row = list_height + 11, col = 0, width = width, height = 1, hint = spec.tags_hint },
@@ -199,7 +213,8 @@ function M.open()
       engine = picked.engine,
       model = picked.model,
       effort = picked.effort,
-      tags = text(panels[6], ","),
+      role = picked.role,
+      tags = text(panels[7], ","),
     }
     for number, key in ipairs({ "name", "prompt" }) do
       if answers[key] == "" then

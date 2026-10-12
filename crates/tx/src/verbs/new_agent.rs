@@ -1,5 +1,6 @@
 //! `_new-agent`: the prefix+n seam. In the key's popup (bin/tmux-new-agent) an nvim form
-//! (nvim/lua/tx-new-agent.lua) asks for the agent's name, prompt, engine, model, effort and tags,
+//! (nvim/lua/tx-new-agent.lua) asks for the agent's name, prompt, engine, model, effort, role and
+//! tags,
 //! then this hands the spawn to a background
 //! `run-shell`, so the popup closes at once; the background half spawns the agent through the
 //! `spawn` verb and reports on the firing client's status line.
@@ -16,6 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::app::{Command, CommandTable, Env};
 use crate::engines::DEFAULT_EFFORT;
 use crate::engines::antigravity::AGY_MODEL_FAMILY;
+use crate::roles::role_names;
 use crate::service::SessionService;
 use crate::shlex::shlex_join;
 use crate::storage::Home;
@@ -23,6 +25,8 @@ use crate::storage::Home;
 use super::common::{bin_tx, repo_root, split_tags};
 
 const DEFAULT_TAG: &str = "agent";
+/// The role option that passes no `--role`: COMMON alone.
+const NO_ROLE: &str = "none";
 const TAGS_HELP: &str = "Comma-separated · empty means agent";
 const ENGINES: &[&str] = &["claude", "codex", "antigravity"];
 /// Fixed lists: claude's aliases, and the codex and agy models offered at the time of writing.
@@ -68,6 +72,7 @@ struct Reply {
     engine: String,
     model: String,
     effort: String,
+    role: String,
     tags: String,
 }
 
@@ -78,6 +83,7 @@ struct Answers<'a> {
     engine: &'a str,
     model: &'a str,
     effort: &'a str,
+    role: &'a str,
     tags: &'a str,
 }
 
@@ -86,27 +92,38 @@ impl Command for NewAgent {
         "_new-agent"
     }
     fn summary(&self) -> &'static str {
-        "Internal: prefix+n — ask for a new agent's name, prompt, engine, model, effort and tags \
-         in the popup, then spawn it in the background. Usage: _new-agent PANE CLIENT [NAME \
-         PROMPT ENGINE MODEL EFFORT TAGS]"
+        "Internal: prefix+n — ask for a new agent's name, prompt, engine, model, effort, role and \
+         tags in the popup, then spawn it in the background. Usage: _new-agent PANE CLIENT [NAME \
+         PROMPT ENGINE MODEL EFFORT ROLE TAGS]"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         match argv {
             [pane, client] => self.ask(pane, client),
-            [pane, client, name, prompt, engine, model, effort, tags] => {
+            [
+                pane,
+                client,
+                name,
+                prompt,
+                engine,
+                model,
+                effort,
+                role,
+                tags,
+            ] => {
                 let answers = Answers {
                     name,
                     prompt,
                     engine,
                     model,
                     effort,
+                    role,
                     tags,
                 };
                 self.spawn(pane, client, &answers)
             }
             _ => {
                 eprintln!(
-                    "usage: tx _new-agent PANE CLIENT [NAME PROMPT ENGINE MODEL EFFORT TAGS]"
+                    "usage: tx _new-agent PANE CLIENT [NAME PROMPT ENGINE MODEL EFFORT ROLE TAGS]"
                 );
                 Ok(2)
             }
@@ -122,7 +139,10 @@ impl NewAgent {
         fs::create_dir_all(&directory)?;
         let result = directory.join("answers.json");
         let spec = directory.join("spec.json");
-        fs::write(&spec, form_spec(&result).to_string())?;
+        fs::write(
+            &spec,
+            form_spec(&result, &role_names(&self.home)).to_string(),
+        )?;
         // --clean: the form brings its own look, and no user config (dashboard, plugins) runs
         // before it. The module ships with this tx, so its `nvim/` leads the runtimepath.
         process::Command::new("nvim")
@@ -150,6 +170,7 @@ impl NewAgent {
             engine,
             model,
             effort,
+            role,
             tags,
         } = reply;
         // `run-shell` runs in the server's environment: bake the home into the command. Its
@@ -169,6 +190,7 @@ impl NewAgent {
             &engine,
             &model,
             &effort,
+            &role,
             &tags,
         ]);
         self.service
@@ -205,15 +227,18 @@ impl NewAgent {
     }
 }
 
-/// The form's spec: the engines, each one's models (its default first) and efforts, and what is
-/// preselected; `result` is where the answers go.
-fn form_spec(result: &Path) -> Value {
+/// The form's spec: the engines, each one's models (its default first) and efforts, the roles
+/// (none first), and what is preselected; `result` is where the answers go.
+fn form_spec(result: &Path, roles: &[String]) -> Value {
     let by_engine = |table: &[(&str, &[&str])]| {
         table
             .iter()
             .map(|(engine, options)| (engine.to_string(), json!(options)))
             .collect::<Map<_, _>>()
     };
+    let role_options: Vec<&str> = std::iter::once(NO_ROLE)
+        .chain(roles.iter().map(String::as_str))
+        .collect();
     json!({
         "result": result,
         "engines": ENGINES,
@@ -221,6 +246,7 @@ fn form_spec(result: &Path) -> Value {
         "efforts": by_engine(EFFORTS),
         "engine": ENGINES[0],
         "effort": DEFAULT_EFFORT.level().to_string(),
+        "roles": role_options,
         "tags_hint": TAGS_HELP,
     })
 }
@@ -258,6 +284,9 @@ fn spawn_argv(answers: &Answers, cwd: &str) -> Vec<String> {
     if answers.model != default_model(answers.engine) {
         argv.extend(["--model".to_owned(), answers.model.to_owned()]);
     }
+    if answers.role != NO_ROLE {
+        argv.extend(["--role".to_owned(), answers.role.to_owned()]);
+    }
     argv
 }
 
@@ -286,7 +315,7 @@ mod tests {
 
     #[test]
     fn the_spec_preselects_claude_its_default_model_and_effort_3() {
-        let spec = form_spec(Path::new("/t/answers.json"));
+        let spec = form_spec(Path::new("/t/answers.json"), &["DEVELOPER".to_owned()]);
         assert_eq!(spec["result"], "/t/answers.json");
         assert_eq!(spec["engines"], json!(["claude", "codex", "antigravity"]));
         assert_eq!(spec["engine"], "claude");
@@ -294,6 +323,7 @@ mod tests {
         assert_eq!(spec["models"]["antigravity"][0], AGY_MODEL_FAMILY);
         assert_eq!(spec["efforts"]["antigravity"], json!(["1", "2", "3"]));
         assert_eq!(spec["effort"], "3");
+        assert_eq!(spec["roles"], json!(["none", "DEVELOPER"]));
     }
 
     #[test]
@@ -304,6 +334,7 @@ mod tests {
             engine: "codex",
             model: "gpt-6-sol",
             effort: "4",
+            role: "DEVELOPER",
             tags: "tutor, api",
         };
         assert_eq!(
@@ -321,16 +352,20 @@ mod tests {
                 "--prompt",
                 "add GET /health",
                 "--model",
-                "gpt-6-sol"
+                "gpt-6-sol",
+                "--role",
+                "DEVELOPER"
             ]
         );
         let defaults = Answers {
             model: "gpt-6-astra",
+            role: NO_ROLE,
             tags: "",
             ..answers
         };
         let argv = spawn_argv(&defaults, "/p");
         assert!(!argv.contains(&"--model".to_owned()));
+        assert!(!argv.contains(&"--role".to_owned()));
         assert_eq!(argv[2], DEFAULT_TAG);
     }
 }
