@@ -222,6 +222,8 @@ impl Component for SessionVerbs {
             Visibility::Hidden,
             super::new_agent::NewAgent {
                 service: Rc::clone(&deps.service),
+                env: Rc::clone(&deps.env),
+                home: Rc::clone(&deps.home),
                 commands: Rc::downgrade(&table),
             },
         );
