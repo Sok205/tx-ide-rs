@@ -52,8 +52,8 @@ impl Command for ForkPane {
             tmux.display_status(client, "prefix+F: the fork verb is disabled");
             return Ok(1);
         };
-        let prompt = format!("Fork {ACCENT_ANSI}{BOLD}{}{RESET} as: ", source.name);
-        let Some(name) = prompt_with_default(&prompt, &format!("{}-fork", source.name))? else {
+        let label = format!("Fork {ACCENT_ANSI}{BOLD}{}{RESET} as", source.name);
+        let Some(name) = prompt_with_default(&label, &format!("{}-fork", source.name))? else {
             return Ok(0);
         };
         let name = name.trim();
