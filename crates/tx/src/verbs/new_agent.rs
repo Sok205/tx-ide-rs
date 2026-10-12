@@ -1,26 +1,29 @@
-//! `_new-agent`: the prefix+n seam. In the key's popup (bin/tmux-new-agent) one form asks for the
-//! agent's name, prompt, engine, model, effort and tags, then hands the spawn to a background
+//! `_new-agent`: the prefix+n seam. In the key's popup (bin/tmux-new-agent) an nvim form
+//! (nvim/lua/tx-new-agent.lua) asks for the agent's name, prompt, engine, model, effort and tags,
+//! then this hands the spawn to a background
 //! `run-shell`, so the popup closes at once; the background half spawns the agent through the
 //! `spawn` verb and reports on the firing client's status line.
 
+use std::fs;
+use std::path::Path;
+use std::process;
 use std::rc::{Rc, Weak};
 
 use cordis::BoxError;
+use serde::Deserialize;
+use serde_json::{Map, Value, json};
 
 use crate::app::{Command, CommandTable, Env};
 use crate::engines::DEFAULT_EFFORT;
 use crate::engines::antigravity::AGY_MODEL_FAMILY;
 use crate::service::SessionService;
-use crate::session_editor::{Field, Form, Kind, run_form};
 use crate::shlex::shlex_join;
 use crate::storage::Home;
 
-use super::common::{bin_tx, split_tags};
+use super::common::{bin_tx, repo_root, split_tags};
 
 const DEFAULT_TAG: &str = "agent";
 const TAGS_HELP: &str = "Comma-separated · empty means agent";
-/// Field index of the engine, which the model and effort lists follow.
-const ENGINE_FIELD: usize = 2;
 const ENGINES: &[&str] = &["claude", "codex", "antigravity"];
 /// Fixed lists: claude's aliases, and the codex and agy models offered at the time of writing.
 /// Each starts with what the engine runs without `--model` (claude's and codex's configured model,
@@ -55,6 +58,17 @@ pub struct NewAgent {
     pub home: Rc<Home>,
     /// Weak: the table owns the verbs.
     pub commands: Weak<CommandTable>,
+}
+
+/// The form's answers, as nvim/lua/tx-new-agent.lua writes them.
+#[derive(Deserialize)]
+struct Reply {
+    name: String,
+    prompt: String,
+    engine: String,
+    model: String,
+    effort: String,
+    tags: String,
 }
 
 /// The form's answers.
@@ -101,11 +115,43 @@ impl Command for NewAgent {
 }
 
 impl NewAgent {
-    /// The popup half: fill the form (Esc cancels), then hand the spawn to the server and exit.
+    /// The popup half: fill the nvim form (Esc cancels), then hand the spawn to the server and
+    /// exit.
     fn ask(&self, pane: &str, client: &str) -> Result<i32, BoxError> {
-        let Some([name, prompt, engine, model, effort, tags]) = run_form(new_agent_form())? else {
+        let directory = std::env::temp_dir().join(format!("tx-new-agent-{}", process::id()));
+        fs::create_dir_all(&directory)?;
+        let result = directory.join("answers.json");
+        let spec = directory.join("spec.json");
+        fs::write(&spec, form_spec(&result).to_string())?;
+        // --clean: the form brings its own look, and no user config (dashboard, plugins) runs
+        // before it. The module ships with this tx, so its `nvim/` leads the runtimepath.
+        process::Command::new("nvim")
+            .args([
+                "--clean",
+                "-n",
+                "-i",
+                "NONE",
+                "--cmd",
+                "set shortmess+=I | lua vim.opt.rtp:prepend(vim.env.TX_NEW_AGENT_RTP)",
+                "-c",
+                "lua require('tx-new-agent').open()",
+            ])
+            .env("TX_NEW_AGENT_SPEC", &spec)
+            .env("TX_NEW_AGENT_RTP", repo_root(&self.env).join("nvim"))
+            .status()?;
+        let reply = read_reply(&result);
+        fs::remove_dir_all(&directory)?;
+        let Some(reply) = reply? else {
             return Ok(0);
         };
+        let Reply {
+            name,
+            prompt,
+            engine,
+            model,
+            effort,
+            tags,
+        } = reply;
         // `run-shell` runs in the server's environment: bake the home into the command. Its
         // stdout would open in view mode and a nonzero exit would echo the whole command, so the
         // spawn verb's report and exit status are dropped — the outcome is on the status line.
@@ -118,12 +164,12 @@ impl NewAgent {
             "_new-agent",
             pane,
             client,
-            name.trim(),
-            prompt.trim(),
+            &name,
+            &prompt,
             &engine,
             &model,
             &effort,
-            tags.trim(),
+            &tags,
         ]);
         self.service
             .tmux()
@@ -159,39 +205,32 @@ impl NewAgent {
     }
 }
 
-/// Name and prompt are required; engine, model and effort are lists (claude, the engine's default
-/// model, the default effort); blank tags mean `agent`.
-fn new_agent_form() -> Form<6> {
-    let effort = DEFAULT_EFFORT.level().to_string();
-    let text = |label, help, required| Field {
-        label,
-        help,
-        required,
-        kind: Kind::Text,
-        value: "",
+/// The form's spec: the engines, each one's models (its default first) and efforts, and what is
+/// preselected; `result` is where the answers go.
+fn form_spec(result: &Path) -> Value {
+    let by_engine = |table: &[(&str, &[&str])]| {
+        table
+            .iter()
+            .map(|(engine, options)| (engine.to_string(), json!(options)))
+            .collect::<Map<_, _>>()
     };
-    let choice = |label, kind, value| Field {
-        label,
-        help: None,
-        required: false,
-        kind,
-        value,
-    };
-    let by_engine = |table| Kind::ChoiceOf {
-        field: ENGINE_FIELD,
-        table,
-    };
-    Form::new(
-        [
-            text("Name", None, true),
-            text("Prompt", None, true),
-            choice("Engine", Kind::Choice(ENGINES), ENGINES[0]),
-            choice("Model", by_engine(MODELS), default_model(ENGINES[0])),
-            choice("Effort", by_engine(EFFORTS), &effort),
-            text("Tags", Some(TAGS_HELP), false),
-        ],
-        "spawn",
-    )
+    json!({
+        "result": result,
+        "engines": ENGINES,
+        "models": by_engine(MODELS),
+        "efforts": by_engine(EFFORTS),
+        "engine": ENGINES[0],
+        "effort": DEFAULT_EFFORT.level().to_string(),
+        "tags_hint": TAGS_HELP,
+    })
+}
+
+/// The form's answers, `None` when it was cancelled (it writes none).
+fn read_reply(result: &Path) -> Result<Option<Reply>, BoxError> {
+    if !result.exists() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_str(&fs::read_to_string(result)?)?))
 }
 
 /// `tx spawn` for an engine worker in the pane's directory.
@@ -244,139 +283,17 @@ fn clean_tags(tags: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session_editor::{Key, Outcome};
-
-    const HEIGHT: usize = 17;
-    const WIDTH: usize = 62;
-
-    fn press(form: &mut Form<6>, keys: &[Key]) -> Option<Outcome<6>> {
-        keys.iter().find_map(|&key| form.handle(key, HEIGHT, WIDTH))
-    }
-
-    fn typed(text: &str) -> Vec<Key> {
-        text.chars().map(Key::Char).collect()
-    }
-
-    fn rows(form: &mut Form<6>) -> Vec<String> {
-        form.render(HEIGHT, WIDTH).rows(HEIGHT, WIDTH)
-    }
 
     #[test]
-    fn engine_model_and_effort_are_lists_side_by_side() {
-        let mut form = new_agent_form();
-        let rows = rows(&mut form);
-        assert_eq!(rows[1], "  › Name:");
-        assert_eq!(rows[3], "    Prompt:");
-        assert_eq!(
-            rows[5],
-            "    Engine          Model                        Effort"
-        );
-        assert_eq!(
-            rows[6],
-            "  ● claude        ● fable                        1"
-        );
-        assert_eq!(
-            rows[7],
-            "    codex           opus                         2"
-        );
-        assert_eq!(
-            rows[8],
-            "    antigravity     sonnet                     ● 3"
-        );
-        assert_eq!(
-            rows[9],
-            "                    haiku                        4"
-        );
-        assert_eq!(
-            rows[10],
-            "                                                 5"
-        );
-        assert_eq!(rows[12], "    Tags:");
-        assert_eq!(
-            rows[13],
-            "              Comma-separated · empty means agent"
-        );
-        assert_eq!(rows[15], "  Tab next   ↑↓ move   Enter spawn   Esc cancel");
-    }
-
-    #[test]
-    fn arrows_move_one_row_tab_jumps_and_enter_picks() {
-        let mut form = new_agent_form();
-        // ↓ from Name to Prompt, ↓ onto the engine list (claude), ↓ to codex, Enter picks it.
-        let mut keys = typed("health");
-        keys.extend([Key::Down, Key::Down, Key::Down, Key::Enter]);
-        press(&mut form, &keys);
-        assert_eq!(
-            rows(&mut form)[7],
-            "  ● codex           gpt-6.1-sol                  2"
-        );
-        // → to the model column on the same row, Space picks; → to effort, ↓↓ to 5, Enter.
-        press(
-            &mut form,
-            &[
-                Key::Right,
-                Key::Char(' '),
-                Key::Right,
-                Key::Down,
-                Key::Down,
-                Key::Down,
-            ],
-        );
-        press(&mut form, &[Key::Enter]);
-        // ↓ past the bottom of a list leaves it for Tags; Tab wraps to Name, Shift-Tab back.
-        press(&mut form, &[Key::Down]);
-        assert_eq!(rows(&mut form)[12], "  › Tags:");
-        press(&mut form, &typed("api"));
-        // Enter on a text field spawns — but the prompt is still blank.
-        assert_eq!(press(&mut form, &[Key::Enter]), None);
-        assert_eq!(rows(&mut form)[15], "  Prompt cannot be empty.");
-        let mut keys = typed("add GET /health");
-        keys.push(Key::Enter);
-        assert_eq!(
-            press(&mut form, &keys),
-            Some(Outcome::Save([
-                "health".into(),
-                "add GET /health".into(),
-                "codex".into(),
-                "gpt-6.1-sol".into(),
-                "5".into(),
-                "api".into(),
-            ]))
-        );
-    }
-
-    #[test]
-    fn a_new_engine_keeps_the_model_and_effort_it_offers() {
-        let mut form = new_agent_form();
-        // Effort 5, then engine antigravity: it has no 5 (falls back to 1) and a different list.
-        press(
-            &mut form,
-            &[
-                Key::Char('\t'),
-                Key::Char('\t'),
-                Key::Char('\t'),
-                Key::Char('\t'),
-            ],
-        );
-        press(&mut form, &[Key::Down, Key::Down, Key::Enter]);
-        press(
-            &mut form,
-            &[Key::BackTab, Key::BackTab, Key::Down, Key::Down, Key::Enter],
-        );
-        let rows = rows(&mut form);
-        assert_eq!(
-            rows[6],
-            "    claude        ● gemini-3.7-flash           ● 1"
-        );
-        assert_eq!(
-            rows[7],
-            "    codex           gemini-3.8-flash-high        2"
-        );
-        assert_eq!(
-            rows[8],
-            "  ● antigravity     gemini-3.1-pro-high          3"
-        );
-        assert_eq!(rows[9], "                    claude-opus-4-6-thinking");
+    fn the_spec_preselects_claude_its_default_model_and_effort_3() {
+        let spec = form_spec(Path::new("/t/answers.json"));
+        assert_eq!(spec["result"], "/t/answers.json");
+        assert_eq!(spec["engines"], json!(["claude", "codex", "antigravity"]));
+        assert_eq!(spec["engine"], "claude");
+        assert_eq!(spec["models"]["claude"][0], "fable");
+        assert_eq!(spec["models"]["antigravity"][0], AGY_MODEL_FAMILY);
+        assert_eq!(spec["efforts"]["antigravity"], json!(["1", "2", "3"]));
+        assert_eq!(spec["effort"], "3");
     }
 
     #[test]

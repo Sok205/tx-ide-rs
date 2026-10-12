@@ -1,10 +1,9 @@
-//! Port of lib/tx/session_editor.py — the terminal form of single-line fields behind
-//! `tx _edit-session` (name + tags) and `tx _new-agent` (name, prompt and tags, plus engine /
-//! model / effort lists).
+//! Port of lib/tx/session_editor.py — the two-field terminal form (name + tags) behind
+//! `tx _edit-session`.
 //!
 //! The reference is a `curses.wrapper` form in raw mode with keypad on and a 25 ms escape delay.
 //! Here the form logic ([`Form`]) is pure — keys in, a [`Frame`] of positioned text out — and
-//! [`run_form`] is the terminal shell around it: termios raw mode on stdin, the alternate
+//! [`edit_session`] is the terminal shell around it: termios raw mode on stdin, the alternate
 //! screen and keypad mode on stdout, and a small keypad/UTF-8 decoder for the input bytes.
 
 use std::io::{self, Write};
@@ -12,8 +11,11 @@ use std::os::fd::RawFd;
 
 use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, FG_ANSI, SELECTION_BG, WARN_ANSI};
 
+const HINT: &str = "↑↓ switch   Enter save   Esc cancel";
 const TAGS_HELP: &str = "Comma-separated · empty clears tags";
+const EMPTY_NAME: &str = "Name cannot be empty.";
 const TOO_SMALL: &str = "Resize to edit";
+const LABELS: [&str; 2] = ["Name", "Tags"];
 const ESC_DELAY_MS: i32 = 25;
 const RESIZE_POLL_MS: i32 = 100;
 
@@ -39,10 +41,10 @@ pub enum Key {
 
 /// How the form finished.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Outcome<const N: usize> {
+pub enum Outcome {
     Cancel,
-    /// The values as typed, in field order — not stripped.
-    Save([String; N]),
+    /// `(name, tags)` as typed — the name is not stripped.
+    Save(String, String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,9 +116,8 @@ impl Frame {
                 draw.text
             );
         }
-        match self.cursor {
-            Some((row, col)) => out += &format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1),
-            None => out += "\x1b[?25l",
+        if let Some((row, col)) = self.cursor {
+            out += &format!("\x1b[{};{}H", row + 1, col + 1);
         }
         out
     }
@@ -331,467 +332,126 @@ fn is_printable(character: char) -> bool {
         .any(|&(low, high)| (low..=high).contains(&code))
 }
 
-/// One field of a [`Form`].
-#[derive(Clone, Copy, Debug)]
-pub struct Field<'a> {
-    pub label: &'static str,
-    /// A muted line under a text field.
-    pub help: Option<&'static str>,
-    /// Enter refuses to finish while this text field is blank.
-    pub required: bool,
-    pub kind: Kind,
-    /// The starting text; for a list, one of its options.
-    pub value: &'a str,
-}
-
-/// What a field holds.
-#[derive(Clone, Copy, Debug)]
-pub enum Kind {
-    /// One line of free text.
-    Text,
-    /// One of the options, picked from a list.
-    Choice(&'static [&'static str]),
-    /// One of the options `table` lists for the value of field `field` (itself a list); a pick
-    /// there keeps this value when still offered, else picks the first option.
-    ChoiceOf {
-        field: usize,
-        table: &'static [(&'static str, &'static [&'static str])],
-    },
-}
-
-/// A field being edited.
+/// The form state (`values`, `positions`, `offsets`, `active`, `error` of `_form`).
 #[derive(Clone, Debug)]
-struct Input {
-    label: &'static str,
-    help: Option<&'static str>,
-    required: bool,
-    kind: Kind,
-    value: Vec<char>,
-    position: usize,
-    offset: usize,
-    /// A list's highlighted option.
-    cursor: usize,
-}
-
-/// Where the cursor lands when a list gains focus.
-#[derive(Clone, Copy)]
-enum Entry {
-    Top,
-    Bottom,
-    Picked,
-}
-
-/// The form state (`values`, `positions`, `offsets`, `active`, `error` of `_form`). A text field
-/// takes two rows — the field, then its help line. A run of list fields sits side by side as
-/// columns: a header row, then one row per option, then a blank row. The hint row closes the form.
-#[derive(Clone, Debug)]
-pub struct Form<const N: usize> {
-    inputs: [Input; N],
-    /// What Enter does on a text field, for the hint row.
-    action: &'static str,
+pub struct Form {
+    values: [Vec<char>; 2],
+    positions: [usize; 2],
+    offsets: [usize; 2],
     active: usize,
-    /// Enter found the active field required and blank; cleared by the next key.
     error: bool,
 }
 
-impl<const N: usize> Form<N> {
-    pub fn new(fields: [Field; N], action: &'static str) -> Self {
-        let inputs = fields.map(|field| {
-            let value: Vec<char> = field.value.chars().collect();
-            Input {
-                label: field.label,
-                help: field.help,
-                required: field.required,
-                kind: field.kind,
-                position: value.len(),
-                value,
-                offset: 0,
-                cursor: 0,
-            }
-        });
-        let mut form = Self {
-            inputs,
-            action,
+impl Form {
+    pub fn new(name: &str, tags: &str) -> Self {
+        let values = [name.chars().collect::<Vec<_>>(), tags.chars().collect()];
+        Self {
+            positions: [values[0].len(), values[1].len()],
+            values,
+            offsets: [0, 0],
             active: 0,
             error: false,
-        };
-        for index in 0..N {
-            if form.is_list(index) {
-                form.inputs[index].cursor = form.picked(index);
-            }
-        }
-        form
-    }
-
-    fn is_list(&self, index: usize) -> bool {
-        !matches!(self.inputs[index].kind, Kind::Text)
-    }
-
-    /// The options field `index` offers now (none for a text field).
-    fn options(&self, index: usize) -> &'static [&'static str] {
-        match self.inputs[index].kind {
-            Kind::Text => &[],
-            Kind::Choice(options) => options,
-            Kind::ChoiceOf { field, table } => {
-                let value: String = self.inputs[field].value.iter().collect();
-                table
-                    .iter()
-                    .find(|(key, _)| *key == value)
-                    .map(|(_, options)| *options)
-                    .expect("the table lists every option of its field")
-            }
         }
     }
 
-    /// Every option field `index` can offer: what its column is sized for.
-    fn all_options(&self, index: usize) -> Vec<&'static str> {
-        match self.inputs[index].kind {
-            Kind::Text => Vec::new(),
-            Kind::Choice(options) => options.to_vec(),
-            Kind::ChoiceOf { table, .. } => table
-                .iter()
-                .flat_map(|(_, options)| options.iter().copied())
-                .collect(),
-        }
-    }
-
-    /// The tallest list field `index` can show.
-    fn tallest(&self, index: usize) -> usize {
-        match self.inputs[index].kind {
-            Kind::Text => 0,
-            Kind::Choice(options) => options.len(),
-            Kind::ChoiceOf { table, .. } => table
-                .iter()
-                .map(|(_, options)| options.len())
-                .max()
-                .unwrap_or(0),
-        }
-    }
-
-    /// A list column: `› Label` over `● option` cells (the dot under the marker), then a gap.
-    fn column_width(&self, index: usize) -> usize {
-        let header = self.inputs[index].label.chars().count() + 2;
-        let widest = self
-            .all_options(index)
-            .iter()
-            .map(|option| option.chars().count())
-            .max()
-            .unwrap_or(0);
-        header.max(widest + 3) + 2
-    }
-
-    /// The index of a list's picked option.
-    fn picked(&self, index: usize) -> usize {
-        let value: String = self.inputs[index].value.iter().collect();
-        self.options(index)
-            .iter()
-            .position(|option| *option == value)
-            .expect("a list holds one of its options")
-    }
-
-    /// The run of list fields that `index` belongs to (side by side on screen).
-    fn columns(&self, index: usize) -> std::ops::Range<usize> {
-        let mut start = index;
-        while start > 0 && self.is_list(start - 1) {
-            start -= 1;
-        }
-        let mut end = index + 1;
-        while end < N && self.is_list(end) {
-            end += 1;
-        }
-        start..end
-    }
-
-    /// Each field's `(row, col)` — a text field's row, a list's header — and the hint row.
-    fn layout(&self) -> ([(usize, usize); N], usize) {
-        let mut places = [(0, 0); N];
-        let mut row = 1;
-        let mut index = 0;
-        while index < N {
-            if self.is_list(index) {
-                let columns = self.columns(index);
-                let mut col = 2;
-                let mut tallest = 0;
-                for column in columns.clone() {
-                    places[column] = (row, col);
-                    col += self.column_width(column);
-                    tallest = tallest.max(self.tallest(column));
-                }
-                row += tallest + 2;
-                index = columns.end;
-            } else {
-                places[index] = (row, 2);
-                row += 2;
-                index += 1;
-            }
-        }
-        (places, row + 1)
-    }
-
-    /// The column of the text fields' leading pad cell: two past the widest `› Label:`.
-    fn field_col(&self) -> usize {
-        let widest = self
-            .inputs
-            .iter()
-            .filter(|input| matches!(input.kind, Kind::Text))
-            .map(|input| input.label.chars().count())
-            .max()
-            .unwrap_or(0);
-        widest + 7
-    }
-
-    fn too_small(&self, height: usize, width: usize) -> bool {
-        let (places, hint) = self.layout();
-        let lists_end = (0..N)
-            .filter(|&index| self.is_list(index))
-            .map(|index| places[index].1 + self.column_width(index))
-            .max()
-            .unwrap_or(0);
-        height <= hint || width < (self.field_col() + 13).max(lists_end + 1)
-    }
-
-    /// Focus field `index`; a list's cursor lands per `entry`.
-    fn focus(&mut self, index: usize, entry: Entry) {
-        self.active = index;
-        if self.is_list(index) {
-            self.inputs[index].cursor = match entry {
-                Entry::Top => 0,
-                Entry::Bottom => self.options(index).len() - 1,
-                Entry::Picked => self.picked(index),
-            };
-        }
-    }
-
-    fn set(&mut self, index: usize, value: &str) {
-        let input = &mut self.inputs[index];
-        input.value = value.chars().collect();
-        input.position = input.value.len();
-    }
-
-    /// Pick the active list's highlighted option and refresh the lists that depend on it.
-    fn pick(&mut self) {
-        let option = self.options(self.active)[self.inputs[self.active].cursor];
-        self.set(self.active, option);
-        for dependent in 0..N {
-            if matches!(self.inputs[dependent].kind, Kind::ChoiceOf { field, .. } if field == self.active)
-            {
-                let options = self.options(dependent);
-                let value: String = self.inputs[dependent].value.iter().collect();
-                if !options.contains(&value.as_str()) {
-                    self.set(dependent, options[0]);
-                }
-                let input = &mut self.inputs[dependent];
-                input.cursor = input.cursor.min(options.len() - 1);
-            }
-        }
+    fn too_small(height: usize, width: usize) -> bool {
+        height < 7 || width < 24
     }
 
     /// Paint the form for a `height`×`width` screen (also scrolls each field's offset so its
     /// cursor stays visible, as the reference does while drawing).
     pub fn render(&mut self, height: usize, width: usize) -> Frame {
         let mut frame = Frame::default();
-        if self.too_small(height, width) {
+        if Self::too_small(height, width) {
             frame.addn(0, 0, TOO_SMALL, width.saturating_sub(1), Style::Normal);
             // curses leaves the cursor after the last write.
             let written = TOO_SMALL.chars().count().min(width.saturating_sub(1));
             frame.cursor = Some((0, written));
             return frame;
         }
-        let (places, hint_row) = self.layout();
-        let field_col = self.field_col();
-        let available = width - field_col - 3;
-        for (index, &(row, col)) in places.iter().enumerate() {
-            let active = index == self.active;
-            let marker = if active { '›' } else { ' ' };
-            let label_style = if active { Style::Accent } else { Style::Muted };
-            if self.is_list(index) {
-                let label = self.inputs[index].label;
-                frame.add(row, col, format!("{marker} {label}"), label_style);
-                let value: String = self.inputs[index].value.iter().collect();
-                let cell = self.column_width(index) - 1;
-                for (position, option) in self.options(index).iter().enumerate() {
-                    let picked = *option == value;
-                    let dot = if picked { '●' } else { ' ' };
-                    let style = if active && position == self.inputs[index].cursor {
-                        Style::Selected
-                    } else if picked {
-                        Style::Accent
-                    } else if active {
-                        Style::Normal
-                    } else {
-                        Style::Muted
-                    };
-                    frame.add(
-                        row + 1 + position,
-                        col,
-                        format!("{:<cell$}", format!("{dot} {option}")),
-                        style,
-                    );
-                }
-                continue;
-            }
-            let input = &mut self.inputs[index];
-            input.offset = input.offset.min(input.position);
-            while text_width(&input.value[input.offset..input.position]) >= available {
-                input.offset += 1;
+        let available = width - 14;
+        for (index, label) in LABELS.iter().enumerate() {
+            let row = index * 2 + 1;
+            let value = &self.values[index];
+            let position = self.positions[index];
+            let offset = &mut self.offsets[index];
+            *offset = (*offset).min(position);
+            while text_width(&value[*offset..position]) >= available {
+                *offset += 1;
             }
             let mut visible: Vec<char> = Vec::new();
             let mut used = 0;
-            for &character in &input.value[input.offset..] {
+            for &character in &value[*offset..] {
                 if used + char_width(character) > available {
                     break;
                 }
                 used += char_width(character);
                 visible.push(character);
             }
-            frame.add(row, 2, format!("{marker} {}:", input.label), label_style);
+            let active = index == self.active;
+            let marker = if active { '›' } else { ' ' };
+            let label_style = if active { Style::Accent } else { Style::Muted };
+            frame.add(row, 2, format!("{marker} {label}:"), label_style);
             let field_style = if active {
                 Style::Selected
             } else {
                 Style::Normal
             };
-            frame.add(row, field_col, " ".repeat(available + 2), field_style);
-            frame.add(
-                row,
-                field_col + 1,
-                visible.iter().collect::<String>(),
-                field_style,
-            );
-            if let Some(help) = input.help {
-                frame.addn(row + 1, field_col + 1, help, available, Style::Muted);
-            }
+            frame.add(row, 11, " ".repeat(available + 2), field_style);
+            frame.add(row, 12, visible.iter().collect::<String>(), field_style);
         }
-        let has_lists = (0..N).any(|index| self.is_list(index));
-        let active = &self.inputs[self.active];
+        frame.addn(4, 12, TAGS_HELP, width - 14, Style::Muted);
         let (message, style) = if self.error {
-            (format!("{} cannot be empty.", active.label), Style::Warning)
-        } else if !has_lists {
-            let action = self.action;
-            (
-                format!("↑↓ switch   Enter {action}   Esc cancel"),
-                Style::Muted,
-            )
-        } else if self.is_list(self.active) {
-            (
-                "Tab next   ↑↓←→ move   Enter pick   Esc cancel".to_owned(),
-                Style::Muted,
-            )
+            (EMPTY_NAME, Style::Warning)
         } else {
-            let action = self.action;
-            (
-                format!("Tab next   ↑↓ move   Enter {action}   Esc cancel"),
-                Style::Muted,
-            )
+            (HINT, Style::Muted)
         };
-        frame.addn(hint_row, 2, &message, width - 4, style);
-        // A list shows no cursor.
-        if !self.is_list(self.active) {
-            let (row, _) = places[self.active];
-            let cursor_col =
-                field_col + 1 + text_width(&active.value[active.offset..active.position]);
-            frame.cursor = Some((row, cursor_col));
-        }
+        frame.addn(6, 2, message, width - 4, style);
+        let active = self.active;
+        let cursor_col =
+            12 + text_width(&self.values[active][self.offsets[active]..self.positions[active]]);
+        frame.cursor = Some((active * 2 + 1, cursor_col));
         frame
     }
 
     /// Apply one key read while the screen was `height`×`width` (the size of the last paint).
-    /// `Some` when the form is done. Tab / Shift-Tab step through the fields; ↑↓ move one row,
-    /// through a list's options and on to the field above or below.
-    pub fn handle(&mut self, key: Key, height: usize, width: usize) -> Option<Outcome<N>> {
+    /// `Some` when the form is done.
+    pub fn handle(&mut self, key: Key, height: usize, width: usize) -> Option<Outcome> {
         if matches!(key, Key::Char('\x1b' | '\x03')) {
             return Some(Outcome::Cancel);
         }
-        if self.too_small(height, width) {
-            return None;
-        }
-        let active = self.active;
-        if self.is_list(active) {
-            self.error = false;
-            let cursor = self.inputs[active].cursor;
-            let columns = self.columns(active);
-            match key {
-                Key::Char('\t') => self.focus((active + 1) % N, Entry::Picked),
-                Key::BackTab => self.focus((active + N - 1) % N, Entry::Picked),
-                Key::Up if cursor > 0 => self.inputs[active].cursor -= 1,
-                Key::Up if columns.start > 0 => self.focus(columns.start - 1, Entry::Bottom),
-                Key::Down if cursor + 1 < self.options(active).len() => {
-                    self.inputs[active].cursor += 1;
-                }
-                Key::Down if columns.end < N => self.focus(columns.end, Entry::Top),
-                Key::Left if active > columns.start => {
-                    self.active -= 1;
-                    let last = self.options(self.active).len() - 1;
-                    self.inputs[self.active].cursor = cursor.min(last);
-                }
-                Key::Right if active + 1 < columns.end => {
-                    self.active += 1;
-                    let last = self.options(self.active).len() - 1;
-                    self.inputs[self.active].cursor = cursor.min(last);
-                }
-                Key::Char('\n' | '\r' | ' ') | Key::Enter => self.pick(),
-                _ => {}
-            }
+        if Self::too_small(height, width) {
             return None;
         }
         if matches!(key, Key::Char('\n' | '\r') | Key::Enter) {
-            let blank = self.inputs.iter().position(|input| {
-                matches!(input.kind, Kind::Text)
-                    && input.required
-                    && input.value.iter().all(|c| c.is_whitespace())
-            });
-            if let Some(blank) = blank {
+            if self.values[0].iter().all(|c| c.is_whitespace()) {
                 self.error = true;
-                self.active = blank;
+                self.active = 0;
                 return None;
             }
-            let values = self
-                .inputs
-                .each_ref()
-                .map(|input| input.value.iter().collect());
-            return Some(Outcome::Save(values));
+            return Some(Outcome::Save(
+                self.values[0].iter().collect(),
+                self.values[1].iter().collect(),
+            ));
         }
         self.error = false;
-        match key {
-            Key::Char('\t') => {
-                self.focus((active + 1) % N, Entry::Picked);
-                return None;
-            }
-            Key::BackTab => {
-                self.focus((active + N - 1) % N, Entry::Picked);
-                return None;
-            }
-            Key::Up => {
-                if active > 0 {
-                    let above = if self.is_list(active - 1) {
-                        self.columns(active - 1).start
-                    } else {
-                        active - 1
-                    };
-                    self.focus(above, Entry::Bottom);
-                }
-                return None;
-            }
-            Key::Down => {
-                if active + 1 < N {
-                    self.focus(active + 1, Entry::Top);
-                }
-                return None;
-            }
-            _ => {}
+        if matches!(key, Key::Up | Key::Down | Key::BackTab | Key::Char('\t')) {
+            self.active = 1 - self.active;
+            return None;
         }
-        let input = &mut self.inputs[self.active];
-        let position = input.position;
-        let value = &mut input.value;
+        let active = self.active;
+        let position = self.positions[active];
+        let value = &mut self.values[active];
         match key {
-            Key::Left | Key::Char('\x02') => input.position = position.saturating_sub(1),
+            Key::Left | Key::Char('\x02') => self.positions[active] = position.saturating_sub(1),
             Key::Right | Key::Char('\x06') => {
-                input.position = value.len().min(position + 1);
+                self.positions[active] = value.len().min(position + 1);
             }
-            Key::Home | Key::Char('\x01') => input.position = 0,
-            Key::End | Key::Char('\x05') => input.position = value.len(),
+            Key::Home | Key::Char('\x01') => self.positions[active] = 0,
+            Key::End | Key::Char('\x05') => self.positions[active] = value.len(),
             Key::Char('\x7f' | '\x08') if position > 0 => {
                 value.remove(position - 1);
-                input.position -= 1;
+                self.positions[active] -= 1;
             }
             Key::Delete => {
                 if position < value.len() {
@@ -800,12 +460,12 @@ impl<const N: usize> Form<N> {
             }
             Key::Char('\x15') => {
                 value.drain(..position);
-                input.position = 0;
+                self.positions[active] = 0;
             }
             Key::Char('\x0b') => value.truncate(position),
             Key::Char(character) if is_printable(character) => {
                 value.insert(position, character);
-                input.position += 1;
+                self.positions[active] += 1;
             }
             _ => {}
         }
@@ -997,7 +657,7 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = write_all(b"\x1b[0m\x1b[?25h\x1b[?1l\x1b>\x1b[?1049l");
+        let _ = write_all(b"\x1b[0m\x1b[?1l\x1b>\x1b[?1049l");
         // SAFETY: restores the attributes read in `open`.
         unsafe { libc::tcsetattr(STDIN, libc::TCSANOW, &self.saved) };
     }
@@ -1009,38 +669,11 @@ fn write_all(bytes: &[u8]) -> io::Result<()> {
     stdout.flush()
 }
 
-/// The prefix+e form: the session's name (required) and tags.
-pub fn session_form(name: &str, tags: &str) -> Form<2> {
-    Form::new(
-        [
-            Field {
-                label: "Name",
-                help: None,
-                required: true,
-                kind: Kind::Text,
-                value: name,
-            },
-            Field {
-                label: "Tags",
-                help: Some(TAGS_HELP),
-                required: false,
-                kind: Kind::Text,
-                value: tags,
-            },
-        ],
-        "save",
-    )
-}
-
-/// Run the prefix+e form; `Some((name, tags))` on save, `None` on Esc / Ctrl-C.
+/// Run the form on the controlling terminal (stdin/stdout); `Some((name, tags))` on save, `None`
+/// on Esc / Ctrl-C.
 pub fn edit_session(name: &str, tags: &str) -> io::Result<Option<(String, String)>> {
-    Ok(run_form(session_form(name, tags))?.map(|[name, tags]| (name, tags)))
-}
-
-/// Run `form` on the controlling terminal (stdin/stdout); the values on Enter, `None` on Esc /
-/// Ctrl-C.
-pub fn run_form<const N: usize>(mut form: Form<N>) -> io::Result<Option<[String; N]>> {
     let _terminal = Terminal::open()?;
+    let mut form = Form::new(name, tags);
     let mut decoder = Decoder::default();
     loop {
         let (height, width) = Terminal::size();
@@ -1069,7 +702,7 @@ pub fn run_form<const N: usize>(mut form: Form<N>) -> io::Result<Option<[String;
         };
         match form.handle(key, height, width) {
             Some(Outcome::Cancel) => return Ok(None),
-            Some(Outcome::Save(values)) => return Ok(Some(values)),
+            Some(Outcome::Save(name, tags)) => return Ok(Some((name, tags))),
             None => {}
         }
     }
@@ -1079,7 +712,7 @@ pub fn run_form<const N: usize>(mut form: Form<N>) -> io::Result<Option<[String;
 mod tests {
     use super::*;
 
-    fn keys(form: &mut Form<2>, keys: &[Key]) -> Option<Outcome<2>> {
+    fn keys(form: &mut Form, keys: &[Key]) -> Option<Outcome> {
         keys.iter().find_map(|&key| form.handle(key, 24, 80))
     }
 
@@ -1089,7 +722,7 @@ mod tests {
 
     #[test]
     fn rendered_rows_match_the_reference_layout() {
-        let mut form = session_form("abc", "t");
+        let mut form = Form::new("abc", "t");
         let rows = form.render(24, 80).rows(24, 80);
         assert_eq!(rows[1], "  › Name:   abc");
         assert_eq!(rows[3], "    Tags:   t");
@@ -1101,14 +734,14 @@ mod tests {
     #[test]
     fn cancel_keys() {
         for key in [Key::Char('\x1b'), Key::Char('\x03')] {
-            let mut form = session_form("w", "a");
+            let mut form = Form::new("w", "a");
             assert_eq!(form.handle(key, 24, 80), Some(Outcome::Cancel));
         }
     }
 
     #[test]
     fn empty_name_refused_then_any_key_clears_the_error() {
-        let mut form = session_form("abc", "t");
+        let mut form = Form::new("abc", "t");
         assert_eq!(keys(&mut form, &[Key::Down, Key::Char('\x15')]), None);
         assert_eq!(keys(&mut form, &[Key::Up, Key::Char('\x15')]), None);
         assert_eq!(form.handle(Key::Char('\r'), 24, 80), None);
@@ -1123,21 +756,21 @@ mod tests {
         );
         assert_eq!(
             keys(&mut form, &typed("  x \r")),
-            Some(Outcome::Save(["  x ".into(), "".into()]))
+            Some(Outcome::Save("  x ".into(), "".into()))
         );
     }
 
     #[test]
     fn editing_keys() {
-        let mut form = session_form("abc", "t");
+        let mut form = Form::new("abc", "t");
         keys(&mut form, &[Key::Left, Key::Left, Key::Char('\x0b')]);
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   a");
 
-        let mut form = session_form("abc", "t");
+        let mut form = Form::new("abc", "t");
         keys(&mut form, &[Key::Home, Key::Delete]);
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   bc");
 
-        let mut form = session_form("abc", "t");
+        let mut form = Form::new("abc", "t");
         keys(
             &mut form,
             &[Key::Char('\x01'), Key::Char('\x06'), Key::Char('\x7f')],
@@ -1148,17 +781,17 @@ mod tests {
         );
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   bXc");
 
-        let mut form = session_form("abc", "t");
+        let mut form = Form::new("abc", "t");
         keys(
             &mut form,
             &[Key::Home, Key::Char('Y'), Key::Char('\x08'), Key::End],
         );
         assert_eq!(
             keys(&mut form, &typed("X\n")),
-            Some(Outcome::Save(["abcX".into(), "t".into()]))
+            Some(Outcome::Save("abcX".into(), "t".into()))
         );
 
-        let mut form = session_form("w", "a");
+        let mut form = Form::new("w", "a");
         let mut sequence = vec![Key::Char('\x15')];
         sequence.extend(typed("w2"));
         sequence.extend([Key::Char('\t'), Key::End]);
@@ -1171,13 +804,13 @@ mod tests {
         );
         assert_eq!(
             form.handle(Key::Enter, 24, 80),
-            Some(Outcome::Save(["w2".into(), "a,b".into()]))
+            Some(Outcome::Save("w2".into(), "a,b".into()))
         );
     }
 
     #[test]
     fn too_small_only_cancels() {
-        let mut form = session_form("abc", "t");
+        let mut form = Form::new("abc", "t");
         let rows = form.render(5, 20).rows(5, 20);
         assert_eq!(rows[0], "Resize to edit");
         assert_eq!(form.handle(Key::Char('\r'), 5, 20), None);
@@ -1187,7 +820,7 @@ mod tests {
     #[test]
     fn long_value_scrolls_to_keep_the_cursor_visible() {
         let name = "x".repeat(100);
-        let mut form = session_form(&name, "");
+        let mut form = Form::new(&name, "");
         let frame = form.render(24, 40);
         // available = 26: the cursor sits at the end, 25 characters shown before it.
         assert_eq!(
