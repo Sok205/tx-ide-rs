@@ -892,6 +892,7 @@ impl Command for EditSession {
             tmux.display_status(client, &format!("edit of {} failed: {error}", session.name));
             return Ok(1);
         }
+        tmux.refresh_labels();
         Ok(0)
     }
 }

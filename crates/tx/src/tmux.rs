@@ -372,6 +372,15 @@ impl Tmux {
         self.run(&["run-shell", "-b", command]).map(drop)
     }
 
+    /// Re-run every client's status and border `#()` jobs now (`refresh-client -S`), so a label
+    /// reading the store shows an edit at once instead of on its next once-a-second run.
+    pub fn refresh_labels(&self) {
+        let (_, clients) = self.run_quiet(&["list-clients", "-F", "#{client_name}"]);
+        for client in clients.lines() {
+            let _ = self.run_quiet(&["refresh-client", "-S", "-t", client]);
+        }
+    }
+
     /// Show `message` on `client`'s status line for `STATUS_MILLISECONDS` (best effort).
     pub fn display_status(&self, client: &str, message: &str) {
         eprintln!("{message}");
