@@ -26,5 +26,5 @@
 - prefix+n (new agent: name / tags / prompt → `tx spawn`, then a `send-message` to the tx-assistant)
   and the hidden `tx _new-agent` behind it are new here; the reference has no spawn key. The key
   replaces tmux's stock next-window on `n`.
-- prefix+F (fork the pane's session → `tx fork`, then a `send-message` to the tx-assistant) and the
+- prefix+F (fork the pane's session in a popup → `tx fork`; unlike prefix+n, the tx-assistant is not told) and the
   hidden `tx _fork-pane` behind it are new here; the reference has no fork key. `F` is unbound in stock tmux.

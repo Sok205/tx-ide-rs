@@ -1,7 +1,7 @@
 //! `_fork-pane`: the prefix+F seam, run inside the key's popup (bin/tmux-fork-tx-session). It
 //! asks for the fork's name (prefilled `<source>-fork`), forks the tx session shown in the firing
-//! pane through the `fork` verb, tells the tx-assistant, and reports on the firing client's
-//! status line.
+//! pane through the `fork` verb. Only a failure reaches the firing client's status line — the
+//! popup is gone by then.
 
 use std::rc::{Rc, Weak};
 
@@ -12,8 +12,6 @@ use crate::palette::{ACCENT_ANSI, BOLD, RESET};
 use crate::service::SessionService;
 
 use super::listing::prompt_with_default;
-
-const ASSISTANT: &str = "tx-assistant";
 
 pub struct ForkPane {
     pub service: Rc<SessionService>,
@@ -26,8 +24,8 @@ impl Command for ForkPane {
         "_fork-pane"
     }
     fn summary(&self) -> &'static str {
-        "Internal: prefix+F — fork the pane's tx session (name asked in the popup), \
-         tell the tx-assistant. Usage: _fork-pane PANE CLIENT"
+        "Internal: prefix+F — fork the pane's tx session (name asked in the popup). \
+         Usage: _fork-pane PANE CLIENT"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let [pane, client] = argv else {
@@ -58,28 +56,16 @@ impl Command for ForkPane {
         };
         let name = name.trim();
         match fork.run(&fork_argv(&source.id, name)) {
-            Ok(0) => {}
+            Ok(0) => Ok(0),
             Ok(code) => {
                 tmux.display_status(client, &format!("prefix+F: fork failed (exit {code})"));
-                return Ok(code);
+                Ok(code)
             }
             Err(error) => {
                 tmux.display_status(client, &format!("prefix+F: {error}"));
-                return Ok(1);
+                Ok(1)
             }
         }
-        let status = match self
-            .service
-            .send_message(ASSISTANT, &notice(&source.name, name))
-        {
-            Ok(()) => format!("forked {}; tx-assistant notified", source.name),
-            Err(_) => format!(
-                "forked {} (tx-assistant not running — not notified)",
-                source.name
-            ),
-        };
-        tmux.display_status(client, &status);
-        Ok(0)
     }
 }
 
@@ -92,15 +78,6 @@ fn fork_argv(source_id: &str, name: &str) -> Vec<String> {
     argv
 }
 
-/// What the tx-assistant is told.
-fn notice(source: &str, name: &str) -> String {
-    if name.is_empty() {
-        format!("forked session {source} (default fork name)")
-    } else {
-        format!("forked session {source} as {name}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,11 +86,5 @@ mod tests {
     fn a_blank_name_leaves_the_fork_verb_default() {
         assert_eq!(fork_argv("abc123", ""), ["abc123"]);
         assert_eq!(fork_argv("abc123", "api-alt"), ["abc123", "api-alt"]);
-    }
-
-    #[test]
-    fn the_assistant_hears_what_was_forked() {
-        assert_eq!(notice("api", "api-alt"), "forked session api as api-alt");
-        assert_eq!(notice("api", ""), "forked session api (default fork name)");
     }
 }
