@@ -31,6 +31,8 @@ NAV="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-nav"
 KILL="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-kill-tx-session"
 # Repo-relative editor for the focused session's name and tags.
 EDIT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-edit-tx-session"
+# Repo-relative fork popup for the focused session.
+FORK="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-fork-tx-session"
 
 option() {
   tmux show-option -gv "$1" 2>/dev/null || printf '%s' "$2"
@@ -72,10 +74,6 @@ bind n command-prompt -p "new agent name:,tags (comma-separated):,prompt:" {
   set-buffer -b tx-new-agent-prompt "%3"
   run-shell -b "tx _new-agent '#{pane_id}' '#{client_name}' >/dev/null 2>&1"
 }
-bind F command-prompt -p "fork name (blank = <source>-fork):" {
-  set-buffer -b tx-fork-name "%%"
-  run-shell -b "tx _fork-pane '#{pane_id}' '#{client_name}' >/dev/null 2>&1"
-}
 EOF
   # prefix+X: kill the active pane's tx session behind a stock-style confirm-before prompt
   # (the tmux-native sibling of prefix+x / prefix+&, but through `tx kill` so the record
@@ -83,6 +81,7 @@ EOF
   cat >>"$CONF" <<EOF
 bind X run-shell "$KILL '#{pane_id}' '#{session_name}'"
 bind e run-shell -b "$EDIT '#{pane_id}' '#{client_name}'"
+bind F run-shell -b "$FORK '#{pane_id}' '#{client_name}'"
 EOF
 fi
 

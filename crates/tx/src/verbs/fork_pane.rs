@@ -1,7 +1,7 @@
-//! `_fork-pane`: the prefix+F seam. The key's tmux prompt leaves the fork's name (blank: the
-//! `fork` verb's `<source>-fork` default) in a buffer; this forks the tx session shown in the
-//! firing pane through the `fork` verb, tells the tx-assistant, and reports on the firing
-//! client's status line.
+//! `_fork-pane`: the prefix+F seam, run inside the key's popup (bin/tmux-fork-tx-session). It
+//! asks for the fork's name (prefilled `<source>-fork`), forks the tx session shown in the firing
+//! pane through the `fork` verb, tells the tx-assistant, and reports on the firing client's
+//! status line.
 
 use std::rc::{Rc, Weak};
 
@@ -10,8 +10,8 @@ use cordis::BoxError;
 use crate::app::{Command, CommandTable};
 use crate::service::SessionService;
 
-/// The buffer prefix+F's prompt writes (tmux/tx-ide.tmux).
-const BUFFER: &str = "tx-fork-name";
+use super::listing::prompt_with_default;
+
 const ASSISTANT: &str = "tx-assistant";
 
 pub struct ForkPane {
@@ -25,7 +25,7 @@ impl Command for ForkPane {
         "_fork-pane"
     }
     fn summary(&self) -> &'static str {
-        "Internal: prefix+F — fork the pane's tx session (name from the tx-fork-name buffer), \
+        "Internal: prefix+F — fork the pane's tx session (name asked in the popup), \
          tell the tx-assistant. Usage: _fork-pane PANE CLIENT"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
@@ -34,12 +34,6 @@ impl Command for ForkPane {
             return Ok(2);
         };
         let tmux = self.service.tmux();
-        let name = tmux
-            .show_buffer(BUFFER)
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        tmux.delete_buffer(BUFFER);
         // The session nested in the pane, else the pane's own session (a direct attach).
         let target = tmux
             .inner_for_pane(pane)
@@ -57,7 +51,12 @@ impl Command for ForkPane {
             tmux.display_status(client, "prefix+F: the fork verb is disabled");
             return Ok(1);
         };
-        match fork.run(&fork_argv(&source.id, &name)) {
+        let prompt = format!("Fork {} as: ", source.name);
+        let Some(name) = prompt_with_default(&prompt, &format!("{}-fork", source.name))? else {
+            return Ok(0);
+        };
+        let name = name.trim();
+        match fork.run(&fork_argv(&source.id, name)) {
             Ok(0) => {}
             Ok(code) => {
                 tmux.display_status(client, &format!("prefix+F: fork failed (exit {code})"));
@@ -70,7 +69,7 @@ impl Command for ForkPane {
         }
         let status = match self
             .service
-            .send_message(ASSISTANT, &notice(&source.name, &name))
+            .send_message(ASSISTANT, &notice(&source.name, name))
         {
             Ok(()) => format!("forked {}; tx-assistant notified", source.name),
             Err(_) => format!(

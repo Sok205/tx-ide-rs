@@ -36,7 +36,7 @@ const RETRY_PAUSE: Duration = Duration::from_millis(1200);
 
 /// The `ServiceError`s cli.py raises itself (printed `tx <verb>: <text>`, exit 1).
 #[derive(Debug, thiserror::Error)]
-enum ListingError {
+pub(super) enum ListingError {
     #[error("no tx session in this pane (view homes cannot be edited)")]
     NoSessionInPane,
     #[error("the session in this pane is not tx-managed")]
@@ -882,7 +882,7 @@ impl Command for EditSession {
 }
 
 /// `_prompt_with_default`: fzf's query editor prefilled with `default`; `None` when cancelled.
-fn prompt_with_default(prompt: &str, default: &str) -> Result<Option<String>, ListingError> {
+pub(super) fn prompt_with_default(prompt: &str, default: &str) -> Result<Option<String>, ListingError> {
     let output = Process::new("fzf")
         .args([
             "--disabled",
