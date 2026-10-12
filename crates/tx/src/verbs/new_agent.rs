@@ -8,7 +8,7 @@ use std::rc::{Rc, Weak};
 use cordis::BoxError;
 
 use crate::app::{Command, CommandTable, Env};
-use crate::engines::{DEFAULT_EFFORT, Effort};
+use crate::engines::DEFAULT_EFFORT;
 use crate::service::SessionService;
 use crate::session_editor::{Field, Form, Kind, run_form};
 use crate::shlex::shlex_join;
@@ -50,11 +50,11 @@ const MODELS: &[(&str, &[&str])] = &[
         ],
     ),
 ];
-/// agy's effort picks its flash slug, which exists for low / medium / high only.
+/// `--effort` tiers. agy's effort picks its flash slug, which exists for 1-3 only.
 const EFFORTS: &[(&str, &[&str])] = &[
-    ("claude", &["low", "medium", "high", "xhigh", "max"]),
-    ("codex", &["low", "medium", "high", "xhigh", "max"]),
-    ("antigravity", &["low", "medium", "high"]),
+    ("claude", &["1", "2", "3", "4", "5"]),
+    ("codex", &["1", "2", "3", "4", "5"]),
+    ("antigravity", &["1", "2", "3"]),
 ];
 
 pub struct NewAgent {
@@ -167,9 +167,10 @@ impl NewAgent {
     }
 }
 
-/// Name and prompt are required; engine, model and effort are ←→ choices (claude, the engine's
-/// default model, high); blank tags mean `agent`.
+/// Name and prompt are required; engine, model and effort are lists (claude, the engine's default
+/// model, 3); blank tags mean `agent`.
 fn new_agent_form() -> Form<6> {
+    let effort = DEFAULT_EFFORT.level().to_string();
     let text = |label, help, required| Field {
         label,
         help,
@@ -194,7 +195,7 @@ fn new_agent_form() -> Form<6> {
             text("Prompt", None, true),
             choice("Engine", Kind::Choice(ENGINES), ENGINES[0]),
             choice("Model", by_engine(MODELS), DEFAULT_MODEL),
-            choice("Effort", by_engine(EFFORTS), DEFAULT_EFFORT.as_str()),
+            choice("Effort", by_engine(EFFORTS), &effort),
             text("Tags", Some(TAGS_HELP), false),
         ],
         "spawn",
@@ -208,12 +209,6 @@ fn spawn_argv(answers: &Answers, cwd: &str) -> Vec<String> {
     } else {
         answers.tags
     };
-    let effort = Effort::ALL
-        .into_iter()
-        .find(|effort| effort.as_str() == answers.effort)
-        .expect("an effort the form offers")
-        .level()
-        .to_string();
     let mut argv = [
         answers.name,
         "--tag",
@@ -223,7 +218,7 @@ fn spawn_argv(answers: &Answers, cwd: &str) -> Vec<String> {
         "--engine",
         answers.engine,
         "--effort",
-        &effort,
+        answers.effort,
         "--prompt",
         answers.prompt,
     ]
@@ -250,7 +245,7 @@ mod tests {
     use super::*;
     use crate::session_editor::{Key, Outcome};
 
-    const HEIGHT: usize = 15;
+    const HEIGHT: usize = 17;
     const WIDTH: usize = 62;
 
     fn press(form: &mut Form<6>, keys: &[Key]) -> Option<Outcome<6>> {
@@ -261,55 +256,75 @@ mod tests {
         text.chars().map(Key::Char).collect()
     }
 
-    #[test]
-    fn one_form_with_engine_model_and_effort_choices() {
-        let mut form = new_agent_form();
-        let rows = form.render(HEIGHT, WIDTH).rows(HEIGHT, WIDTH);
-        assert_eq!(rows[1], "  › Name:");
-        assert_eq!(rows[3], "    Prompt:");
-        assert_eq!(rows[5], "    Engine:   ‹ claude ›");
-        assert_eq!(rows[7], "    Model:    ‹ default ›");
-        assert_eq!(rows[9], "    Effort:   ‹ high ›");
-        assert_eq!(rows[11], "    Tags:");
-        assert_eq!(
-            rows[12],
-            "              Comma-separated · empty means agent"
-        );
-        assert_eq!(
-            rows[14],
-            "  ↑↓ switch   ←→ choose   Enter spawn   Esc cancel"
-        );
+    fn rows(form: &mut Form<6>) -> Vec<String> {
+        form.render(HEIGHT, WIDTH).rows(HEIGHT, WIDTH)
     }
 
     #[test]
-    fn choices_cycle_and_follow_the_engine() {
+    fn engine_model_and_effort_are_lists_side_by_side() {
         let mut form = new_agent_form();
-        // Name, then down to Effort: max, then back to Engine: antigravity (from claude, ←).
-        let mut keys = typed("health");
-        keys.extend([
-            Key::Down,
-            Key::Down,
-            Key::Down,
-            Key::Down,
-            Key::Left,
-            Key::Left,
-        ]);
-        keys.extend([Key::Up, Key::Up, Key::Left]);
-        press(&mut form, &keys);
-        let rows = form.render(HEIGHT, WIDTH).rows(HEIGHT, WIDTH);
-        assert_eq!(rows[5], "  › Engine:   ‹ antigravity ›");
-        // agy has no xhigh: the effort falls back to its first option.
-        assert_eq!(rows[9], "    Effort:   ‹ low ›");
-        // Typing on a choice does nothing; Space steps it (back to claude, which keeps low). Then
-        // the model: default → fable → opus.
-        let mut keys = typed("x ");
-        keys.extend([Key::Down, Key::Right, Key::Right]);
-        press(&mut form, &keys);
-        assert_eq!(press(&mut form, &[Key::Enter]), None);
+        let rows = rows(&mut form);
+        assert_eq!(rows[1], "  › Name:");
+        assert_eq!(rows[3], "    Prompt:");
         assert_eq!(
-            form.render(HEIGHT, WIDTH).rows(HEIGHT, WIDTH)[14],
-            "  Prompt cannot be empty."
+            rows[5],
+            "    Engine          Model                        Effort"
         );
+        assert_eq!(
+            rows[6],
+            "  ● claude        ● default                      1"
+        );
+        assert_eq!(
+            rows[7],
+            "    codex           fable                        2"
+        );
+        assert_eq!(
+            rows[8],
+            "    antigravity     opus                       ● 3"
+        );
+        assert_eq!(
+            rows[10],
+            "                    haiku                        5"
+        );
+        assert_eq!(rows[12], "    Tags:");
+        assert_eq!(
+            rows[13],
+            "              Comma-separated · empty means agent"
+        );
+        assert_eq!(rows[15], "  Tab next   ↑↓ move   Enter spawn   Esc cancel");
+    }
+
+    #[test]
+    fn arrows_move_one_row_tab_jumps_and_enter_picks() {
+        let mut form = new_agent_form();
+        // ↓ from Name to Prompt, ↓ onto the engine list (claude), ↓ to codex, Enter picks it.
+        let mut keys = typed("health");
+        keys.extend([Key::Down, Key::Down, Key::Down, Key::Enter]);
+        press(&mut form, &keys);
+        assert_eq!(
+            rows(&mut form)[7],
+            "  ● codex           gpt-6.1-sol                  2"
+        );
+        // → to the model column on the same row, Space picks; → to effort, ↓↓ to 5, Enter.
+        press(
+            &mut form,
+            &[
+                Key::Right,
+                Key::Char(' '),
+                Key::Right,
+                Key::Down,
+                Key::Down,
+                Key::Down,
+            ],
+        );
+        press(&mut form, &[Key::Enter]);
+        // ↓ past the bottom of a list leaves it for Tags; Tab wraps to Name, Shift-Tab back.
+        press(&mut form, &[Key::Down]);
+        assert_eq!(rows(&mut form)[12], "  › Tags:");
+        press(&mut form, &typed("api"));
+        // Enter on a text field spawns — but the prompt is still blank.
+        assert_eq!(press(&mut form, &[Key::Enter]), None);
+        assert_eq!(rows(&mut form)[15], "  Prompt cannot be empty.");
         let mut keys = typed("add GET /health");
         keys.push(Key::Enter);
         assert_eq!(
@@ -317,12 +332,46 @@ mod tests {
             Some(Outcome::Save([
                 "health".into(),
                 "add GET /health".into(),
-                "claude".into(),
-                "opus".into(),
-                "low".into(),
-                "".into(),
+                "codex".into(),
+                "gpt-6.1-sol".into(),
+                "5".into(),
+                "api".into(),
             ]))
         );
+    }
+
+    #[test]
+    fn a_new_engine_keeps_the_model_and_effort_it_offers() {
+        let mut form = new_agent_form();
+        // Effort 5, then engine antigravity: it has no 5 (falls back to 1) and a different list.
+        press(
+            &mut form,
+            &[
+                Key::Char('\t'),
+                Key::Char('\t'),
+                Key::Char('\t'),
+                Key::Char('\t'),
+            ],
+        );
+        press(&mut form, &[Key::Down, Key::Down, Key::Enter]);
+        press(
+            &mut form,
+            &[Key::BackTab, Key::BackTab, Key::Down, Key::Down, Key::Enter],
+        );
+        let rows = rows(&mut form);
+        assert_eq!(
+            rows[6],
+            "    claude        ● default                    ● 1"
+        );
+        assert_eq!(
+            rows[7],
+            "    codex           gemini-3.8-flash-high        2"
+        );
+        assert_eq!(
+            rows[8],
+            "  ● antigravity     gemini-3.1-pro-high          3"
+        );
+        assert_eq!(rows[9], "                    claude-opus-4-6-thinking");
     }
 
     #[test]
@@ -332,7 +381,7 @@ mod tests {
             prompt: "add GET /health",
             engine: "codex",
             model: "gpt-6-sol",
-            effort: "xhigh",
+            effort: "4",
             tags: "tutor, api",
         };
         assert_eq!(
