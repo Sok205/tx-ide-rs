@@ -9,9 +9,9 @@ client_name="$2"
 
 # run-shell expands pane/client formats before the popup starts. display-popup's
 # shell-command does not expand them, so pass the captured pane and client as literal arguments.
-# Centred on the client screen, styled like the prefix+f fork popup; the form needs 9 rows, and
+# Centred on the client screen, styled like the prefix+f fork popup; the form needs 15 rows, and
 # 64 columns keep the fields compact.
 printf -v new_agent_command '%q _new-agent %q %q' "$SCRIPT_DIR/tx" "$pane_id" "$client_name"
-exec tmux display-popup -c "$client_name" -E -w 64 -h 11 -x C -y C -b heavy \
+exec tmux display-popup -c "$client_name" -E -w 64 -h 17 -x C -y C -b heavy \
   -S "fg=yellow,bold" \
   -T ' New agent ' "$new_agent_command"

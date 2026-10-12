@@ -1,5 +1,6 @@
 //! Port of lib/tx/session_editor.py — the terminal form of single-line fields behind
-//! `tx _edit-session` (name + tags) and `tx _new-agent` (name + tags + prompt).
+//! `tx _edit-session` (name + tags) and `tx _new-agent` (name, tags, prompt and the engine /
+//! model / effort choices).
 //!
 //! The reference is a `curses.wrapper` form in raw mode with keypad on and a 25 ms escape delay.
 //! Here the form logic ([`Form`]) is pure — keys in, a [`Frame`] of positioned text out — and
@@ -113,8 +114,9 @@ impl Frame {
                 draw.text
             );
         }
-        if let Some((row, col)) = self.cursor {
-            out += &format!("\x1b[{};{}H", row + 1, col + 1);
+        match self.cursor {
+            Some((row, col)) => out += &format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1),
+            None => out += "\x1b[?25l",
         }
         out
     }
@@ -337,8 +339,24 @@ pub struct Field<'a> {
     pub help: Option<&'static str>,
     /// Enter refuses to finish while this field is blank.
     pub required: bool,
-    /// The starting text.
+    pub kind: Kind,
+    /// The starting text; for a choice, one of its options.
     pub value: &'a str,
+}
+
+/// What a field holds.
+#[derive(Clone, Copy, Debug)]
+pub enum Kind {
+    /// Free text.
+    Text,
+    /// One of the options, picked with ←→.
+    Choice(&'static [&'static str]),
+    /// One of the options `table` lists for the value of field `field` (itself a choice); a change
+    /// there keeps this value when still offered, else picks the first option.
+    ChoiceOf {
+        field: usize,
+        table: &'static [(&'static str, &'static [&'static str])],
+    },
 }
 
 /// A field being edited.
@@ -347,6 +365,7 @@ struct Input {
     label: &'static str,
     help: Option<&'static str>,
     required: bool,
+    kind: Kind,
     value: Vec<char>,
     position: usize,
     offset: usize,
@@ -372,6 +391,7 @@ impl<const N: usize> Form<N> {
                 label: field.label,
                 help: field.help,
                 required: field.required,
+                kind: field.kind,
                 position: value.len(),
                 value,
                 offset: 0,
@@ -394,6 +414,55 @@ impl<const N: usize> Form<N> {
             .max()
             .unwrap_or(0);
         widest + 7
+    }
+
+    /// The options of field `index` (none for a text field).
+    fn options(&self, index: usize) -> &'static [&'static str] {
+        match self.inputs[index].kind {
+            Kind::Text => &[],
+            Kind::Choice(options) => options,
+            Kind::ChoiceOf { field, table } => {
+                let value: String = self.inputs[field].value.iter().collect();
+                table
+                    .iter()
+                    .find(|(key, _)| *key == value)
+                    .map(|(_, options)| *options)
+                    .expect("the table lists every option of its field")
+            }
+        }
+    }
+
+    fn set(&mut self, index: usize, value: &str) {
+        let input = &mut self.inputs[index];
+        input.value = value.chars().collect();
+        input.position = input.value.len();
+    }
+
+    /// Step the active choice to its next (or previous) option and refresh the choices that
+    /// depend on it.
+    fn choose(&mut self, forward: bool) {
+        let options = self.options(self.active);
+        let current: String = self.inputs[self.active].value.iter().collect();
+        let index = options
+            .iter()
+            .position(|option| *option == current)
+            .expect("a choice holds one of its options");
+        let next = if forward {
+            (index + 1) % options.len()
+        } else {
+            (index + options.len() - 1) % options.len()
+        };
+        self.set(self.active, options[next]);
+        for dependent in 0..N {
+            if matches!(self.inputs[dependent].kind, Kind::ChoiceOf { field, .. } if field == self.active)
+            {
+                let options = self.options(dependent);
+                let value: String = self.inputs[dependent].value.iter().collect();
+                if !options.contains(&value.as_str()) {
+                    self.set(dependent, options[0]);
+                }
+            }
+        }
     }
 
     fn too_small(&self, height: usize, width: usize) -> bool {
@@ -437,13 +506,14 @@ impl<const N: usize> Form<N> {
             } else {
                 Style::Normal
             };
+            let text = match input.kind {
+                Kind::Text => visible.iter().collect::<String>(),
+                Kind::Choice(_) | Kind::ChoiceOf { .. } => {
+                    format!("‹ {} ›", input.value.iter().collect::<String>())
+                }
+            };
             frame.add(row, field_col, " ".repeat(available + 2), field_style);
-            frame.add(
-                row,
-                field_col + 1,
-                visible.iter().collect::<String>(),
-                field_style,
-            );
+            frame.add(row, field_col + 1, text, field_style);
             if let Some(help) = input.help {
                 frame.addn(row + 1, field_col + 1, help, available, Style::Muted);
             }
@@ -453,14 +523,27 @@ impl<const N: usize> Form<N> {
             (format!("{} cannot be empty.", active.label), Style::Warning)
         } else {
             let action = self.action;
+            let choose = if self
+                .inputs
+                .iter()
+                .any(|input| !matches!(input.kind, Kind::Text))
+            {
+                "←→ choose   "
+            } else {
+                ""
+            };
             (
-                format!("↑↓ switch   Enter {action}   Esc cancel"),
+                format!("↑↓ switch   {choose}Enter {action}   Esc cancel"),
                 Style::Muted,
             )
         };
         frame.addn(N * 2 + 2, 2, &message, width - 4, style);
-        let cursor_col = field_col + 1 + text_width(&active.value[active.offset..active.position]);
-        frame.cursor = Some((self.active * 2 + 1, cursor_col));
+        // A choice shows no cursor.
+        if matches!(active.kind, Kind::Text) {
+            let cursor_col =
+                field_col + 1 + text_width(&active.value[active.offset..active.position]);
+            frame.cursor = Some((self.active * 2 + 1, cursor_col));
+        }
         frame
     }
 
@@ -500,6 +583,14 @@ impl<const N: usize> Form<N> {
                 return None;
             }
             _ => {}
+        }
+        if !matches!(self.inputs[self.active].kind, Kind::Text) {
+            match key {
+                Key::Right | Key::Char(' ') => self.choose(true),
+                Key::Left => self.choose(false),
+                _ => {}
+            }
+            return None;
         }
         let input = &mut self.inputs[self.active];
         let position = input.position;
@@ -719,7 +810,7 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = write_all(b"\x1b[0m\x1b[?1l\x1b>\x1b[?1049l");
+        let _ = write_all(b"\x1b[0m\x1b[?25h\x1b[?1l\x1b>\x1b[?1049l");
         // SAFETY: restores the attributes read in `open`.
         unsafe { libc::tcsetattr(STDIN, libc::TCSANOW, &self.saved) };
     }
@@ -739,12 +830,14 @@ pub fn session_form(name: &str, tags: &str) -> Form<2> {
                 label: "Name",
                 help: None,
                 required: true,
+                kind: Kind::Text,
                 value: name,
             },
             Field {
                 label: "Tags",
                 help: Some(TAGS_HELP),
                 required: false,
+                kind: Kind::Text,
                 value: tags,
             },
         ],
