@@ -1,4 +1,4 @@
-//! `_fork-pane`: the prefix+F seam, run inside the key's popup (bin/tmux-fork-tx-session). It
+//! `_fork-pane`: the prefix+f seam, run inside the key's popup (bin/tmux-fork-tx-session). It
 //! asks for the fork's name (prefilled `<source>-fork`), forks the tx session shown in the firing
 //! pane through the `fork` verb, and reports the outcome on the firing client's status line —
 //! the popup is gone by then.
@@ -25,7 +25,7 @@ impl Command for ForkPane {
         "_fork-pane"
     }
     fn summary(&self) -> &'static str {
-        "Internal: prefix+F — fork the pane's tx session (name asked in the popup). \
+        "Internal: prefix+f — fork the pane's tx session (name asked in the popup). \
          Usage: _fork-pane PANE CLIENT"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
@@ -44,11 +44,11 @@ impl Command for ForkPane {
             .transpose()?
             .flatten()
         else {
-            tmux.display_status(client, "prefix+F: no tx session in this pane");
+            tmux.display_status(client, "prefix+f: no tx session in this pane");
             return Ok(1);
         };
         let Some(fork) = self.commands.upgrade().and_then(|table| table.get("fork")) else {
-            tmux.display_status(client, "prefix+F: the fork verb is disabled");
+            tmux.display_status(client, "prefix+f: the fork verb is disabled");
             return Ok(1);
         };
         let label = format!("Fork {ACCENT_ANSI}{BOLD}{}{RESET} as", source.name);

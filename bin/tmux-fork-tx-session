@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prefix+F: fork the tx session visible in the firing pane, naming it in a popup on the firing client.
+# prefix+f: fork the tx session visible in the firing pane, naming it in a popup on the firing client.
 set -eu
 
 SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
