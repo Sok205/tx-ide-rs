@@ -9,6 +9,7 @@ use cordis::BoxError;
 
 use crate::app::{Command, CommandTable, Env};
 use crate::engines::DEFAULT_EFFORT;
+use crate::engines::antigravity::AGY_MODEL_FAMILY;
 use crate::service::SessionService;
 use crate::session_editor::{Field, Form, Kind, run_form};
 use crate::shlex::shlex_join;
@@ -18,31 +19,22 @@ use super::common::{bin_tx, split_tags};
 
 const DEFAULT_TAG: &str = "agent";
 const TAGS_HELP: &str = "Comma-separated · empty means agent";
-/// The model option that passes no `--model`: the engine picks.
-const DEFAULT_MODEL: &str = "default";
 /// Field index of the engine, which the model and effort lists follow.
 const ENGINE_FIELD: usize = 2;
 const ENGINES: &[&str] = &["claude", "codex", "antigravity"];
 /// Fixed lists: claude's aliases, and the codex and agy models offered at the time of writing.
+/// Each starts with what the engine runs without `--model` (claude's and codex's configured model,
+/// tx's agy flash family), preselected and spawned without `--model`.
 const MODELS: &[(&str, &[&str])] = &[
-    (
-        "claude",
-        &[DEFAULT_MODEL, "fable", "opus", "sonnet", "haiku"],
-    ),
+    ("claude", &["fable", "opus", "sonnet", "haiku"]),
     (
         "codex",
-        &[
-            DEFAULT_MODEL,
-            "gpt-6.1-sol",
-            "gpt-6-astra",
-            "gpt-6-sol",
-            "gpt-6-luna",
-        ],
+        &["gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"],
     ),
     (
         "antigravity",
         &[
-            DEFAULT_MODEL,
+            AGY_MODEL_FAMILY,
             "gemini-3.8-flash-high",
             "gemini-3.1-pro-high",
             "claude-opus-4-6-thinking",
@@ -168,7 +160,7 @@ impl NewAgent {
 }
 
 /// Name and prompt are required; engine, model and effort are lists (claude, the engine's default
-/// model, 3); blank tags mean `agent`.
+/// model, the default effort); blank tags mean `agent`.
 fn new_agent_form() -> Form<6> {
     let effort = DEFAULT_EFFORT.level().to_string();
     let text = |label, help, required| Field {
@@ -194,7 +186,7 @@ fn new_agent_form() -> Form<6> {
             text("Name", None, true),
             text("Prompt", None, true),
             choice("Engine", Kind::Choice(ENGINES), ENGINES[0]),
-            choice("Model", by_engine(MODELS), DEFAULT_MODEL),
+            choice("Model", by_engine(MODELS), default_model(ENGINES[0])),
             choice("Effort", by_engine(EFFORTS), &effort),
             text("Tags", Some(TAGS_HELP), false),
         ],
@@ -224,10 +216,19 @@ fn spawn_argv(answers: &Answers, cwd: &str) -> Vec<String> {
     ]
     .map(str::to_owned)
     .to_vec();
-    if answers.model != DEFAULT_MODEL {
+    if answers.model != default_model(answers.engine) {
         argv.extend(["--model".to_owned(), answers.model.to_owned()]);
     }
     argv
+}
+
+/// The first model listed for `engine`: what it runs without `--model`.
+fn default_model(engine: &str) -> &'static str {
+    MODELS
+        .iter()
+        .find(|(name, _)| *name == engine)
+        .map(|(_, models)| models[0])
+        .expect("a listed engine")
 }
 
 /// `tutor, api` → `tutor,api`.
@@ -272,19 +273,23 @@ mod tests {
         );
         assert_eq!(
             rows[6],
-            "  ● claude        ● default                      1"
+            "  ● claude        ● fable                        1"
         );
         assert_eq!(
             rows[7],
-            "    codex           fable                        2"
+            "    codex           opus                         2"
         );
         assert_eq!(
             rows[8],
-            "    antigravity     opus                       ● 3"
+            "    antigravity     sonnet                     ● 3"
+        );
+        assert_eq!(
+            rows[9],
+            "                    haiku                        4"
         );
         assert_eq!(
             rows[10],
-            "                    haiku                        5"
+            "                                                 5"
         );
         assert_eq!(rows[12], "    Tags:");
         assert_eq!(
@@ -361,7 +366,7 @@ mod tests {
         let rows = rows(&mut form);
         assert_eq!(
             rows[6],
-            "    claude        ● default                    ● 1"
+            "    claude        ● gemini-3.7-flash           ● 1"
         );
         assert_eq!(
             rows[7],
@@ -403,7 +408,7 @@ mod tests {
             ]
         );
         let defaults = Answers {
-            model: DEFAULT_MODEL,
+            model: "gpt-6-astra",
             tags: "",
             ..answers
         };
