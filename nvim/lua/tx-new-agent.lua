@@ -166,22 +166,36 @@ function M.open()
     end
   end
 
-  -- A one-line picker: the picked option between arrows, and its place in the options.
-  local function render_cycle(panel)
+  local active = 1
+  -- A picker's place in its options, `index/count`.
+  local function position(panel)
     local choices = options(panel.key)
-    local index = 1
-    for line, option in ipairs(choices) do
+    for index, option in ipairs(choices) do
       if option == picked[panel.key] then
-        index = line
+        return ("%d/%d"):format(index, #choices)
       end
     end
+  end
+  -- The label on the left; a picker's position on the right, the border drawn between them.
+  local function title(panel, is_active)
+    local group = is_active and "TxFormTitleActive" or "TxFormTitle"
+    local label = (" [%d] %s "):format(panel.number, panel.label)
+    if not panel.cycle then
+      return { { label, group } }
+    end
+    local counter = (" %s "):format(position(panel))
+    local gap = panel.width - vim.fn.strdisplaywidth(label) - vim.fn.strdisplaywidth(counter)
+    return { { label, group }, { ("─"):rep(gap), "FloatBorder" }, { counter, group } }
+  end
+
+  -- A one-line picker: the picked option between arrows; its position is in the title.
+  local function render_cycle(panel)
     vim.bo[panel.buffer].modifiable = true
-    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, {
-      (" ‹ %s ›  %d/%d"):format(picked[panel.key], index, #choices),
-    })
+    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, { (" ‹ %s ›"):format(picked[panel.key]) })
     vim.bo[panel.buffer].modifiable = false
     vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
     vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", 0, 0, -1)
+    vim.api.nvim_win_set_config(panel.window, { title = title(panel, panel.number == active), title_pos = "left" })
   end
 
   local function cycle(panel, step)
@@ -245,10 +259,6 @@ function M.open()
     end
   end
 
-  local active = 1
-  local function title(panel, is_active)
-    return { { (" [%d] %s "):format(panel.number, panel.label), is_active and "TxFormTitleActive" or "TxFormTitle" } }
-  end
   local function focus(number)
     local previous = panels[active]
     vim.api.nvim_win_set_config(previous.window, { title = title(previous, false), title_pos = "left" })
