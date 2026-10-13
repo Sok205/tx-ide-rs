@@ -16,6 +16,10 @@ pub const DIM_FG_HEX: &str = "#a9b1d6";
 pub const DIM_FG_ANSI: &str = "\x1b[38;2;169;177;214m";
 pub const WARN_HEX: &str = "#e0af68";
 pub const WARN_ANSI: &str = "\x1b[38;2;224;175;104m";
+/// Derived / automatic values (the \e[36m cyan of shared/palette.sh): a hue nothing typed uses.
+pub const INFO_HEX: &str = "#7dcfff";
+pub const INFO_ANSI: &str = "\x1b[38;2;125;207;255m";
+pub const ITALIC: &str = "\x1b[3m";
 pub const BG_DEEP_HEX: &str = "#15161e";
 /// fzf `bg+` 256-colour index, matched to the curses TUIs.
 pub const SELECTION_BG: &str = "236";

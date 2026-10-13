@@ -2,8 +2,9 @@
 //! `tx _edit-session`.
 //!
 //! The group field edits the explicit effort-group override. Empty means automatic: the field
-//! then shows the group the resolver derives (tags / parent chain / bound artifact / name) as a
-//! dimmed placeholder, and its help row says which of the two is in effect.
+//! then shows the group the resolver derives (tags / parent chain / bound artifact / name) as
+//! ghost text in the palette's info cyan, italic — a hue and shape no typed value has, so it never
+//! passes for one — and its help row says which of the two is in effect.
 //!
 //! The reference is a `curses.wrapper` form in raw mode with keypad on and a 25 ms escape delay.
 //! Here the form logic ([`Form`]) is pure — keys in, a [`Frame`] of positioned text out — and
@@ -13,7 +14,9 @@
 use std::io::{self, Write};
 use std::os::fd::RawFd;
 
-use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, FG_ANSI, SELECTION_BG, WARN_ANSI};
+use crate::palette::{
+    ACCENT_ANSI, BOLD, DIM_FG_ANSI, FG_ANSI, INFO_ANSI, ITALIC, SELECTION_BG, WARN_ANSI,
+};
 
 const HINT: &str = "↑↓ switch   Enter save   Esc cancel";
 const TAGS_HELP: &str = "Comma-separated · empty clears tags";
@@ -67,8 +70,11 @@ pub enum Style {
     Muted,
     /// Active field: the palette's foreground on the selection background.
     Selected,
-    /// Placeholder in the active field: the dim foreground on the selection background.
-    SelectedMuted,
+    /// The automatic group in the inactive group field: info cyan, italic.
+    Automatic,
+    /// The automatic group in the active group field: info cyan, italic, on the selection
+    /// background.
+    AutomaticSelected,
     /// Error row: the palette's warning amber.
     Warning,
 }
@@ -80,7 +86,10 @@ impl Style {
             Style::Accent => format!("{ACCENT_ANSI}{BOLD}"),
             Style::Muted => DIM_FG_ANSI.into(),
             Style::Selected => format!("{FG_ANSI}\x1b[48;5;{SELECTION_BG}m"),
-            Style::SelectedMuted => format!("{DIM_FG_ANSI}\x1b[48;5;{SELECTION_BG}m"),
+            Style::Automatic => format!("{INFO_ANSI}{ITALIC}"),
+            Style::AutomaticSelected => {
+                format!("{INFO_ANSI}{ITALIC}\x1b[48;5;{SELECTION_BG}m")
+            }
             Style::Warning => WARN_ANSI.into(),
         }
     }
@@ -426,9 +435,9 @@ impl Form {
             frame.add(row, FIELD_COLUMN - 1, " ".repeat(available + 2), field_style);
             if index == 2 && value.is_empty() {
                 let placeholder_style = if active {
-                    Style::SelectedMuted
+                    Style::AutomaticSelected
                 } else {
-                    Style::Muted
+                    Style::Automatic
                 };
                 frame.addn(
                     row,
@@ -894,7 +903,7 @@ mod tests {
             .iter()
             .find(|draw| draw.row == 5 && draw.col == 12)
             .unwrap();
-        assert_eq!(placeholder.style, Style::SelectedMuted);
+        assert_eq!(placeholder.style, Style::AutomaticSelected);
         // Down wraps to Name; Up from Name wraps to Group; BackTab goes back up too.
         keys(&mut form, &[Key::Down]);
         assert_eq!(form.render(24, 80).cursor, Some((1, 15)));
@@ -916,7 +925,7 @@ mod tests {
             .into_iter()
             .find(|draw| draw.row == 5 && draw.col == 12)
             .unwrap();
-        assert_eq!(inactive_placeholder.style, Style::Muted);
+        assert_eq!(inactive_placeholder.style, Style::Automatic);
 
         keys(&mut form, &[Key::Up]);
         keys(&mut form, &typed("ops"));
