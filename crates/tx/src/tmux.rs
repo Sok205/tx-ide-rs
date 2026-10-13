@@ -276,6 +276,24 @@ impl Tmux {
         self.set_option(&exact_session_pane(name), "@tx_view", "1", false)
     }
 
+    /// A session-scoped user option on the session named exactly `name`.
+    pub fn session_option(&self, name: &str, option: &str) -> Option<String> {
+        self.show_option(&exact_session_pane(name), option)
+    }
+
+    pub fn set_session_option(
+        &self,
+        name: &str,
+        option: &str,
+        value: &str,
+    ) -> Result<(), TmuxError> {
+        self.set_option(&exact_session_pane(name), option, value, false)
+    }
+
+    pub fn unset_session_option(&self, name: &str, option: &str) {
+        self.unset_option(&exact_session_pane(name), option, false);
+    }
+
     pub fn is_view(&self, name: &str) -> bool {
         self.show_option(&exact_session_pane(name), "@tx_view")
             .as_deref()

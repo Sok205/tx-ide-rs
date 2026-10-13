@@ -182,9 +182,8 @@ impl Command for Timeline {
             )?;
             return Ok(0);
         }
-        let resident = (self.name == "_timeline-resident")
-            .then_some((self.deps.tmux.as_ref(), self.deps.env.actor()));
-        run::run(builder, days, window, resident)?;
+        let resident = (self.name == "_timeline-resident").then_some(self.deps.env.actor());
+        run::run(builder, days, window, &self.deps.tmux, resident)?;
         Ok(0)
     }
 }
@@ -237,7 +236,19 @@ impl Command for TimelineAttach {
             }
         };
         drop(lock);
-        Ok(self.0.tmux.attach_session(&session.id)?)
+        let tmux = &self.0.tmux;
+        let code = tmux.attach_session(&session.id)?;
+        // Enter in the resident: it left the target session id behind and detached us; this
+        // process runs on the outer client, so the focusing happens here.
+        if let Some(target) = tmux.session_option(&session.id, run::GOTO_OPTION) {
+            tmux.unset_session_option(&session.id, run::GOTO_OPTION);
+            if let Err(reason) = run::focus_session_pane(tmux, &target)
+                && let Some(client) = tmux.display_message("#{client_name}", None)
+            {
+                tmux.display_status(&client, &format!("timeline: {target}: {reason}"));
+            }
+        }
+        Ok(code)
     }
 }
 
