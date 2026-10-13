@@ -13,7 +13,8 @@
 -- "none" (COMMON alone), and spec.role is preselected.
 --
 -- Panels: [1] Name  [2] Tags  [3] Project  [4] Prompt  [5] Engine  [6] Model  [7] Effort
--- [8] Role. The form opens in insert mode on Name, and moving between panels keeps the mode.
+-- [8] Role. The form opens in normal mode on Name (i to type), and moving between panels keeps
+-- the mode.
 -- Tab / S-Tab step through the panels and 1-8 jump to one (normal mode); in a list the cursor
 -- line is the pick, so j/k or Up/Down choose, in either mode, wrapping at both ends. Project is
 -- a one-line field beside Tags showing the picked project: h/l, j/k or the arrows cycle through
@@ -428,7 +429,6 @@ function M.open()
   })
 
   focus(1)
-  vim.cmd("startinsert!")
 end
 
 return M
