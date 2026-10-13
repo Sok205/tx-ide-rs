@@ -4,17 +4,20 @@
 -- with the spec's path in $TX_NEW_AGENT_SPEC. Spawning writes the answers to spec.result as JSON
 -- and quits; cancelling quits without writing it.
 --
---   spec = { result, engines = { … }, models = { [engine] = { … } }, efforts = { [engine] = { … } },
+--   spec = { result, projects = { … }, project_paths = { [project] = path }, project,
+--            engines = { … }, models = { [engine] = { … } }, efforts = { [engine] = { … } },
 --            engine, effort, roles = { … }, role, tags_hint }
 --
--- Each model list starts with the engine's default, which is what the form preselects; the roles
--- start with "none" (COMMON alone), and spec.role is preselected.
+-- spec.project is preselected among the projects (the answers carry its path as cwd). Each model
+-- list starts with the engine's default, which is what the form preselects; the roles start with
+-- "none" (COMMON alone), and spec.role is preselected.
 --
--- Panels: [1] Name  [2] Tags  [3] Prompt  [4] Engine  [5] Model  [6] Effort  [7] Role. The form
--- opens in insert mode on Name, and moving between panels keeps the mode. Tab / S-Tab step
--- through the panels and 1-7 jump to one (normal mode); in a list the cursor line is the pick, so
--- j/k or the arrows choose, in either mode. Enter spawns from any panel; Esc leaves insert mode, and
--- Esc or q in normal mode cancels.
+-- Panels: [1] Name  [2] Tags  [3] Prompt  [4] Project  [5] Engine  [6] Model  [7] Effort
+-- [8] Role. The form opens in insert mode on Name, and moving between panels keeps the mode.
+-- Tab / S-Tab step through the panels and 1-8 jump to one (normal mode); in a list the cursor
+-- line is the pick, so j/k or the arrows choose, in either mode (a list longer than its panel
+-- scrolls). Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
+-- cancels. While Project is active the help line shows the picked path.
 
 local M = {}
 
@@ -26,7 +29,7 @@ local WARN = "#e0af68"
 local BORDER = "#3b4261"
 local SELECTION = "#303030"
 
-local HELP = " Tab next · 1-7 jump · j/k pick · Enter spawn · Esc cancel"
+local HELP = " Tab next · 1-8 jump · j/k pick · Enter spawn · Esc cancel"
 
 local function highlights()
   local set = vim.api.nvim_set_hl
@@ -56,13 +59,16 @@ function M.open()
 
   local namespace = vim.api.nvim_create_namespace("tx_new_agent")
   local picked = {
+    project = spec.project,
     engine = spec.engine,
     model = spec.models[spec.engine][1],
     effort = spec.effort,
     role = spec.role,
   }
   local function options(key)
-    if key == "engine" then
+    if key == "project" then
+      return spec.projects
+    elseif key == "engine" then
       return spec.engines
     elseif key == "role" then
       return spec.roles
@@ -70,13 +76,17 @@ function M.open()
     return spec[key .. "s"][picked.engine]
   end
 
-  -- Geometry: full-width text panels around a row of four lists; a help line under them.
+  -- Geometry: full-width text panels around a row of five lists; a help line under them. The
+  -- row is as tall as the longest engine-dependent list; a longer project list scrolls.
   local width = vim.o.columns - 2
-  local engine_width, effort_width, role_width = 15, 12, 12
+  local project_width, engine_width, effort_width, role_width = 12, 15, 12, 12
+  for _, project in ipairs(spec.projects) do
+    project_width = math.max(project_width, #project + 4)
+  end
   for _, role in ipairs(spec.roles) do
     role_width = math.max(role_width, #role + 4)
   end
-  local model_width = width - engine_width - effort_width - role_width - 6
+  local model_width = width - project_width - engine_width - effort_width - role_width - 8
   local list_height = math.max(#spec.engines, #spec.roles)
   for _, key in ipairs({ "models", "efforts" }) do
     for _, list in pairs(spec[key]) do
@@ -88,12 +98,20 @@ function M.open()
     { label = "Name", field = "name", row = 0, col = 0, width = width, height = 1 },
     { label = "Tags", field = "tags", row = 3, col = 0, width = width, height = 1, hint = spec.tags_hint },
     { label = "Prompt", field = "prompt", row = 6, col = 0, width = width, height = 4, wrap = true },
-    { label = "Engine", key = "engine", row = 12, col = 0, width = engine_width, height = list_height },
+    { label = "Project", key = "project", row = 12, col = 0, width = project_width, height = list_height },
+    {
+      label = "Engine",
+      key = "engine",
+      row = 12,
+      col = project_width + 2,
+      width = engine_width,
+      height = list_height,
+    },
     {
       label = "Model",
       key = "model",
       row = 12,
-      col = engine_width + 2,
+      col = project_width + engine_width + 4,
       width = model_width,
       height = list_height,
     },
@@ -101,7 +119,7 @@ function M.open()
       label = "Effort",
       key = "effort",
       row = 12,
-      col = engine_width + model_width + 4,
+      col = project_width + engine_width + model_width + 6,
       width = effort_width,
       height = list_height,
     },
@@ -109,7 +127,7 @@ function M.open()
       label = "Role",
       key = "role",
       row = 12,
-      col = engine_width + model_width + effort_width + 6,
+      col = project_width + engine_width + model_width + effort_width + 8,
       width = role_width,
       height = list_height,
     },
@@ -139,6 +157,13 @@ function M.open()
     vim.api.nvim_buf_add_highlight(help_buffer, namespace, group, 0, 0, -1)
   end
   say(HELP, "TxFormHelp")
+  local function help_for(panel)
+    if panel.key == "project" then
+      say(" " .. spec.project_paths[picked.project], "TxFormHelp")
+    else
+      say(HELP, "TxFormHelp")
+    end
+  end
 
   local function render_list(panel)
     local lines = {}
@@ -166,7 +191,9 @@ function M.open()
       return
     end
     picked[panel.key] = option
-    if panel.key == "engine" then
+    if panel.key == "project" then
+      help_for(panel)
+    elseif panel.key == "engine" then
       for _, key in ipairs({ "model", "effort" }) do
         if not vim.tbl_contains(options(key), picked[key]) then
           picked[key] = options(key)[1]
@@ -203,7 +230,7 @@ function M.open()
     vim.api.nvim_win_set_config(panel.window, { title = title(panel, true), title_pos = "left" })
     vim.wo[panel.window].winhighlight = "FloatBorder:TxFormBorderActive"
     vim.api.nvim_set_current_win(panel.window)
-    say(HELP, "TxFormHelp")
+    help_for(panel)
     vim.wo[panel.window].cursorline = panel.key ~= nil
     -- The mode carries over; in a text panel the cursor goes to the end of the text.
     if not panel.key then
@@ -227,6 +254,7 @@ function M.open()
       effort = picked.effort,
       role = picked.role,
       tags = text(panel_for("tags"), ","),
+      cwd = spec.project_paths[picked.project],
     }
     for _, field in ipairs({ "name", "prompt" }) do
       if answers[field] == "" then

@@ -1,12 +1,14 @@
 //! `_new-agent`: the prefix+n seam. In the key's popup (bin/tmux-new-agent) an nvim form
-//! (nvim/lua/tx-new-agent.lua) asks for the agent's name, prompt, engine, model, effort, role and
-//! tags,
-//! then this hands the spawn to a background
-//! `run-shell`, so the popup closes at once; the background half spawns the agent through the
-//! `spawn` verb and reports on the firing client's status line.
+//! (nvim/lua/tx-new-agent.lua) asks for the agent's name, prompt, project, engine, model, effort,
+//! role and tags, then this hands the spawn to a background `run-shell`, so the popup closes at
+//! once; the background half spawns the agent through the `spawn` verb and reports on the firing
+//! client's status line.
+//!
+//! The projects are `config.json`'s `projects` (preselected: `default_project`, else the first);
+//! without any, the firing pane's directory is the only choice.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::rc::{Rc, Weak};
 
@@ -20,7 +22,7 @@ use crate::engines::antigravity::AGY_MODEL_FAMILY;
 use crate::roles::role_names;
 use crate::service::SessionService;
 use crate::shlex::shlex_join;
-use crate::storage::Home;
+use crate::storage::{Config, Home, Projects};
 
 use super::common::{bin_tx, repo_root, split_tags};
 
@@ -66,7 +68,8 @@ pub struct NewAgent {
     pub commands: Weak<CommandTable>,
 }
 
-/// The form's answers, as nvim/lua/tx-new-agent.lua writes them.
+/// The form's answers, as nvim/lua/tx-new-agent.lua writes them; `cwd` is the picked project's
+/// path.
 #[derive(Deserialize)]
 struct Reply {
     name: String,
@@ -76,6 +79,7 @@ struct Reply {
     effort: String,
     role: String,
     tags: String,
+    cwd: String,
 }
 
 /// The form's answers.
@@ -87,6 +91,7 @@ struct Answers<'a> {
     effort: &'a str,
     role: &'a str,
     tags: &'a str,
+    cwd: &'a str,
 }
 
 impl Command for NewAgent {
@@ -94,24 +99,14 @@ impl Command for NewAgent {
         "_new-agent"
     }
     fn summary(&self) -> &'static str {
-        "Internal: prefix+n — ask for a new agent's name, prompt, engine, model, effort, role and \
-         tags in the popup, then spawn it in the background. Usage: _new-agent PANE CLIENT [NAME \
-         PROMPT ENGINE MODEL EFFORT ROLE TAGS]"
+        "Internal: prefix+n — ask for a new agent's name, prompt, project, engine, model, effort, \
+         role and tags in the popup, then spawn it in the background. Usage: _new-agent PANE \
+         CLIENT | _new-agent CLIENT NAME PROMPT ENGINE MODEL EFFORT ROLE TAGS CWD"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         match argv {
             [pane, client] => self.ask(pane, client),
-            [
-                pane,
-                client,
-                name,
-                prompt,
-                engine,
-                model,
-                effort,
-                role,
-                tags,
-            ] => {
+            [client, name, prompt, engine, model, effort, role, tags, cwd] => {
                 let answers = Answers {
                     name,
                     prompt,
@@ -120,12 +115,14 @@ impl Command for NewAgent {
                     effort,
                     role,
                     tags,
+                    cwd,
                 };
-                self.spawn(pane, client, &answers)
+                self.spawn(client, &answers)
             }
             _ => {
                 eprintln!(
-                    "usage: tx _new-agent PANE CLIENT [NAME PROMPT ENGINE MODEL EFFORT ROLE TAGS]"
+                    "usage: tx _new-agent PANE CLIENT | tx _new-agent CLIENT NAME PROMPT ENGINE \
+                     MODEL EFFORT ROLE TAGS CWD"
                 );
                 Ok(2)
             }
@@ -137,13 +134,21 @@ impl NewAgent {
     /// The popup half: fill the nvim form (Esc cancels), then hand the spawn to the server and
     /// exit.
     fn ask(&self, pane: &str, client: &str) -> Result<i32, BoxError> {
+        let tmux = self.service.tmux();
+        let projects = match self.projects(pane) {
+            Ok(projects) => projects,
+            Err(error) => {
+                tmux.display_status(client, &format!("prefix+n: {error}"));
+                return Ok(1);
+            }
+        };
         let directory = std::env::temp_dir().join(format!("tx-new-agent-{}", process::id()));
         fs::create_dir_all(&directory)?;
         let result = directory.join("answers.json");
         let spec = directory.join("spec.json");
         fs::write(
             &spec,
-            form_spec(&result, &role_names(&self.home)).to_string(),
+            form_spec(&result, &role_names(&self.home), &projects).to_string(),
         )?;
         // --clean: the form brings its own look, and no user config (dashboard, plugins) runs
         // before it. The module ships with this tx, so its `nvim/` leads the runtimepath.
@@ -174,6 +179,7 @@ impl NewAgent {
             effort,
             role,
             tags,
+            cwd,
         } = reply;
         // `run-shell` runs in the server's environment: bake the home into the command. Its
         // stdout would open in view mode and a nonzero exit would echo the whole command, so the
@@ -185,7 +191,6 @@ impl NewAgent {
             &home,
             &tx,
             "_new-agent",
-            pane,
             client,
             &name,
             &prompt,
@@ -194,25 +199,36 @@ impl NewAgent {
             &effort,
             &role,
             &tags,
+            &cwd,
         ]);
-        self.service
-            .tmux()
-            .run_shell_background(&format!("{command} >/dev/null 2>&1 || true"))?;
+        tmux.run_shell_background(&format!("{command} >/dev/null 2>&1 || true"))?;
         Ok(0)
     }
 
-    /// The background half: spawn in the pane's directory and report.
-    fn spawn(&self, pane: &str, client: &str, answers: &Answers) -> Result<i32, BoxError> {
-        let tmux = self.service.tmux();
-        let name = answers.name;
-        let cwd = tmux
+    /// The configured projects; without any, the firing pane's directory under its own name.
+    fn projects(&self, pane: &str) -> Result<Projects, BoxError> {
+        let home_dir = self.env.var("HOME").map(Path::new);
+        let configured = Config::load(&self.home.config_path())?.projects(home_dir)?;
+        if !configured.entries.is_empty() {
+            return Ok(configured);
+        }
+        let path = self
+            .service
+            .tmux()
             .display_message("#{pane_current_path}", Some(pane))
             .unwrap_or_default();
+        Ok(pane_project(&path))
+    }
+
+    /// The background half: spawn in the picked project and report.
+    fn spawn(&self, client: &str, answers: &Answers) -> Result<i32, BoxError> {
+        let tmux = self.service.tmux();
+        let name = answers.name;
         let Some(spawn) = self.commands.upgrade().and_then(|table| table.get("spawn")) else {
             tmux.display_status(client, "prefix+n: the spawn verb is disabled");
             return Ok(1);
         };
-        match spawn.run(&spawn_argv(answers, &cwd)) {
+        match spawn.run(&spawn_argv(answers)) {
             Ok(0) => {
                 tmux.display_status(client, &format!("spawned {name}"));
                 Ok(0)
@@ -229,9 +245,21 @@ impl NewAgent {
     }
 }
 
-/// The form's spec: the engines, each one's models (its default first) and efforts, the roles
-/// (none first), and what is preselected; `result` is where the answers go.
-fn form_spec(result: &Path, roles: &[String]) -> Value {
+/// The pane's directory as the one project, named after its last component.
+fn pane_project(path: &str) -> Projects {
+    let name = Path::new(path)
+        .file_name()
+        .map_or(path, |name| name.to_str().unwrap_or(path));
+    Projects {
+        entries: vec![(name.to_owned(), PathBuf::from(path))],
+        default: None,
+    }
+}
+
+/// The form's spec: the projects (names, their paths), the engines, each one's models (its
+/// default first) and efforts, the roles (none first), and what is preselected; `result` is where
+/// the answers go.
+fn form_spec(result: &Path, roles: &[String], projects: &Projects) -> Value {
     let by_engine = |table: &[(&str, &[&str])]| {
         table
             .iter()
@@ -246,8 +274,21 @@ fn form_spec(result: &Path, roles: &[String]) -> Value {
     } else {
         NO_ROLE
     };
+    let project_names: Vec<&str> = projects
+        .entries
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let project_paths: Map<String, Value> = projects
+        .entries
+        .iter()
+        .map(|(name, path)| (name.clone(), json!(path)))
+        .collect();
     json!({
         "result": result,
+        "projects": project_names,
+        "project_paths": project_paths,
+        "project": projects.default_name(),
         "engines": ENGINES,
         "models": by_engine(MODELS),
         "efforts": by_engine(EFFORTS),
@@ -267,8 +308,8 @@ fn read_reply(result: &Path) -> Result<Option<Reply>, BoxError> {
     Ok(Some(serde_json::from_str(&fs::read_to_string(result)?)?))
 }
 
-/// `tx spawn` for an engine worker in the pane's directory.
-fn spawn_argv(answers: &Answers, cwd: &str) -> Vec<String> {
+/// `tx spawn` for an engine worker in the picked project.
+fn spawn_argv(answers: &Answers) -> Vec<String> {
     let tags = if answers.tags.is_empty() {
         DEFAULT_TAG
     } else {
@@ -279,7 +320,7 @@ fn spawn_argv(answers: &Answers, cwd: &str) -> Vec<String> {
         "--tag",
         &clean_tags(tags),
         "--cwd",
-        cwd,
+        answers.cwd,
         "--engine",
         answers.engine,
         "--effort",
@@ -321,10 +362,27 @@ fn clean_tags(tags: &str) -> String {
 mod tests {
     use super::*;
 
+    fn two_projects() -> Projects {
+        Projects {
+            entries: vec![
+                ("tx".to_owned(), PathBuf::from("/u/code/tx")),
+                ("web".to_owned(), PathBuf::from("/srv/web")),
+            ],
+            default: Some("web".to_owned()),
+        }
+    }
+
     #[test]
     fn the_spec_preselects_claude_its_default_model_effort_3_and_developer() {
-        let spec = form_spec(Path::new("/t/answers.json"), &["DEVELOPER".to_owned()]);
+        let projects = two_projects();
+        let spec = form_spec(Path::new("/t/answers.json"), &["DEVELOPER".to_owned()], &projects);
         assert_eq!(spec["result"], "/t/answers.json");
+        assert_eq!(spec["projects"], json!(["tx", "web"]));
+        assert_eq!(
+            spec["project_paths"],
+            json!({"tx": "/u/code/tx", "web": "/srv/web"})
+        );
+        assert_eq!(spec["project"], "web");
         assert_eq!(spec["engines"], json!(["claude", "codex", "antigravity"]));
         assert_eq!(spec["engine"], "claude");
         assert_eq!(spec["models"]["claude"][0], "fable");
@@ -333,12 +391,30 @@ mod tests {
         assert_eq!(spec["effort"], "3");
         assert_eq!(spec["roles"], json!(["none", "DEVELOPER"]));
         assert_eq!(spec["role"], "DEVELOPER");
-        let without_developer = form_spec(Path::new("/t/answers.json"), &["REVIEWER".to_owned()]);
+        let without_developer = form_spec(
+            Path::new("/t/answers.json"),
+            &["REVIEWER".to_owned()],
+            &projects,
+        );
         assert_eq!(without_developer["role"], "none");
     }
 
     #[test]
-    fn spawns_an_engine_worker_in_the_pane_directory() {
+    fn the_pane_directory_stands_in_for_missing_projects() {
+        let projects = pane_project("/p/my proj");
+        assert_eq!(
+            projects.entries,
+            vec![("my proj".to_owned(), PathBuf::from("/p/my proj"))]
+        );
+        assert_eq!(projects.default_name(), Some("my proj"));
+        let spec = form_spec(Path::new("/t/answers.json"), &[], &projects);
+        assert_eq!(spec["projects"], json!(["my proj"]));
+        assert_eq!(spec["project"], "my proj");
+        assert_eq!(pane_project("/").entries[0].0, "/");
+    }
+
+    #[test]
+    fn spawns_an_engine_worker_in_the_picked_project() {
         let answers = Answers {
             name: "health",
             prompt: "add GET /health",
@@ -347,9 +423,10 @@ mod tests {
             effort: "4",
             role: "DEVELOPER",
             tags: "tutor, api",
+            cwd: "/p/my proj",
         };
         assert_eq!(
-            spawn_argv(&answers, "/p/my proj"),
+            spawn_argv(&answers),
             [
                 "health",
                 "--tag",
@@ -374,7 +451,7 @@ mod tests {
             tags: "",
             ..answers
         };
-        let argv = spawn_argv(&defaults, "/p");
+        let argv = spawn_argv(&defaults);
         assert!(!argv.contains(&"--model".to_owned()));
         assert!(!argv.contains(&"--role".to_owned()));
         assert_eq!(argv[2], DEFAULT_TAG);

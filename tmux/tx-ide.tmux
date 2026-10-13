@@ -33,7 +33,7 @@ KILL="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-kill-tx-sessio
 EDIT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-edit-tx-session"
 # Repo-relative fork popup for the focused session.
 FORK="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-fork-tx-session"
-# Repo-relative new-agent popup (name / tags / prompt).
+# Repo-relative new-agent popup (name / tags / prompt / project / engine / model / effort / role).
 NEW_AGENT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-new-agent"
 
 option() {

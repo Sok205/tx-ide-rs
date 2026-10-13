@@ -82,7 +82,7 @@ tx start --tutor                                       # boot tx-ide straight in
 ```
 
 Inside tmux: `prefix+t` opens the picker, `prefix+/` sends a line to the tx-assistant,
-`prefix+n` spawns a new agent (an nvim form in a popup: name, tags, prompt, engine / model / effort / role lists), `prefix+f` forks the active pane's session (a popup asks the name; blank = `<source>-fork`), `prefix+e` edits a session's name and tags, `prefix+X` kills the active pane's session,
+`prefix+n` spawns a new agent (an nvim form in a popup: name, tags, prompt, project / engine / model / effort / role lists; the projects come from `config.json`), `prefix+f` forks the active pane's session (a popup asks the name; blank = `<source>-fork`), `prefix+e` edits a session's name and tags, `prefix+X` kills the active pane's session,
 `prefix+s` lists sessions with their names and tags, and `C-h/j/k/l` move between panes
 (passing through into nvim and nested tmux).
 
@@ -127,6 +127,8 @@ transfer-encoding.
 ```json
 {
   "stuck_working_threshold_seconds": 600,
+  "projects": { "tx-ide": "~/code/tx-ide-rs", "web": "~/code/web" },
+  "default_project": "tx-ide",
   "sync": { "backend": "local", "path": "~/tx-archive" },
   "plugins": {
     "engine.antigravity": { "disabled": true },
@@ -137,6 +139,9 @@ transfer-encoding.
 
 - `stuck_working_threshold_seconds` — how long a `working` session may idle, with its pane no
   longer running the agent, before it is demoted to `idle` (default 600).
+- `projects` / `default_project` — the working directories `prefix+n` offers for a new agent
+  (name → path, `~` expands), with the one preselected (default: the first). Without any, the
+  key offers the firing pane's directory.
 - `sync` — the remote for `tx sync` (`local` with `path`, or `s3` with `bucket` / `prefix`).
 - `plugins` — switch components off. Entries: `engine.claude`, `engine.codex`,
   `engine.antigravity`, `verbs.home`, `verbs.sessions`, `verbs.listing`, `verbs.hooks`,
