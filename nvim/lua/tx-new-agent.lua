@@ -17,9 +17,9 @@
 -- Tab / S-Tab step through the panels and 1-8 jump to one (normal mode); in a list the cursor
 -- line is the pick, so j/k or Up/Down choose, in either mode, wrapping at both ends. Project is
 -- a one-line field beside Tags showing the picked project: h/l, j/k or the arrows cycle through
--- them, and while it is active the help line shows its path. Project and Model show the pick's
--- position in their footer (bottom right). Enter spawns from any panel; Esc leaves insert mode,
--- and Esc or q in normal mode cancels.
+-- them, and while it is active the help line shows its path. Titles are centred, and Project's
+-- and Model's carry the pick's position after the label (like <leader>ac's panels). Enter spawns
+-- from any panel; Esc leaves insert mode, and Esc or q in normal mode cancels.
 
 local M = {}
 
@@ -179,16 +179,14 @@ function M.open()
       end
     end
   end
-  -- The border text: the label as the title (left) and, on a counting panel, the pick's
-  -- position as the footer (right).
+  -- The centred title: the label and, on a counting panel, the pick's position after it.
   local function decoration(panel, is_active)
     local group = is_active and "TxFormTitleActive" or "TxFormTitle"
-    local config = { title = { { (" [%d] %s "):format(panel.number, panel.label), group } }, title_pos = "left" }
+    local text = (" [%d] %s "):format(panel.number, panel.label)
     if panel.counter then
-      config.footer = { { (" %s "):format(position(panel)), group } }
-      config.footer_pos = "right"
+      text = (" [%d] %s %s "):format(panel.number, panel.label, position(panel))
     end
-    return config
+    return { title = { { text, group } }, title_pos = "center" }
   end
 
   -- A one-line picker: the picked option between arrows; its position is in the title.
