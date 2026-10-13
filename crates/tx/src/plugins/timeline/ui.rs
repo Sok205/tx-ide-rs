@@ -1,6 +1,6 @@
 //! Drawing the timeline: axis, group bands, swimlanes, message arrows and the
 //! footer. The axis is anchored at now: the red `┃` carries the clock time, ticks to its left
-//! read as offsets from it (`-5m`, `-1h`, `-2d`). The canvas is a cell grid: `━` working (the agent holds the floor), `╌` idle
+//! read as offsets from it (`-5m`, `-1h`, `-2d`); nothing else is written on the axis. The canvas is a cell grid: `━` working (the agent holds the floor), `╌` idle
 //! (waiting for the human), `×` killed, red `┃` now;
 //! a working session has a `▸` in a one-column gutter beyond the time axis.
 //! a message is a green `•` on the sender's row, `┆` down/up, `▾`/`▴` on the receiver's row.
@@ -97,24 +97,6 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
     }
     let (day_row, tick_row, rule_row) = (axis.y, axis.y + 1, axis.y + 2);
     let header = Style::new().fg(Color::DarkGray);
-    buffer.set_stringn(
-        axis.x,
-        day_row,
-        "tx timeline",
-        usize::from(app.geometry.label_width),
-        header.add_modifier(Modifier::BOLD),
-    );
-    buffer.set_stringn(
-        axis.x,
-        tick_row,
-        format!(
-            "{} lanes · {} groups",
-            app.payload.lanes.len(),
-            app.payload.groups.len()
-        ),
-        usize::from(app.geometry.label_width),
-        header,
-    );
     for x in canvas.x..canvas.x + canvas.width {
         put(buffer, x, rule_row, "─", header);
     }
@@ -142,18 +124,10 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
             }
         }
     }
-    // day labels: the running day pins to the left edge until it ends
-    let mut last_day_end: i64 = -1;
+    // day boundaries: a heavy tick on the rule, no label — the offsets carry the distance
     for day in &app.payload.days {
         let column = app.column_of(day.offset);
-        let end_column = app
-            .column_of(day.offset + 1440.0)
-            .min(i64::from(canvas.width));
-        if end_column <= 0 || column >= i64::from(canvas.width) {
-            continue;
-        }
-        let start = column.max(0);
-        if column >= 0 {
+        if app.on_canvas(column) {
             put(
                 buffer,
                 canvas.x + column as u16,
@@ -161,18 +135,6 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
                 "┳",
                 header.add_modifier(Modifier::BOLD),
             );
-        }
-        let room = (end_column - start).max(0) as usize;
-        if start > last_day_end && room >= 3 {
-            let style = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
-            buffer.set_stringn(
-                canvas.x + start as u16,
-                day_row,
-                &day.label,
-                room.min(day.label.len()),
-                style,
-            );
-            last_day_end = start + day.label.len() as i64;
         }
     }
     draw_now_column(app, buffer, day_row, rule_row + 1, true);
