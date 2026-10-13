@@ -189,10 +189,10 @@ function M.open()
     return { { label, group }, { ("─"):rep(gap), "FloatBorder" }, { counter, group } }
   end
 
-  -- A one-line picker: the picked option between arrows; its position is in the title.
+  -- A one-line picker: the picked option between up / down arrows; its position is in the title.
   local function render_cycle(panel)
     vim.bo[panel.buffer].modifiable = true
-    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, { (" ‹ %s ›"):format(picked[panel.key]) })
+    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, { (" ↑ %s ↓"):format(picked[panel.key]) })
     vim.bo[panel.buffer].modifiable = false
     vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
     vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", 0, 0, -1)
