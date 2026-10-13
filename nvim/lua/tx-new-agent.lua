@@ -15,12 +15,14 @@
 -- Panels: [1] Name  [2] Tags  [3] Project  [4] Prompt  [5] Engine  [6] Model  [7] Effort
 -- [8] Role. The form opens in normal mode on Name (i to type), and moving between panels keeps
 -- the mode.
--- Tab / S-Tab step through the panels and 1-8 jump to one (normal mode); in a list the cursor
--- line is the pick, so j/k or Up/Down choose, in either mode, wrapping at both ends. Project is
--- a one-line field beside Tags showing the picked project: h/l, j/k or the arrows cycle through
--- them, and while it is active the help line shows its path. Titles are centred, and Project's
--- and Model's carry the pick's position after the label (like <leader>ac's panels). Enter spawns
--- from any panel; Esc leaves insert mode, and Esc or q in normal mode cancels.
+-- Tab / S-Tab step through the panels in either mode. In normal mode h/l step too, 1-8 jump to
+-- a panel, and on the text panels and Project j/k move to the panel below / above. In a list
+-- the cursor line is the pick, so j/k or Up/Down choose, in either mode, wrapping at both ends.
+-- Project is a one-line field beside Tags showing the picked project: Left/Right cycle through
+-- them in either mode, and while it is active the help line shows its path. Titles are centred,
+-- and Project's and Model's carry the pick's position after the label (like <leader>ac's
+-- panels). Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
+-- cancels.
 
 local M = {}
 
@@ -32,7 +34,7 @@ local WARN = "#e0af68"
 local BORDER = "#3b4261"
 local SELECTION = "#303030"
 
-local HELP = " Tab next · 1-8 jump · j/k pick · h/l project · Enter spawn · Esc cancel"
+local HELP = " h/l j/k move · 1-8 jump · i type · j/k pick · ←/→ project · Enter spawn · Esc cancel"
 
 local function highlights()
   local set = vim.api.nvim_set_hl
@@ -99,19 +101,41 @@ function M.open()
   end
 
   local panels = {
-    { label = "Name", field = "name", row = 0, col = 0, width = width, height = 1 },
-    { label = "Tags", field = "tags", row = 3, col = 0, width = tags_width, height = 1, hint = spec.tags_hint },
+    { label = "Name", field = "name", row = 0, col = 0, width = width, height = 1, above = "Engine", below = "Tags" },
+    {
+      label = "Tags",
+      field = "tags",
+      row = 3,
+      col = 0,
+      width = tags_width,
+      height = 1,
+      hint = spec.tags_hint,
+      above = "Name",
+      below = "Prompt",
+    },
     {
       label = "Project",
       key = "project",
       cycle = true,
       counter = true,
+      above = "Name",
+      below = "Prompt",
       row = 3,
       col = tags_width + 2,
       width = project_width,
       height = 1,
     },
-    { label = "Prompt", field = "prompt", row = 6, col = 0, width = width, height = 4, wrap = true },
+    {
+      label = "Prompt",
+      field = "prompt",
+      row = 6,
+      col = 0,
+      width = width,
+      height = 4,
+      wrap = true,
+      above = "Tags",
+      below = "Engine",
+    },
     { label = "Engine", key = "engine", row = 12, col = 0, width = engine_width, height = list_height },
     {
       label = "Model",
@@ -147,6 +171,13 @@ function M.open()
       end
     end
   end
+  local function panel_by_label(label)
+    for _, panel in ipairs(panels) do
+      if panel.label == label then
+        return panel
+      end
+    end
+  end
 
   local help_buffer = vim.api.nvim_create_buf(false, true)
   local help_window = vim.api.nvim_open_win(help_buffer, false, {
@@ -167,7 +198,7 @@ function M.open()
   local function help_for(panel)
     if panel.key == "project" then
       local path = vim.fn.fnamemodify(spec.project_paths[picked.project], ":~")
-      say(" h/l pick · Tab next · Enter spawn · " .. path, "TxFormHelp")
+      say(" ←/→ pick · h/l move · Enter spawn · " .. path, "TxFormHelp")
     else
       say(HELP, "TxFormHelp")
     end
@@ -373,17 +404,29 @@ function M.open()
       end)
     end
     map({ "n", "i" }, "<CR>", spawn)
+    -- Normal mode: h / l step through the panels; on a panel that is not a list, j / k move to
+    -- the one below / above.
+    map("n", "l", function()
+      focus(number % #panels + 1)
+    end)
+    map("n", "h", function()
+      focus((number - 2) % #panels + 1)
+    end)
+    if panel.below then
+      map("n", "j", function()
+        focus(panel_by_label(panel.below).number)
+      end)
+      map("n", "k", function()
+        focus(panel_by_label(panel.above).number)
+      end)
+    end
     if panel.cycle then
-      for _, keys in ipairs({ "j", "l", "<Down>", "<Right>" }) do
-        map({ "n", "i" }, keys, function()
-          cycle(panel, 1)
-        end)
-      end
-      for _, keys in ipairs({ "k", "h", "<Up>", "<Left>" }) do
-        map({ "n", "i" }, keys, function()
-          cycle(panel, -1)
-        end)
-      end
+      map({ "n", "i" }, "<Right>", function()
+        cycle(panel, 1)
+      end)
+      map({ "n", "i" }, "<Left>", function()
+        cycle(panel, -1)
+      end)
     elseif panel.key then
       -- The pick moves by one line, wrapping at both ends (in insert mode too: a list cannot
       -- take text).
