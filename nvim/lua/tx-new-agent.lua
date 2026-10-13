@@ -18,8 +18,8 @@
 -- line is the pick, so j/k or Up/Down choose, in either mode, wrapping at both ends. Project is
 -- a one-line field beside Tags showing the picked project: h/l, j/k or the arrows cycle through
 -- them, and while it is active the help line shows its path. Project and Model show the pick's
--- position in their titles. Enter spawns from any panel; Esc leaves insert mode, and Esc or q in
--- normal mode cancels.
+-- position in their footer (bottom right). Enter spawns from any panel; Esc leaves insert mode,
+-- and Esc or q in normal mode cancels.
 
 local M = {}
 
@@ -179,17 +179,16 @@ function M.open()
       end
     end
   end
-  -- The label on the left and, on a counting panel, the pick's position on the right, the
-  -- border drawn between them.
-  local function title(panel, is_active)
+  -- The border text: the label as the title (left) and, on a counting panel, the pick's
+  -- position as the footer (right).
+  local function decoration(panel, is_active)
     local group = is_active and "TxFormTitleActive" or "TxFormTitle"
-    local label = (" [%d] %s "):format(panel.number, panel.label)
-    if not panel.counter then
-      return { { label, group } }
+    local config = { title = { { (" [%d] %s "):format(panel.number, panel.label), group } }, title_pos = "left" }
+    if panel.counter then
+      config.footer = { { (" %s "):format(position(panel)), group } }
+      config.footer_pos = "right"
     end
-    local counter = (" %s "):format(position(panel))
-    local gap = panel.width - vim.fn.strdisplaywidth(label) - vim.fn.strdisplaywidth(counter)
-    return { { label, group }, { ("─"):rep(gap), "FloatBorder" }, { counter, group } }
+    return config
   end
 
   -- A one-line picker: the picked option between arrows; its position is in the title.
@@ -199,7 +198,7 @@ function M.open()
     vim.bo[panel.buffer].modifiable = false
     vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
     vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", 0, 0, -1)
-    vim.api.nvim_win_set_config(panel.window, { title = title(panel, panel.number == active), title_pos = "left" })
+    vim.api.nvim_win_set_config(panel.window, decoration(panel, panel.number == active))
   end
 
   local function cycle(panel, step)
@@ -231,7 +230,7 @@ function M.open()
     vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", picked_line - 1, 0, -1)
     vim.api.nvim_win_set_cursor(panel.window, { picked_line, 0 })
     if panel.counter then
-      vim.api.nvim_win_set_config(panel.window, { title = title(panel, panel.number == active), title_pos = "left" })
+      vim.api.nvim_win_set_config(panel.window, decoration(panel, panel.number == active))
     end
   end
 
@@ -268,12 +267,12 @@ function M.open()
 
   local function focus(number)
     local previous = panels[active]
-    vim.api.nvim_win_set_config(previous.window, { title = title(previous, false), title_pos = "left" })
+    vim.api.nvim_win_set_config(previous.window, decoration(previous, false))
     vim.wo[previous.window].winhighlight = "FloatBorder:TxFormBorder"
     vim.wo[previous.window].cursorline = false
     active = number
     local panel = panels[number]
-    vim.api.nvim_win_set_config(panel.window, { title = title(panel, true), title_pos = "left" })
+    vim.api.nvim_win_set_config(panel.window, decoration(panel, true))
     vim.wo[panel.window].winhighlight = "FloatBorder:TxFormBorderActive"
     vim.api.nvim_set_current_win(panel.window)
     help_for(panel)
@@ -319,17 +318,19 @@ function M.open()
   for number, panel in ipairs(panels) do
     panel.number = number
     panel.buffer = vim.api.nvim_create_buf(false, true)
-    panel.window = vim.api.nvim_open_win(panel.buffer, false, {
-      relative = "editor",
-      row = panel.row,
-      col = panel.col,
-      width = panel.width,
-      height = panel.height,
-      style = "minimal",
-      border = "rounded",
-      title = title(panel, false),
-      title_pos = "left",
-    })
+    panel.window = vim.api.nvim_open_win(
+      panel.buffer,
+      false,
+      vim.tbl_extend("error", decoration(panel, false), {
+        relative = "editor",
+        row = panel.row,
+        col = panel.col,
+        width = panel.width,
+        height = panel.height,
+        style = "minimal",
+        border = "rounded",
+      })
+    )
     vim.wo[panel.window].winhighlight = "FloatBorder:TxFormBorder"
     vim.wo[panel.window].wrap = panel.wrap or false
     vim.wo[panel.window].linebreak = panel.wrap or false
