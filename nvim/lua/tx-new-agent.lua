@@ -15,10 +15,11 @@
 -- Panels: [1] Name  [2] Tags  [3] Project  [4] Prompt  [5] Engine  [6] Model  [7] Effort
 -- [8] Role. The form opens in insert mode on Name, and moving between panels keeps the mode.
 -- Tab / S-Tab step through the panels and 1-8 jump to one (normal mode); in a list the cursor
--- line is the pick, so j/k or the arrows choose, in either mode. Project is a one-line field
--- beside Tags showing the picked project: h/l, j/k or the arrows cycle through them, and while
--- it is active the help line shows its path. Enter spawns from any panel; Esc leaves insert
--- mode, and Esc or q in normal mode cancels.
+-- line is the pick, so j/k or Up/Down choose, in either mode, wrapping at both ends. Project is
+-- a one-line field beside Tags showing the picked project: h/l, j/k or the arrows cycle through
+-- them, and while it is active the help line shows its path. Project and Model show the pick's
+-- position in their titles. Enter spawns from any panel; Esc leaves insert mode, and Esc or q in
+-- normal mode cancels.
 
 local M = {}
 
@@ -101,6 +102,7 @@ function M.open()
       label = "Project",
       key = "project",
       cycle = true,
+      counter = true,
       row = 3,
       col = tags_width + 2,
       width = project_width,
@@ -111,6 +113,7 @@ function M.open()
     {
       label = "Model",
       key = "model",
+      counter = true,
       row = 12,
       col = engine_width + 2,
       width = model_width,
@@ -176,11 +179,12 @@ function M.open()
       end
     end
   end
-  -- The label on the left; a picker's position on the right, the border drawn between them.
+  -- The label on the left and, on a counting panel, the pick's position on the right, the
+  -- border drawn between them.
   local function title(panel, is_active)
     local group = is_active and "TxFormTitleActive" or "TxFormTitle"
     local label = (" [%d] %s "):format(panel.number, panel.label)
-    if not panel.cycle then
+    if not panel.counter then
       return { { label, group } }
     end
     local counter = (" %s "):format(position(panel))
@@ -226,6 +230,9 @@ function M.open()
     vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
     vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", picked_line - 1, 0, -1)
     vim.api.nvim_win_set_cursor(panel.window, { picked_line, 0 })
+    if panel.counter then
+      vim.api.nvim_win_set_config(panel.window, { title = title(panel, panel.number == active), title_pos = "left" })
+    end
   end
 
   -- The cursor line is the pick; a new engine keeps the model and effort it offers, else its first.
@@ -375,9 +382,24 @@ function M.open()
         end)
       end
     elseif panel.key then
-      -- A list cannot take text: in insert mode j / k still move the pick.
-      map("i", "j", "<Down>")
-      map("i", "k", "<Up>")
+      -- The pick moves by one line, wrapping at both ends (in insert mode too: a list cannot
+      -- take text).
+      local function move(step)
+        local count = #options(panel.key)
+        local line = vim.api.nvim_win_get_cursor(panel.window)[1]
+        vim.api.nvim_win_set_cursor(panel.window, { (line - 1 + step) % count + 1, 0 })
+        pick_at_cursor(panel)
+      end
+      for _, keys in ipairs({ "j", "<Down>" }) do
+        map({ "n", "i" }, keys, function()
+          move(1)
+        end)
+      end
+      for _, keys in ipairs({ "k", "<Up>" }) do
+        map({ "n", "i" }, keys, function()
+          move(-1)
+        end)
+      end
     end
     map("n", "<Esc>", function()
       vim.cmd("qall!")
