@@ -2,7 +2,7 @@
 //! footer. The axis is anchored at now: the red `┃` carries the clock time, ticks to its left
 //! read as offsets from it (`-5m`, `-1h`, `-2d`). The canvas is a cell grid: `━` working (the agent holds the floor), `╌` idle
 //! (waiting for the human), `×` killed, red `┃` now;
-//! live sessions have a `▸` in a one-column gutter beyond the time axis.
+//! live sessions have a `▸` (working) or `▹` (idle) in a one-column gutter beyond the time axis.
 //! a message is a green `•` on the sender's row, `┆` down/up, `▾`/`▴` on the receiver's row.
 
 use ratatui::Frame;
@@ -380,13 +380,15 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
             );
         }
     }
+    // live marker past the now column: filled while working, hollow while idle
     let now_column = app.column_of(app.now);
     if lane.live && app.on_canvas(now_column) {
+        let marker = if lane.state == "working" { "▸" } else { "▹" };
         put(
             buffer,
             canvas.x + now_column as u16 + 1,
             y,
-            "▸",
+            marker,
             Style::new().fg(group_color).add_modifier(Modifier::BOLD),
         );
     }
