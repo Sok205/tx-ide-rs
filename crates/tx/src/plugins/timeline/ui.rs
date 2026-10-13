@@ -188,8 +188,11 @@ fn draw_now_column(app: &App, buffer: &mut Buffer, top: u16, bottom: u16, label:
         put(buffer, x, y, "┃", Style::new().fg(NOW));
     }
     if label {
-        // the clock time, right-aligned against the now column
-        let text = clock::clock_label(app.payload.timestamp(app.now));
+        // "now HH:MM", right-aligned against the now column
+        let text = format!(
+            "now {}",
+            clock::clock_label(app.payload.timestamp(app.now))
+        );
         let width = text.len() as u16;
         let label_x = x.saturating_sub(width).max(app.geometry.canvas.x);
         buffer.set_stringn(
