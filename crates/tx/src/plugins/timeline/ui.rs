@@ -2,7 +2,7 @@
 //! footer. The canvas is a cell grid: `━` working (the agent holds the floor), `╌` idle
 //! (waiting for the human), `×` killed, red `┃` now;
 //! live sessions have a `▸` in a one-column gutter beyond the time axis.
-//! a message is a green `●` on the sender's row, `│` down/up, `▼`/`▲` on the receiver's row.
+//! a message is a green `•` on the sender's row, `┆` down/up, `▾`/`▴` on the receiver's row.
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -361,8 +361,9 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     }
 }
 
-/// Peer messages, lane to lane: `●` where it left, a vertical line, `▼`/`▲` where it arrived.
-/// The selected message is amber; a bar the line crosses keeps its heavy horizontal (`┿`).
+/// Peer messages, lane to lane: `•` where it left, a dotted line, `▾`/`▴` where it arrived —
+/// small glyphs, plain weight, so the arrows sit under the bars rather than over them. The
+/// selected message is amber and bold; a bar the line crosses keeps its heavy horizontal (`┿`).
 fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>]) {
     let canvas = app.geometry.canvas;
     let mut ordered = app.messages();
@@ -380,16 +381,20 @@ fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>])
         let x = canvas.x + column as u16;
         let selected = app.message == Some(index);
         let color = if selected { AMBER } else { MESSAGE };
-        let style = Style::new().fg(color).add_modifier(Modifier::BOLD);
+        let style = if selected {
+            Style::new().fg(color).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(color)
+        };
         match edge.from.and_then(|from| lane_row[from]) {
             Some(from_row) if from_row != to_row => {
                 let (top, bottom) = (from_row.min(to_row), from_row.max(to_row));
                 for y in top + 1..bottom {
                     let crossing = symbol_at(buffer, x, y) == "━";
-                    put(buffer, x, y, if crossing { "┿" } else { "│" }, style);
+                    put(buffer, x, y, if crossing { "┿" } else { "┆" }, style);
                 }
-                put(buffer, x, from_row, "●", style);
-                let head = if from_row < to_row { "▼" } else { "▲" };
+                put(buffer, x, from_row, "•", style);
+                let head = if from_row < to_row { "▾" } else { "▴" };
                 put(buffer, x, to_row, head, style);
             }
             // a self-message, or a sender without a row: mark the arrival only
