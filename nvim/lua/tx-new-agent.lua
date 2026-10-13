@@ -12,12 +12,13 @@
 -- list starts with the engine's default, which is what the form preselects; the roles start with
 -- "none" (COMMON alone), and spec.role is preselected.
 --
--- Panels: [1] Name  [2] Tags  [3] Prompt  [4] Project  [5] Engine  [6] Model  [7] Effort
+-- Panels: [1] Name  [2] Tags  [3] Project  [4] Prompt  [5] Engine  [6] Model  [7] Effort
 -- [8] Role. The form opens in insert mode on Name, and moving between panels keeps the mode.
 -- Tab / S-Tab step through the panels and 1-8 jump to one (normal mode); in a list the cursor
--- line is the pick, so j/k or the arrows choose, in either mode (a list longer than its panel
--- scrolls). Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
--- cancels. While Project is active the help line shows the picked path.
+-- line is the pick, so j/k or the arrows choose, in either mode. Project is a one-line field
+-- beside Tags showing the picked project: j/k, h/l or the arrows cycle through them, and while
+-- it is active the help line shows its path. Enter spawns from any panel; Esc leaves insert
+-- mode, and Esc or q in normal mode cancels.
 
 local M = {}
 
@@ -76,17 +77,16 @@ function M.open()
     return spec[key .. "s"][picked.engine]
   end
 
-  -- Geometry: full-width text panels around a row of five lists; a help line under them. The
-  -- row is as tall as the longest engine-dependent list; a longer project list scrolls.
+  -- Geometry: full-width text panels (Tags shares its row with Project, which takes 40%) around
+  -- a row of four lists; a help line under them.
   local width = vim.o.columns - 2
-  local project_width, engine_width, effort_width, role_width = 12, 15, 12, 12
-  for _, project in ipairs(spec.projects) do
-    project_width = math.max(project_width, #project + 4)
-  end
+  local project_width = math.floor(width * 0.4)
+  local tags_width = width - project_width - 2
+  local engine_width, effort_width, role_width = 15, 12, 12
   for _, role in ipairs(spec.roles) do
     role_width = math.max(role_width, #role + 4)
   end
-  local model_width = width - project_width - engine_width - effort_width - role_width - 8
+  local model_width = width - engine_width - effort_width - role_width - 6
   local list_height = math.max(#spec.engines, #spec.roles)
   for _, key in ipairs({ "models", "efforts" }) do
     for _, list in pairs(spec[key]) do
@@ -96,22 +96,23 @@ function M.open()
 
   local panels = {
     { label = "Name", field = "name", row = 0, col = 0, width = width, height = 1 },
-    { label = "Tags", field = "tags", row = 3, col = 0, width = width, height = 1, hint = spec.tags_hint },
-    { label = "Prompt", field = "prompt", row = 6, col = 0, width = width, height = 4, wrap = true },
-    { label = "Project", key = "project", row = 12, col = 0, width = project_width, height = list_height },
+    { label = "Tags", field = "tags", row = 3, col = 0, width = tags_width, height = 1, hint = spec.tags_hint },
     {
-      label = "Engine",
-      key = "engine",
-      row = 12,
-      col = project_width + 2,
-      width = engine_width,
-      height = list_height,
+      label = "Project",
+      key = "project",
+      cycle = true,
+      row = 3,
+      col = tags_width + 2,
+      width = project_width,
+      height = 1,
     },
+    { label = "Prompt", field = "prompt", row = 6, col = 0, width = width, height = 4, wrap = true },
+    { label = "Engine", key = "engine", row = 12, col = 0, width = engine_width, height = list_height },
     {
       label = "Model",
       key = "model",
       row = 12,
-      col = project_width + engine_width + 4,
+      col = engine_width + 2,
       width = model_width,
       height = list_height,
     },
@@ -119,7 +120,7 @@ function M.open()
       label = "Effort",
       key = "effort",
       row = 12,
-      col = project_width + engine_width + model_width + 6,
+      col = engine_width + model_width + 4,
       width = effort_width,
       height = list_height,
     },
@@ -127,7 +128,7 @@ function M.open()
       label = "Role",
       key = "role",
       row = 12,
-      col = project_width + engine_width + model_width + effort_width + 8,
+      col = engine_width + model_width + effort_width + 6,
       width = role_width,
       height = list_height,
     },
@@ -165,6 +166,36 @@ function M.open()
     end
   end
 
+  -- A one-line picker: the picked option between arrows, and its place in the options.
+  local function render_cycle(panel)
+    local choices = options(panel.key)
+    local index = 1
+    for line, option in ipairs(choices) do
+      if option == picked[panel.key] then
+        index = line
+      end
+    end
+    vim.bo[panel.buffer].modifiable = true
+    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, {
+      (" ‹ %s ›  %d/%d"):format(picked[panel.key], index, #choices),
+    })
+    vim.bo[panel.buffer].modifiable = false
+    vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
+    vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", 0, 0, -1)
+  end
+
+  local function cycle(panel, step)
+    local choices = options(panel.key)
+    for index, option in ipairs(choices) do
+      if option == picked[panel.key] then
+        picked[panel.key] = choices[(index - 1 + step) % #choices + 1]
+        break
+      end
+    end
+    render_cycle(panel)
+    help_for(panel)
+  end
+
   local function render_list(panel)
     local lines = {}
     local picked_line = 1
@@ -191,9 +222,7 @@ function M.open()
       return
     end
     picked[panel.key] = option
-    if panel.key == "project" then
-      help_for(panel)
-    elseif panel.key == "engine" then
+    if panel.key == "engine" then
       for _, key in ipairs({ "model", "effort" }) do
         if not vim.tbl_contains(options(key), picked[key]) then
           picked[key] = options(key)[1]
@@ -231,7 +260,7 @@ function M.open()
     vim.wo[panel.window].winhighlight = "FloatBorder:TxFormBorderActive"
     vim.api.nvim_set_current_win(panel.window)
     help_for(panel)
-    vim.wo[panel.window].cursorline = panel.key ~= nil
+    vim.wo[panel.window].cursorline = panel.key ~= nil and not panel.cycle
     -- The mode carries over; in a text panel the cursor goes to the end of the text.
     if not panel.key then
       local last = vim.api.nvim_buf_line_count(panel.buffer)
@@ -287,7 +316,9 @@ function M.open()
     vim.wo[panel.window].winhighlight = "FloatBorder:TxFormBorder"
     vim.wo[panel.window].wrap = panel.wrap or false
     vim.wo[panel.window].linebreak = panel.wrap or false
-    if panel.key then
+    if panel.cycle then
+      render_cycle(panel)
+    elseif panel.key then
       render_list(panel)
       vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
         buffer = panel.buffer,
@@ -322,7 +353,18 @@ function M.open()
       end)
     end
     map({ "n", "i" }, "<CR>", spawn)
-    if panel.key then
+    if panel.cycle then
+      for _, keys in ipairs({ "j", "l", "<Down>", "<Right>" }) do
+        map({ "n", "i" }, keys, function()
+          cycle(panel, 1)
+        end)
+      end
+      for _, keys in ipairs({ "k", "h", "<Up>", "<Left>" }) do
+        map({ "n", "i" }, keys, function()
+          cycle(panel, -1)
+        end)
+      end
+    elseif panel.key then
       -- A list cannot take text: in insert mode j / k still move the pick.
       map("i", "j", "<Down>")
       map("i", "k", "<Up>")
