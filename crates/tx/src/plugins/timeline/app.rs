@@ -15,8 +15,8 @@ use super::model::{Edge, EdgeKind, Lane, Payload};
 pub const ZOOM_LEVELS: [f64; 12] = [
     0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0,
 ];
-/// At or below this many minutes per column the fine segment tier (`fsegs`, > 10 min idle)
-/// is drawn — the HTML view's 60 px/h switch.
+/// At or below this many minutes per column the exact turn spans (`work`) are drawn instead of
+/// the coarse 3 h-gap segments — the HTML view's 60 px/h switch.
 pub const FINE_TIER_MAX: f64 = 10.0;
 /// The default rolling observation window: the last 4.5 h, glued to now (`--last` overrides).
 pub const DEFAULT_WINDOW_MIN: f64 = 270.0;
@@ -141,7 +141,7 @@ impl App {
 
     pub fn segments<'a>(&self, lane: &'a Lane) -> &'a [(f64, f64)] {
         if self.uses_fine_tier() {
-            &lane.fsegs
+            &lane.work
         } else {
             &lane.segs
         }
@@ -636,6 +636,7 @@ mod tests {
             b,
             segs: vec![(a, b)],
             fsegs: vec![(a, b)],
+            work: vec![(a, b)],
             events: Vec::new(),
             rows: Vec::new(),
         }

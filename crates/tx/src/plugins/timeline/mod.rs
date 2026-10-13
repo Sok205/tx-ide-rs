@@ -9,5 +9,6 @@ pub mod metadata;
 pub mod model;
 pub mod rows;
 pub mod run;
+pub mod turns;
 pub mod ui;
 pub mod verbs;

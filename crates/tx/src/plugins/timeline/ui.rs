@@ -1,5 +1,6 @@
 //! Drawing the timeline: axis, group bands, swimlanes, message arrows and the
-//! footer. The canvas is a cell grid: `━` working, `╌` idle, `×` killed, red `┃` now;
+//! footer. The canvas is a cell grid: `━` working (the agent holds the floor), `╌` idle
+//! (waiting for the human), `×` killed, red `┃` now;
 //! live sessions have a `▸` in a one-column gutter beyond the time axis.
 //! a message is a green `●` on the sender's row, `│` down/up, `▼`/`▲` on the receiver's row.
 
