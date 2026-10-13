@@ -1,5 +1,6 @@
 //! Drawing the timeline: axis, group bands, swimlanes, message arrows and the
-//! footer. The canvas is a cell grid: `━` working (the agent holds the floor), `╌` idle
+//! footer. The axis is anchored at now: the red `┃` carries the clock time, ticks to its left
+//! read as offsets from it (`-5m`, `-1h`, `-2d`). The canvas is a cell grid: `━` working (the agent holds the floor), `╌` idle
 //! (waiting for the human), `×` killed, red `┃` now;
 //! live sessions have a `▸` in a one-column gutter beyond the time axis.
 //! a message is a green `•` on the sender's row, `┆` down/up, `▾`/`▴` on the receiver's row.
@@ -78,7 +79,7 @@ fn canvas_columns(app: &App) -> impl Iterator<Item = (u16, f64)> + '_ {
     (0..canvas.width).map(move |offset| (canvas.x + offset, app.minute_at(i64::from(offset))))
 }
 
-/// Tick spacing: the smallest step that leaves room for an `HH:MM` label.
+/// Tick spacing: the smallest step that leaves room for an offset label.
 fn tick_step_minutes(minutes_per_column: f64) -> f64 {
     [
         1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 180.0, 360.0, 720.0, 1440.0,
@@ -117,17 +118,27 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
     for x in canvas.x..canvas.x + canvas.width {
         put(buffer, x, rule_row, "─", header);
     }
+    // ticks every `step` minutes back from now; the now column itself carries the clock
     let step = tick_step_minutes(app.minutes_per_column());
     let mut last_label_end: i64 = -1;
     for (x, minute) in canvas_columns(app) {
         let next = app.minute_at(i64::from(x - canvas.x) + 1);
-        let tick = (minute / step).ceil() * step;
-        if tick >= minute && tick < next && tick >= 0.0 {
+        let age = app.now - minute;
+        let steps_back = (age / step).floor();
+        let tick = app.now - steps_back * step;
+        if steps_back >= 1.0 && tick >= minute && tick < next {
             put(buffer, x, rule_row, "┬", header);
-            let label = clock::clock_label(app.payload.timestamp(tick));
-            if i64::from(x) > last_label_end && x + 5 <= canvas.x + canvas.width {
-                buffer.set_stringn(x, tick_row, &label, 5, Style::new().fg(Color::Gray));
-                last_label_end = i64::from(x) + 5;
+            let label = age_label(steps_back * step);
+            let width = label.len() as u16;
+            if i64::from(x) > last_label_end && x + width <= canvas.x + canvas.width {
+                buffer.set_stringn(
+                    x,
+                    tick_row,
+                    &label,
+                    usize::from(width),
+                    Style::new().fg(Color::Gray),
+                );
+                last_label_end = i64::from(x + width);
             }
         }
     }
@@ -177,14 +188,31 @@ fn draw_now_column(app: &App, buffer: &mut Buffer, top: u16, bottom: u16, label:
         put(buffer, x, y, "┃", Style::new().fg(NOW));
     }
     if label {
-        let label_x = x.min(app.geometry.canvas.x + app.geometry.canvas.width.saturating_sub(3));
+        // the clock time, right-aligned against the now column
+        let text = clock::clock_label(app.payload.timestamp(app.now));
+        let width = text.len() as u16;
+        let label_x = x.saturating_sub(width).max(app.geometry.canvas.x);
         buffer.set_stringn(
             label_x,
             top,
-            "now",
-            usize::from(app.geometry.canvas.width.min(3)),
+            &text,
+            usize::from(width),
             Style::new().fg(NOW).add_modifier(Modifier::BOLD),
         );
+    }
+}
+
+/// An offset back from now as a tick label: `-5m`, `-1h`, `-1h30`, `-2d`, `-1d6h`.
+fn age_label(minutes: f64) -> String {
+    let minutes = minutes.round() as i64;
+    let (days, rest) = (minutes / 1440, minutes % 1440);
+    let (hours, rest) = (rest / 60, rest % 60);
+    match (days, hours, rest) {
+        (0, 0, minutes) => format!("-{minutes}m"),
+        (0, hours, 0) => format!("-{hours}h"),
+        (0, hours, minutes) => format!("-{hours}h{minutes:02}"),
+        (days, 0, _) => format!("-{days}d"),
+        (days, hours, _) => format!("-{days}d{hours}h"),
     }
 }
 
@@ -447,4 +475,18 @@ pub fn buffer_text(buffer: &Buffer) -> String {
         lines.push(line.trim_end().to_owned());
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn age_labels() {
+        assert_eq!(age_label(5.0), "-5m");
+        assert_eq!(age_label(60.0), "-1h");
+        assert_eq!(age_label(90.0), "-1h30");
+        assert_eq!(age_label(1440.0), "-1d");
+        assert_eq!(age_label(1440.0 + 360.0), "-1d6h");
+    }
 }
