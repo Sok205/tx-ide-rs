@@ -224,10 +224,12 @@ function M.open()
     return { title = { { text, group } }, title_pos = "center" }
   end
 
-  -- A one-line picker: the picked option between arrows; its position is in the title.
+  -- A one-line picker: the picked option between arrows, centred; its position is in the title.
   local function render_cycle(panel)
+    local text = ("‹ %s ›"):format(picked[panel.key])
+    local margin = math.floor((panel.width - vim.fn.strdisplaywidth(text)) / 2)
     vim.bo[panel.buffer].modifiable = true
-    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, { (" ‹ %s ›"):format(picked[panel.key]) })
+    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, { (" "):rep(margin) .. text })
     vim.bo[panel.buffer].modifiable = false
     vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
     vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", 0, 0, -1)
