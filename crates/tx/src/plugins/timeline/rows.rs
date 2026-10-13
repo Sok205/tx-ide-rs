@@ -239,7 +239,7 @@ pub fn tool_line(name: &str, detail: &str) -> String {
     }
 }
 
-fn iso_timestamp(value: Option<&Value>) -> Option<f64> {
+pub(super) fn iso_timestamp(value: Option<&Value>) -> Option<f64> {
     let text = value?.as_str()?;
     fromisoformat_timestamp(&text.replace('Z', "+00:00"))
 }

@@ -4,7 +4,7 @@
 //! - lanes: session records are MERGED when they share a transcript path (resume chains
 //!   re-record the same conversation under a new record id).
 //! - segments: activity runs split on > `SEG_GAP_MIN` minutes of silence (`FSEG_GAP_MIN` for the
-//!   fine tier the view picks when zoomed in).
+//!   reference's fine tier; the view draws exact turn spans — [`super::turns`] — when zoomed in).
 //! - events: `u` rows (burst-capped per minute) + milestone tool calls.
 //! - edges: peer-message envelopes and spawn / resume parentage, lane to lane.
 //!
@@ -23,6 +23,7 @@ use super::cache::TranscriptCache;
 use super::clock;
 use super::metadata::Metadata;
 use super::rows::{BLURB_CAP, EV_TEXT, Kind, Row, cap, milestone_label, peer_parts};
+use super::turns::Turns;
 use crate::artifact::Artifact;
 use crate::artifact_store::ArtifactStore;
 use crate::engines::claude::{BUNDLE_TRANSCRIPT_NAME, bundle_transcript_path};
@@ -36,6 +37,9 @@ pub const ASSISTANT_NAME: &str = "tx-assistant";
 pub const SEG_GAP_MIN: f64 = 180.0;
 pub const FSEG_GAP_MIN: f64 = 10.0;
 pub const BURST_PER_MIN: usize = 4;
+/// An unclosed turn (a crash, a thinking-only final message) counts as working for at most this
+/// long after the transcript's last entry.
+pub const HOLD_CAP_S: f64 = 900.0;
 pub const CREATE_MATCH_S: f64 = 180.0;
 pub const DEFAULT_DAYS: f64 = 14.0;
 pub const ORDER_FILE: &str = "timeline.group-order.json";
@@ -113,6 +117,9 @@ pub struct Lane {
     pub b: f64,
     pub segs: Vec<(f64, f64)>,
     pub fsegs: Vec<(f64, f64)>,
+    /// Exact turn spans (the agent held the floor), minutes, merged across the lane's
+    /// transcripts; a live turn runs to `now`. Not in the reference payload.
+    pub work: Vec<(f64, f64)>,
     pub events: Vec<Event>,
     /// Every parsed row, time-sorted; epoch seconds.
     pub rows: Vec<Row>,
@@ -210,6 +217,40 @@ impl Payload {
             "edges": edges,
         })
     }
+}
+
+/// The lane's turn spans in window minutes: open turns run to `end` (now, or the kill) but no
+/// further than `HOLD_CAP_S` past the transcript's last entry; overlapping spans from a resume
+/// chain are merged.
+fn work_spans(
+    turns: &[Turns],
+    end: f64,
+    now: f64,
+    minutes: &impl Fn(f64) -> f64,
+) -> Vec<(f64, f64)> {
+    let mut spans: Vec<(f64, f64)> = Vec::new();
+    for turn in turns {
+        spans.extend_from_slice(&turn.spans);
+        if let Some(start) = turn.open {
+            let close = end.min(turn.last_at + HOLD_CAP_S).min(now);
+            if close > start {
+                spans.push((start, close));
+            }
+        }
+    }
+    spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut merged: Vec<(f64, f64)> = Vec::new();
+    for (start, close) in spans {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(close),
+            _ => merged.push((start, close)),
+        }
+    }
+    merged
+        .into_iter()
+        .filter(|(_, close)| minutes(*close) >= 0.0)
+        .map(|(start, close)| (round2(minutes(start).max(0.0)), round2(minutes(close))))
+        .collect()
 }
 
 /// xterm-256 index → `#rrggbb` (the reference's `_cube_to_hex`).
@@ -370,19 +411,22 @@ impl Builder {
         seeds
     }
 
-    /// All parsed rows for a lane's merged records, time-sorted, paths deduplicated.
-    fn lane_rows(&mut self, seed: &LaneSeed) -> Vec<Row> {
+    /// All parsed rows for a lane's merged records, time-sorted, paths deduplicated; and the
+    /// turn spans of the same transcripts.
+    fn lane_rows(&mut self, seed: &LaneSeed) -> (Vec<Row>, Vec<Turns>) {
         let mut rows = Vec::new();
+        let mut turns = Vec::new();
         let mut seen = HashSet::new();
         for record in &seed.records {
             for path in self.transcript_paths(record) {
                 if seen.insert(path.clone()) {
                     rows.extend_from_slice(self.cache.rows(&path));
+                    turns.extend(self.cache.turns(&path).cloned());
                 }
             }
         }
         rows.sort_by(|left, right| left.at.total_cmp(&right.at));
-        rows
+        (rows, turns)
     }
 
     pub fn build(&mut self, days: f64, now: f64) -> Payload {
@@ -416,11 +460,11 @@ impl Builder {
         let mut lanes: Vec<Lane> = Vec::new();
         let mut lane_peers: Vec<Vec<(f64, String, String)>> = Vec::new();
         let mut spawns: Vec<(f64, String, usize, EdgeKind)> = Vec::new();
-        let mut seed_rows: Vec<Vec<Row>> = Vec::new();
+        let mut seed_rows: Vec<(Vec<Row>, Vec<Turns>)> = Vec::new();
         for seed in &seeds {
             seed_rows.push(self.lane_rows(seed));
         }
-        for (seed, rows) in seeds.iter().zip(seed_rows) {
+        for (seed, (rows, turns)) in seeds.iter().zip(seed_rows) {
             let records = &seed.records;
             let tags: HashSet<&str> = records
                 .iter()
@@ -490,6 +534,7 @@ impl Builder {
             if fsegs.is_empty() {
                 fsegs.push((0.0, 1.0));
             }
+            let work = work_spans(&turns, kill.unwrap_or(now), now, &minutes);
 
             let mut events = Vec::new();
             let mut per_minute: HashMap<i64, usize> = HashMap::new();
@@ -653,6 +698,7 @@ impl Builder {
                 b: round2(minutes(times[times.len() - 1])),
                 segs,
                 fsegs,
+                work,
                 events,
                 rows,
             });

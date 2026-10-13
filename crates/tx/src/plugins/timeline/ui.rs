@@ -1,7 +1,9 @@
 //! Drawing the timeline: axis, group bands, swimlanes, message arrows and the
-//! footer. The canvas is a cell grid: `━` working, `╌` idle, `×` killed, red `┃` now;
-//! live sessions have a `▸` in a one-column gutter beyond the time axis.
-//! a message is a green `●` on the sender's row, `│` down/up, `▼`/`▲` on the receiver's row.
+//! footer. The axis is anchored at now: the red `┃` carries the clock time, ticks to its left
+//! read as offsets from it (`-5m`, `-1h`, `-2d`); nothing else is written on the axis. The canvas is a cell grid: `━` working (the agent holds the floor), `╌` idle
+//! (waiting for the human), `×` killed, red `┃` now;
+//! a working session has a `▸` in a one-column gutter beyond the time axis.
+//! a message is a green `•` on the sender's row, `┆` down/up, `▾`/`▴` on the receiver's row.
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -77,7 +79,7 @@ fn canvas_columns(app: &App) -> impl Iterator<Item = (u16, f64)> + '_ {
     (0..canvas.width).map(move |offset| (canvas.x + offset, app.minute_at(i64::from(offset))))
 }
 
-/// Tick spacing: the smallest step that leaves room for an `HH:MM` label.
+/// Tick spacing: the smallest step that leaves room for an offset label.
 fn tick_step_minutes(minutes_per_column: f64) -> f64 {
     [
         1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 180.0, 360.0, 720.0, 1440.0,
@@ -95,53 +97,37 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
     }
     let (day_row, tick_row, rule_row) = (axis.y, axis.y + 1, axis.y + 2);
     let header = Style::new().fg(Color::DarkGray);
-    buffer.set_stringn(
-        axis.x,
-        day_row,
-        "tx timeline",
-        usize::from(app.geometry.label_width),
-        header.add_modifier(Modifier::BOLD),
-    );
-    buffer.set_stringn(
-        axis.x,
-        tick_row,
-        format!(
-            "{} lanes · {} groups",
-            app.payload.lanes.len(),
-            app.payload.groups.len()
-        ),
-        usize::from(app.geometry.label_width),
-        header,
-    );
     for x in canvas.x..canvas.x + canvas.width {
         put(buffer, x, rule_row, "─", header);
     }
+    // ticks every `step` minutes back from now; the now column itself carries the clock
     let step = tick_step_minutes(app.minutes_per_column());
     let mut last_label_end: i64 = -1;
     for (x, minute) in canvas_columns(app) {
         let next = app.minute_at(i64::from(x - canvas.x) + 1);
-        let tick = (minute / step).ceil() * step;
-        if tick >= minute && tick < next && tick >= 0.0 {
+        let age = app.now - minute;
+        let steps_back = (age / step).floor();
+        let tick = app.now - steps_back * step;
+        if steps_back >= 1.0 && tick >= minute && tick < next {
             put(buffer, x, rule_row, "┬", header);
-            let label = clock::clock_label(app.payload.timestamp(tick));
-            if i64::from(x) > last_label_end && x + 5 <= canvas.x + canvas.width {
-                buffer.set_stringn(x, tick_row, &label, 5, Style::new().fg(Color::Gray));
-                last_label_end = i64::from(x) + 5;
+            let label = age_label(steps_back * step);
+            let width = label.len() as u16;
+            if i64::from(x) > last_label_end && x + width <= canvas.x + canvas.width {
+                buffer.set_stringn(
+                    x,
+                    tick_row,
+                    &label,
+                    usize::from(width),
+                    Style::new().fg(Color::Gray),
+                );
+                last_label_end = i64::from(x + width);
             }
         }
     }
-    // day labels: the running day pins to the left edge until it ends
-    let mut last_day_end: i64 = -1;
+    // day boundaries: a heavy tick on the rule, no label — the offsets carry the distance
     for day in &app.payload.days {
         let column = app.column_of(day.offset);
-        let end_column = app
-            .column_of(day.offset + 1440.0)
-            .min(i64::from(canvas.width));
-        if end_column <= 0 || column >= i64::from(canvas.width) {
-            continue;
-        }
-        let start = column.max(0);
-        if column >= 0 {
+        if app.on_canvas(column) {
             put(
                 buffer,
                 canvas.x + column as u16,
@@ -149,18 +135,6 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
                 "┳",
                 header.add_modifier(Modifier::BOLD),
             );
-        }
-        let room = (end_column - start).max(0) as usize;
-        if start > last_day_end && room >= 3 {
-            let style = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
-            buffer.set_stringn(
-                canvas.x + start as u16,
-                day_row,
-                &day.label,
-                room.min(day.label.len()),
-                style,
-            );
-            last_day_end = start + day.label.len() as i64;
         }
     }
     draw_now_column(app, buffer, day_row, rule_row + 1, true);
@@ -176,14 +150,34 @@ fn draw_now_column(app: &App, buffer: &mut Buffer, top: u16, bottom: u16, label:
         put(buffer, x, y, "┃", Style::new().fg(NOW));
     }
     if label {
-        let label_x = x.min(app.geometry.canvas.x + app.geometry.canvas.width.saturating_sub(3));
+        // "now HH:MM", right-aligned against the now column
+        let text = format!(
+            "now {}",
+            clock::clock_label(app.payload.timestamp(app.now))
+        );
+        let width = text.len() as u16;
+        let label_x = x.saturating_sub(width).max(app.geometry.canvas.x);
         buffer.set_stringn(
             label_x,
             top,
-            "now",
-            usize::from(app.geometry.canvas.width.min(3)),
+            &text,
+            usize::from(width),
             Style::new().fg(NOW).add_modifier(Modifier::BOLD),
         );
+    }
+}
+
+/// An offset back from now as a tick label: `-5m`, `-1h`, `-1h30`, `-2d`, `-1d6h`.
+fn age_label(minutes: f64) -> String {
+    let minutes = minutes.round() as i64;
+    let (days, rest) = (minutes / 1440, minutes % 1440);
+    let (hours, rest) = (rest / 60, rest % 60);
+    match (days, hours, rest) {
+        (0, 0, minutes) => format!("-{minutes}m"),
+        (0, hours, 0) => format!("-{hours}h"),
+        (0, hours, minutes) => format!("-{hours}h{minutes:02}"),
+        (days, 0, _) => format!("-{days}d"),
+        (days, hours, _) => format!("-{days}d{hours}h"),
     }
 }
 
@@ -348,8 +342,9 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
             );
         }
     }
+    // working marker past the now column; an idle lane shows nothing there
     let now_column = app.column_of(app.now);
-    if lane.live && app.on_canvas(now_column) {
+    if lane.live && lane.state == "working" && app.on_canvas(now_column) {
         put(
             buffer,
             canvas.x + now_column as u16 + 1,
@@ -360,8 +355,9 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     }
 }
 
-/// Peer messages, lane to lane: `●` where it left, a vertical line, `▼`/`▲` where it arrived.
-/// The selected message is amber; a bar the line crosses keeps its heavy horizontal (`┿`).
+/// Peer messages, lane to lane: `•` where it left, a dotted line, `▾`/`▴` where it arrived —
+/// small glyphs, plain weight, so the arrows sit under the bars rather than over them. The
+/// selected message is amber and bold; a bar the line crosses keeps its heavy horizontal (`┿`).
 fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>]) {
     let canvas = app.geometry.canvas;
     let mut ordered = app.messages();
@@ -379,16 +375,20 @@ fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>])
         let x = canvas.x + column as u16;
         let selected = app.message == Some(index);
         let color = if selected { AMBER } else { MESSAGE };
-        let style = Style::new().fg(color).add_modifier(Modifier::BOLD);
+        let style = if selected {
+            Style::new().fg(color).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(color)
+        };
         match edge.from.and_then(|from| lane_row[from]) {
             Some(from_row) if from_row != to_row => {
                 let (top, bottom) = (from_row.min(to_row), from_row.max(to_row));
                 for y in top + 1..bottom {
                     let crossing = symbol_at(buffer, x, y) == "━";
-                    put(buffer, x, y, if crossing { "┿" } else { "│" }, style);
+                    put(buffer, x, y, if crossing { "┿" } else { "┆" }, style);
                 }
-                put(buffer, x, from_row, "●", style);
-                let head = if from_row < to_row { "▼" } else { "▲" };
+                put(buffer, x, from_row, "•", style);
+                let head = if from_row < to_row { "▾" } else { "▴" };
                 put(buffer, x, to_row, head, style);
             }
             // a self-message, or a sender without a row: mark the arrival only
@@ -441,4 +441,18 @@ pub fn buffer_text(buffer: &Buffer) -> String {
         lines.push(line.trim_end().to_owned());
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn age_labels() {
+        assert_eq!(age_label(5.0), "-5m");
+        assert_eq!(age_label(60.0), "-1h");
+        assert_eq!(age_label(90.0), "-1h30");
+        assert_eq!(age_label(1440.0), "-1d");
+        assert_eq!(age_label(1440.0 + 360.0), "-1d6h");
+    }
 }

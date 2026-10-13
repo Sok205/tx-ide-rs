@@ -11,6 +11,7 @@ use std::time::SystemTime;
 
 use super::metadata::Metadata;
 use super::rows::{Row, parse_entry};
+use super::turns::Turns;
 
 struct Entry {
     size: u64,
@@ -18,6 +19,7 @@ struct Entry {
     offset: u64,
     rows: Vec<Row>,
     metadata: Metadata,
+    turns: Turns,
 }
 
 #[derive(Default)]
@@ -29,6 +31,11 @@ impl TranscriptCache {
     /// Metadata collected with the most recent read of this transcript.
     pub fn metadata(&self, path: &Path) -> Option<&Metadata> {
         self.entries.get(path).map(|entry| &entry.metadata)
+    }
+
+    /// Turn spans collected with the most recent read of this transcript.
+    pub fn turns(&self, path: &Path) -> Option<&Turns> {
+        self.entries.get(path).map(|entry| &entry.turns)
     }
 
     /// The rows of `path`, re-parsing only what was appended since the last call.
@@ -46,9 +53,11 @@ impl TranscriptCache {
         if fresh {
             return &self.entries[path].rows;
         }
-        let (start, mut rows, mut metadata) = match self.entries.remove(path) {
-            Some(entry) if size >= entry.offset => (entry.offset, entry.rows, entry.metadata),
-            _ => (0, Vec::new(), Metadata::default()),
+        let (start, mut rows, mut metadata, mut turns) = match self.entries.remove(path) {
+            Some(entry) if size >= entry.offset => {
+                (entry.offset, entry.rows, entry.metadata, entry.turns)
+            }
+            _ => (0, Vec::new(), Metadata::default(), Turns::default()),
         };
         let mut chunk = Vec::new();
         let read = File::open(path).and_then(|mut file| {
@@ -66,6 +75,7 @@ impl TranscriptCache {
             if let Ok(entry) = serde_json::from_str(line) {
                 parse_entry(&entry, &mut rows);
                 metadata.update(&entry);
+                turns.update(&entry);
             }
         }
         self.entries.insert(
@@ -76,6 +86,7 @@ impl TranscriptCache {
                 offset: start + consumed as u64,
                 rows,
                 metadata,
+                turns,
             },
         );
         &self.entries[path].rows
