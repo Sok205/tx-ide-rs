@@ -14,9 +14,11 @@ outlives the pane you started it from.
   and the shell stay where they are. Picking another session later swaps what the viewer
   shows — the session it showed keeps running in the background.
 - `tx ls` lists sessions in the shell. `prefix+s` shows every tmux session in a tree.
-- `prefix+e` opens a small popup form to rename a session or edit its tags: a `Name` field and
-  a `Tags` field (comma-separated). `↑`/`↓` (or Tab) switches field, `Enter` saves, `Esc`
-  cancels. The CLI equivalent is `tx tag NAME TAG`.
+- `prefix+e` opens a small popup form to rename a session or edit its tags and group: a `Name`
+  field, a `Tags` field (comma-separated) and a `Group` field. `↑`/`↓` (or Tab) switches field,
+  `Enter` saves, `Esc` cancels. The CLI equivalent is `tx tag NAME TAG`. `Group` is the explicit
+  effort-group override; left empty it shows the automatic group (dimmed) that tx derives from
+  the tags, the parent session or the name.
 
 ## Your task
 

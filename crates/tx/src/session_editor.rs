@@ -1,5 +1,9 @@
-//! Port of lib/tx/session_editor.py — the two-field terminal form (name + tags) behind
+//! Port of lib/tx/session_editor.py — the terminal form (name + tags + group) behind
 //! `tx _edit-session`.
+//!
+//! The group field edits the explicit effort-group override. Empty means automatic: the field
+//! then shows the group the resolver derives (tags / parent chain / bound artifact / name) as a
+//! dimmed placeholder, and its help row says which of the two is in effect.
 //!
 //! The reference is a `curses.wrapper` form in raw mode with keypad on and a 25 ms escape delay.
 //! Here the form logic ([`Form`]) is pure — keys in, a [`Frame`] of positioned text out — and
@@ -13,9 +17,13 @@ use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, FG_ANSI, SELECTION_BG, WARN
 
 const HINT: &str = "↑↓ switch   Enter save   Esc cancel";
 const TAGS_HELP: &str = "Comma-separated · empty clears tags";
+const GROUP_AUTOMATIC_HELP: &str = "Automatic · type to override";
+const GROUP_EXPLICIT_HELP: &str = "Explicit · empty restores automatic";
 const EMPTY_NAME: &str = "Name cannot be empty.";
 const TOO_SMALL: &str = "Resize to edit";
-const LABELS: [&str; 2] = ["Name", "Tags"];
+const LABELS: [&str; 3] = ["Name", "Tags", "Group"];
+const FIELD_COLUMN: usize = 12;
+const HINT_ROW: usize = 8;
 const ESC_DELAY_MS: i32 = 25;
 const RESIZE_POLL_MS: i32 = 100;
 
@@ -45,8 +53,8 @@ pub enum Key {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Cancel,
-    /// `(name, tags)` as typed — the name is not stripped.
-    Save(String, String),
+    /// `(name, tags, group)` as typed — the name is not stripped.
+    Save(String, String, String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +67,8 @@ pub enum Style {
     Muted,
     /// Active field: the palette's foreground on the selection background.
     Selected,
+    /// Placeholder in the active field: the dim foreground on the selection background.
+    SelectedMuted,
     /// Error row: the palette's warning amber.
     Warning,
 }
@@ -70,6 +80,7 @@ impl Style {
             Style::Accent => format!("{ACCENT_ANSI}{BOLD}"),
             Style::Muted => DIM_FG_ANSI.into(),
             Style::Selected => format!("{FG_ANSI}\x1b[48;5;{SELECTION_BG}m"),
+            Style::SelectedMuted => format!("{DIM_FG_ANSI}\x1b[48;5;{SELECTION_BG}m"),
             Style::Warning => WARN_ANSI.into(),
         }
     }
@@ -334,30 +345,43 @@ fn is_printable(character: char) -> bool {
         .any(|&(low, high)| (low..=high).contains(&code))
 }
 
-/// The form state (`values`, `positions`, `offsets`, `active`, `error` of `_form`).
+/// The form state (`values`, `positions`, `offsets`, `active`, `error` of `_form`), plus the
+/// group the resolver derives when there is no override (the group field's placeholder).
 #[derive(Clone, Debug)]
 pub struct Form {
-    values: [Vec<char>; 2],
-    positions: [usize; 2],
-    offsets: [usize; 2],
+    values: [Vec<char>; 3],
+    positions: [usize; 3],
+    offsets: [usize; 3],
     active: usize,
     error: bool,
+    automatic_group: String,
 }
 
 impl Form {
-    pub fn new(name: &str, tags: &str) -> Self {
-        let values = [name.chars().collect::<Vec<_>>(), tags.chars().collect()];
+    /// `group` is the explicit override (empty for none); `automatic_group` is what the session
+    /// resolves to without one.
+    pub fn new(name: &str, tags: &str, group: &str, automatic_group: &str) -> Self {
+        let values = [
+            name.chars().collect::<Vec<_>>(),
+            tags.chars().collect(),
+            group.chars().collect(),
+        ];
         Self {
-            positions: [values[0].len(), values[1].len()],
+            positions: [values[0].len(), values[1].len(), values[2].len()],
             values,
-            offsets: [0, 0],
+            offsets: [0, 0, 0],
             active: 0,
             error: false,
+            automatic_group: automatic_group.to_owned(),
         }
     }
 
     fn too_small(height: usize, width: usize) -> bool {
-        height < 7 || width < 24
+        height <= HINT_ROW || width < 24
+    }
+
+    fn group_is_explicit(&self) -> bool {
+        self.values[2].iter().any(|character| !character.is_whitespace())
     }
 
     /// Paint the form for a `height`×`width` screen (also scrolls each field's offset so its
@@ -399,19 +423,45 @@ impl Form {
             } else {
                 Style::Normal
             };
-            frame.add(row, 11, " ".repeat(available + 2), field_style);
-            frame.add(row, 12, visible.iter().collect::<String>(), field_style);
+            frame.add(row, FIELD_COLUMN - 1, " ".repeat(available + 2), field_style);
+            if index == 2 && value.is_empty() {
+                let placeholder_style = if active {
+                    Style::SelectedMuted
+                } else {
+                    Style::Muted
+                };
+                frame.addn(
+                    row,
+                    FIELD_COLUMN,
+                    &self.automatic_group,
+                    available,
+                    placeholder_style,
+                );
+            } else {
+                frame.add(
+                    row,
+                    FIELD_COLUMN,
+                    visible.iter().collect::<String>(),
+                    field_style,
+                );
+            }
         }
-        frame.addn(4, 12, TAGS_HELP, width - 14, Style::Muted);
+        frame.addn(4, FIELD_COLUMN, TAGS_HELP, width - 14, Style::Muted);
+        let group_help = if self.group_is_explicit() {
+            GROUP_EXPLICIT_HELP
+        } else {
+            GROUP_AUTOMATIC_HELP
+        };
+        frame.addn(6, FIELD_COLUMN, group_help, width - 14, Style::Muted);
         let (message, style) = if self.error {
             (EMPTY_NAME, Style::Warning)
         } else {
             (HINT, Style::Muted)
         };
-        frame.addn(6, 2, message, width - 4, style);
+        frame.addn(HINT_ROW, 2, message, width - 4, style);
         let active = self.active;
-        let cursor_col =
-            12 + text_width(&self.values[active][self.offsets[active]..self.positions[active]]);
+        let cursor_col = FIELD_COLUMN
+            + text_width(&self.values[active][self.offsets[active]..self.positions[active]]);
         frame.cursor = Some((active * 2 + 1, cursor_col));
         frame
     }
@@ -434,12 +484,20 @@ impl Form {
             return Some(Outcome::Save(
                 self.values[0].iter().collect(),
                 self.values[1].iter().collect(),
+                self.values[2].iter().collect(),
             ));
         }
         self.error = false;
-        if matches!(key, Key::Up | Key::Down | Key::BackTab | Key::Char('\t')) {
-            self.active = 1 - self.active;
-            return None;
+        match key {
+            Key::Down | Key::Char('\t') => {
+                self.active = (self.active + 1) % LABELS.len();
+                return None;
+            }
+            Key::Up | Key::BackTab => {
+                self.active = (self.active + LABELS.len() - 1) % LABELS.len();
+                return None;
+            }
+            _ => {}
         }
         let active = self.active;
         let position = self.positions[active];
@@ -699,11 +757,16 @@ pub(crate) fn read_key(decoder: &mut Decoder, size: (usize, usize)) -> io::Resul
     }
 }
 
-/// Run the form on the controlling terminal (stdin/stdout); `Some((name, tags))` on save, `None`
-/// on Esc / Ctrl-C.
-pub fn edit_session(name: &str, tags: &str) -> io::Result<Option<(String, String)>> {
+/// Run the form on the controlling terminal (stdin/stdout); `Some((name, tags, group))` on save
+/// (`group` empty = automatic), `None` on Esc / Ctrl-C.
+pub fn edit_session(
+    name: &str,
+    tags: &str,
+    group: &str,
+    automatic_group: &str,
+) -> io::Result<Option<(String, String, String)>> {
     let _terminal = Terminal::open()?;
-    let mut form = Form::new(name, tags);
+    let mut form = Form::new(name, tags, group, automatic_group);
     let mut decoder = Decoder::default();
     loop {
         let (height, width) = Terminal::size();
@@ -711,7 +774,7 @@ pub fn edit_session(name: &str, tags: &str) -> io::Result<Option<(String, String
         let key = read_key(&mut decoder, (height, width))?;
         match form.handle(key, height, width) {
             Some(Outcome::Cancel) => return Ok(None),
-            Some(Outcome::Save(name, tags)) => return Ok(Some((name, tags))),
+            Some(Outcome::Save(name, tags, group)) => return Ok(Some((name, tags, group))),
             None => {}
         }
     }
@@ -731,55 +794,57 @@ mod tests {
 
     #[test]
     fn rendered_rows_match_the_reference_layout() {
-        let mut form = Form::new("abc", "t");
+        let mut form = Form::new("abc", "t", "", "auto");
         let rows = form.render(24, 80).rows(24, 80);
         assert_eq!(rows[1], "  › Name:   abc");
         assert_eq!(rows[3], "    Tags:   t");
         assert_eq!(rows[4], "            Comma-separated · empty clears tags");
-        assert_eq!(rows[6], "  ↑↓ switch   Enter save   Esc cancel");
+        assert_eq!(rows[5], "    Group:  auto");
+        assert_eq!(rows[6], "            Automatic · type to override");
+        assert_eq!(rows[8], "  ↑↓ switch   Enter save   Esc cancel");
         assert_eq!(form.render(24, 80).cursor, Some((1, 15)));
     }
 
     #[test]
     fn cancel_keys() {
         for key in [Key::Char('\x1b'), Key::Char('\x03')] {
-            let mut form = Form::new("w", "a");
+            let mut form = Form::new("w", "a", "", "a");
             assert_eq!(form.handle(key, 24, 80), Some(Outcome::Cancel));
         }
     }
 
     #[test]
     fn empty_name_refused_then_any_key_clears_the_error() {
-        let mut form = Form::new("abc", "t");
+        let mut form = Form::new("abc", "t", "", "auto");
         assert_eq!(keys(&mut form, &[Key::Down, Key::Char('\x15')]), None);
         assert_eq!(keys(&mut form, &[Key::Up, Key::Char('\x15')]), None);
         assert_eq!(form.handle(Key::Char('\r'), 24, 80), None);
         assert_eq!(
-            form.render(24, 80).rows(24, 80)[6],
+            form.render(24, 80).rows(24, 80)[8],
             "  Name cannot be empty."
         );
         form.handle(Key::Right, 24, 80);
         assert_eq!(
-            form.render(24, 80).rows(24, 80)[6],
+            form.render(24, 80).rows(24, 80)[8],
             "  ↑↓ switch   Enter save   Esc cancel"
         );
         assert_eq!(
             keys(&mut form, &typed("  x \r")),
-            Some(Outcome::Save("  x ".into(), "".into()))
+            Some(Outcome::Save("  x ".into(), "".into(), "".into()))
         );
     }
 
     #[test]
     fn editing_keys() {
-        let mut form = Form::new("abc", "t");
+        let mut form = Form::new("abc", "t", "", "auto");
         keys(&mut form, &[Key::Left, Key::Left, Key::Char('\x0b')]);
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   a");
 
-        let mut form = Form::new("abc", "t");
+        let mut form = Form::new("abc", "t", "", "auto");
         keys(&mut form, &[Key::Home, Key::Delete]);
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   bc");
 
-        let mut form = Form::new("abc", "t");
+        let mut form = Form::new("abc", "t", "", "auto");
         keys(
             &mut form,
             &[Key::Char('\x01'), Key::Char('\x06'), Key::Char('\x7f')],
@@ -790,17 +855,17 @@ mod tests {
         );
         assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   bXc");
 
-        let mut form = Form::new("abc", "t");
+        let mut form = Form::new("abc", "t", "", "auto");
         keys(
             &mut form,
             &[Key::Home, Key::Char('Y'), Key::Char('\x08'), Key::End],
         );
         assert_eq!(
             keys(&mut form, &typed("X\n")),
-            Some(Outcome::Save("abcX".into(), "t".into()))
+            Some(Outcome::Save("abcX".into(), "t".into(), "".into()))
         );
 
-        let mut form = Form::new("w", "a");
+        let mut form = Form::new("w", "a", "", "a");
         let mut sequence = vec![Key::Char('\x15')];
         sequence.extend(typed("w2"));
         sequence.extend([Key::Char('\t'), Key::End]);
@@ -813,23 +878,109 @@ mod tests {
         );
         assert_eq!(
             form.handle(Key::Enter, 24, 80),
-            Some(Outcome::Save("w2".into(), "a,b".into()))
+            Some(Outcome::Save("w2".into(), "a,b".into(), "".into()))
+        );
+    }
+
+    #[test]
+    fn field_cycling_reaches_the_group_row() {
+        let mut form = Form::new("abc", "t", "", "auto");
+        keys(&mut form, &[Key::Down, Key::Down]);
+        let frame = form.render(24, 80);
+        assert_eq!(frame.rows(24, 80)[5], "  › Group:  auto");
+        assert_eq!(frame.cursor, Some((5, 12)));
+        let placeholder = frame
+            .draws
+            .iter()
+            .find(|draw| draw.row == 5 && draw.col == 12)
+            .unwrap();
+        assert_eq!(placeholder.style, Style::SelectedMuted);
+        // Down wraps to Name; Up from Name wraps to Group; BackTab goes back up too.
+        keys(&mut form, &[Key::Down]);
+        assert_eq!(form.render(24, 80).cursor, Some((1, 15)));
+        keys(&mut form, &[Key::Up]);
+        assert_eq!(form.render(24, 80).cursor, Some((5, 12)));
+        keys(&mut form, &[Key::BackTab]);
+        assert_eq!(form.render(24, 80).cursor, Some((3, 13)));
+    }
+
+    #[test]
+    fn group_placeholder_is_automatic_and_typing_makes_it_explicit() {
+        let mut form = Form::new("abc", "t", "", "feat-x");
+        let rows = form.render(24, 80).rows(24, 80);
+        assert_eq!(rows[5], "    Group:  feat-x");
+        assert_eq!(rows[6], "            Automatic · type to override");
+        let inactive_placeholder = form
+            .render(24, 80)
+            .draws
+            .into_iter()
+            .find(|draw| draw.row == 5 && draw.col == 12)
+            .unwrap();
+        assert_eq!(inactive_placeholder.style, Style::Muted);
+
+        keys(&mut form, &[Key::Up]);
+        keys(&mut form, &typed("ops"));
+        let frame = form.render(24, 80);
+        let rows = frame.rows(24, 80);
+        assert_eq!(rows[5], "  › Group:  ops");
+        assert_eq!(rows[6], "            Explicit · empty restores automatic");
+        assert_eq!(frame.cursor, Some((5, 15)));
+        assert_eq!(
+            form.handle(Key::Char('\r'), 24, 80),
+            Some(Outcome::Save("abc".into(), "t".into(), "ops".into()))
+        );
+    }
+
+    #[test]
+    fn explicit_group_is_shown_and_clearing_it_restores_the_placeholder() {
+        let mut form = Form::new("abc", "t", "ops", "feat-x");
+        let rows = form.render(24, 80).rows(24, 80);
+        assert_eq!(rows[5], "    Group:  ops");
+        assert_eq!(rows[6], "            Explicit · empty restores automatic");
+
+        keys(&mut form, &[Key::Up, Key::Char('\x15')]);
+        let rows = form.render(24, 80).rows(24, 80);
+        assert_eq!(rows[5], "  › Group:  feat-x");
+        assert_eq!(rows[6], "            Automatic · type to override");
+        // Whitespace alone counts as automatic too; the verb trims before comparing.
+        keys(&mut form, &typed(" "));
+        assert_eq!(
+            form.render(24, 80).rows(24, 80)[6],
+            "            Automatic · type to override"
+        );
+        assert_eq!(
+            form.handle(Key::Enter, 24, 80),
+            Some(Outcome::Save("abc".into(), "t".into(), " ".into()))
+        );
+    }
+
+    #[test]
+    fn long_placeholder_is_clipped_to_the_field() {
+        let mut form = Form::new("abc", "t", "", &"g".repeat(100));
+        let frame = form.render(24, 40);
+        // available = 26.
+        assert_eq!(
+            frame.rows(24, 40)[5],
+            format!("    Group:  {}", "g".repeat(26))
         );
     }
 
     #[test]
     fn too_small_only_cancels() {
-        let mut form = Form::new("abc", "t");
+        let mut form = Form::new("abc", "t", "", "auto");
         let rows = form.render(5, 20).rows(5, 20);
         assert_eq!(rows[0], "Resize to edit");
         assert_eq!(form.handle(Key::Char('\r'), 5, 20), None);
         assert_eq!(form.handle(Key::Char('\x1b'), 5, 20), Some(Outcome::Cancel));
+        // 8 rows no longer hold the hint row; 9 do.
+        assert_eq!(form.render(8, 80).rows(8, 80)[0], "Resize to edit");
+        assert_eq!(form.render(9, 80).rows(9, 80)[1], "  › Name:   abc");
     }
 
     #[test]
     fn long_value_scrolls_to_keep_the_cursor_visible() {
         let name = "x".repeat(100);
-        let mut form = Form::new(&name, "");
+        let mut form = Form::new(&name, "", "", "auto");
         let frame = form.render(24, 40);
         // available = 26: the cursor sits at the end, 25 characters shown before it.
         assert_eq!(
