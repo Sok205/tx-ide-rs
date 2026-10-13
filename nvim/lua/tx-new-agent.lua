@@ -15,10 +15,9 @@
 -- Panels: [1] Name  [2] Tags  [3] Project  [4] Prompt  [5] Engine  [6] Model  [7] Effort
 -- [8] Role. The form opens in insert mode on Name, and moving between panels keeps the mode.
 -- Tab / S-Tab step through the panels and 1-8 jump to one (normal mode); in a list the cursor
--- line is the pick, so j/k or Up/Down choose, in either mode. Project is a one-line field
--- beside Tags showing the picked project: j/k or Up/Down cycle through them, and while it is
--- active the help line shows its path. On the lists and Project, which hold no text, h/l or
--- Left/Right step to the previous / next panel. Enter spawns from any panel; Esc leaves insert
+-- line is the pick, so j/k or the arrows choose, in either mode. Project is a one-line field
+-- beside Tags showing the picked project: h/l, j/k or the arrows cycle through them, and while
+-- it is active the help line shows its path. Enter spawns from any panel; Esc leaves insert
 -- mode, and Esc or q in normal mode cancels.
 
 local M = {}
@@ -189,10 +188,10 @@ function M.open()
     return { { label, group }, { ("─"):rep(gap), "FloatBorder" }, { counter, group } }
   end
 
-  -- A one-line picker: the picked option between up / down arrows; its position is in the title.
+  -- A one-line picker: the picked option between arrows; its position is in the title.
   local function render_cycle(panel)
     vim.bo[panel.buffer].modifiable = true
-    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, { (" ↑ %s ↓"):format(picked[panel.key]) })
+    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, { (" ‹ %s ›"):format(picked[panel.key]) })
     vim.bo[panel.buffer].modifiable = false
     vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
     vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", 0, 0, -1)
@@ -364,26 +363,13 @@ function M.open()
       end)
     end
     map({ "n", "i" }, "<CR>", spawn)
-    if panel.key then
-      -- No text to move through: Left / Right step between panels.
-      for _, keys in ipairs({ "l", "<Right>" }) do
-        map({ "n", "i" }, keys, function()
-          focus(number % #panels + 1)
-        end)
-      end
-      for _, keys in ipairs({ "h", "<Left>" }) do
-        map({ "n", "i" }, keys, function()
-          focus((number - 2) % #panels + 1)
-        end)
-      end
-    end
     if panel.cycle then
-      for _, keys in ipairs({ "j", "<Down>" }) do
+      for _, keys in ipairs({ "j", "l", "<Down>", "<Right>" }) do
         map({ "n", "i" }, keys, function()
           cycle(panel, 1)
         end)
       end
-      for _, keys in ipairs({ "k", "<Up>" }) do
+      for _, keys in ipairs({ "k", "h", "<Up>", "<Left>" }) do
         map({ "n", "i" }, keys, function()
           cycle(panel, -1)
         end)
