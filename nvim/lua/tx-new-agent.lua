@@ -4,17 +4,26 @@
 -- with the spec's path in $TX_NEW_AGENT_SPEC. Spawning writes the answers to spec.result as JSON
 -- and quits; cancelling quits without writing it.
 --
---   spec = { result, engines = { … }, models = { [engine] = { … } }, efforts = { [engine] = { … } },
+--   spec = { result, projects = { … }, project_paths = { [project] = path }, project,
+--            engines = { … }, models = { [engine] = { … } }, efforts = { [engine] = { … } },
 --            engine, effort, roles = { … }, role, tags_hint }
 --
--- Each model list starts with the engine's default, which is what the form preselects; the roles
--- start with "none" (COMMON alone), and spec.role is preselected.
+-- spec.project is preselected among the projects (the answers carry its path as cwd). Each model
+-- list starts with the engine's default, which is what the form preselects; the roles start with
+-- "none" (COMMON alone), and spec.role is preselected.
 --
--- Panels: [1] Name  [2] Tags  [3] Prompt  [4] Engine  [5] Model  [6] Effort  [7] Role. The form
--- opens in insert mode on Name, and moving between panels keeps the mode. Tab / S-Tab step
--- through the panels and 1-7 jump to one (normal mode); in a list the cursor line is the pick, so
--- j/k or the arrows choose, in either mode. Enter spawns from any panel; Esc leaves insert mode, and
--- Esc or q in normal mode cancels.
+-- Panels: [1] Name  [2] Tags  [3] Project  [4] Prompt  [5] Engine  [6] Model  [7] Effort
+-- [8] Role. The form opens in normal mode on Name (i to type), and moving between panels keeps
+-- the mode.
+-- Tab / S-Tab step through the panels in either mode. In normal mode h/l step too, 1-8 jump to
+-- a panel, and on the text panels and Project j/k move to the panel below / above. In a list
+-- the cursor line is the pick, so j/k or Up/Down choose, in either mode, wrapping at both ends.
+-- Project is a one-line field beside Tags showing the picked project: Left/Right or h/l cycle
+-- through them (so there h/l do not step panels), and while it is active the help line shows
+-- its path. Titles are centred,
+-- and Project's and Model's carry the pick's position after the label (like <leader>ac's
+-- panels). Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
+-- cancels.
 
 local M = {}
 
@@ -26,7 +35,7 @@ local WARN = "#e0af68"
 local BORDER = "#3b4261"
 local SELECTION = "#303030"
 
-local HELP = " Tab next · 1-7 jump · j/k pick · Enter spawn · Esc cancel"
+local HELP = " h/l j/k move · 1-8 jump · i type · j/k pick · ←/→ project · Enter spawn · Esc cancel"
 
 local function highlights()
   local set = vim.api.nvim_set_hl
@@ -56,13 +65,16 @@ function M.open()
 
   local namespace = vim.api.nvim_create_namespace("tx_new_agent")
   local picked = {
+    project = spec.project,
     engine = spec.engine,
     model = spec.models[spec.engine][1],
     effort = spec.effort,
     role = spec.role,
   }
   local function options(key)
-    if key == "engine" then
+    if key == "project" then
+      return spec.projects
+    elseif key == "engine" then
       return spec.engines
     elseif key == "role" then
       return spec.roles
@@ -70,13 +82,18 @@ function M.open()
     return spec[key .. "s"][picked.engine]
   end
 
-  -- Geometry: full-width text panels around a row of four lists; a help line under them.
+  -- Geometry: full-width text panels (Tags and Project split their row) around a row of four
+  -- lists, Model as wide as its longest name and Role taking the rest; a help line under them.
   local width = vim.o.columns - 2
-  local engine_width, effort_width, role_width = 15, 12, 12
-  for _, role in ipairs(spec.roles) do
-    role_width = math.max(role_width, #role + 4)
+  local project_width = math.floor((width - 2) / 2)
+  local tags_width = width - project_width - 2
+  local engine_width, effort_width, model_width = 15, 12, 12
+  for _, models in pairs(spec.models) do
+    for _, model in ipairs(models) do
+      model_width = math.max(model_width, #model + 4)
+    end
   end
-  local model_width = width - engine_width - effort_width - role_width - 6
+  local role_width = width - engine_width - model_width - effort_width - 6
   local list_height = math.max(#spec.engines, #spec.roles)
   for _, key in ipairs({ "models", "efforts" }) do
     for _, list in pairs(spec[key]) do
@@ -85,13 +102,46 @@ function M.open()
   end
 
   local panels = {
-    { label = "Name", field = "name", row = 0, col = 0, width = width, height = 1 },
-    { label = "Tags", field = "tags", row = 3, col = 0, width = width, height = 1, hint = spec.tags_hint },
-    { label = "Prompt", field = "prompt", row = 6, col = 0, width = width, height = 4, wrap = true },
+    { label = "Name", field = "name", row = 0, col = 0, width = width, height = 1, above = "Engine", below = "Tags" },
+    {
+      label = "Tags",
+      field = "tags",
+      row = 3,
+      col = 0,
+      width = tags_width,
+      height = 1,
+      hint = spec.tags_hint,
+      above = "Name",
+      below = "Prompt",
+    },
+    {
+      label = "Project",
+      key = "project",
+      cycle = true,
+      counter = true,
+      above = "Name",
+      below = "Prompt",
+      row = 3,
+      col = tags_width + 2,
+      width = project_width,
+      height = 1,
+    },
+    {
+      label = "Prompt",
+      field = "prompt",
+      row = 6,
+      col = 0,
+      width = width,
+      height = 4,
+      wrap = true,
+      above = "Tags",
+      below = "Engine",
+    },
     { label = "Engine", key = "engine", row = 12, col = 0, width = engine_width, height = list_height },
     {
       label = "Model",
       key = "model",
+      counter = true,
       row = 12,
       col = engine_width + 2,
       width = model_width,
@@ -122,6 +172,13 @@ function M.open()
       end
     end
   end
+  local function panel_by_label(label)
+    for _, panel in ipairs(panels) do
+      if panel.label == label then
+        return panel
+      end
+    end
+  end
 
   local help_buffer = vim.api.nvim_create_buf(false, true)
   local help_window = vim.api.nvim_open_win(help_buffer, false, {
@@ -139,6 +196,58 @@ function M.open()
     vim.api.nvim_buf_add_highlight(help_buffer, namespace, group, 0, 0, -1)
   end
   say(HELP, "TxFormHelp")
+  local function help_for(panel)
+    if panel.key == "project" then
+      local path = vim.fn.fnamemodify(spec.project_paths[picked.project], ":~")
+      say(" h/l pick · j/k move · Enter spawn · " .. path, "TxFormHelp")
+    else
+      say(HELP, "TxFormHelp")
+    end
+  end
+
+  local active = 1
+  -- A picker's place in its options, `index/count`.
+  local function position(panel)
+    local choices = options(panel.key)
+    for index, option in ipairs(choices) do
+      if option == picked[panel.key] then
+        return ("%d/%d"):format(index, #choices)
+      end
+    end
+  end
+  -- The centred title: the label and, on a counting panel, the pick's position after it.
+  local function decoration(panel, is_active)
+    local group = is_active and "TxFormTitleActive" or "TxFormTitle"
+    local text = (" [%d] %s "):format(panel.number, panel.label)
+    if panel.counter then
+      text = (" [%d] %s %s "):format(panel.number, panel.label, position(panel))
+    end
+    return { title = { { text, group } }, title_pos = "center" }
+  end
+
+  -- A one-line picker: the picked option between arrows, centred; its position is in the title.
+  local function render_cycle(panel)
+    local text = ("‹ %s ›"):format(picked[panel.key])
+    local margin = math.floor((panel.width - vim.fn.strdisplaywidth(text)) / 2)
+    vim.bo[panel.buffer].modifiable = true
+    vim.api.nvim_buf_set_lines(panel.buffer, 0, -1, false, { (" "):rep(margin) .. text })
+    vim.bo[panel.buffer].modifiable = false
+    vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
+    vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", 0, 0, -1)
+    vim.api.nvim_win_set_config(panel.window, decoration(panel, panel.number == active))
+  end
+
+  local function cycle(panel, step)
+    local choices = options(panel.key)
+    for index, option in ipairs(choices) do
+      if option == picked[panel.key] then
+        picked[panel.key] = choices[(index - 1 + step) % #choices + 1]
+        break
+      end
+    end
+    render_cycle(panel)
+    help_for(panel)
+  end
 
   local function render_list(panel)
     local lines = {}
@@ -156,6 +265,9 @@ function M.open()
     vim.api.nvim_buf_clear_namespace(panel.buffer, namespace, 0, -1)
     vim.api.nvim_buf_add_highlight(panel.buffer, namespace, "TxFormPicked", picked_line - 1, 0, -1)
     vim.api.nvim_win_set_cursor(panel.window, { picked_line, 0 })
+    if panel.counter then
+      vim.api.nvim_win_set_config(panel.window, decoration(panel, panel.number == active))
+    end
   end
 
   -- The cursor line is the pick; a new engine keeps the model and effort it offers, else its first.
@@ -189,22 +301,18 @@ function M.open()
     end
   end
 
-  local active = 1
-  local function title(panel, is_active)
-    return { { (" [%d] %s "):format(panel.number, panel.label), is_active and "TxFormTitleActive" or "TxFormTitle" } }
-  end
   local function focus(number)
     local previous = panels[active]
-    vim.api.nvim_win_set_config(previous.window, { title = title(previous, false), title_pos = "left" })
+    vim.api.nvim_win_set_config(previous.window, decoration(previous, false))
     vim.wo[previous.window].winhighlight = "FloatBorder:TxFormBorder"
     vim.wo[previous.window].cursorline = false
     active = number
     local panel = panels[number]
-    vim.api.nvim_win_set_config(panel.window, { title = title(panel, true), title_pos = "left" })
+    vim.api.nvim_win_set_config(panel.window, decoration(panel, true))
     vim.wo[panel.window].winhighlight = "FloatBorder:TxFormBorderActive"
     vim.api.nvim_set_current_win(panel.window)
-    say(HELP, "TxFormHelp")
-    vim.wo[panel.window].cursorline = panel.key ~= nil
+    help_for(panel)
+    vim.wo[panel.window].cursorline = panel.key ~= nil and not panel.cycle
     -- The mode carries over; in a text panel the cursor goes to the end of the text.
     if not panel.key then
       local last = vim.api.nvim_buf_line_count(panel.buffer)
@@ -227,6 +335,7 @@ function M.open()
       effort = picked.effort,
       role = picked.role,
       tags = text(panel_for("tags"), ","),
+      cwd = spec.project_paths[picked.project],
     }
     for _, field in ipairs({ "name", "prompt" }) do
       if answers[field] == "" then
@@ -245,21 +354,25 @@ function M.open()
   for number, panel in ipairs(panels) do
     panel.number = number
     panel.buffer = vim.api.nvim_create_buf(false, true)
-    panel.window = vim.api.nvim_open_win(panel.buffer, false, {
-      relative = "editor",
-      row = panel.row,
-      col = panel.col,
-      width = panel.width,
-      height = panel.height,
-      style = "minimal",
-      border = "rounded",
-      title = title(panel, false),
-      title_pos = "left",
-    })
+    panel.window = vim.api.nvim_open_win(
+      panel.buffer,
+      false,
+      vim.tbl_extend("error", decoration(panel, false), {
+        relative = "editor",
+        row = panel.row,
+        col = panel.col,
+        width = panel.width,
+        height = panel.height,
+        style = "minimal",
+        border = "rounded",
+      })
+    )
     vim.wo[panel.window].winhighlight = "FloatBorder:TxFormBorder"
     vim.wo[panel.window].wrap = panel.wrap or false
     vim.wo[panel.window].linebreak = panel.wrap or false
-    if panel.key then
+    if panel.cycle then
+      render_cycle(panel)
+    elseif panel.key then
       render_list(panel)
       vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
         buffer = panel.buffer,
@@ -294,10 +407,54 @@ function M.open()
       end)
     end
     map({ "n", "i" }, "<CR>", spawn)
-    if panel.key then
-      -- A list cannot take text: in insert mode j / k still move the pick.
-      map("i", "j", "<Down>")
-      map("i", "k", "<Up>")
+    -- Normal mode: h / l step through the panels (except on Project, where they cycle the
+    -- pick); on a panel that is not a list, j / k move to the one below / above.
+    if not panel.cycle then
+      map("n", "l", function()
+        focus(number % #panels + 1)
+      end)
+      map("n", "h", function()
+        focus((number - 2) % #panels + 1)
+      end)
+    end
+    if panel.below then
+      map("n", "j", function()
+        focus(panel_by_label(panel.below).number)
+      end)
+      map("n", "k", function()
+        focus(panel_by_label(panel.above).number)
+      end)
+    end
+    if panel.cycle then
+      for _, keys in ipairs({ "l", "<Right>" }) do
+        map({ "n", "i" }, keys, function()
+          cycle(panel, 1)
+        end)
+      end
+      for _, keys in ipairs({ "h", "<Left>" }) do
+        map({ "n", "i" }, keys, function()
+          cycle(panel, -1)
+        end)
+      end
+    elseif panel.key then
+      -- The pick moves by one line, wrapping at both ends (in insert mode too: a list cannot
+      -- take text).
+      local function move(step)
+        local count = #options(panel.key)
+        local line = vim.api.nvim_win_get_cursor(panel.window)[1]
+        vim.api.nvim_win_set_cursor(panel.window, { (line - 1 + step) % count + 1, 0 })
+        pick_at_cursor(panel)
+      end
+      for _, keys in ipairs({ "j", "<Down>" }) do
+        map({ "n", "i" }, keys, function()
+          move(1)
+        end)
+      end
+      for _, keys in ipairs({ "k", "<Up>" }) do
+        map({ "n", "i" }, keys, function()
+          move(-1)
+        end)
+      end
     end
     map("n", "<Esc>", function()
       vim.cmd("qall!")
@@ -324,7 +481,6 @@ function M.open()
   })
 
   focus(1)
-  vim.cmd("startinsert!")
 end
 
 return M

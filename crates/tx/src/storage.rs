@@ -138,6 +138,36 @@ pub enum ConfigError {
         path: PathBuf,
         source: SyncSpecError,
     },
+    #[error(
+        "malformed {}: '{PROJECTS_KEY}' must be an object of name → path strings, got {found}",
+        path.display()
+    )]
+    BadProjects { path: PathBuf, found: String },
+    #[error(
+        "malformed {}: '{DEFAULT_PROJECT_KEY}' must name a configured project, got {found}",
+        path.display()
+    )]
+    BadDefaultProject { path: PathBuf, found: String },
+}
+
+pub const PROJECTS_KEY: &str = "projects";
+pub const DEFAULT_PROJECT_KEY: &str = "default_project";
+
+/// The `projects` section: named working directories a new session can start in, in file order,
+/// and the `default_project` preselected among them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Projects {
+    pub entries: Vec<(String, PathBuf)>,
+    pub default: Option<String>,
+}
+
+impl Projects {
+    /// The configured default, else the first entry; `None` without entries.
+    pub fn default_name(&self) -> Option<&str> {
+        self.default
+            .as_deref()
+            .or_else(|| self.entries.first().map(|(name, _)| name.as_str()))
+    }
 }
 
 /// `$TX_IDE_HOME/config.json`. Load it where the reference reads it (the reconcile pass, `tx
@@ -210,6 +240,39 @@ impl Config {
             path: self.path.clone(),
             found: py_repr(&found),
         }
+    }
+
+    /// The `projects` object (name → `~`-expandable path) and `default_project`, which must name
+    /// one of them. Absent sections are empty.
+    pub fn projects(&self, home_dir: Option<&Path>) -> Result<Projects, ConfigError> {
+        let bad_projects = |found: &Value| ConfigError::BadProjects {
+            path: self.path.clone(),
+            found: py_repr(found),
+        };
+        let entries: Vec<(String, PathBuf)> = match self.data.get(PROJECTS_KEY) {
+            None => Vec::new(),
+            Some(Value::Object(map)) => map
+                .iter()
+                .map(|(name, path)| match path {
+                    Value::String(raw) => Ok((name.clone(), expand_user(raw, home_dir))),
+                    other => Err(bad_projects(other)),
+                })
+                .collect::<Result<_, _>>()?,
+            Some(other) => return Err(bad_projects(other)),
+        };
+        let default = match self.data.get(DEFAULT_PROJECT_KEY) {
+            None => None,
+            Some(Value::String(name)) if entries.iter().any(|(entry, _)| entry == name) => {
+                Some(name.clone())
+            }
+            Some(other) => {
+                return Err(ConfigError::BadDefaultProject {
+                    path: self.path.clone(),
+                    found: py_repr(other),
+                });
+            }
+        };
+        Ok(Projects { entries, default })
     }
 
     /// `remote_from_config`: the `sync` section, `None` when absent or falsy.
@@ -534,6 +597,49 @@ mod tests {
                 "config.json: 'stuck_working_threshold_seconds' must be a number, got '5'"
             )
         );
+    }
+
+    #[test]
+    fn projects_section() {
+        let home = Path::new("/u");
+        let projects = |text: &str| config(text).1.unwrap().projects(Some(home));
+        assert_eq!(projects("{}").unwrap(), Projects::default());
+        assert_eq!(projects("{}").unwrap().default_name(), None);
+        let two = projects(
+            r#"{"projects": {"tx": "~/code/tx", "web": "/srv/web/"}, "default_project": "web"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            two.entries,
+            vec![
+                ("tx".to_owned(), PathBuf::from("/u/code/tx")),
+                ("web".to_owned(), PathBuf::from("/srv/web")),
+            ]
+        );
+        assert_eq!(two.default_name(), Some("web"));
+        let first = projects(r#"{"projects": {"tx": "~/code/tx", "web": "/srv/web"}}"#).unwrap();
+        assert_eq!(first.default_name(), Some("tx"));
+        for (text, tail) in [
+            (
+                r#"{"projects": ["~/code/tx"]}"#,
+                "'projects' must be an object of name → path strings, got ['~/code/tx']",
+            ),
+            (
+                r#"{"projects": {"tx": 1}}"#,
+                "'projects' must be an object of name → path strings, got 1",
+            ),
+            (
+                r#"{"projects": {"tx": "/t"}, "default_project": "web"}"#,
+                "'default_project' must name a configured project, got 'web'",
+            ),
+            (
+                r#"{"default_project": "tx"}"#,
+                "'default_project' must name a configured project, got 'tx'",
+            ),
+        ] {
+            let text = projects(text).unwrap_err().to_string();
+            assert!(text.ends_with(tail), "{text}");
+        }
     }
 
     #[test]
