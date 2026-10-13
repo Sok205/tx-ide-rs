@@ -18,8 +18,9 @@
 -- Tab / S-Tab step through the panels in either mode. In normal mode h/l step too, 1-8 jump to
 -- a panel, and on the text panels and Project j/k move to the panel below / above. In a list
 -- the cursor line is the pick, so j/k or Up/Down choose, in either mode, wrapping at both ends.
--- Project is a one-line field beside Tags showing the picked project: Left/Right cycle through
--- them in either mode, and while it is active the help line shows its path. Titles are centred,
+-- Project is a one-line field beside Tags showing the picked project: Left/Right or h/l cycle
+-- through them (so there h/l do not step panels), and while it is active the help line shows
+-- its path. Titles are centred,
 -- and Project's and Model's carry the pick's position after the label (like <leader>ac's
 -- panels). Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
 -- cancels.
@@ -198,7 +199,7 @@ function M.open()
   local function help_for(panel)
     if panel.key == "project" then
       local path = vim.fn.fnamemodify(spec.project_paths[picked.project], ":~")
-      say(" ←/→ pick · h/l move · Enter spawn · " .. path, "TxFormHelp")
+      say(" h/l pick · j/k move · Enter spawn · " .. path, "TxFormHelp")
     else
       say(HELP, "TxFormHelp")
     end
@@ -406,14 +407,16 @@ function M.open()
       end)
     end
     map({ "n", "i" }, "<CR>", spawn)
-    -- Normal mode: h / l step through the panels; on a panel that is not a list, j / k move to
-    -- the one below / above.
-    map("n", "l", function()
-      focus(number % #panels + 1)
-    end)
-    map("n", "h", function()
-      focus((number - 2) % #panels + 1)
-    end)
+    -- Normal mode: h / l step through the panels (except on Project, where they cycle the
+    -- pick); on a panel that is not a list, j / k move to the one below / above.
+    if not panel.cycle then
+      map("n", "l", function()
+        focus(number % #panels + 1)
+      end)
+      map("n", "h", function()
+        focus((number - 2) % #panels + 1)
+      end)
+    end
     if panel.below then
       map("n", "j", function()
         focus(panel_by_label(panel.below).number)
@@ -423,12 +426,16 @@ function M.open()
       end)
     end
     if panel.cycle then
-      map({ "n", "i" }, "<Right>", function()
-        cycle(panel, 1)
-      end)
-      map({ "n", "i" }, "<Left>", function()
-        cycle(panel, -1)
-      end)
+      for _, keys in ipairs({ "l", "<Right>" }) do
+        map({ "n", "i" }, keys, function()
+          cycle(panel, 1)
+        end)
+      end
+      for _, keys in ipairs({ "h", "<Left>" }) do
+        map({ "n", "i" }, keys, function()
+          cycle(panel, -1)
+        end)
+      end
     elseif panel.key then
       -- The pick moves by one line, wrapping at both ends (in insert mode too: a list cannot
       -- take text).
