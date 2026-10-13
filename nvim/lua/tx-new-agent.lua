@@ -31,7 +31,7 @@ local WARN = "#e0af68"
 local BORDER = "#3b4261"
 local SELECTION = "#303030"
 
-local HELP = " Tab next · 1-8 jump · j/k pick · Enter spawn · Esc cancel"
+local HELP = " Tab next · 1-8 jump · j/k pick · h/l project · Enter spawn · Esc cancel"
 
 local function highlights()
   local set = vim.api.nvim_set_hl
@@ -165,7 +165,8 @@ function M.open()
   say(HELP, "TxFormHelp")
   local function help_for(panel)
     if panel.key == "project" then
-      say(" " .. spec.project_paths[picked.project], "TxFormHelp")
+      local path = vim.fn.fnamemodify(spec.project_paths[picked.project], ":~")
+      say(" h/l pick · Tab next · Enter spawn · " .. path, "TxFormHelp")
     else
       say(HELP, "TxFormHelp")
     end
