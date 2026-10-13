@@ -78,16 +78,18 @@ function M.open()
     return spec[key .. "s"][picked.engine]
   end
 
-  -- Geometry: full-width text panels (Tags shares its row with Project, which takes 40%) around
-  -- a row of four lists; a help line under them.
+  -- Geometry: full-width text panels (Tags and Project split their row) around a row of four
+  -- lists, Model as wide as its longest name and Role taking the rest; a help line under them.
   local width = vim.o.columns - 2
-  local project_width = math.floor(width * 0.4)
+  local project_width = math.floor((width - 2) / 2)
   local tags_width = width - project_width - 2
-  local engine_width, effort_width, role_width = 15, 12, 12
-  for _, role in ipairs(spec.roles) do
-    role_width = math.max(role_width, #role + 4)
+  local engine_width, effort_width, model_width = 15, 12, 12
+  for _, models in pairs(spec.models) do
+    for _, model in ipairs(models) do
+      model_width = math.max(model_width, #model + 4)
+    end
   end
-  local model_width = width - engine_width - effort_width - role_width - 6
+  local role_width = width - engine_width - model_width - effort_width - 6
   local list_height = math.max(#spec.engines, #spec.roles)
   for _, key in ipairs({ "models", "efforts" }) do
     for _, list in pairs(spec[key]) do
