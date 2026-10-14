@@ -3,7 +3,7 @@
 //! Pure list logic ([`Picker`]) — keys in, the chosen action out — around the session editor's
 //! terminal layer. Enter attaches the cursor's row in the pane and a digit attaches that row;
 //! f (focus the pane already showing it) and p (open it in a popup) arm the operation instead,
-//! and the next digit or Enter applies it to that row — so `f 2` focuses the third row, as does
+//! and the next digit or Enter applies it to that row — so `f 3` focuses the third row, as does
 //! `f ↓ ↓ Enter`. Esc disarms, then closes (q too). A pick the caller declines (a focus with
 //! nothing to focus) becomes a notice line and the list stays open.
 
@@ -42,8 +42,8 @@ impl Operation {
     fn hint(self) -> &'static str {
         match self {
             Self::Attach => HINT,
-            Self::Focus => "focus: digit or Enter picks the row   Esc back",
-            Self::Popup => "popup: digit or Enter picks the row   Esc back",
+            Self::Focus => "focus mode: digit or Enter picks the row   Esc back",
+            Self::Popup => "popup mode: digit or Enter picks the row   Esc back",
         }
     }
 }
@@ -54,7 +54,8 @@ pub struct Picker<'a> {
     header: &'a str,
     lines: &'a [String],
     cursor: usize,
-    /// The operation f / p armed; Enter and digits apply it. `Attach` when nothing is armed.
+    /// The operation f / p armed; Enter and digits (rows are numbered from 1) apply it.
+    /// `Attach` when nothing is armed.
     operation: Operation,
     /// A one-line message under the rows (a declined pick); the next key clears it.
     notice: Option<String>,
@@ -88,8 +89,8 @@ impl<'a> Picker<'a> {
             }
             Key::Char('f') => self.operation = Operation::Focus,
             Key::Char('p') => self.operation = Operation::Popup,
-            Key::Char(digit @ '0'..='9') => {
-                let index = digit as usize - '0' as usize;
+            Key::Char(digit @ '1'..='9') => {
+                let index = digit as usize - '1' as usize;
                 if index < self.lines.len() {
                     return Some(Some(self.disarm().pick(index)));
                 }
@@ -201,7 +202,8 @@ mod tests {
         let mut picker = Picker::new("H", &lines);
         assert_eq!(picker.handle(Key::Down), None);
         assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Attach(1))));
-        assert_eq!(picker.handle(Key::Char('0')), Some(Some(Pick::Attach(0))));
+        assert_eq!(picker.handle(Key::Char('1')), Some(Some(Pick::Attach(0))));
+        assert_eq!(picker.handle(Key::Char('0')), None);
         assert_eq!(picker.handle(Key::Char('7')), None);
         assert_eq!(picker.handle(Key::Right), None);
         assert_eq!(picker.handle(Key::Char('l')), None);
@@ -213,8 +215,8 @@ mod tests {
         let lines = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
         let mut picker = Picker::new("H", &lines);
         assert_eq!(picker.handle(Key::Char('f')), None);
-        assert!(picker.render(8, 40).contains("focus:"));
-        assert_eq!(picker.handle(Key::Char('2')), Some(Some(Pick::Focus(2))));
+        assert!(picker.render(8, 40).contains("focus mode:"));
+        assert_eq!(picker.handle(Key::Char('3')), Some(Some(Pick::Focus(2))));
         // Applied once: the next Enter is a plain attach again.
         assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Attach(0))));
         assert_eq!(picker.handle(Key::Char('p')), None);

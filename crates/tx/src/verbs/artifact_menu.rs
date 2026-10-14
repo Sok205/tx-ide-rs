@@ -576,7 +576,7 @@ impl Row {
         let name = pad(&truncate(&self.name, layout.namew), layout.namew);
         let mut line = format!(
             "{DIM_FG_ANSI}{:<NUMBER_WIDTH$}{FG_ANSI}{name}{RESET_FG}   ",
-            format!("({index})")
+            format!("({})", index + 1)
         );
         if layout.location {
             line.push_str(&format!(
