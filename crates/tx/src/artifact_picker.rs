@@ -2,14 +2,14 @@
 //!
 //! Pure list logic ([`Picker`]) — keys in, the chosen action out — around the session editor's
 //! terminal layer. Enter attaches the row's view in the pane, → focuses the pane already showing
-//! it, a digit picks that row for attach, Esc / q close.
+//! it (so does l, vim-style), a digit picks that row for attach, Esc / q close.
 
 use std::io;
 
 use crate::palette::{DIM_FG_ANSI, RESET, SELECTION_BG};
 use crate::session_editor::{Decoder, Key, Terminal, read_key, write_all};
 
-pub const HINT: &str = "Enter attach here   → focus its pane   Esc close";
+pub const HINT: &str = "Enter attach here   →/l focus its pane   Esc close";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
@@ -44,7 +44,7 @@ impl<'a> Picker<'a> {
             Key::Enter | Key::Char('\r') | Key::Char('\n') => {
                 return Some(self.row().map(Pick::Attach));
             }
-            Key::Right => return Some(self.row().map(Pick::Focus)),
+            Key::Right | Key::Char('l') => return Some(self.row().map(Pick::Focus)),
             Key::Char(digit @ '0'..='9') => {
                 let index = digit as usize - '0' as usize;
                 if index < self.lines.len() {
@@ -134,6 +134,7 @@ mod tests {
         assert_eq!(picker.handle(Key::Down), None);
         assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Attach(1))));
         assert_eq!(picker.handle(Key::Right), Some(Some(Pick::Focus(1))));
+        assert_eq!(picker.handle(Key::Char('l')), Some(Some(Pick::Focus(1))));
         assert_eq!(picker.handle(Key::Char('0')), Some(Some(Pick::Attach(0))));
         assert_eq!(picker.handle(Key::Char('7')), None);
         assert_eq!(picker.handle(Key::Char('q')), Some(None));
