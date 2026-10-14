@@ -2,7 +2,8 @@
 //!
 //! Pure list logic ([`Picker`]) — keys in, the chosen action out — around the session editor's
 //! terminal layer. Enter attaches the row's view in the pane, → focuses the pane already showing
-//! it (so does l, vim-style), a digit picks that row for attach, Esc / q close. A pick the caller
+//! it (so does l, vim-style), p opens it in a popup, a digit picks that row for attach, Esc / q
+//! close. A pick the caller
 //! declines (a focus with nothing to focus) becomes a notice line and the list stays open.
 
 use std::io;
@@ -10,12 +11,14 @@ use std::io;
 use crate::palette::{DIM_FG_ANSI, RESET, SELECTION_BG, WARN_ANSI};
 use crate::session_editor::{Decoder, Key, Terminal, read_key, write_all};
 
-pub const HINT: &str = "Enter attach here   →/l focus its pane   Esc close";
+pub const HINT: &str = "Enter attach here   →/l focus its pane   p popup   Esc close";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     Attach(usize),
     Focus(usize),
+    /// Open the row's view nest-attached in a popup over the terminal.
+    Popup(usize),
 }
 
 /// The list state: `lines` are fully styled rows (SGR, no background), `header` the dim column
@@ -54,6 +57,7 @@ impl<'a> Picker<'a> {
                 return Some(self.row().map(Pick::Attach));
             }
             Key::Right | Key::Char('l') => return Some(self.row().map(Pick::Focus)),
+            Key::Char('p') => return Some(self.row().map(Pick::Popup)),
             Key::Char(digit @ '0'..='9') => {
                 let index = digit as usize - '0' as usize;
                 if index < self.lines.len() {
@@ -157,6 +161,7 @@ mod tests {
         assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Attach(1))));
         assert_eq!(picker.handle(Key::Right), Some(Some(Pick::Focus(1))));
         assert_eq!(picker.handle(Key::Char('l')), Some(Some(Pick::Focus(1))));
+        assert_eq!(picker.handle(Key::Char('p')), Some(Some(Pick::Popup(1))));
         assert_eq!(picker.handle(Key::Char('0')), Some(Some(Pick::Attach(0))));
         assert_eq!(picker.handle(Key::Char('7')), None);
         assert_eq!(picker.handle(Key::Char('q')), Some(None));

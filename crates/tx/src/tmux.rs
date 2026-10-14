@@ -14,6 +14,7 @@ use std::process::{Command, Stdio};
 
 use crate::palette::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX};
 use crate::session::Location;
+use crate::shlex::shlex_quote;
 
 /// Injected into every spawned session so colours render in a detached `new-session -d`.
 pub const TRUECOLOR_ENV: [(&str, &str); 2] =
@@ -398,26 +399,32 @@ impl Tmux {
             .map(drop)
     }
 
-    /// Open a `width`×`height` popup centred on `client`, in the picker's palette, running
-    /// `command`; closes when it exits (`-E`). Returns once the popup is up (the command runs on).
+    /// Open a `width`×`height` (columns, or a tmux percentage like `90%`) popup centred on
+    /// `client`, in the picker's palette, running `command`; closes when it exits (`-E`).
+    /// Returns when the popup closes.
     pub fn display_popup(
         &self,
         client: &str,
-        width: usize,
-        height: usize,
+        width: &str,
+        height: &str,
         title: &str,
         command: &str,
     ) -> Result<(), TmuxError> {
-        let width = width.to_string();
-        let height = height.to_string();
         let style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
         let border = format!("bg={BG_DEEP_HEX},fg={ACCENT_HEX}");
         let title = format!("#[fg={ACCENT_HEX},bold]{title}#[default]");
         self.run(&[
-            "display-popup", "-c", client, "-E", "-x", "C", "-y", "C", "-w", &width, "-h",
-            &height, "-b", "rounded", "-s", &style, "-S", &border, "-T", &title, command,
+            "display-popup", "-c", client, "-E", "-x", "C", "-y", "C", "-w", width, "-h",
+            height, "-b", "rounded", "-s", &style, "-S", &border, "-T", &title, command,
         ])
         .map(drop)
+    }
+
+    /// Nest-attach `session` in a popup covering most of `client`'s terminal (the timeline's
+    /// resident-popup shape); detaching or ending the session closes it.
+    pub fn popup_attach(&self, client: &str, title: &str, session: &str) -> Result<(), TmuxError> {
+        let command = format!("TMUX= tmux attach -t {}", shlex_quote(&exact_session(session)));
+        self.display_popup(client, "90%", "90%", title, &command)
     }
 
     /// Split `session`'s `pane` (a position token: `top-left`, `top-right`, …), the new pane

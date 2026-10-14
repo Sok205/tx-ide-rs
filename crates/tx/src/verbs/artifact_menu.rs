@@ -5,7 +5,8 @@
 //! client whose screen is the hosting pane. In an llm session `_artifact-menu` opens a popup over
 //! the pane running `_artifact-pick`, a list of the artifacts the session touched and its live
 //! nvim companions drawn like the tx picker's rows. Enter re-hosts the pane on the chosen view
-//! (the llm session keeps running detached); → moves the terminal to the pane already showing it.
+//! (the llm session keeps running detached); → moves the terminal to the pane already showing it;
+//! p nest-attaches it in a popup over the terminal, leaving the panes as they are.
 //! In an nvim view the key goes back to the controlling session — the artifact's most recent live
 //! non-`user` toucher (else its creator), or the companion's `parent` — focusing the pane still
 //! showing it, else re-hosting this pane on it.
@@ -94,14 +95,15 @@ impl Command for ArtifactGo {
     }
     fn summary(&self) -> &'static str {
         "Internal: show an artifact's nvim view or a session — `attach` re-hosts the pane showing \
-         SESSION on it, `focus` moves the terminal to the pane already hosting it (else attaches). \
-         Usage: _artifact-go SESSION CLIENT {attach|focus} {artifact|session} ID"
+         SESSION on it, `focus` moves the terminal to the pane already hosting it, `popup` \
+         nest-attaches it in a popup. Usage: _artifact-go SESSION CLIENT \
+         {attach|focus|popup} {artifact|session} ID"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let words: Vec<&str> = argv.iter().map(String::as_str).collect();
         let usage = || {
             eprintln!(
-                "usage: tx _artifact-go SESSION CLIENT {{attach|focus}} {{artifact|session}} ID"
+                "usage: tx _artifact-go SESSION CLIENT {{attach|focus|popup}} {{artifact|session}} ID"
             );
             Ok(2)
         };
@@ -124,8 +126,10 @@ impl Command for ArtifactGo {
 enum Mode {
     /// Re-host the pane the key fired in on the view.
     Attach,
-    /// Move the terminal to the pane already hosting the view; attach here when there is none.
+    /// Move the terminal to the pane already hosting the view (reported when there is none).
     Focus,
+    /// Nest-attach the view in a popup over the terminal; the panes stay as they are.
+    Popup,
 }
 
 impl Mode {
@@ -133,6 +137,7 @@ impl Mode {
         match text {
             "attach" => Some(Self::Attach),
             "focus" => Some(Self::Focus),
+            "popup" => Some(Self::Popup),
             _ => None,
         }
     }
@@ -141,6 +146,7 @@ impl Mode {
         match self {
             Self::Attach => "attach",
             Self::Focus => "focus",
+            Self::Popup => "popup",
         }
     }
 }
@@ -192,8 +198,8 @@ impl ArtifactNav {
                 let client_width = self.client_width(client);
                 self.service.tmux().display_popup(
                     client,
-                    (content + POPUP_FRAME).min(client_width),
-                    listing.lines.len().max(1) + POPUP_ROWS_OVERHEAD,
+                    &(content + POPUP_FRAME).min(client_width).to_string(),
+                    &(listing.lines.len().max(1) + POPUP_ROWS_OVERHEAD).to_string(),
                     &listing.title,
                     &self.tx_command(&["_artifact-pick", session, client]),
                 )?;
@@ -227,7 +233,7 @@ impl ArtifactNav {
         let listing = self.listing(&record, client)?;
         // A focus needs a pane to go to: declined in place when nothing shows the row's view.
         let decline = |pick: Pick| match pick {
-            Pick::Attach(_) => None,
+            Pick::Attach(_) | Pick::Popup(_) => None,
             Pick::Focus(index) => {
                 let target = &listing.targets[index];
                 let hosted = self.hosting_session(target).is_some_and(|tmux_name| {
@@ -245,6 +251,7 @@ impl ArtifactNav {
         let (mode, index) = match pick {
             Pick::Attach(index) => (Mode::Attach, index),
             Pick::Focus(index) => (Mode::Focus, index),
+            Pick::Popup(index) => (Mode::Popup, index),
         };
         let target = &listing.targets[index];
         let command = self.tx_command(&[
@@ -453,7 +460,9 @@ impl ArtifactNav {
     }
 
     /// Bring `target` in front of the user: in `Focus` mode move the terminal to a pane already
-    /// hosting it (reported when none does); in `Attach` mode re-host here.
+    /// hosting it (reported when none does); in `Popup` mode nest-attach it in a popup over the
+    /// outer terminal (the nested client's own screen when there is no outer one); in `Attach`
+    /// mode re-host here.
     fn show(
         &self,
         session: &str,
@@ -462,16 +471,23 @@ impl ArtifactNav {
         target: &Session,
     ) -> Result<i32, BoxError> {
         let tmux = self.service.tmux();
-        if mode == Mode::Focus {
-            return match tmux.focus_hosting_pane(client, target.tmux_name()) {
+        match mode {
+            Mode::Focus => match tmux.focus_hosting_pane(client, target.tmux_name()) {
                 Ok(()) => Ok(0),
                 Err(reason) => {
                     tmux.display_status(client, &format!("prefix+a: {}: {reason}", target.name));
                     Ok(1)
                 }
-            };
+            },
+            Mode::Popup => {
+                let outer = tmux
+                    .outer_client(client)
+                    .map_or_else(|| client.to_owned(), |(outer, _)| outer);
+                tmux.popup_attach(&outer, &format!(" {} ", target.name), target.tmux_name())?;
+                Ok(0)
+            }
+            Mode::Attach => self.rehost(session, client, target),
         }
-        self.rehost(session, client, target)
     }
 
     /// Re-host the pane the firing client paints into on `target` (`respawn-pane -k` onto a
