@@ -4,9 +4,10 @@
 //! pane hosts a `tmux` client — so `#{session_name}` is the tx id and `#{client_name}` the nested
 //! client whose screen is the hosting pane. In an llm session `_artifact-menu` opens a popup over
 //! the pane running `_artifact-pick`, a list of the artifacts the session touched and its live
-//! nvim companions drawn like the tx picker's rows. Enter re-hosts the pane on the chosen view
-//! (the llm session keeps running detached); → moves the terminal to the pane already showing it;
-//! p nest-attaches it in a popup over the terminal, leaving the panes as they are.
+//! nvim companions drawn like the tx picker's rows. Enter (or a digit) re-hosts the pane on the
+//! chosen view (the llm session keeps running detached); f then a digit or Enter moves the
+//! terminal to the pane already showing it; p then a digit or Enter nest-attaches it in a popup
+//! over the terminal, leaving the panes as they are.
 //! In an nvim view the key goes back to the controlling session — the artifact's most recent live
 //! non-`user` toucher (else its creator), or the companion's `parent` — focusing the pane still
 //! showing it, else re-hosting this pane on it.
@@ -75,8 +76,9 @@ impl Command for ArtifactPick {
         "_artifact-pick"
     }
     fn summary(&self) -> &'static str {
-        "Internal: the picker inside prefix+a's popup — Enter attaches the row's view in the pane, \
-         → focuses the pane already showing it. Usage: _artifact-pick SESSION CLIENT"
+        "Internal: the picker inside prefix+a's popup — Enter attaches the row's view in the pane; \
+         f / p then a digit or Enter focus the pane already showing it / open it in a popup. \
+         Usage: _artifact-pick SESSION CLIENT"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let [session, client] = argv else {
