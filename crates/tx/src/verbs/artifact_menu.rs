@@ -16,7 +16,8 @@ use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::artifact_service::ArtifactService;
 use crate::events;
-use crate::render::reltime;
+use crate::palette::{DIM_FG_HEX, FG_HEX, WARN_HEX, tag_hex};
+use crate::render::{LOCATION_W, ROLE_W, actor_label, location_text, reltime};
 use crate::service::SessionService;
 use crate::session::{OtherRole, Session, SessionKind};
 use crate::shlex::shlex_join;
@@ -25,7 +26,8 @@ use crate::storage::Home;
 
 use super::common::{bin_tx, nest_attach_command};
 
-const TITLE_WIDTH: usize = 32;
+const NAME_FLOOR: usize = 12;
+const NAME_CEILING: usize = 40;
 
 pub(super) struct ArtifactNav {
     pub(super) service: Rc<SessionService>,
@@ -123,53 +125,81 @@ impl ArtifactNav {
         let now = events::now();
         let mut artifacts = self.artifacts.artifacts_for_session(&record.id);
         artifacts.sort_by(|a, b| updated_at(b).total_cmp(&updated_at(a)));
-        let companions: Vec<Session> = self
-            .service
-            .live_sessions()?
-            .into_iter()
-            .filter(|candidate| candidate.parent.as_deref() == Some(record.id.as_str()))
-            .filter(|candidate| {
-                matches!(&candidate.kind, SessionKind::Other(other)
-                    if other.role == OtherRole::Nvim && other.artifact_id.is_none())
-            })
-            .collect();
+        let live = self.service.live_sessions()?;
+        let names = self.service.store().names_for(
+            artifacts
+                .iter()
+                .flat_map(|artifact| artifact.history())
+                .map(|touch| touch.session_id.as_str()),
+        );
 
-        let mut items: Vec<(String, String, String)> = Vec::new();
+        let mut rows: Vec<Row> = Vec::new();
         for artifact in &artifacts {
-            let title = artifact.title.as_deref().unwrap_or(&artifact.filename);
+            let view = live.iter().find(|candidate| {
+                matches!(&candidate.kind, SessionKind::Other(other)
+                    if other.artifact_id.as_deref() == Some(artifact.id.as_str()))
+            });
+            let mut chips = Vec::new();
+            for touch in artifact.history() {
+                let author = actor_label(&touch.session_id, &names);
+                if !chips.contains(&author) {
+                    chips.push(author);
+                }
+            }
+            rows.push(Row {
+                name: artifact
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| artifact.filename.clone()),
+                location: view
+                    .map_or_else(|| "—".to_owned(), |view| location_text(&view.attached_to)),
+                started: reltime(Some(&artifact.created_at), now),
+                idle: reltime(Some(artifact.updated_at()), now),
+                role: "art",
+                note: format!("{}r", artifact.history().len()),
+                chips,
+                command: self.go_command(session, client, "artifact", &artifact.id),
+            });
+        }
+        for companion in live.iter().filter(|candidate| {
+            candidate.parent.as_deref() == Some(record.id.as_str())
+                && matches!(&candidate.kind, SessionKind::Other(other)
+                    if other.role == OtherRole::Nvim && other.artifact_id.is_none())
+        }) {
+            rows.push(Row {
+                name: companion.name.clone(),
+                location: location_text(&companion.attached_to),
+                started: reltime(companion.created_at.as_ref(), now),
+                idle: "—".to_owned(),
+                role: "nvim",
+                note: String::new(),
+                chips: companion.tags.clone(),
+                command: self.go_command(session, client, "session", &companion.id),
+            });
+        }
+
+        let namew = rows
+            .iter()
+            .map(|row| row.name.chars().count())
+            .max()
+            .unwrap_or(0)
+            .clamp(NAME_FLOOR, NAME_CEILING);
+        let mut items: Vec<(String, String, String)> =
+            vec![(header(namew), String::new(), String::new())];
+        if rows.is_empty() {
             items.push((
-                format!(
-                    "{:<width$} {:>3}r {:>5}",
-                    truncate(title, TITLE_WIDTH),
-                    artifact.history().len(),
-                    reltime(Some(artifact.updated_at()), now),
-                    width = TITLE_WIDTH
-                ),
+                "-  (no artifacts or companions)".into(),
                 String::new(),
-                self.go_command(session, client, "artifact", &artifact.id),
+                String::new(),
             ));
         }
-        for companion in &companions {
-            items.push((
-                format!(
-                    "{:<width$} nvim {:>5}",
-                    truncate(&companion.name, TITLE_WIDTH),
-                    reltime(companion.created_at.as_ref(), now),
-                    width = TITLE_WIDTH
-                ),
-                String::new(),
-                self.go_command(session, client, "session", &companion.id),
-            ));
-        }
-        if items.is_empty() {
-            items.push((
-                "-no artifacts or companions".into(),
-                String::new(),
-                String::new(),
-            ));
-        }
-        for (index, item) in items.iter_mut().enumerate().take(9) {
-            item.1 = (index + 1).to_string();
+        for (index, row) in rows.iter().enumerate() {
+            let key = if index < 9 {
+                (index + 1).to_string()
+            } else {
+                String::new()
+            };
+            items.push((row.render(namew), key, row.command.clone()));
         }
         self.service
             .tmux()
@@ -279,6 +309,58 @@ impl ArtifactNav {
 
 fn updated_at(artifact: &Artifact) -> f64 {
     artifact.updated_at().as_f64().unwrap_or(0.0)
+}
+
+/// One menu line, laid out like a picker row: NAME   LOCATION STARTED IDLE ROLE chips.
+struct Row {
+    name: String,
+    location: String,
+    started: String,
+    idle: String,
+    role: &'static str,
+    /// A dim annotation before the chips (an artifact's revision count).
+    note: String,
+    chips: Vec<String>,
+    command: String,
+}
+
+impl Row {
+    /// tmux `#[…]` styles stand in for the picker's SGR escapes; literal `#` is doubled.
+    fn render(&self, namew: usize) -> String {
+        let name = pad(&truncate(&self.name, namew), namew);
+        let chips: String = self
+            .chips
+            .iter()
+            .map(|chip| format!(" #[fg={}][{}]#[default]", tag_hex(chip), escape(chip)))
+            .collect();
+        format!(
+            "#[fg={FG_HEX}]{}#[default]   {} {:<7} #[fg={WARN_HEX}]{:<6}#[default] #[fg={}]{:<ROLE_W$}#[default] #[fg={DIM_FG_HEX}]{:<3}#[default]{chips}",
+            escape(&name),
+            escape(&pad(&self.location, LOCATION_W)),
+            self.started,
+            self.idle,
+            tag_hex(self.role),
+            self.role,
+            self.note,
+        )
+    }
+}
+
+/// The picker's column header as a disabled (unselectable) first line.
+fn header(namew: usize) -> String {
+    format!(
+        "-#[fg={DIM_FG_HEX}]{:<namew$}   {:<LOCATION_W$} {:<7} {:<6} {:<ROLE_W$}     TAGS#[default]",
+        "NAME", "LOCATION", "STARTED", "IDLE", "ROLE"
+    )
+}
+
+fn pad(text: &str, width: usize) -> String {
+    let fill = width.saturating_sub(text.chars().count());
+    format!("{text}{}", " ".repeat(fill))
+}
+
+fn escape(text: &str) -> String {
+    text.replace('#', "##")
 }
 
 fn truncate(text: &str, width: usize) -> String {

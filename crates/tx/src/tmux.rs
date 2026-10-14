@@ -12,6 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::process::{Command, Stdio};
 
+use crate::palette::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX, FG_HEX, SELECTION_BG};
 use crate::session::Location;
 
 /// Injected into every spawned session so colours render in a detached `new-session -d`.
@@ -391,24 +392,38 @@ impl Tmux {
             .map(drop)
     }
 
-    /// Post a native menu on `client`, centred: one `(name, key, command)` per item. A name
-    /// starting with `-` is a disabled line (tmux's own convention).
+    /// Post a native menu on `client`, centred and in the picker's palette: one `(name, key,
+    /// command)` per item. A name starting with `-` is a disabled line (tmux's own convention).
     pub fn display_menu(
         &self,
         client: &str,
         title: &str,
         items: &[(String, String, String)],
     ) -> Result<(), TmuxError> {
+        let style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
+        let selected = format!("bg=colour{SELECTION_BG},fg={FG_HEX},bold");
+        let border = format!("bg={BG_DEEP_HEX},fg={ACCENT_HEX}");
+        let title = format!("#[fg={ACCENT_HEX},bold]{title}#[default]");
         let mut args = vec![
             "display-menu",
             "-c",
             client,
             "-T",
-            title,
+            &title,
             "-x",
             "C",
             "-y",
             "C",
+            "-b",
+            "rounded",
+            "-s",
+            &style,
+            "-H",
+            &selected,
+            "-S",
+            &border,
+            // A disabled line starts with `-`: end option parsing so it is not read as a flag.
+            "--",
         ];
         for (name, key, command) in items {
             args.extend([name.as_str(), key.as_str(), command.as_str()]);
