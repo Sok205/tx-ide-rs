@@ -102,6 +102,12 @@ const VERBS: &[(&str, &str, Visibility, Run)] = &[
         rename,
     ),
     (
+        "parent",
+        "Read or set a session's parent (the session that spawned it; --clear drops the link).",
+        Visibility::Public,
+        parent,
+    ),
+    (
         "whoami",
         "Print the current session's display name (resolves #S — the id for a process).",
         Visibility::Public,
@@ -622,6 +628,49 @@ fn rename(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxError>
         .service
         .rename(required(&matches, "name"), required(&matches, "new_name"))?;
     println!("Renamed to '{}'", session.name);
+    Ok(0)
+}
+
+fn parent(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxError> {
+    let parser = parser
+        .arg(Arg::positional("name"))
+        .arg(
+            Arg::positional("parent")
+                .optional()
+                .help("the parent session to set (name or id)"),
+        )
+        .arg(Arg::option("--clear").flag().help("drop the parent link"));
+    let matches = parse!(parser, argv);
+    let name = required(&matches, "name");
+    let clear = matches.get_flag("clear");
+    let parent = matches.get_one("parent");
+    if clear && parent.is_some() {
+        return Ok(parser.error("give a parent or --clear, not both").emit());
+    }
+    if clear {
+        let session = deps.service.set_parent(name, None)?;
+        println!("Cleared parent of '{}'", session.name);
+        return Ok(0);
+    }
+    if let Some(parent) = parent {
+        let session = deps.service.set_parent(name, Some(parent))?;
+        println!("Parent of '{}' is now '{parent}'", session.name);
+        return Ok(0);
+    }
+    let Some(session) = deps.service.get(name)? else {
+        eprintln!("tx parent: session '{name}' not found");
+        return Ok(1);
+    };
+    match session
+        .parent
+        .as_deref()
+        .map(|id| deps.service.get(id))
+        .transpose()?
+    {
+        Some(Some(parent)) => println!("{} ({})", parent.name, parent.id),
+        Some(None) => println!("{} (no record)", session.parent.as_deref().unwrap_or("")),
+        None => println!("—"),
+    }
     Ok(0)
 }
 

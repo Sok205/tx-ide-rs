@@ -3,8 +3,9 @@
 //! The key fires INSIDE the nested session — the outer bind forwards it one level down while the
 //! pane hosts a `tmux` client — so `#{session_name}` is the tx id and `#{client_name}` the nested
 //! client whose screen is the hosting pane. In an llm session `_artifact-menu` opens a popup over
-//! the pane running `_artifact-pick`, a list of the artifacts the session touched and its live
-//! nvim companions drawn like the tx picker's rows. Enter (or a digit) re-hosts the pane on the
+//! the pane running `_artifact-pick`, a sectioned list — the artifacts the session touched, its
+//! parent, its live children (sessions it spawned: workers, shells, nvim companions) — drawn like
+//! the tx picker's rows. Enter (or a digit) re-hosts the pane on the
 //! chosen view (the llm session keeps running detached); f then a digit or Enter moves the
 //! terminal to the pane already showing it; p then a digit or Enter nest-attaches it in a popup
 //! over the terminal, leaving the panes as they are.
@@ -18,12 +19,12 @@ use cordis::BoxError;
 
 use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
-use crate::artifact_picker::{self, HINT, Pick, visible_width};
+use crate::artifact_picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::artifact_service::ArtifactService;
 use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ansi, tag_hex};
 use crate::render::{LOCATION_W, actor_label, location_text};
 use crate::service::SessionService;
-use crate::session::{OtherRole, Session, SessionKind};
+use crate::session::{Session, SessionKind};
 use crate::shlex::shlex_join;
 use crate::spawn::SpawnSpec;
 use crate::storage::Home;
@@ -32,16 +33,18 @@ use super::common::{bin_tx, nest_attach_command};
 
 const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
-/// The `(k) ` choice number drawn at the row's left, as choose-tree does.
-const NUMBER_WIDTH: usize = 4;
+/// The `(k) ` choice key drawn at the row's left, as choose-tree does: `(1)` up to nine rows,
+/// `(M-a)` past that.
+const DIGIT_LABEL_WIDTH: usize = 4;
+const META_LABEL_WIDTH: usize = 6;
 /// Popup border plus one column of padding each side.
 const POPUP_FRAME: usize = 4;
 /// Header, rows, a blank line, the notice line, the hint, and the border rows.
 const POPUP_ROWS_OVERHEAD: usize = 6;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
-/// The choice number and the NAME…columns separator.
-const FIXED_CELLS: usize = NUMBER_WIDTH + 3;
+/// The NAME…columns separator.
+const NAME_GAP: usize = 3;
 
 pub(super) struct ArtifactNav {
     pub(super) service: Rc<SessionService>,
@@ -159,11 +162,12 @@ struct Target {
     id: String,
 }
 
-/// The picker's content for one llm session: its rows laid out for `client`'s width.
+/// The picker's content for one llm session: sections and rows laid out for `client`'s width;
+/// `names` and `targets` are per row, in row order.
 struct Listing {
     title: String,
     header: String,
-    lines: Vec<String>,
+    items: Vec<Item>,
     names: Vec<String>,
     targets: Vec<Target>,
 }
@@ -191,9 +195,9 @@ impl ArtifactNav {
             SessionKind::Llm(_) => {
                 let listing = self.listing(&record, client)?;
                 let content = listing
-                    .lines
+                    .items
                     .iter()
-                    .map(|line| visible_width(line))
+                    .map(|item| visible_width(item.text()))
                     .chain([visible_width(&listing.header), HINT.chars().count()])
                     .max()
                     .unwrap_or(0);
@@ -201,7 +205,7 @@ impl ArtifactNav {
                 self.service.tmux().display_popup(
                     client,
                     &(content + POPUP_FRAME).min(client_width).to_string(),
-                    &(listing.lines.len().max(1) + POPUP_ROWS_OVERHEAD).to_string(),
+                    &(listing.items.len().max(1) + POPUP_ROWS_OVERHEAD).to_string(),
                     &listing.title,
                     &self.tx_command(&["_artifact-pick", session, client]),
                 )?;
@@ -247,7 +251,7 @@ impl ArtifactNav {
                 (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
             }
         };
-        let Some(pick) = artifact_picker::pick(&listing.header, &listing.lines, decline)? else {
+        let Some(pick) = artifact_picker::pick(&listing.header, &listing.items, decline)? else {
             return Ok(0);
         };
         let (mode, index) = match pick {
@@ -288,8 +292,10 @@ impl ArtifactNav {
                 .map(|touch| touch.session_id.as_str()),
         );
 
-        let mut rows: Vec<Row> = Vec::new();
+        // (section title, rows) in display order; rows are numbered across sections.
+        let mut sections: Vec<(&str, Vec<Row>)> = Vec::new();
         let mut targets: Vec<Target> = Vec::new();
+        let mut rows: Vec<Row> = Vec::new();
         for artifact in &artifacts {
             let view = live.iter().find(|candidate| {
                 matches!(&candidate.kind, SessionKind::Other(other)
@@ -316,34 +322,59 @@ impl ArtifactNav {
                 id: artifact.id.clone(),
             });
         }
-        for companion in live.iter().filter(|candidate| {
+        if !rows.is_empty() {
+            sections.push(("ARTIFACTS", std::mem::take(&mut rows)));
+        }
+        let parent = record
+            .parent
+            .as_deref()
+            .and_then(|parent_id| live.iter().find(|candidate| candidate.id == parent_id));
+        // Artifact views are already rows above, under their artifact.
+        let children = live.iter().filter(|candidate| {
             candidate.parent.as_deref() == Some(record.id.as_str())
-                && matches!(&candidate.kind, SessionKind::Other(other)
-                    if other.role == OtherRole::Nvim && other.artifact_id.is_none())
-        }) {
-            rows.push(Row {
-                name: companion.name.clone(),
-                location: location_text(&companion.attached_to),
-                chips: companion.tags.clone(),
-            });
-            targets.push(Target {
-                kind: "session",
-                id: companion.id.clone(),
-            });
+                && !matches!(&candidate.kind, SessionKind::Other(other) if other.artifact_id.is_some())
+        });
+        for (title, related) in [
+            ("PARENT", parent.into_iter().collect::<Vec<_>>()),
+            ("CHILDREN", children.collect()),
+        ] {
+            if related.is_empty() {
+                continue;
+            }
+            for related_session in related {
+                rows.push(Row {
+                    name: related_session.name.clone(),
+                    location: location_text(&related_session.attached_to),
+                    chips: related_session.tags.clone(),
+                });
+                targets.push(Target {
+                    kind: "session",
+                    id: related_session.id.clone(),
+                });
+            }
+            sections.push((title, std::mem::take(&mut rows)));
         }
 
         // Laid out for the popup's usable width so no row wraps.
-        let layout = Layout::fit(&rows, self.client_width(client).saturating_sub(POPUP_FRAME));
-        let lines = rows
-            .iter()
-            .enumerate()
-            .map(|(index, row)| row.render(index, &layout))
-            .collect();
-        let names = rows.iter().map(|row| row.name.clone()).collect();
+        let all_rows: Vec<&Row> = sections.iter().flat_map(|(_, rows)| rows).collect();
+        let layout = Layout::fit(
+            &all_rows,
+            self.client_width(client).saturating_sub(POPUP_FRAME),
+        );
+        let names = all_rows.iter().map(|row| row.name.clone()).collect();
+        let mut items = Vec::new();
+        let mut index = 0;
+        for (title, rows) in &sections {
+            items.push(Item::Section((*title).to_owned()));
+            for row in rows {
+                items.push(Item::Row(row.render(index, &layout)));
+                index += 1;
+            }
+        }
         Ok(Listing {
             title: format!(" {} ", record.name),
             header: layout.header(),
-            lines,
+            items,
             names,
             targets,
         })
@@ -575,8 +606,9 @@ impl Row {
     fn render(&self, index: usize, layout: &Layout) -> String {
         let name = pad(&truncate(&self.name, layout.namew), layout.namew);
         let mut line = format!(
-            "{DIM_FG_ANSI}{:<NUMBER_WIDTH$}{FG_ANSI}{name}{RESET_FG}   ",
-            format!("({})", index + 1)
+            "{DIM_FG_ANSI}{:<label_width$}{FG_ANSI}{name}{RESET_FG}   ",
+            row_label(index),
+            label_width = layout.label_width
         );
         if layout.location {
             line.push_str(&format!(
@@ -599,23 +631,30 @@ impl Row {
 /// Which picker columns fit: the number and NAME always, LOCATION when there is room, chips in
 /// whatever is left.
 struct Layout {
+    label_width: usize,
     namew: usize,
     location: bool,
     chips: usize,
 }
 
 impl Layout {
-    fn fit(rows: &[Row], width: usize) -> Self {
+    fn fit(rows: &[&Row], width: usize) -> Self {
         let longest = rows
             .iter()
             .map(|row| row.name.chars().count())
             .max()
             .unwrap_or(0);
-        let chips_wanted = rows.iter().map(Row::chips_width).max().unwrap_or(0);
+        let chips_wanted = rows.iter().map(|row| row.chips_width()).max().unwrap_or(0);
+        let label_width = if rows.len() > 9 {
+            META_LABEL_WIDTH
+        } else {
+            DIGIT_LABEL_WIDTH
+        };
+        let fixed = label_width + NAME_GAP;
         let mut namew = longest.clamp(NAME_FLOOR, NAME_CEILING);
-        let spare = |namew: usize| width.saturating_sub(namew + FIXED_CELLS);
+        let spare = |namew: usize| width.saturating_sub(namew + fixed);
         if spare(namew) < chips_wanted {
-            namew = NAME_FLOOR.max(width.saturating_sub(FIXED_CELLS + chips_wanted).min(namew));
+            namew = NAME_FLOOR.max(width.saturating_sub(fixed + chips_wanted).min(namew));
         }
         let mut left = spare(namew);
         let mut chips = chips_wanted.min(left);
@@ -626,6 +665,7 @@ impl Layout {
         }
         chips += left;
         Self {
+            label_width,
             namew,
             location,
             chips,
@@ -635,9 +675,10 @@ impl Layout {
     /// The picker's column header (drawn dim by the picker).
     fn header(&self) -> String {
         let mut line = format!(
-            "{:<NUMBER_WIDTH$}{:<namew$}   ",
+            "{:<label_width$}{:<namew$}   ",
             "",
             "NAME",
+            label_width = self.label_width,
             namew = self.namew
         );
         if self.location {
