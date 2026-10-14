@@ -34,8 +34,8 @@ const NAME_CEILING: usize = 40;
 const NUMBER_WIDTH: usize = 4;
 /// Popup border plus one column of padding each side.
 const POPUP_FRAME: usize = 4;
-/// Header, rows, a blank line, the hint, and the border rows.
-const POPUP_ROWS_OVERHEAD: usize = 5;
+/// Header, rows, a blank line, the notice line, the hint, and the border rows.
+const POPUP_ROWS_OVERHEAD: usize = 6;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
 /// The choice number and the NAME…columns separator.
@@ -156,6 +156,7 @@ struct Listing {
     title: String,
     header: String,
     lines: Vec<String>,
+    names: Vec<String>,
     targets: Vec<Target>,
 }
 
@@ -216,14 +217,29 @@ impl ArtifactNav {
         }
     }
 
-    /// Inside the popup: run the list, then hand the choice to a background `_artifact-go` so the
-    /// popup is gone before the pane it sits on is re-hosted.
+    /// Inside the popup: run the list (a focus on a view no pane shows is declined with a notice),
+    /// then hand the choice to a background `_artifact-go` so the popup is gone before the pane
+    /// it sits on is re-hosted.
     fn pick(&self, session: &str, client: &str) -> Result<i32, BoxError> {
         let Some(record) = self.record(session, client)? else {
             return Ok(1);
         };
         let listing = self.listing(&record, client)?;
-        let Some(pick) = artifact_picker::pick(&listing.header, &listing.lines)? else {
+        // A focus needs a pane to go to: declined in place when nothing shows the row's view.
+        let decline = |pick: Pick| match pick {
+            Pick::Attach(_) => None,
+            Pick::Focus(index) => {
+                let target = &listing.targets[index];
+                let hosted = self.hosting_session(target).is_some_and(|tmux_name| {
+                    self.service
+                        .tmux()
+                        .pane_for_session(&tmux_name, "")
+                        .is_some()
+                });
+                (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
+            }
+        };
+        let Some(pick) = artifact_picker::pick(&listing.header, &listing.lines, decline)? else {
             return Ok(0);
         };
         let (mode, index) = match pick {
@@ -314,12 +330,32 @@ impl ArtifactNav {
             .enumerate()
             .map(|(index, row)| row.render(index, &layout))
             .collect();
+        let names = rows.iter().map(|row| row.name.clone()).collect();
         Ok(Listing {
             title: format!(" {} ", record.name),
             header: layout.header(),
             lines,
+            names,
             targets,
         })
+    }
+
+    /// The tmux session a row's view runs in: the companion itself, or the live nvim view bound to
+    /// the artifact (`None` when the artifact has no live view).
+    fn hosting_session(&self, target: &Target) -> Option<String> {
+        match target.kind {
+            "session" => Some(target.id.clone()),
+            _ => self
+                .service
+                .live_sessions()
+                .ok()?
+                .into_iter()
+                .find_map(|candidate| {
+                    matches!(&candidate.kind, SessionKind::Other(other)
+                    if other.artifact_id.as_deref() == Some(target.id.as_str()))
+                    .then(|| candidate.tmux_name().to_owned())
+                }),
+        }
     }
 
     /// This binary with the home baked in: `run-shell` and the popup run in the server's
@@ -417,7 +453,7 @@ impl ArtifactNav {
     }
 
     /// Bring `target` in front of the user: in `Focus` mode move the terminal to a pane already
-    /// hosting it (falling back to attaching when none does); in `Attach` mode re-host here.
+    /// hosting it (reported when none does); in `Attach` mode re-host here.
     fn show(
         &self,
         session: &str,
@@ -426,7 +462,7 @@ impl ArtifactNav {
         target: &Session,
     ) -> Result<i32, BoxError> {
         let tmux = self.service.tmux();
-        if mode == Mode::Focus && tmux.pane_for_session(target.tmux_name(), "").is_some() {
+        if mode == Mode::Focus {
             return match tmux.focus_hosting_pane(client, target.tmux_name()) {
                 Ok(()) => Ok(0),
                 Err(reason) => {

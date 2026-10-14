@@ -2,11 +2,12 @@
 //!
 //! Pure list logic ([`Picker`]) — keys in, the chosen action out — around the session editor's
 //! terminal layer. Enter attaches the row's view in the pane, → focuses the pane already showing
-//! it (so does l, vim-style), a digit picks that row for attach, Esc / q close.
+//! it (so does l, vim-style), a digit picks that row for attach, Esc / q close. A pick the caller
+//! declines (a focus with nothing to focus) becomes a notice line and the list stays open.
 
 use std::io;
 
-use crate::palette::{DIM_FG_ANSI, RESET, SELECTION_BG};
+use crate::palette::{DIM_FG_ANSI, RESET, SELECTION_BG, WARN_ANSI};
 use crate::session_editor::{Decoder, Key, Terminal, read_key, write_all};
 
 pub const HINT: &str = "Enter attach here   →/l focus its pane   Esc close";
@@ -23,6 +24,8 @@ pub struct Picker<'a> {
     header: &'a str,
     lines: &'a [String],
     cursor: usize,
+    /// A one-line message under the rows (a declined pick); the next key clears it.
+    notice: Option<String>,
 }
 
 impl<'a> Picker<'a> {
@@ -31,11 +34,17 @@ impl<'a> Picker<'a> {
             header,
             lines,
             cursor: 0,
+            notice: None,
         }
+    }
+
+    pub fn notice(&mut self, text: String) {
+        self.notice = Some(text);
     }
 
     /// `Some(Some(pick))` chooses, `Some(None)` cancels, `None` keeps going.
     pub fn handle(&mut self, key: Key) -> Option<Option<Pick>> {
+        self.notice = None;
         match key {
             Key::Up | Key::Char('k') => self.cursor = self.cursor.saturating_sub(1),
             Key::Down | Key::Char('j') => {
@@ -83,7 +92,10 @@ impl<'a> Picker<'a> {
                 put(line);
             }
         }
-        if height > self.lines.len() + 2 {
+        if height > self.lines.len() + 3 {
+            if let Some(notice) = &self.notice {
+                out += &format!("\x1b[{};1H{WARN_ANSI}{notice}{RESET}", height - 1);
+            }
             out += &format!("\x1b[{};1H{DIM_FG_ANSI}{HINT}{RESET}", height);
         }
         out
@@ -108,8 +120,13 @@ pub fn visible_width(text: &str) -> usize {
     width
 }
 
-/// Run the picker on the controlling terminal; `None` on Esc / q / Ctrl-C.
-pub fn pick(header: &str, lines: &[String]) -> io::Result<Option<Pick>> {
+/// Run the picker on the controlling terminal; `None` on Esc / q / Ctrl-C. `decline` vets a pick:
+/// `Some(message)` shows it as the notice and keeps the list open, `None` accepts the pick.
+pub fn pick(
+    header: &str,
+    lines: &[String],
+    mut decline: impl FnMut(Pick) -> Option<String>,
+) -> io::Result<Option<Pick>> {
     let _terminal = Terminal::open()?;
     let mut picker = Picker::new(header, lines);
     let mut decoder = Decoder::default();
@@ -117,8 +134,13 @@ pub fn pick(header: &str, lines: &[String]) -> io::Result<Option<Pick>> {
         let (height, width) = Terminal::size();
         write_all(picker.render(height, width).as_bytes())?;
         let key = read_key(&mut decoder, (height, width))?;
-        if let Some(outcome) = picker.handle(key) {
-            return Ok(outcome);
+        match picker.handle(key) {
+            Some(Some(chosen)) => match decline(chosen) {
+                Some(message) => picker.notice(message),
+                None => return Ok(Some(chosen)),
+            },
+            Some(None) => return Ok(None),
+            None => {}
         }
     }
 }
@@ -138,6 +160,16 @@ mod tests {
         assert_eq!(picker.handle(Key::Char('0')), Some(Some(Pick::Attach(0))));
         assert_eq!(picker.handle(Key::Char('7')), None);
         assert_eq!(picker.handle(Key::Char('q')), Some(None));
+    }
+
+    #[test]
+    fn notice_shows_under_the_rows_until_the_next_key() {
+        let lines = vec!["a".to_owned()];
+        let mut picker = Picker::new("H", &lines);
+        picker.notice("nope".into());
+        assert!(picker.render(6, 20).contains("nope"));
+        picker.handle(Key::Down);
+        assert!(!picker.render(6, 20).contains("nope"));
     }
 
     #[test]
