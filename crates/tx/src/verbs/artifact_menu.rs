@@ -19,7 +19,7 @@ use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::artifact_picker::{self, HINT, Pick, visible_width};
 use crate::artifact_service::ArtifactService;
-use crate::palette::{DIM_FG_ANSI, FG_ANSI, RESET_FG, tag_ansi};
+use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ansi, tag_hex};
 use crate::render::{LOCATION_W, actor_label, location_text};
 use crate::service::SessionService;
 use crate::session::{OtherRole, Session, SessionKind};
@@ -483,7 +483,15 @@ impl ArtifactNav {
                 let outer = tmux
                     .outer_client(client)
                     .map_or_else(|| client.to_owned(), |(outer, _)| outer);
-                tmux.popup_attach(&outer, &format!(" {} ", target.name), target.tmux_name())?;
+                let prefix = tmux
+                    .global_option("prefix")
+                    .unwrap_or_else(|| "C-b".to_owned());
+                tmux.popup_attach(
+                    &outer,
+                    &popup_title(target),
+                    &popup_footer(&prefix),
+                    target.tmux_name(),
+                )?;
                 Ok(0)
             }
             Mode::Attach => self.rehost(session, client, target),
@@ -530,6 +538,23 @@ impl ArtifactNav {
 
 fn updated_at(artifact: &Artifact) -> f64 {
     artifact.updated_at().as_f64().unwrap_or(0.0)
+}
+
+/// The popup's title, as the picker shows a row: the view's name, then its tags as chips.
+fn popup_title(view: &Session) -> String {
+    let mut title = format!(" {} ", view.name);
+    for tag in &view.tags {
+        title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
+    }
+    title
+}
+
+/// The popup's bottom line: how to leave it.
+fn popup_footer(prefix: &str) -> String {
+    format!(
+        " #[fg={FG_HEX}]{prefix} d#[fg={DIM_FG_HEX}] close, the view keeps running   \
+         #[fg={FG_HEX}]:q#[fg={DIM_FG_HEX}] in nvim ends the view"
+    )
 }
 
 /// One picker line, laid out like a picker row: (n) NAME   LOCATION chips.

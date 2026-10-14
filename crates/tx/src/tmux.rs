@@ -421,11 +421,27 @@ impl Tmux {
     }
 
     /// Nest-attach `session` in a popup covering most of `client`'s terminal (the timeline's
-    /// resident-popup shape); detaching or ending the session closes it. The plain name, as
-    /// `attach_session` passes it: an `=`-prefixed target makes the popup's attach die at once.
-    pub fn popup_attach(&self, client: &str, title: &str, session: &str) -> Result<(), TmuxError> {
+    /// resident-popup shape); detaching or ending the session closes it. While it is open the
+    /// session's status line is on, showing `footer` (a tmux format) in the popup's palette; it
+    /// is hidden again when the popup closes. The plain name, as `attach_session` passes it: an
+    /// `=`-prefixed target makes the popup's attach die at once.
+    pub fn popup_attach(
+        &self,
+        client: &str,
+        title: &str,
+        footer: &str,
+        session: &str,
+    ) -> Result<(), TmuxError> {
+        let status_style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
+        self.set_session_option(session, "status", "on")?;
+        self.set_session_option(session, "status-style", &status_style)?;
+        self.set_session_option(session, "status-format[0]", footer)?;
         let command = format!("TMUX= tmux attach -t {}", shlex_quote(session));
-        self.display_popup(client, "90%", "90%", title, &command)
+        let shown = self.display_popup(client, "90%", "90%", title, &command);
+        for option in ["status", "status-style", "status-format[0]"] {
+            self.unset_session_option(session, option);
+        }
+        shown
     }
 
     /// Split `session`'s `pane` (a position token: `top-left`, `top-right`, …), the new pane
