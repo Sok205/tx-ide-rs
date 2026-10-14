@@ -628,6 +628,20 @@ impl SessionService {
         Ok(session)
     }
 
+    /// Set (or with `None` clear) the parent link; `parent` is a name or id, stored as the id.
+    pub fn set_parent(&self, name_or_id: &str, parent: Option<&str>) -> Result<Session> {
+        let mut session = self.require(name_or_id)?;
+        let parent = parent.map(|parent| self.require(parent)).transpose()?;
+        session.parent = parent.as_ref().map(|parent| parent.id.clone());
+        session.attached_to = self.tmux.attached_to(session.tmux_name());
+        self.store.save(&session)?;
+        let shown = parent
+            .as_ref()
+            .map_or("(cleared)", |parent| parent.name.as_str());
+        self.log("parent", &format!("{} → {shown}", session.name))?;
+        Ok(session)
+    }
+
     /// Record which artifact a freshly spawned nvim view renders (`OtherSession.artifact_id`).
     pub fn bind_artifact(&self, session_id: &str, artifact_id: &str) -> Result<Session> {
         let mut session = self.require(session_id)?;
