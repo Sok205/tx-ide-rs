@@ -6,8 +6,9 @@
 //! the pane running `_artifact-pick`, a list of the artifacts the session touched and its live
 //! nvim companions drawn like the tx picker's rows. Enter re-hosts the pane on the chosen view
 //! (the llm session keeps running detached); → moves the terminal to the pane already showing it.
-//! In an nvim view the key re-hosts the pane on the controlling session: the artifact's most
-//! recent live non-`user` toucher (else its creator), or the companion's `parent`.
+//! In an nvim view the key goes back to the controlling session — the artifact's most recent live
+//! non-`user` toucher (else its creator), or the companion's `parent` — focusing the pane still
+//! showing it, else re-hosting this pane on it.
 
 use std::rc::Rc;
 
@@ -210,7 +211,7 @@ impl ArtifactNav {
                         .display_status(client, "prefix+a: nothing to go back to");
                     return Ok(1);
                 };
-                self.go_session(session, client, Mode::Attach, &back)
+                self.go_back(session, client, &back)
             }
         }
     }
@@ -394,6 +395,25 @@ impl ArtifactNav {
             return Ok(1);
         }
         self.show(session, client, mode, &target)
+    }
+
+    /// The way back from a view: to the pane still showing the controlling session when there is
+    /// one this terminal can reach (the view was reached by focusing), else re-host it here (the
+    /// view was attached in its place, which left it detached).
+    fn go_back(&self, session: &str, client: &str, target_id: &str) -> Result<i32, BoxError> {
+        let tmux = self.service.tmux();
+        let Some(target) = self.service.get(target_id)? else {
+            tmux.display_status(client, &format!("prefix+a: session {target_id} not found"));
+            return Ok(1);
+        };
+        if !target.is_alive() || !tmux.has_session(target.tmux_name()) {
+            tmux.display_status(client, &format!("prefix+a: {} has ended", target.name));
+            return Ok(1);
+        }
+        if tmux.focus_hosting_pane(client, target.tmux_name()).is_ok() {
+            return Ok(0);
+        }
+        self.rehost(session, client, &target)
     }
 
     /// Bring `target` in front of the user: in `Focus` mode move the terminal to a pane already
