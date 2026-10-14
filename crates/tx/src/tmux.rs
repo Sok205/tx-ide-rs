@@ -421,9 +421,10 @@ impl Tmux {
     }
 
     /// Nest-attach `session` in a popup covering most of `client`'s terminal (the timeline's
-    /// resident-popup shape); detaching or ending the session closes it.
+    /// resident-popup shape); detaching or ending the session closes it. The plain name, as
+    /// `attach_session` passes it: an `=`-prefixed target makes the popup's attach die at once.
     pub fn popup_attach(&self, client: &str, title: &str, session: &str) -> Result<(), TmuxError> {
-        let command = format!("TMUX= tmux attach -t {}", shlex_quote(&exact_session(session)));
+        let command = format!("TMUX= tmux attach -t {}", shlex_quote(session));
         self.display_popup(client, "90%", "90%", title, &command)
     }
 
