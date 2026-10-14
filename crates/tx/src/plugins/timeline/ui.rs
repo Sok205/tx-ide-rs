@@ -401,7 +401,9 @@ fn draw_footer(app: &App, buffer: &mut Buffer, rect: Rect) {
     if rect.height == 0 {
         return;
     }
-    let status_style = if app.message.is_some() {
+    let status_style = if app.notice.is_some() {
+        Style::new().fg(Color::Red)
+    } else if app.message.is_some() {
         Style::new().fg(AMBER)
     } else {
         Style::new().fg(Color::White)

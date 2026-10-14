@@ -25,11 +25,12 @@ use crate::render::{
 use crate::service::SessionService;
 use crate::session::{Session, State};
 use crate::session_editor::edit_session;
-use crate::shlex::shlex_quote;
 use crate::spawn::{SHELL_COMMANDS, SpawnSpec};
 use crate::storage::Home;
 use crate::tmux::Tmux;
-use crate::verbs::common::{default_shell, detect_term_cols, env_namew, split_tags};
+use crate::verbs::common::{
+    default_shell, detect_term_cols, env_namew, nest_attach_command, split_tags,
+};
 
 /// The pause before the picker re-runs after a vanished session / a failed jump.
 const RETRY_PAUSE: Duration = Duration::from_millis(1200);
@@ -813,11 +814,7 @@ impl Picker<'_> {
         if !origin_cmd.is_some_and(|cmd| hosts_in_view_pane(&cmd)) {
             return Ok(false);
         }
-        let wrapper = format!(
-            "set -m; TMUX= tmux attach -t {}; exec ${{SHELL:-zsh}}",
-            shlex_quote(target)
-        );
-        tmux.respawn_pane(&origin_pane, &format!("bash -c {}", shlex_quote(&wrapper)))?;
+        tmux.respawn_pane(&origin_pane, &nest_attach_command(target))?;
         Ok(true)
     }
 

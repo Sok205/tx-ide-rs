@@ -475,7 +475,7 @@ impl Form {
 
 /// Splits input bytes into keys: keypad sequences (CSI / SS3), UTF-8 characters, lone bytes.
 #[derive(Default)]
-struct Decoder {
+pub(crate) struct Decoder {
     pending: Vec<u8>,
 }
 
@@ -578,12 +578,12 @@ const STDIN: RawFd = 0;
 const STDOUT: RawFd = 1;
 
 /// Raw mode on stdin + alternate screen / keypad mode on stdout, undone on drop (`endwin`).
-struct Terminal {
+pub(crate) struct Terminal {
     saved: libc::termios,
 }
 
 impl Terminal {
-    fn open() -> io::Result<Self> {
+    pub(crate) fn open() -> io::Result<Self> {
         // SAFETY: `termios` is plain data; tcgetattr fills it or fails.
         let mut saved: libc::termios = unsafe { std::mem::zeroed() };
         // SAFETY: valid fd number and a valid pointer to a termios.
@@ -602,7 +602,7 @@ impl Terminal {
         Ok(terminal)
     }
 
-    fn size() -> (usize, usize) {
+    pub(crate) fn size() -> (usize, usize) {
         for fd in [STDOUT, STDIN] {
             // SAFETY: `winsize` is plain data; ioctl fills it or fails.
             let mut size: libc::winsize = unsafe { std::mem::zeroed() };
@@ -663,10 +663,37 @@ impl Drop for Terminal {
     }
 }
 
-fn write_all(bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_all(bytes: &[u8]) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     stdout.write_all(bytes)?;
     stdout.flush()
+}
+
+/// The next key from the terminal: a complete decoded sequence, a lone ESC once the escape delay
+/// has passed, or `Key::Resize` when the terminal size no longer matches `size`.
+pub(crate) fn read_key(decoder: &mut Decoder, size: (usize, usize)) -> io::Result<Key> {
+    loop {
+        if let Some(key) = decoder.next(false) {
+            return Ok(key);
+        }
+        let escape_pending = decoder.pending.first() == Some(&0x1b);
+        let timeout = if escape_pending {
+            ESC_DELAY_MS
+        } else {
+            RESIZE_POLL_MS
+        };
+        let bytes = Terminal::read(timeout)?;
+        if bytes.is_empty() {
+            if escape_pending {
+                if let Some(key) = decoder.next(true) {
+                    return Ok(key);
+                }
+            } else if Terminal::size() != size {
+                return Ok(Key::Resize);
+            }
+        }
+        decoder.pending.extend_from_slice(&bytes);
+    }
 }
 
 /// Run the form on the controlling terminal (stdin/stdout); `Some((name, tags))` on save, `None`
@@ -678,28 +705,7 @@ pub fn edit_session(name: &str, tags: &str) -> io::Result<Option<(String, String
     loop {
         let (height, width) = Terminal::size();
         write_all(form.render(height, width).to_ansi().as_bytes())?;
-        let key = loop {
-            if let Some(key) = decoder.next(false) {
-                break key;
-            }
-            let escape_pending = decoder.pending.first() == Some(&0x1b);
-            let timeout = if escape_pending {
-                ESC_DELAY_MS
-            } else {
-                RESIZE_POLL_MS
-            };
-            let bytes = Terminal::read(timeout)?;
-            if bytes.is_empty() {
-                if escape_pending {
-                    if let Some(key) = decoder.next(true) {
-                        break key;
-                    }
-                } else if Terminal::size() != (height, width) {
-                    break Key::Resize;
-                }
-            }
-            decoder.pending.extend_from_slice(&bytes);
-        };
+        let key = read_key(&mut decoder, (height, width))?;
         match form.handle(key, height, width) {
             Some(Outcome::Cancel) => return Ok(None),
             Some(Outcome::Save(name, tags)) => return Ok(Some((name, tags))),

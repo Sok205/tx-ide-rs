@@ -4,6 +4,7 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 
 use crate::app::Env;
+use crate::shlex::shlex_quote;
 use crate::tmux::Tmux;
 
 /// `_split_tags`: comma-separated, empty parts dropped.
@@ -98,7 +99,11 @@ pub fn repo_root(env: &Env) -> std::path::PathBuf {
         .skip(1)
         .find(|dir| dir.join("bin").join("tx-assistant").is_file())
         .map(std::path::Path::to_path_buf)
-        .or_else(|| exe.parent().and_then(std::path::Path::parent).map(std::path::Path::to_path_buf))
+        .or_else(|| {
+            exe.parent()
+                .and_then(std::path::Path::parent)
+                .map(std::path::Path::to_path_buf)
+        })
         .unwrap_or_default()
 }
 
@@ -129,4 +134,14 @@ mod tests {
         );
         assert_eq!(group_value(""), Err("a group cannot be empty".to_owned()));
     }
+}
+
+/// The pane command that nest-attaches `target` (`TMUX= tmux attach` with a `set -m` bash
+/// wrapper) and keeps the pane alive as a shell after detach.
+pub fn nest_attach_command(target: &str) -> String {
+    let wrapper = format!(
+        "set -m; TMUX= tmux attach -t {}; exec ${{SHELL:-zsh}}",
+        shlex_quote(target)
+    );
+    format!("bash -c {}", shlex_quote(&wrapper))
 }

@@ -1,5 +1,10 @@
 //! The terminal and the event loop: raw mode + alternate screen + mouse capture (restored on
 //! exit and on panic), keys / mouse / resize multiplexed with the refresh tick.
+//!
+//! Enter jumps to the cursor lane's session. Run in a pane, the loop focuses the hosting pane
+//! itself. The resident (viewed through a popup) cannot reach the outer client, so it leaves the
+//! session id in [`GOTO_OPTION`] on its own tmux session and detaches; `tx _timeline-attach`,
+//! which runs on the outer client, picks it up and does the focusing.
 
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
@@ -23,19 +28,33 @@ pub const TICK: Duration = Duration::from_secs(3);
 /// Terminals report several wheel events per physical notch: Ctrl+wheel zoom steps at most
 /// once per this interval.
 pub const WHEEL_ZOOM_INTERVAL: Duration = Duration::from_millis(150);
+/// Session option on the resident's tmux session: the session id Enter asked to jump to.
+pub const GOTO_OPTION: &str = "@tx_timeline_goto";
 
+/// Focus the pane hosting `session_id` for the terminal the caller is shown on
+/// (`Tmux::focus_hosting_pane` from the calling client). `Err` is the reason, for the user.
+pub fn focus_session_pane(tmux: &Tmux, session_id: &str) -> Result<(), String> {
+    let client = tmux
+        .current_client_name()
+        .ok_or_else(|| "not inside tmux".to_owned())?;
+    tmux.focus_hosting_pane(&client, session_id)
+}
+
+/// `resident` is the tmux session name of a popup-hosted timeline: q and Enter detach it
+/// instead of quitting.
 pub fn run(
     mut builder: Builder,
     days: f64,
     window: f64,
-    resident: Option<(&Tmux, &str)>,
+    tmux: &Tmux,
+    resident: Option<&str>,
 ) -> io::Result<()> {
     let days = days.max(window / 1440.0);
     let payload = builder.build(days, clock::now());
     let mut app = App::new(payload, clock::now(), window);
     let mut terminal = ratatui::try_init()?;
     execute!(io::stdout(), EnableMouseCapture)?;
-    let result = event_loop(&mut terminal, &mut app, &mut builder, days, resident);
+    let result = event_loop(&mut terminal, &mut app, &mut builder, days, tmux, resident);
     let _ = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
@@ -46,7 +65,8 @@ fn event_loop(
     app: &mut App,
     builder: &mut Builder,
     days: f64,
-    resident: Option<(&Tmux, &str)>,
+    tmux: &Tmux,
+    resident: Option<&str>,
 ) -> io::Result<()> {
     terminal.draw(|frame| ui::render(app, frame))?;
     app.fit_initial();
@@ -62,15 +82,39 @@ fn event_loop(
                 dispatch(app, terminal, event::read()?, &mut last_wheel_zoom)?;
             }
         }
+        if let Some(index) = app.goto.take() {
+            jump(app, index, tmux, resident)?;
+        }
         if Instant::now() >= next_tick {
             let payload = builder.build(days, clock::now());
             app.refresh(payload, clock::now());
             next_tick = Instant::now() + TICK;
         }
-        if app.quit && let Some((tmux, session)) = resident {
+        if app.quit && let Some(session) = resident {
             tmux.detach_session(session).map_err(io::Error::other)?;
             app.quit = false;
         }
+    }
+    Ok(())
+}
+
+/// Enter on lane `index`: focus its session's pane, or tell the user why not.
+fn jump(app: &mut App, index: usize, tmux: &Tmux, resident: Option<&str>) -> io::Result<()> {
+    let lane = &app.payload.lanes[index];
+    let outcome = match resident {
+        Some(session) => {
+            if tmux.pane_for_session(&lane.sid, "").is_none() {
+                Err("not attached to any pane".to_owned())
+            } else {
+                tmux.set_session_option(session, GOTO_OPTION, &lane.sid)
+                    .and_then(|()| tmux.detach_session(session))
+                    .map_err(|error| error.to_string())
+            }
+        }
+        None => focus_session_pane(tmux, &lane.sid),
+    };
+    if let Err(reason) = outcome {
+        app.notice = Some(format!("{}: {reason}", lane.name));
     }
     Ok(())
 }

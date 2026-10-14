@@ -60,6 +60,10 @@ pub struct App {
     pub searching: bool,
     pub geometry: Geometry,
     pub quit: bool,
+    /// Enter on a lane: the event loop focuses the pane hosting that session, then clears it.
+    pub goto: Option<usize>,
+    /// A one-shot message for the status line (a failed jump); the next key clears it.
+    pub notice: Option<String>,
     drag: Option<(u16, f64)>,
 }
 
@@ -83,6 +87,8 @@ impl App {
             searching: false,
             geometry: Geometry::default(),
             quit: false,
+            goto: None,
+            notice: None,
             drag: None,
         };
         app.cursor = app.visible_lanes().first().copied();
@@ -372,6 +378,7 @@ impl App {
     // ----- input -----------------------------------------------------------------------------
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        self.notice = None;
         if self.searching {
             self.handle_search_key(key);
             return;
@@ -392,6 +399,7 @@ impl App {
             KeyCode::Char('-' | '[') => self.zoom_by(1),
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_cursor(-1),
+            KeyCode::Enter => self.goto = self.cursor,
             KeyCode::Tab | KeyCode::Char('.') => self.select_message(1),
             KeyCode::BackTab | KeyCode::Char(',') => self.select_message(-1),
             KeyCode::Char('n') => self.jump_to_now(),
@@ -555,6 +563,9 @@ impl App {
     // ----- footer text -----------------------------------------------------------------------
 
     pub fn status_line(&self) -> String {
+        if let Some(notice) = &self.notice {
+            return notice.clone();
+        }
         let Some(lane) = self.cursor_lane() else {
             return "no lanes in the window".to_owned();
         };
@@ -600,7 +611,7 @@ impl App {
         .collect::<Vec<_>>()
         .join(" ");
         format!(
-            "h/l pan  [ ] zoom  j/k lane  tab/shift-tab message  / search  s sys  i idle  n now  q   {zoom} {flags}"
+            "h/l pan  [ ] zoom  j/k lane  enter go  tab/shift-tab message  / search  s sys  i idle  n now  q   {zoom} {flags}"
         )
     }
 }
@@ -805,6 +816,20 @@ mod tests {
         assert!(app.lane_matches(&app.payload.lanes[1]));
         app.handle_key(KeyEvent::from(KeyCode::Esc));
         assert!(app.search.is_empty());
+    }
+
+    #[test]
+    fn enter_requests_a_jump_and_a_notice_lasts_one_key() {
+        let mut app = app();
+        app.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(app.goto.take(), Some(1));
+        app.notice = Some("two: not attached to any pane".into());
+        assert_eq!(app.status_line(), "two: not attached to any pane");
+        app.handle_key(KeyEvent::from(KeyCode::Char('k')));
+        assert_eq!(app.notice, None);
+        assert_eq!(app.goto, None);
+        assert!(app.status_line().contains("one"));
     }
 
     #[test]

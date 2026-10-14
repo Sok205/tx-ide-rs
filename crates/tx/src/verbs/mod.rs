@@ -1,5 +1,6 @@
 //! Verb components: each registers its `tx <verb>`s into the command table.
 
+pub mod artifact_menu;
 pub mod artifacts;
 pub mod chat;
 pub mod common;

@@ -12,6 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::process::{Command, Stdio};
 
+use crate::palette::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX};
 use crate::session::Location;
 
 /// Injected into every spawned session so colours render in a detached `new-session -d`.
@@ -276,6 +277,24 @@ impl Tmux {
         self.set_option(&exact_session_pane(name), "@tx_view", "1", false)
     }
 
+    /// A session-scoped user option on the session named exactly `name`.
+    pub fn session_option(&self, name: &str, option: &str) -> Option<String> {
+        self.show_option(&exact_session_pane(name), option)
+    }
+
+    pub fn set_session_option(
+        &self,
+        name: &str,
+        option: &str,
+        value: &str,
+    ) -> Result<(), TmuxError> {
+        self.set_option(&exact_session_pane(name), option, value, false)
+    }
+
+    pub fn unset_session_option(&self, name: &str, option: &str) {
+        self.unset_option(&exact_session_pane(name), option, false);
+    }
+
     pub fn is_view(&self, name: &str) -> bool {
         self.show_option(&exact_session_pane(name), "@tx_view")
             .as_deref()
@@ -284,6 +303,13 @@ impl Tmux {
 
     pub fn switch_client(&self, name: &str) -> Result<(), TmuxError> {
         self.run(&["switch-client", "-t", &exact_session(name)])
+            .map(drop)
+    }
+
+    /// Switch exactly `client` (never the implicit "current" one, which inside a nested session
+    /// is the nested client) to `target`, a session or `session:window.pane`.
+    pub fn switch_client_of(&self, client: &str, target: &str) -> Result<(), TmuxError> {
+        self.run(&["switch-client", "-c", client, "-t", &exact_session(target)])
             .map(drop)
     }
 
@@ -316,6 +342,36 @@ impl Tmux {
         self.display_message("#S", None)
     }
 
+    /// The client this process is displayed on (`#{client_name}`); `None` outside tmux. Inside
+    /// a nested session this is the nested client — see [`Self::outer_client`].
+    /// `client`'s terminal width in columns; `None` when there is no such client.
+    pub fn client_width(&self, client: &str) -> Option<usize> {
+        let (_, out) = self.run_quiet(&["display-message", "-p", "-c", client, "#{client_width}"]);
+        out.trim().parse().ok()
+    }
+
+    pub fn current_client_name(&self) -> Option<String> {
+        if !self.env.inside_tmux() {
+            return None;
+        }
+        self.display_message("#{client_name}", None)
+    }
+
+    /// The real-terminal client that ultimately shows `client`, with its session. A client
+    /// whose tty is some pane's tty is nested in that pane, so the walk ascends to the most
+    /// recently active client of that pane's session until the tty belongs to no pane. `None`
+    /// when the chain ends without a terminal client.
+    pub fn outer_client(&self, client: &str) -> Option<(String, String)> {
+        let (_, clients) = self.run_quiet(&[
+            "list-clients",
+            "-F",
+            "#{client_name}\t#{client_tty}\t#{client_session}\t#{client_activity}",
+        ]);
+        let (_, panes) =
+            self.run_quiet(&["list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"]);
+        walk_to_outer_client(&clients, &panes, client)
+    }
+
     pub fn current_pane_id(&self) -> Option<String> {
         self.display_message("#{pane_id}", None)
     }
@@ -340,6 +396,28 @@ impl Tmux {
     pub fn respawn_pane(&self, pane_id: &str, command: &str) -> Result<(), TmuxError> {
         self.run(&["respawn-pane", "-k", "-t", pane_id, command])
             .map(drop)
+    }
+
+    /// Open a `width`×`height` popup centred on `client`, in the picker's palette, running
+    /// `command`; closes when it exits (`-E`). Returns once the popup is up (the command runs on).
+    pub fn display_popup(
+        &self,
+        client: &str,
+        width: usize,
+        height: usize,
+        title: &str,
+        command: &str,
+    ) -> Result<(), TmuxError> {
+        let width = width.to_string();
+        let height = height.to_string();
+        let style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
+        let border = format!("bg={BG_DEEP_HEX},fg={ACCENT_HEX}");
+        let title = format!("#[fg={ACCENT_HEX},bold]{title}#[default]");
+        self.run(&[
+            "display-popup", "-c", client, "-E", "-x", "C", "-y", "C", "-w", &width, "-h",
+            &height, "-b", "rounded", "-s", &style, "-S", &border, "-T", &title, command,
+        ])
+        .map(drop)
     }
 
     /// Split `session`'s `pane` (a position token: `top-left`, `top-right`, …), the new pane
@@ -490,6 +568,45 @@ impl Tmux {
             "#{pane_tty}\t#{session_name}\t#{window_active}\t#{pane_active}",
         ]);
         parse_focused_session(&clients, &panes)
+    }
+
+    /// The pane whose tty a nested client runs on (a client's name IS its tty): the pane that
+    /// client paints into. `None` for a terminal client.
+    pub fn pane_hosting_client(&self, client: &str) -> Option<String> {
+        let (_, panes) = self.run_quiet(&["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}"]);
+        panes
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .find(|(tty, _)| *tty == client)
+            .map(|(_, pane_id)| pane_id.to_owned())
+    }
+
+    /// Focus the pane hosting `session` for the terminal `client` is shown on. `client` may be
+    /// a nested client, so the client to move is its outer one (never the implicit current
+    /// client: switching a nested client onto its own host view collapses the view). A pane in
+    /// the outer client's session is selected in place; one in another plain session gets the
+    /// outer client switched to it; one in another view is reported, not switched to — a view is
+    /// a terminal's workspace, not a switch target. `Err` is the reason, for the user.
+    pub fn focus_hosting_pane(&self, client: &str, session: &str) -> Result<(), String> {
+        let (outer, outer_session) = self
+            .outer_client(client)
+            .ok_or_else(|| "no terminal client to move".to_owned())?;
+        let pane = self
+            .pane_for_session(session, &outer_session)
+            .ok_or_else(|| "not attached to any pane".to_owned())?;
+        let host = pane.split(':').next().unwrap_or_default();
+        let focused = if host == outer_session {
+            self.select_window(&pane) && self.select_pane(&pane)
+        } else if self.is_view(host) {
+            return Err(format!("attached in view {host}, not in {outer_session}"));
+        } else {
+            self.switch_client_of(&outer, &pane).is_ok()
+        };
+        if focused {
+            Ok(())
+        } else {
+            Err(format!("tmux could not focus {pane}"))
+        }
     }
 
     /// Which inner session is nested in this pane (the join, inverted).
@@ -732,6 +849,35 @@ fn parse_focused_session(clients: &str, panes: &str) -> Option<String> {
     lookup(&session_by_tty, focused_pane_tty).map(str::to_owned)
 }
 
+/// See [`Tmux::outer_client`]. `clients` lines are `name\ttty\tsession\tactivity`, `panes`
+/// lines `tty\tsession`. Bounded so a tty loop (never produced by tmux) cannot spin.
+fn walk_to_outer_client(clients: &str, panes: &str, client: &str) -> Option<(String, String)> {
+    let clients: Vec<(&str, &str, &str, i64)> = py_splitlines(clients)
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            let [name, tty, session, activity] = fields.as_slice() else {
+                return None;
+            };
+            Some((*name, *tty, *session, activity.trim().parse().unwrap_or(0)))
+        })
+        .collect();
+    let pane_sessions: Vec<(&str, &str)> = py_splitlines(panes)
+        .filter_map(|line| line.split_once('\t'))
+        .collect();
+    let mut current = clients.iter().find(|(name, ..)| *name == client)?;
+    for _ in 0..16 {
+        let Some((_, hosting_session)) = pane_sessions.iter().find(|(tty, _)| *tty == current.1)
+        else {
+            return Some((current.0.to_owned(), current.2.to_owned()));
+        };
+        current = clients
+            .iter()
+            .filter(|(.., session, _)| session == hosting_session)
+            .max_by_key(|(.., activity)| *activity)?;
+    }
+    None
+}
+
 fn parse_focus_line(line: &str, pane_id: &str) -> Option<EnvelopeAttrs> {
     let fields: Vec<&str> = line.split('|').collect();
     let [
@@ -784,6 +930,32 @@ mod tests {
         assert_eq!(bare, "tmux switch-client -t Views failed: ");
         let exact = tmux.switch_client("Views").unwrap_err().to_string();
         assert_eq!(exact, "tmux switch-client -t =Views failed: ");
+    }
+
+    #[test]
+    fn outer_client_walks_up_nested_attachments() {
+        let clients = "/dev/ttys001\t/dev/ttys001\tViews\t100\n\
+                       /dev/ttys002\t/dev/ttys002\tinner\t200\n\
+                       /dev/ttys003\t/dev/ttys003\tdeep\t300\n\
+                       /dev/ttys004\t/dev/ttys004\tViews\t50\n";
+        // ttys002 is Views' pane (inner nested in Views), ttys003 is inner's pane (deep in inner)
+        let panes = "/dev/ttys002\tViews\n/dev/ttys003\tinner\n/dev/ttys009\tdeep\n";
+        assert_eq!(
+            walk_to_outer_client(clients, panes, "/dev/ttys003"),
+            Some(("/dev/ttys001".to_owned(), "Views".to_owned()))
+        );
+        assert_eq!(
+            walk_to_outer_client(clients, panes, "/dev/ttys001"),
+            Some(("/dev/ttys001".to_owned(), "Views".to_owned()))
+        );
+        // a nested client whose host has no client at all: nothing to move
+        let orphan = "/dev/ttys003\t/dev/ttys003\tdeep\t300\n";
+        assert_eq!(walk_to_outer_client(orphan, panes, "/dev/ttys003"), None);
+        assert_eq!(walk_to_outer_client(clients, panes, "/dev/ttys404"), None);
+        // a tty loop terminates
+        let looped = "/dev/ttys005\tViews\n";
+        let self_hosted = "/dev/ttys005\t/dev/ttys005\tViews\t1\n";
+        assert_eq!(walk_to_outer_client(self_hosted, looped, "/dev/ttys005"), None);
     }
 
     #[test]
