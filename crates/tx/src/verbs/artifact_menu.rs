@@ -166,8 +166,8 @@ impl ArtifactNav {
         Ok(record)
     }
 
-    /// `requested` (the toggle row) is stored on the nested session; otherwise the stored mode,
-    /// else `Attach`.
+    /// `requested` (the toggle row) is stored on the llm session's tmux session; otherwise the
+    /// stored mode, else `Attach`. A session with no tmux session (ended) reads as `Attach`.
     fn mode(&self, session: &str, requested: Option<Mode>) -> Result<Mode, BoxError> {
         let tmux = self.service.tmux();
         if let Some(mode) = requested {
@@ -202,7 +202,9 @@ impl ArtifactNav {
                         .display_status(client, "prefix+a: nothing to go back to");
                     return Ok(1);
                 };
-                self.go_session(session, client, Mode::Attach, &back)
+                // The way back honours the mode the controlling session's menu was left in.
+                let mode = self.mode(&back, None)?;
+                self.go_session(session, client, mode, &back)
             }
         }
     }
