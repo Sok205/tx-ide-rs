@@ -31,6 +31,8 @@ const NAME_CEILING: usize = 40;
 const MENU_FRAME: usize = 4;
 /// The `(k) ` choice number drawn at the row's left, as choose-tree does.
 const NUMBER_WIDTH: usize = 4;
+/// The ` (k)` tmux appends (invisibly, see `Tmux::display_menu`) at the right of a keyed item.
+const KEY_WIDTH: usize = 4;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
 /// The choice number and the NAME…columns separator.
@@ -183,24 +185,25 @@ impl ArtifactNav {
             .tmux()
             .client_width(client)
             .unwrap_or(DEFAULT_WIDTH);
-        let layout = Layout::fit(&rows, client_width.saturating_sub(MENU_FRAME));
+        let layout = Layout::fit(&rows, client_width.saturating_sub(MENU_FRAME + KEY_WIDTH));
         let mut items: Vec<(String, String, String)> =
             vec![(layout.header(), String::new(), String::new())];
         if rows.is_empty() {
             items.push((
-                "-  (no artifacts or companions)".into(),
+                format!("-#[fg={DIM_FG_HEX}]  (no artifacts or companions)#[default]"),
                 String::new(),
                 String::new(),
             ));
         }
-        // The number is text at the left, like choose-tree; a tmux key would be drawn at the
-        // right as well, so none is set and j/k/Enter navigate.
+        // The number is drawn as text at the left, like choose-tree; the digit is also the tmux
+        // key, whose own right-hand rendering the menu style hides (see `Tmux::display_menu`).
         for (index, row) in rows.iter().enumerate() {
-            items.push((
-                row.render(index, &layout),
-                String::new(),
-                row.command.clone(),
-            ));
+            let key = if index < 10 {
+                index.to_string()
+            } else {
+                String::new()
+            };
+            items.push((row.render(index, &layout), key, row.command.clone()));
         }
         self.service
             .tmux()
@@ -330,7 +333,8 @@ impl Row {
     fn render(&self, index: usize, layout: &Layout) -> String {
         let name = pad(&truncate(&self.name, layout.namew), layout.namew);
         let mut line = format!(
-            "#[fg={DIM_FG_HEX}]({index})#[default] #[fg={FG_HEX}]{}#[default]   ",
+            "#[fg={DIM_FG_HEX}]{:<NUMBER_WIDTH$}#[default]#[fg={FG_HEX}]{}#[default]   ",
+            format!("({index})"),
             escape(&name)
         );
         if layout.location {
@@ -400,7 +404,8 @@ impl Layout {
         if self.location {
             line.push_str(&format!("{:<LOCATION_W$} ", "LOCATION"));
         }
-        line.push_str("TAGS#[default]");
+        // One extra column: each chip carries a leading space.
+        line.push_str(" TAGS#[default]");
         line
     }
 }

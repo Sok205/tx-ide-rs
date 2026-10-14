@@ -12,7 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::process::{Command, Stdio};
 
-use crate::palette::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX, FG_HEX, SELECTION_BG};
+use crate::palette::{ACCENT_HEX, BG_DEEP_HEX, SELECTION_BG};
 use crate::session::Location;
 
 /// Injected into every spawned session so colours render in a detached `new-session -d`.
@@ -400,14 +400,18 @@ impl Tmux {
 
     /// Post a native menu on `client`, centred and in the picker's palette: one `(name, key,
     /// command)` per item. A name starting with `-` is a disabled line (tmux's own convention).
+    ///
+    /// Every visible segment of an item must carry its own `#[fg=…]`: the base and selected
+    /// styles paint foreground = background so the ` (k)` tmux appends at the right of a keyed
+    /// item (after a `#[default]` reset) stays invisible — the caller draws the key at the left.
     pub fn display_menu(
         &self,
         client: &str,
         title: &str,
         items: &[(String, String, String)],
     ) -> Result<(), TmuxError> {
-        let style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
-        let selected = format!("bg=colour{SELECTION_BG},fg={FG_HEX},bold");
+        let style = format!("bg={BG_DEEP_HEX},fg={BG_DEEP_HEX}");
+        let selected = format!("bg=colour{SELECTION_BG},fg=colour{SELECTION_BG},bold");
         let border = format!("bg={BG_DEEP_HEX},fg={ACCENT_HEX}");
         let title = format!("#[fg={ACCENT_HEX},bold]{title}#[default]");
         let mut args = vec![
