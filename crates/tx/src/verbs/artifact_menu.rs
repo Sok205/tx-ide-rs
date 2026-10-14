@@ -3,8 +3,8 @@
 //! The key fires INSIDE the nested session — the outer bind forwards it one level down while the
 //! pane hosts a `tmux` client — so `#{session_name}` is the tx id and `#{client_name}` the nested
 //! client whose screen is the hosting pane. In an llm session `_artifact-menu` opens a popup over
-//! the pane running `_artifact-pick`, a list of the artifacts the session touched, its live
-//! children (sessions it spawned: workers, shells, nvim companions) and its parent, drawn like
+//! the pane running `_artifact-pick`, a sectioned list — the artifacts the session touched, its
+//! parent, its live children (sessions it spawned: workers, shells, nvim companions) — drawn like
 //! the tx picker's rows. Enter (or a digit) re-hosts the pane on the
 //! chosen view (the llm session keeps running detached); f then a digit or Enter moves the
 //! terminal to the pane already showing it; p then a digit or Enter nest-attaches it in a popup
@@ -19,7 +19,7 @@ use cordis::BoxError;
 
 use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
-use crate::artifact_picker::{self, HINT, Pick, visible_width};
+use crate::artifact_picker::{self, HINT, Item, Pick, visible_width};
 use crate::artifact_service::ArtifactService;
 use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ansi, tag_hex};
 use crate::render::{LOCATION_W, actor_label, location_text};
@@ -41,10 +41,8 @@ const POPUP_FRAME: usize = 4;
 const POPUP_ROWS_OVERHEAD: usize = 6;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
-/// The REL column: `artifact`, `child <role>`, `parent <role>`.
-const RELATION_W: usize = 12;
-/// The choice number, the NAME…columns separator and the REL column.
-const FIXED_CELLS: usize = NUMBER_WIDTH + 3 + RELATION_W + 1;
+/// The choice number and the NAME…columns separator.
+const FIXED_CELLS: usize = NUMBER_WIDTH + 3;
 
 pub(super) struct ArtifactNav {
     pub(super) service: Rc<SessionService>,
@@ -162,11 +160,12 @@ struct Target {
     id: String,
 }
 
-/// The picker's content for one llm session: its rows laid out for `client`'s width.
+/// The picker's content for one llm session: sections and rows laid out for `client`'s width;
+/// `names` and `targets` are per row, in row order.
 struct Listing {
     title: String,
     header: String,
-    lines: Vec<String>,
+    items: Vec<Item>,
     names: Vec<String>,
     targets: Vec<Target>,
 }
@@ -194,9 +193,9 @@ impl ArtifactNav {
             SessionKind::Llm(_) => {
                 let listing = self.listing(&record, client)?;
                 let content = listing
-                    .lines
+                    .items
                     .iter()
-                    .map(|line| visible_width(line))
+                    .map(|item| visible_width(item.text()))
                     .chain([visible_width(&listing.header), HINT.chars().count()])
                     .max()
                     .unwrap_or(0);
@@ -204,7 +203,7 @@ impl ArtifactNav {
                 self.service.tmux().display_popup(
                     client,
                     &(content + POPUP_FRAME).min(client_width).to_string(),
-                    &(listing.lines.len().max(1) + POPUP_ROWS_OVERHEAD).to_string(),
+                    &(listing.items.len().max(1) + POPUP_ROWS_OVERHEAD).to_string(),
                     &listing.title,
                     &self.tx_command(&["_artifact-pick", session, client]),
                 )?;
@@ -250,7 +249,7 @@ impl ArtifactNav {
                 (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
             }
         };
-        let Some(pick) = artifact_picker::pick(&listing.header, &listing.lines, decline)? else {
+        let Some(pick) = artifact_picker::pick(&listing.header, &listing.items, decline)? else {
             return Ok(0);
         };
         let (mode, index) = match pick {
@@ -291,8 +290,10 @@ impl ArtifactNav {
                 .map(|touch| touch.session_id.as_str()),
         );
 
-        let mut rows: Vec<Row> = Vec::new();
+        // (section title, rows) in display order; rows are numbered across sections.
+        let mut sections: Vec<(&str, Vec<Row>)> = Vec::new();
         let mut targets: Vec<Target> = Vec::new();
+        let mut rows: Vec<Row> = Vec::new();
         for artifact in &artifacts {
             let view = live.iter().find(|candidate| {
                 matches!(&candidate.kind, SessionKind::Other(other)
@@ -310,7 +311,6 @@ impl ArtifactNav {
                     .title
                     .clone()
                     .unwrap_or_else(|| artifact.filename.clone()),
-                relation: "artifact".to_owned(),
                 location: view
                     .map_or_else(|| "—".to_owned(), |view| location_text(&view.attached_to)),
                 chips,
@@ -320,43 +320,59 @@ impl ArtifactNav {
                 id: artifact.id.clone(),
             });
         }
+        if !rows.is_empty() {
+            sections.push(("ARTIFACTS", std::mem::take(&mut rows)));
+        }
+        let parent = record
+            .parent
+            .as_deref()
+            .and_then(|parent_id| live.iter().find(|candidate| candidate.id == parent_id));
         // Artifact views are already rows above, under their artifact.
         let children = live.iter().filter(|candidate| {
             candidate.parent.as_deref() == Some(record.id.as_str())
                 && !matches!(&candidate.kind, SessionKind::Other(other) if other.artifact_id.is_some())
         });
-        let parent = record
-            .parent
-            .as_deref()
-            .and_then(|parent_id| live.iter().find(|candidate| candidate.id == parent_id));
-        let related = children
-            .map(|child| ("child", child))
-            .chain(parent.map(|parent| ("parent", parent)));
-        for (relation, related_session) in related {
-            rows.push(Row {
-                name: related_session.name.clone(),
-                relation: format!("{relation} {}", related_session.role().as_str()),
-                location: location_text(&related_session.attached_to),
-                chips: related_session.tags.clone(),
-            });
-            targets.push(Target {
-                kind: "session",
-                id: related_session.id.clone(),
-            });
+        for (title, related) in [
+            ("PARENT", parent.into_iter().collect::<Vec<_>>()),
+            ("CHILDREN", children.collect()),
+        ] {
+            if related.is_empty() {
+                continue;
+            }
+            for related_session in related {
+                rows.push(Row {
+                    name: related_session.name.clone(),
+                    location: location_text(&related_session.attached_to),
+                    chips: related_session.tags.clone(),
+                });
+                targets.push(Target {
+                    kind: "session",
+                    id: related_session.id.clone(),
+                });
+            }
+            sections.push((title, std::mem::take(&mut rows)));
         }
 
         // Laid out for the popup's usable width so no row wraps.
-        let layout = Layout::fit(&rows, self.client_width(client).saturating_sub(POPUP_FRAME));
-        let lines = rows
-            .iter()
-            .enumerate()
-            .map(|(index, row)| row.render(index, &layout))
-            .collect();
-        let names = rows.iter().map(|row| row.name.clone()).collect();
+        let all_rows: Vec<&Row> = sections.iter().flat_map(|(_, rows)| rows).collect();
+        let layout = Layout::fit(
+            &all_rows,
+            self.client_width(client).saturating_sub(POPUP_FRAME),
+        );
+        let names = all_rows.iter().map(|row| row.name.clone()).collect();
+        let mut items = Vec::new();
+        let mut index = 0;
+        for (title, rows) in &sections {
+            items.push(Item::Section((*title).to_owned()));
+            for row in rows {
+                items.push(Item::Row(row.render(index, &layout)));
+                index += 1;
+            }
+        }
         Ok(Listing {
             title: format!(" {} ", record.name),
             header: layout.header(),
-            lines,
+            items,
             names,
             targets,
         })
@@ -572,11 +588,9 @@ fn popup_footer(prefix: &str) -> String {
     )
 }
 
-/// One picker line, laid out like a picker row: (n) NAME   REL LOCATION chips.
+/// One picker line, laid out like a picker row: (n) NAME   LOCATION chips.
 struct Row {
     name: String,
-    /// `artifact`, `child <role>` or `parent <role>`.
-    relation: String,
     location: String,
     chips: Vec<String>,
 }
@@ -590,9 +604,8 @@ impl Row {
     fn render(&self, index: usize, layout: &Layout) -> String {
         let name = pad(&truncate(&self.name, layout.namew), layout.namew);
         let mut line = format!(
-            "{DIM_FG_ANSI}{:<NUMBER_WIDTH$}{FG_ANSI}{name}{RESET_FG}   {DIM_FG_ANSI}{} {RESET_FG}",
-            format!("({})", index + 1),
-            pad(&self.relation, RELATION_W)
+            "{DIM_FG_ANSI}{:<NUMBER_WIDTH$}{FG_ANSI}{name}{RESET_FG}   ",
+            format!("({})", index + 1)
         );
         if layout.location {
             line.push_str(&format!(
@@ -621,13 +634,13 @@ struct Layout {
 }
 
 impl Layout {
-    fn fit(rows: &[Row], width: usize) -> Self {
+    fn fit(rows: &[&Row], width: usize) -> Self {
         let longest = rows
             .iter()
             .map(|row| row.name.chars().count())
             .max()
             .unwrap_or(0);
-        let chips_wanted = rows.iter().map(Row::chips_width).max().unwrap_or(0);
+        let chips_wanted = rows.iter().map(|row| row.chips_width()).max().unwrap_or(0);
         let mut namew = longest.clamp(NAME_FLOOR, NAME_CEILING);
         let spare = |namew: usize| width.saturating_sub(namew + FIXED_CELLS);
         if spare(namew) < chips_wanted {
@@ -656,7 +669,6 @@ impl Layout {
             "NAME",
             namew = self.namew
         );
-        line.push_str(&format!("{:<RELATION_W$} ", "REL"));
         if self.location {
             line.push_str(&format!("{:<LOCATION_W$} ", "LOCATION"));
         }
