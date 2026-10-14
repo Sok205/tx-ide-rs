@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# prefix+a: the artifacts menu of the tx session the key fired in (see tmux/tx-ide.tmux). The
+# bind runs INSIDE the nested session, so $1 is its tmux name (the tx id) and $2 the nested client.
+set -eu
+
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+exec "$SCRIPT_DIR/tx" _artifact-menu "$1" "$2"

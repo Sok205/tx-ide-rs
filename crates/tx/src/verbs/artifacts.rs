@@ -21,6 +21,7 @@ use crate::storage::{
     Config, ConfigError, Home, LocalStorage, RemoteSpec, Storage, StorageError, expand_user,
 };
 use crate::sync::{self, SyncError, SyncResult};
+use crate::verbs::artifact_menu::{ArtifactGo, ArtifactMenu, ArtifactNav};
 use crate::verbs::common::{group_value, split_tags};
 
 pub struct ArtifactVerbs;
@@ -39,17 +40,31 @@ impl Component for ArtifactVerbs {
             ctx.get(EVENTS)?,
             ctx.get(ENV)?,
         );
-        let artifacts = ArtifactService::new(&home, log, env.actor(), warn_once_stderr());
+        let artifacts =
+            ArtifactService::new(&home, Rc::clone(&log), env.actor(), warn_once_stderr());
         let table = ctx.get(COMMANDS)?;
         table.register(
             ctx,
             Visibility::Public,
             ArtifactCmd {
-                service,
+                service: Rc::clone(&service),
                 artifacts,
                 env: Rc::clone(&env),
             },
         );
+        let nav = Rc::new(ArtifactNav {
+            service,
+            artifacts: Rc::new(ArtifactService::new(
+                &home,
+                log,
+                env.actor(),
+                warn_once_stderr(),
+            )),
+            home: Rc::clone(&home),
+            env: Rc::clone(&env),
+        });
+        table.register(ctx, Visibility::Hidden, ArtifactMenu(Rc::clone(&nav)));
+        table.register(ctx, Visibility::Hidden, ArtifactGo(nav));
         table.register(ctx, Visibility::Public, SyncCmd { home, env });
         Ok(())
     }

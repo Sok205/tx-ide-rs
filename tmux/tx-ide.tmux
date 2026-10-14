@@ -4,6 +4,7 @@
 #
 # Reads @tx-ide-* options to decide which view features to enable:
 #   @tx-ide-popups          on|off   prefix+t (tx), prefix+T (timeline), prefix+e (edit), prefix+/ (assistant), prefix+X (kill),
+#                                    prefix+a (artifacts menu of the nested session; back from a view),
 #                                    prefix+n (new agent; replaces tmux's next-window on that key),
 #                                    prefix+f (fork the pane's session; replaces tmux's find-window)
 #   @tx-ide-pane-borders    on|off   pane-border-format integration + colors
@@ -35,6 +36,8 @@ EDIT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-edit-tx-sessio
 FORK="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-fork-tx-session"
 # Repo-relative new-agent popup (name / tags / prompt / project / engine / model / effort / role).
 NEW_AGENT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-new-agent"
+# Repo-relative artifacts menu the prefix+a bind runs inside the nested session.
+ARTIFACT_MENU="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../bin/tmux-artifact-menu"
 
 option() {
   tmux show-option -gv "$1" 2>/dev/null || printf '%s' "$2"
@@ -81,6 +84,19 @@ bind X run-shell "$KILL '#{pane_id}' '#{session_name}'"
 bind e run-shell -b "$EDIT '#{pane_id}' '#{client_name}'"
 bind f run-shell -b "$FORK '#{pane_id}' '#{client_name}'"
 bind n run-shell -b "$NEW_AGENT '#{pane_id}' '#{client_name}'"
+EOF
+  # prefix+a: artifacts menu (PoC). While the pane hosts a `tmux` client the key is re-sent one
+  # level down, so the bind that finally runs sees the NESTED session: `#{session_name}` is the tx
+  # id and the menu paints inside the pane. A pick re-hosts that pane on the artifact's nvim view;
+  # in a view the key re-hosts it back on the controlling session. Prefix read at compose time,
+  # as for the nav keys.
+  menu_prefix=$(tmux show-option -gv prefix 2>/dev/null || echo C-b)
+  cat >>"$CONF" <<EOF
+bind a if -F '#{==:#{pane_current_command},tmux}' {
+  send-keys $menu_prefix a
+} {
+  run-shell -b "$ARTIFACT_MENU '#{session_name}' '#{client_name}'"
+}
 EOF
 fi
 

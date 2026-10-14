@@ -391,6 +391,31 @@ impl Tmux {
             .map(drop)
     }
 
+    /// Post a native menu on `client`, centred: one `(name, key, command)` per item. A name
+    /// starting with `-` is a disabled line (tmux's own convention).
+    pub fn display_menu(
+        &self,
+        client: &str,
+        title: &str,
+        items: &[(String, String, String)],
+    ) -> Result<(), TmuxError> {
+        let mut args = vec![
+            "display-menu",
+            "-c",
+            client,
+            "-T",
+            title,
+            "-x",
+            "C",
+            "-y",
+            "C",
+        ];
+        for (name, key, command) in items {
+            args.extend([name.as_str(), key.as_str(), command.as_str()]);
+        }
+        self.run(&args).map(drop)
+    }
+
     /// Split `session`'s `pane` (a position token: `top-left`, `top-right`, …), the new pane
     /// `size` tall (`11`, `50%`) below it, running `command`.
     pub fn split_below(
@@ -539,6 +564,17 @@ impl Tmux {
             "#{pane_tty}\t#{session_name}\t#{window_active}\t#{pane_active}",
         ]);
         parse_focused_session(&clients, &panes)
+    }
+
+    /// The pane whose tty a nested client runs on (a client's name IS its tty): the pane that
+    /// client paints into. `None` for a terminal client.
+    pub fn pane_hosting_client(&self, client: &str) -> Option<String> {
+        let (_, panes) = self.run_quiet(&["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}"]);
+        panes
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .find(|(tty, _)| *tty == client)
+            .map(|(_, pane_id)| pane_id.to_owned())
     }
 
     /// Which inner session is nested in this pane (the join, inverted).
