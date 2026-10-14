@@ -1,6 +1,11 @@
 //! Port of lib/tx/session_editor.py — the terminal form (name + tags + group) behind
 //! `tx _edit-session`.
 //!
+//! The form is modal, like prefix+n's: it opens in normal mode, where `j`/`k` (or Tab, ↑/↓)
+//! switch field, `h`/`l` move along the text, `i`/`a`/`A`/`I` enter insert mode, `x` deletes under
+//! the cursor, and Esc or `q` cancel. Esc in insert mode returns to normal mode. Enter saves in
+//! either mode. The hint row names the mode.
+//!
 //! The group field edits the explicit effort-group override. Empty means automatic: the field
 //! then shows the group the resolver derives (tags / parent chain / bound artifact / name) as
 //! ghost text in the palette's info cyan, italic — a hue and shape no typed value has, so it never
@@ -18,7 +23,8 @@ use crate::palette::{
     ACCENT_ANSI, BOLD, DIM_FG_ANSI, FG_ANSI, INFO_ANSI, ITALIC, SELECTION_BG, WARN_ANSI,
 };
 
-const HINT: &str = "↑↓ switch   Enter save   Esc cancel";
+const NORMAL_HINT: &str = "NORMAL  hjkl move   i a A type   Enter save   Esc cancel";
+const INSERT_HINT: &str = "INSERT  Esc normal   Enter save";
 const TAGS_HELP: &str = "Comma-separated · empty clears tags";
 const GROUP_AUTOMATIC_HELP: &str = "Automatic · type to override";
 const GROUP_EXPLICIT_HELP: &str = "Explicit · empty restores automatic";
@@ -50,6 +56,13 @@ pub enum Key {
     Resize,
     /// Any other keypad sequence: a no-op key that still clears the error row.
     Other,
+}
+
+/// The editing mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Normal,
+    Insert,
 }
 
 /// How the form finished.
@@ -362,6 +375,7 @@ pub struct Form {
     positions: [usize; 3],
     offsets: [usize; 3],
     active: usize,
+    mode: Mode,
     error: bool,
     automatic_group: String,
 }
@@ -375,14 +389,32 @@ impl Form {
             tags.chars().collect(),
             group.chars().collect(),
         ];
+        // Normal mode: the cursor rests on the last character, as vim's would.
+        let positions = [
+            values[0].len().saturating_sub(1),
+            values[1].len().saturating_sub(1),
+            values[2].len().saturating_sub(1),
+        ];
         Self {
-            positions: [values[0].len(), values[1].len(), values[2].len()],
+            positions,
             values,
             offsets: [0, 0, 0],
             active: 0,
+            mode: Mode::Normal,
             error: false,
             automatic_group: automatic_group.to_owned(),
         }
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// In normal mode the cursor sits on a character, never past the end.
+    fn clamp_to_text(&mut self) {
+        let active = self.active;
+        let last = self.values[active].len().saturating_sub(1);
+        self.positions[active] = self.positions[active].min(last);
     }
 
     fn too_small(height: usize, width: usize) -> bool {
@@ -462,10 +494,10 @@ impl Form {
             GROUP_AUTOMATIC_HELP
         };
         frame.addn(6, FIELD_COLUMN, group_help, width - 14, Style::Muted);
-        let (message, style) = if self.error {
-            (EMPTY_NAME, Style::Warning)
-        } else {
-            (HINT, Style::Muted)
+        let (message, style) = match (self.error, self.mode) {
+            (true, _) => (EMPTY_NAME, Style::Warning),
+            (false, Mode::Normal) => (NORMAL_HINT, Style::Muted),
+            (false, Mode::Insert) => (INSERT_HINT, Style::Muted),
         };
         frame.addn(HINT_ROW, 2, message, width - 4, style);
         let active = self.active;
@@ -478,8 +510,19 @@ impl Form {
     /// Apply one key read while the screen was `height`×`width` (the size of the last paint).
     /// `Some` when the form is done.
     pub fn handle(&mut self, key: Key, height: usize, width: usize) -> Option<Outcome> {
-        if matches!(key, Key::Char('\x1b' | '\x03')) {
+        if key == Key::Char('\x03') {
             return Some(Outcome::Cancel);
+        }
+        if key == Key::Char('\x1b') {
+            if self.mode == Mode::Normal {
+                return Some(Outcome::Cancel);
+            }
+            // Leaving insert mode steps back onto the last character typed, as vim does.
+            self.mode = Mode::Normal;
+            self.error = false;
+            self.positions[self.active] = self.positions[self.active].saturating_sub(1);
+            self.clamp_to_text();
+            return None;
         }
         if Self::too_small(height, width) {
             return None;
@@ -507,6 +550,9 @@ impl Form {
                 return None;
             }
             _ => {}
+        }
+        if self.mode == Mode::Normal {
+            return self.handle_normal(key);
         }
         let active = self.active;
         let position = self.positions[active];
@@ -537,6 +583,44 @@ impl Form {
                 self.positions[active] += 1;
             }
             _ => {}
+        }
+        None
+    }
+
+    /// Normal-mode keys: vim's motions along the text and between fields, the insert-mode
+    /// entries, `x`, and `q` to cancel. Arrows work here too.
+    fn handle_normal(&mut self, key: Key) -> Option<Outcome> {
+        let active = self.active;
+        let position = self.positions[active];
+        let length = self.values[active].len();
+        match key {
+            Key::Char('q') => return Some(Outcome::Cancel),
+            Key::Char('j') => self.active = (active + 1) % LABELS.len(),
+            Key::Char('k') => self.active = (active + LABELS.len() - 1) % LABELS.len(),
+            Key::Char('h') | Key::Left => self.positions[active] = position.saturating_sub(1),
+            Key::Char('l') | Key::Right => self.positions[active] = position + 1,
+            Key::Char('0' | '^') | Key::Home => self.positions[active] = 0,
+            Key::Char('$') | Key::End => self.positions[active] = length,
+            Key::Char('i') => self.mode = Mode::Insert,
+            Key::Char('a') => {
+                self.mode = Mode::Insert;
+                self.positions[active] = length.min(position + 1);
+            }
+            Key::Char('A') => {
+                self.mode = Mode::Insert;
+                self.positions[active] = length;
+            }
+            Key::Char('I') => {
+                self.mode = Mode::Insert;
+                self.positions[active] = 0;
+            }
+            Key::Char('x') | Key::Delete if position < length => {
+                self.values[active].remove(position);
+            }
+            _ => {}
+        }
+        if self.mode == Mode::Normal {
+            self.clamp_to_text();
         }
         None
     }
@@ -727,7 +811,7 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = write_all(b"\x1b[0m\x1b[?1l\x1b>\x1b[?1049l");
+        let _ = write_all(b"\x1b[0m\x1b[0 q\x1b[?1l\x1b>\x1b[?1049l");
         // SAFETY: restores the attributes read in `open`.
         unsafe { libc::tcsetattr(STDIN, libc::TCSANOW, &self.saved) };
     }
@@ -779,7 +863,12 @@ pub fn edit_session(
     let mut decoder = Decoder::default();
     loop {
         let (height, width) = Terminal::size();
-        write_all(form.render(height, width).to_ansi().as_bytes())?;
+        // DECSCUSR: a block cursor in normal mode, a bar in insert mode, as vim shows them.
+        let cursor_shape = match form.mode() {
+            Mode::Normal => "\x1b[2 q",
+            Mode::Insert => "\x1b[6 q",
+        };
+        write_all(format!("{}{cursor_shape}", form.render(height, width).to_ansi()).as_bytes())?;
         let key = read_key(&mut decoder, (height, width))?;
         match form.handle(key, height, width) {
             Some(Outcome::Cancel) => return Ok(None),
@@ -793,6 +882,9 @@ pub fn edit_session(
 mod tests {
     use super::*;
 
+    const NORMAL: &str = "  NORMAL  hjkl move   i a A type   Enter save   Esc cancel";
+    const INSERT: &str = "  INSERT  Esc normal   Enter save";
+
     fn keys(form: &mut Form, keys: &[Key]) -> Option<Outcome> {
         keys.iter().find_map(|&key| form.handle(key, 24, 80))
     }
@@ -801,73 +893,152 @@ mod tests {
         text.chars().map(Key::Char).collect()
     }
 
+    fn rows(form: &mut Form) -> Vec<String> {
+        form.render(24, 80).rows(24, 80)
+    }
+
+    fn cursor(form: &mut Form) -> Option<(usize, usize)> {
+        form.render(24, 80).cursor
+    }
+
     #[test]
     fn rendered_rows_match_the_reference_layout() {
         let mut form = Form::new("abc", "t", "", "auto");
-        let rows = form.render(24, 80).rows(24, 80);
+        let rows = rows(&mut form);
         assert_eq!(rows[1], "  › Name:   abc");
         assert_eq!(rows[3], "    Tags:   t");
         assert_eq!(rows[4], "            Comma-separated · empty clears tags");
         assert_eq!(rows[5], "    Group:  auto");
         assert_eq!(rows[6], "            Automatic · type to override");
-        assert_eq!(rows[8], "  ↑↓ switch   Enter save   Esc cancel");
-        assert_eq!(form.render(24, 80).cursor, Some((1, 15)));
+        assert_eq!(rows[8], NORMAL);
+        // Normal mode: the cursor rests on the last character.
+        assert_eq!(cursor(&mut form), Some((1, 14)));
     }
 
     #[test]
-    fn cancel_keys() {
-        for key in [Key::Char('\x1b'), Key::Char('\x03')] {
+    fn opens_in_normal_mode_and_the_insert_entries() {
+        let mut form = Form::new("abc", "t", "", "auto");
+        assert_eq!(form.mode(), Mode::Normal);
+        keys(&mut form, &typed("zzz"));
+        assert_eq!(rows(&mut form)[1], "  › Name:   abc");
+
+        keys(&mut form, &typed("iX"));
+        assert_eq!(form.mode(), Mode::Insert);
+        assert_eq!(rows(&mut form)[1], "  › Name:   abXc");
+        assert_eq!(rows(&mut form)[8], INSERT);
+
+        let mut form = Form::new("abc", "t", "", "auto");
+        keys(&mut form, &typed("aX"));
+        assert_eq!(rows(&mut form)[1], "  › Name:   abcX");
+
+        let mut form = Form::new("abc", "t", "", "auto");
+        keys(&mut form, &typed("0AX"));
+        assert_eq!(rows(&mut form)[1], "  › Name:   abcX");
+
+        let mut form = Form::new("abc", "t", "", "auto");
+        keys(&mut form, &typed("IX"));
+        assert_eq!(rows(&mut form)[1], "  › Name:   Xabc");
+    }
+
+    #[test]
+    fn escape_leaves_insert_mode_then_cancels() {
+        let mut form = Form::new("abc", "t", "", "auto");
+        keys(&mut form, &typed("AX"));
+        assert_eq!(form.handle(Key::Char('\x1b'), 24, 80), None);
+        assert_eq!(form.mode(), Mode::Normal);
+        assert_eq!(cursor(&mut form), Some((1, 15)));
+        assert_eq!(form.handle(Key::Char('\x1b'), 24, 80), Some(Outcome::Cancel));
+
+        for key in [Key::Char('q'), Key::Char('\x03')] {
             let mut form = Form::new("w", "a", "", "a");
             assert_eq!(form.handle(key, 24, 80), Some(Outcome::Cancel));
         }
+        // Ctrl-C cancels from insert mode too; q is just a letter there.
+        let mut form = Form::new("w", "a", "", "a");
+        keys(&mut form, &typed("iq"));
+        assert_eq!(rows(&mut form)[1], "  › Name:   qw");
+        assert_eq!(form.handle(Key::Char('\x03'), 24, 80), Some(Outcome::Cancel));
+    }
+
+    #[test]
+    fn hjkl_moves_along_the_text_and_between_fields() {
+        let mut form = Form::new("abc", "t", "", "auto");
+        keys(&mut form, &typed("hh"));
+        assert_eq!(cursor(&mut form), Some((1, 12)));
+        keys(&mut form, &typed("h"));
+        assert_eq!(cursor(&mut form), Some((1, 12)));
+        keys(&mut form, &typed("llll"));
+        assert_eq!(cursor(&mut form), Some((1, 14)));
+        keys(&mut form, &typed("0"));
+        assert_eq!(cursor(&mut form), Some((1, 12)));
+        keys(&mut form, &typed("$"));
+        assert_eq!(cursor(&mut form), Some((1, 14)));
+
+        keys(&mut form, &typed("j"));
+        assert_eq!(cursor(&mut form), Some((3, 12)));
+        keys(&mut form, &typed("j"));
+        assert_eq!(cursor(&mut form), Some((5, 12)));
+        keys(&mut form, &typed("j"));
+        assert_eq!(cursor(&mut form), Some((1, 14)));
+        keys(&mut form, &typed("k"));
+        assert_eq!(cursor(&mut form), Some((5, 12)));
+        // Tab, S-Tab and the arrows switch fields in both modes; j/k only in normal mode.
+        keys(&mut form, &[Key::Char('\t'), Key::BackTab, Key::Up, Key::Down]);
+        assert_eq!(cursor(&mut form), Some((5, 12)));
+        keys(&mut form, &typed("ij"));
+        assert_eq!(rows(&mut form)[5], "  › Group:  j");
+    }
+
+    #[test]
+    fn x_deletes_under_the_cursor() {
+        let mut form = Form::new("abc", "t", "", "auto");
+        keys(&mut form, &typed("x"));
+        assert_eq!(rows(&mut form)[1], "  › Name:   ab");
+        assert_eq!(cursor(&mut form), Some((1, 13)));
+        keys(&mut form, &typed("0xxx"));
+        assert_eq!(rows(&mut form)[1], "  › Name:");
+        assert_eq!(cursor(&mut form), Some((1, 12)));
     }
 
     #[test]
     fn empty_name_refused_then_any_key_clears_the_error() {
         let mut form = Form::new("abc", "t", "", "auto");
-        assert_eq!(keys(&mut form, &[Key::Down, Key::Char('\x15')]), None);
-        assert_eq!(keys(&mut form, &[Key::Up, Key::Char('\x15')]), None);
+        assert_eq!(keys(&mut form, &typed("xxx")), None);
         assert_eq!(form.handle(Key::Char('\r'), 24, 80), None);
+        assert_eq!(rows(&mut form)[8], "  Name cannot be empty.");
+        form.handle(Key::Char('l'), 24, 80);
+        assert_eq!(rows(&mut form)[8], NORMAL);
         assert_eq!(
-            form.render(24, 80).rows(24, 80)[8],
-            "  Name cannot be empty."
-        );
-        form.handle(Key::Right, 24, 80);
-        assert_eq!(
-            form.render(24, 80).rows(24, 80)[8],
-            "  ↑↓ switch   Enter save   Esc cancel"
-        );
-        assert_eq!(
-            keys(&mut form, &typed("  x \r")),
-            Some(Outcome::Save("  x ".into(), "".into(), "".into()))
+            keys(&mut form, &typed("i  x \r")),
+            Some(Outcome::Save("  x ".into(), "t".into(), "".into()))
         );
     }
 
     #[test]
-    fn editing_keys() {
+    fn insert_mode_editing_keys() {
         let mut form = Form::new("abc", "t", "", "auto");
-        keys(&mut form, &[Key::Left, Key::Left, Key::Char('\x0b')]);
-        assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   a");
+        keys(&mut form, &[Key::Char('A'), Key::Left, Key::Left, Key::Char('\x0b')]);
+        assert_eq!(rows(&mut form)[1], "  › Name:   a");
 
         let mut form = Form::new("abc", "t", "", "auto");
-        keys(&mut form, &[Key::Home, Key::Delete]);
-        assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   bc");
+        keys(&mut form, &[Key::Char('I'), Key::Delete]);
+        assert_eq!(rows(&mut form)[1], "  › Name:   bc");
 
         let mut form = Form::new("abc", "t", "", "auto");
         keys(
             &mut form,
-            &[Key::Char('\x01'), Key::Char('\x06'), Key::Char('\x7f')],
+            &[Key::Char('i'), Key::Char('\x01'), Key::Char('\x06'), Key::Char('\x7f')],
         );
         keys(
             &mut form,
             &[Key::Char('\x05'), Key::Char('\x02'), Key::Char('X')],
         );
-        assert_eq!(form.render(24, 80).rows(24, 80)[1], "  › Name:   bXc");
+        assert_eq!(rows(&mut form)[1], "  › Name:   bXc");
 
         let mut form = Form::new("abc", "t", "", "auto");
         keys(
             &mut form,
-            &[Key::Home, Key::Char('Y'), Key::Char('\x08'), Key::End],
+            &[Key::Char('I'), Key::Char('Y'), Key::Char('\x08'), Key::End],
         );
         assert_eq!(
             keys(&mut form, &typed("X\n")),
@@ -875,12 +1046,12 @@ mod tests {
         );
 
         let mut form = Form::new("w", "a", "", "a");
-        let mut sequence = vec![Key::Char('\x15')];
+        let mut sequence = vec![Key::Char('A'), Key::Char('\x15')];
         sequence.extend(typed("w2"));
         sequence.extend([Key::Char('\t'), Key::End]);
         sequence.extend(typed(",b"));
         keys(&mut form, &sequence);
-        let rows = form.render(24, 80).rows(24, 80);
+        let rows = rows(&mut form);
         assert_eq!(
             (rows[1].as_str(), rows[3].as_str()),
             ("    Name:   w2", "  › Tags:   a,b")
@@ -892,11 +1063,22 @@ mod tests {
     }
 
     #[test]
-    fn field_cycling_reaches_the_group_row() {
-        let mut form = Form::new("abc", "t", "", "auto");
-        keys(&mut form, &[Key::Down, Key::Down]);
+    fn group_placeholder_is_automatic_and_typing_makes_it_explicit() {
+        let mut form = Form::new("abc", "t", "", "feat-x");
         let frame = form.render(24, 80);
-        assert_eq!(frame.rows(24, 80)[5], "  › Group:  auto");
+        let rows = frame.rows(24, 80);
+        assert_eq!(rows[5], "    Group:  feat-x");
+        assert_eq!(rows[6], "            Automatic · type to override");
+        let inactive_placeholder = frame
+            .draws
+            .iter()
+            .find(|draw| draw.row == 5 && draw.col == 12)
+            .unwrap();
+        assert_eq!(inactive_placeholder.style, Style::Automatic);
+
+        keys(&mut form, &typed("k"));
+        let frame = form.render(24, 80);
+        assert_eq!(frame.rows(24, 80)[5], "  › Group:  feat-x");
         assert_eq!(frame.cursor, Some((5, 12)));
         let placeholder = frame
             .draws
@@ -904,31 +1086,8 @@ mod tests {
             .find(|draw| draw.row == 5 && draw.col == 12)
             .unwrap();
         assert_eq!(placeholder.style, Style::AutomaticSelected);
-        // Down wraps to Name; Up from Name wraps to Group; BackTab goes back up too.
-        keys(&mut form, &[Key::Down]);
-        assert_eq!(form.render(24, 80).cursor, Some((1, 15)));
-        keys(&mut form, &[Key::Up]);
-        assert_eq!(form.render(24, 80).cursor, Some((5, 12)));
-        keys(&mut form, &[Key::BackTab]);
-        assert_eq!(form.render(24, 80).cursor, Some((3, 13)));
-    }
 
-    #[test]
-    fn group_placeholder_is_automatic_and_typing_makes_it_explicit() {
-        let mut form = Form::new("abc", "t", "", "feat-x");
-        let rows = form.render(24, 80).rows(24, 80);
-        assert_eq!(rows[5], "    Group:  feat-x");
-        assert_eq!(rows[6], "            Automatic · type to override");
-        let inactive_placeholder = form
-            .render(24, 80)
-            .draws
-            .into_iter()
-            .find(|draw| draw.row == 5 && draw.col == 12)
-            .unwrap();
-        assert_eq!(inactive_placeholder.style, Style::Automatic);
-
-        keys(&mut form, &[Key::Up]);
-        keys(&mut form, &typed("ops"));
+        keys(&mut form, &typed("iops"));
         let frame = form.render(24, 80);
         let rows = frame.rows(24, 80);
         assert_eq!(rows[5], "  › Group:  ops");
@@ -943,20 +1102,17 @@ mod tests {
     #[test]
     fn explicit_group_is_shown_and_clearing_it_restores_the_placeholder() {
         let mut form = Form::new("abc", "t", "ops", "feat-x");
-        let rows = form.render(24, 80).rows(24, 80);
-        assert_eq!(rows[5], "    Group:  ops");
-        assert_eq!(rows[6], "            Explicit · empty restores automatic");
+        let rows_ = rows(&mut form);
+        assert_eq!(rows_[5], "    Group:  ops");
+        assert_eq!(rows_[6], "            Explicit · empty restores automatic");
 
-        keys(&mut form, &[Key::Up, Key::Char('\x15')]);
-        let rows = form.render(24, 80).rows(24, 80);
-        assert_eq!(rows[5], "  › Group:  feat-x");
-        assert_eq!(rows[6], "            Automatic · type to override");
+        keys(&mut form, &typed("kxxx"));
+        let rows_ = rows(&mut form);
+        assert_eq!(rows_[5], "  › Group:  feat-x");
+        assert_eq!(rows_[6], "            Automatic · type to override");
         // Whitespace alone counts as automatic too; the verb trims before comparing.
-        keys(&mut form, &typed(" "));
-        assert_eq!(
-            form.render(24, 80).rows(24, 80)[6],
-            "            Automatic · type to override"
-        );
+        keys(&mut form, &typed("i "));
+        assert_eq!(rows(&mut form)[6], "            Automatic · type to override");
         assert_eq!(
             form.handle(Key::Enter, 24, 80),
             Some(Outcome::Save("abc".into(), "t".into(), " ".into()))
@@ -990,6 +1146,7 @@ mod tests {
     fn long_value_scrolls_to_keep_the_cursor_visible() {
         let name = "x".repeat(100);
         let mut form = Form::new(&name, "", "", "auto");
+        keys(&mut form, &typed("A"));
         let frame = form.render(24, 40);
         // available = 26: the cursor sits at the end, 25 characters shown before it.
         assert_eq!(
