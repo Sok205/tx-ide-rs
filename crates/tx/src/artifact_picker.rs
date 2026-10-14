@@ -4,15 +4,46 @@
 //! terminal layer. Enter attaches the cursor's row in the pane and a digit attaches that row;
 //! f (focus the pane already showing it) and p (open it in a popup) arm the operation instead,
 //! and the next digit or Enter applies it to that row — so `f 3` focuses the third row, as does
-//! `f ↓ ↓ Enter`. Esc disarms, then closes (q too). A pick the caller declines (a focus with
-//! nothing to focus) becomes a notice line and the list stays open.
+//! `f ↓ ↓ Enter`. Rows past the ninth take choose-tree's keys: `M-a`…`M-z`, then `M-A`…`M-Z`.
+//! Esc disarms, then closes (q too). A pick the caller declines (a focus with nothing to focus)
+//! becomes a notice line and the list stays open.
 
 use std::io;
 
 use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, RESET, SELECTION_BG, WARN_ANSI};
 use crate::session_editor::{Decoder, Key, Terminal, read_key, write_all};
 
-pub const HINT: &str = "Enter/digit attach here   f focus its pane   p popup   Esc close";
+pub const HINT: &str = "Enter/key attach here   f focus its pane   p popup   Esc close";
+
+/// The key that picks row `index` (0-based), as choose-tree labels them: `1`…`9`, then `M-a`…
+/// `M-z`, then `M-A`…`M-Z`; `None` past those.
+pub fn row_key(index: usize) -> Option<Key> {
+    match index {
+        0..=8 => Some(Key::Char((b'1' + index as u8) as char)),
+        9..=34 => Some(Key::Alt((b'a' + (index - 9) as u8) as char)),
+        35..=60 => Some(Key::Alt((b'A' + (index - 35) as u8) as char)),
+        _ => None,
+    }
+}
+
+/// The row a key picks: the inverse of [`row_key`].
+fn row_index(key: Key) -> Option<usize> {
+    match key {
+        Key::Char(digit @ '1'..='9') => Some(digit as usize - '1' as usize),
+        Key::Alt(letter @ 'a'..='z') => Some(9 + letter as usize - 'a' as usize),
+        Key::Alt(letter @ 'A'..='Z') => Some(35 + letter as usize - 'A' as usize),
+        _ => None,
+    }
+}
+
+/// `row_key`'s label for the row's left edge: `(1)`, `(M-a)`.
+pub fn row_label(index: usize) -> String {
+    match row_key(index) {
+        Some(Key::Char(digit)) => format!("({digit})"),
+        Some(Key::Alt(letter)) => format!("(M-{letter})"),
+        _ => String::new(),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
@@ -110,9 +141,8 @@ impl<'a> Picker<'a> {
             }
             Key::Char('f') => self.operation = Operation::Focus,
             Key::Char('p') => self.operation = Operation::Popup,
-            Key::Char(digit @ '1'..='9') => {
-                let index = digit as usize - '1' as usize;
-                if index < self.rows {
+            Key::Char('1'..='9') | Key::Alt(_) => {
+                if let Some(index) = row_index(key).filter(|index| *index < self.rows) {
                     return Some(Some(self.disarm().pick(index)));
                 }
             }
@@ -263,6 +293,27 @@ mod tests {
         assert_eq!(picker.handle(Key::Char('\x1b')), None);
         assert!(picker.render(10, 40).contains(HINT));
         assert_eq!(picker.handle(Key::Char('\x1b')), Some(None));
+    }
+
+    #[test]
+    fn rows_past_nine_take_meta_letters() {
+        assert_eq!(row_key(0), Some(Key::Char('1')));
+        assert_eq!(row_key(8), Some(Key::Char('9')));
+        assert_eq!(row_key(9), Some(Key::Alt('a')));
+        assert_eq!(row_key(34), Some(Key::Alt('z')));
+        assert_eq!(row_key(35), Some(Key::Alt('A')));
+        assert_eq!(row_key(60), Some(Key::Alt('Z')));
+        assert_eq!(row_key(61), None);
+        for index in 0..61 {
+            assert_eq!(row_index(row_key(index).unwrap()), Some(index));
+        }
+        assert_eq!(row_label(9), "(M-a)");
+        let items: Vec<Item> = (0..12).map(|i| Item::Row(i.to_string())).collect();
+        let mut picker = Picker::new("H", &items);
+        assert_eq!(picker.handle(Key::Alt('c')), Some(Some(Pick::Attach(11))));
+        assert_eq!(picker.handle(Key::Alt('d')), None);
+        assert_eq!(picker.handle(Key::Char('f')), None);
+        assert_eq!(picker.handle(Key::Alt('a')), Some(Some(Pick::Focus(9))));
     }
 
     #[test]

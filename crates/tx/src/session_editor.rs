@@ -23,6 +23,8 @@ const RESIZE_POLL_MS: i32 = 100;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
     Char(char),
+    /// A printable key with Meta held (`ESC` then the key, within the escape delay).
+    Alt(char),
     Up,
     Down,
     Left,
@@ -510,6 +512,7 @@ impl Decoder {
                         Decoded::Key(key, 3)
                     }
                 },
+                Some(&byte @ 0x20..=0x7e) => Decoded::Key(Key::Alt(byte as char), 2),
                 // Not a keypad sequence: curses hands back the ESC on its own.
                 Some(_) => Decoded::Key(Key::Char('\x1b'), 1),
             };
@@ -864,6 +867,10 @@ mod tests {
         decoder.pending.push(0x1b);
         assert_eq!(decoder.next(false), None);
         assert_eq!(decoder.next(true), Some(Key::Char('\x1b')));
+        // ESC then a printable key inside the escape delay is Meta.
+        decoder.pending.extend_from_slice(b"\x1ba\x1bZ");
+        assert_eq!(decoder.next(false), Some(Key::Alt('a')));
+        assert_eq!(decoder.next(false), Some(Key::Alt('Z')));
     }
 
     #[test]

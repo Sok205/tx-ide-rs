@@ -19,7 +19,7 @@ use cordis::BoxError;
 
 use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
-use crate::artifact_picker::{self, HINT, Item, Pick, visible_width};
+use crate::artifact_picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::artifact_service::ArtifactService;
 use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ansi, tag_hex};
 use crate::render::{LOCATION_W, actor_label, location_text};
@@ -33,16 +33,18 @@ use super::common::{bin_tx, nest_attach_command};
 
 const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
-/// The `(k) ` choice number drawn at the row's left, as choose-tree does.
-const NUMBER_WIDTH: usize = 4;
+/// The `(k) ` choice key drawn at the row's left, as choose-tree does: `(1)` up to nine rows,
+/// `(M-a)` past that.
+const DIGIT_LABEL_WIDTH: usize = 4;
+const META_LABEL_WIDTH: usize = 6;
 /// Popup border plus one column of padding each side.
 const POPUP_FRAME: usize = 4;
 /// Header, rows, a blank line, the notice line, the hint, and the border rows.
 const POPUP_ROWS_OVERHEAD: usize = 6;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
-/// The choice number and the NAME…columns separator.
-const FIXED_CELLS: usize = NUMBER_WIDTH + 3;
+/// The NAME…columns separator.
+const NAME_GAP: usize = 3;
 
 pub(super) struct ArtifactNav {
     pub(super) service: Rc<SessionService>,
@@ -604,8 +606,9 @@ impl Row {
     fn render(&self, index: usize, layout: &Layout) -> String {
         let name = pad(&truncate(&self.name, layout.namew), layout.namew);
         let mut line = format!(
-            "{DIM_FG_ANSI}{:<NUMBER_WIDTH$}{FG_ANSI}{name}{RESET_FG}   ",
-            format!("({})", index + 1)
+            "{DIM_FG_ANSI}{:<label_width$}{FG_ANSI}{name}{RESET_FG}   ",
+            row_label(index),
+            label_width = layout.label_width
         );
         if layout.location {
             line.push_str(&format!(
@@ -628,6 +631,7 @@ impl Row {
 /// Which picker columns fit: the number and NAME always, LOCATION when there is room, chips in
 /// whatever is left.
 struct Layout {
+    label_width: usize,
     namew: usize,
     location: bool,
     chips: usize,
@@ -641,10 +645,16 @@ impl Layout {
             .max()
             .unwrap_or(0);
         let chips_wanted = rows.iter().map(|row| row.chips_width()).max().unwrap_or(0);
+        let label_width = if rows.len() > 9 {
+            META_LABEL_WIDTH
+        } else {
+            DIGIT_LABEL_WIDTH
+        };
+        let fixed = label_width + NAME_GAP;
         let mut namew = longest.clamp(NAME_FLOOR, NAME_CEILING);
-        let spare = |namew: usize| width.saturating_sub(namew + FIXED_CELLS);
+        let spare = |namew: usize| width.saturating_sub(namew + fixed);
         if spare(namew) < chips_wanted {
-            namew = NAME_FLOOR.max(width.saturating_sub(FIXED_CELLS + chips_wanted).min(namew));
+            namew = NAME_FLOOR.max(width.saturating_sub(fixed + chips_wanted).min(namew));
         }
         let mut left = spare(namew);
         let mut chips = chips_wanted.min(left);
@@ -655,6 +665,7 @@ impl Layout {
         }
         chips += left;
         Self {
+            label_width,
             namew,
             location,
             chips,
@@ -664,9 +675,10 @@ impl Layout {
     /// The picker's column header (drawn dim by the picker).
     fn header(&self) -> String {
         let mut line = format!(
-            "{:<NUMBER_WIDTH$}{:<namew$}   ",
+            "{:<label_width$}{:<namew$}   ",
             "",
             "NAME",
+            label_width = self.label_width,
             namew = self.namew
         );
         if self.location {
