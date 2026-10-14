@@ -16,7 +16,9 @@ use crate::app::{
     COMMANDS, Command, CommandTable, ENGINES, ENV, Env, HOME, SERVICE, TMUX, Visibility,
 };
 use crate::argparse::{Arg, Matches, ParseExit, Parser};
+use crate::artifact_store::ArtifactStore;
 use crate::engines::EngineRegistry;
+use crate::grouping::GroupResolver;
 use crate::palette;
 use crate::pyjson::dumps_pretty;
 use crate::render::{
@@ -840,8 +842,8 @@ impl Command for EditSession {
         "_edit-session"
     }
     fn summary(&self) -> &'static str {
-        "Internal: prefix+e — edit the focused pane's tx session name and tags in the popup; \
-         failures reach the firing client's status line."
+        "Internal: prefix+e — edit the focused pane's tx session name, tags and group override \
+         in the popup; failures reach the firing client's status line."
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let parser = self
@@ -873,15 +875,32 @@ impl Command for EditSession {
             tmux.display_status(client, &format!("prefix+e: {}", ListingError::NotTxManaged));
             return Ok(1);
         };
-        let Some((name, edited_tags)) = edit_session(&session.name, &session.tags.join(","))?
+        // The group field's placeholder: what the resolver derives once the override is gone.
+        let automatic_group = {
+            let sessions = service.store().all();
+            let scan = ArtifactStore::new(&self.0.home).all();
+            let mut without_override = session.clone();
+            without_override.group = None;
+            GroupResolver::new(&sessions, &scan.artifacts).session_group(&without_override)
+        };
+        let Some((name, edited_tags, edited_group)) = edit_session(
+            &session.name,
+            &session.tags.join(","),
+            session.group.as_deref().unwrap_or(""),
+            &automatic_group,
+        )?
         else {
             return Ok(0);
         };
-        // Both fields were collected before writing; address by the stable id.
+        // All fields were collected before writing; address by the stable id.
         let tags = split_tags(&edited_tags);
+        let group = Some(edited_group.trim().to_owned()).filter(|group| !group.is_empty());
         let written = service.rename(&session.id, &name).and_then(|_| {
             if tags != session.tags {
                 service.tag(&session.id, tags)?;
+            }
+            if group != session.group {
+                service.set_group(&session.id, group)?;
             }
             Ok(())
         });
