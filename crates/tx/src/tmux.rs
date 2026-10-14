@@ -602,6 +602,34 @@ impl Tmux {
             .map(|(_, pane_id)| pane_id.to_owned())
     }
 
+    /// Focus the pane hosting `session` for the terminal `client` is shown on. `client` may be
+    /// a nested client, so the client to move is its outer one (never the implicit current
+    /// client: switching a nested client onto its own host view collapses the view). A pane in
+    /// the outer client's session is selected in place; one in another plain session gets the
+    /// outer client switched to it; one in another view is reported, not switched to — a view is
+    /// a terminal's workspace, not a switch target. `Err` is the reason, for the user.
+    pub fn focus_hosting_pane(&self, client: &str, session: &str) -> Result<(), String> {
+        let (outer, outer_session) = self
+            .outer_client(client)
+            .ok_or_else(|| "no terminal client to move".to_owned())?;
+        let pane = self
+            .pane_for_session(session, &outer_session)
+            .ok_or_else(|| "not attached to any pane".to_owned())?;
+        let host = pane.split(':').next().unwrap_or_default();
+        let focused = if host == outer_session {
+            self.select_window(&pane) && self.select_pane(&pane)
+        } else if self.is_view(host) {
+            return Err(format!("attached in view {host}, not in {outer_session}"));
+        } else {
+            self.switch_client_of(&outer, &pane).is_ok()
+        };
+        if focused {
+            Ok(())
+        } else {
+            Err(format!("tmux could not focus {pane}"))
+        }
+    }
+
     /// Which inner session is nested in this pane (the join, inverted).
     pub fn inner_for_pane(&self, pane_id: &str) -> Option<String> {
         self.attachment_join()

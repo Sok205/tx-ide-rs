@@ -53,14 +53,24 @@ impl Command for ArtifactMenu {
     }
     fn summary(&self) -> &'static str {
         "Internal: prefix+a — in an llm session, a menu of its artifacts and nvim companions; in \
-         an nvim view, back to the controlling session. Usage: _artifact-menu SESSION CLIENT"
+         an nvim view, back to the controlling session. Usage: _artifact-menu SESSION CLIENT [MODE]"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
-        let [session, client] = argv else {
-            eprintln!("usage: tx _artifact-menu SESSION CLIENT");
-            return Ok(2);
-        };
-        self.0.menu(session, client)
+        let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+        match words[..] {
+            [session, client] => self.0.menu(session, client, None),
+            [session, client, mode] => match Mode::parse(mode) {
+                Some(mode) => self.0.menu(session, client, Some(mode)),
+                None => {
+                    eprintln!("tx _artifact-menu: unknown mode '{mode}' (attach|focus)");
+                    Ok(2)
+                }
+            },
+            _ => {
+                eprintln!("usage: tx _artifact-menu SESSION CLIENT [attach|focus]");
+                Ok(2)
+            }
+        }
     }
 }
 
@@ -71,22 +81,72 @@ impl Command for ArtifactGo {
         "_artifact-go"
     }
     fn summary(&self) -> &'static str {
-        "Internal: re-host the pane showing SESSION on an artifact's nvim view or on a session. \
-         Usage: _artifact-go SESSION CLIENT {artifact|session} ID"
+        "Internal: show an artifact's nvim view or a session — `attach` re-hosts the pane showing \
+         SESSION on it, `focus` moves the terminal to the pane already hosting it (else attaches). \
+         Usage: _artifact-go SESSION CLIENT {attach|focus} {artifact|session} ID"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let words: Vec<&str> = argv.iter().map(String::as_str).collect();
-        match words[..] {
-            [session, client, "artifact", artifact_id] => {
-                self.0.go_artifact(session, client, artifact_id)
-            }
-            [session, client, "session", session_id] => {
-                self.0.go_session(session, client, session_id)
-            }
-            _ => {
-                eprintln!("usage: tx _artifact-go SESSION CLIENT {{artifact|session}} ID");
-                Ok(2)
-            }
+        let usage = || {
+            eprintln!(
+                "usage: tx _artifact-go SESSION CLIENT {{attach|focus}} {{artifact|session}} ID"
+            );
+            Ok(2)
+        };
+        let [session, client, mode, kind, id] = words[..] else {
+            return usage();
+        };
+        let Some(mode) = Mode::parse(mode) else {
+            return usage();
+        };
+        match kind {
+            "artifact" => self.0.go_artifact(session, client, mode, id),
+            "session" => self.0.go_session(session, client, mode, id),
+            _ => usage(),
+        }
+    }
+}
+
+/// What a pick does with the chosen view. Remembered per nested session in the
+/// `@tx_artifact_menu` tmux option, so the menu's toggle row sticks until changed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Re-host the pane the key fired in on the view (the default).
+    Attach,
+    /// Move the terminal to the pane already hosting the view; attach here when there is none.
+    Focus,
+}
+
+const MODE_OPTION: &str = "@tx_artifact_menu";
+
+impl Mode {
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "attach" => Some(Self::Attach),
+            "focus" => Some(Self::Focus),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Attach => "attach",
+            Self::Focus => "focus",
+        }
+    }
+
+    fn other(self) -> Self {
+        match self {
+            Self::Attach => Self::Focus,
+            Self::Focus => Self::Attach,
+        }
+    }
+
+    /// The toggle row's text: what the OTHER mode would do.
+    fn toggle_label(self) -> &'static str {
+        match self {
+            Self::Attach => "focus the pane already showing it instead",
+            Self::Focus => "attach it in this pane instead",
         }
     }
 }
@@ -106,12 +166,29 @@ impl ArtifactNav {
         Ok(record)
     }
 
-    fn menu(&self, session: &str, client: &str) -> Result<i32, BoxError> {
+    /// `requested` (the toggle row) is stored on the nested session; otherwise the stored mode,
+    /// else `Attach`.
+    fn mode(&self, session: &str, requested: Option<Mode>) -> Result<Mode, BoxError> {
+        let tmux = self.service.tmux();
+        if let Some(mode) = requested {
+            tmux.set_session_option(session, MODE_OPTION, mode.name())?;
+            return Ok(mode);
+        }
+        Ok(tmux
+            .session_option(session, MODE_OPTION)
+            .and_then(|text| Mode::parse(&text))
+            .unwrap_or(Mode::Attach))
+    }
+
+    fn menu(&self, session: &str, client: &str, requested: Option<Mode>) -> Result<i32, BoxError> {
         let Some(record) = self.record(session, client)? else {
             return Ok(1);
         };
         match &record.kind {
-            SessionKind::Llm(_) => self.show_menu(&record, session, client),
+            SessionKind::Llm(_) => {
+                let mode = self.mode(session, requested)?;
+                self.show_menu(&record, session, client, mode)
+            }
             SessionKind::Other(other) => {
                 let back = match &other.artifact_id {
                     Some(artifact_id) => {
@@ -125,12 +202,18 @@ impl ArtifactNav {
                         .display_status(client, "prefix+a: nothing to go back to");
                     return Ok(1);
                 };
-                self.go_session(session, client, &back)
+                self.go_session(session, client, Mode::Attach, &back)
             }
         }
     }
 
-    fn show_menu(&self, record: &Session, session: &str, client: &str) -> Result<i32, BoxError> {
+    fn show_menu(
+        &self,
+        record: &Session,
+        session: &str,
+        client: &str,
+        mode: Mode,
+    ) -> Result<i32, BoxError> {
         let mut artifacts = self.artifacts.artifacts_for_session(&record.id);
         artifacts.sort_by(|a, b| updated_at(b).total_cmp(&updated_at(a)));
         let live = self.service.live_sessions()?;
@@ -162,7 +245,7 @@ impl ArtifactNav {
                 location: view
                     .map_or_else(|| "—".to_owned(), |view| location_text(&view.attached_to)),
                 chips,
-                command: self.go_command(session, client, "artifact", &artifact.id),
+                command: self.go_command(session, client, mode, "artifact", &artifact.id),
             });
         }
         for companion in live.iter().filter(|candidate| {
@@ -174,18 +257,23 @@ impl ArtifactNav {
                 name: companion.name.clone(),
                 location: location_text(&companion.attached_to),
                 chips: companion.tags.clone(),
-                command: self.go_command(session, client, "session", &companion.id),
+                command: self.go_command(session, client, mode, "session", &companion.id),
             });
         }
 
         // tmux caps an item at the client's width minus its frame and the ` (k)` key, and cuts
         // an over-long one from the LEFT (`format_trim_right`), so every row is laid out to fit.
+        // In focus mode LOCATION is what the pick acts on, so it outranks the chips.
         let client_width = self
             .service
             .tmux()
             .client_width(client)
             .unwrap_or(DEFAULT_WIDTH);
-        let layout = Layout::fit(&rows, client_width.saturating_sub(MENU_FRAME + KEY_WIDTH));
+        let layout = Layout::fit(
+            &rows,
+            client_width.saturating_sub(MENU_FRAME + KEY_WIDTH),
+            mode == Mode::Focus,
+        );
         let mut items: Vec<(String, String, String)> =
             vec![(layout.header(), String::new(), String::new())];
         if rows.is_empty() {
@@ -205,22 +293,50 @@ impl ArtifactNav {
             };
             items.push((row.render(index, &layout), key, row.command.clone()));
         }
-        self.service
-            .tmux()
-            .display_menu(client, &format!(" {} ", record.name), &items)?;
+        // A separator (empty name), then the mode toggle: re-posts the menu in the other mode.
+        items.push((String::new(), String::new(), String::new()));
+        items.push((
+            format!(
+                "#[fg={DIM_FG_HEX}]{:<NUMBER_WIDTH$}#[default]#[fg={DIM_FG_HEX}]{}#[default]",
+                "(m)",
+                mode.toggle_label()
+            ),
+            "m".to_owned(),
+            self.menu_command(session, client, mode.other()),
+        ));
+        self.service.tmux().display_menu(
+            client,
+            &format!(" {} · {} ", record.name, mode.name()),
+            &items,
+        )?;
         Ok(0)
     }
 
-    /// The menu item's tmux command: a background `run-shell` of this binary (the server's
-    /// environment has no PATH or home to rely on; both are baked in, as prefix+f does).
-    fn go_command(&self, session: &str, client: &str, kind: &str, id: &str) -> String {
+    /// A background `run-shell` of this binary (the server's environment has no PATH or home to
+    /// rely on; both are baked in, as prefix+f does).
+    fn run_shell(&self, argv: &[&str]) -> String {
         let home = format!("TX_IDE_HOME={}", self.home.root().display());
         let tx = bin_tx(&self.env).display().to_string();
-        let command = shlex_join(&["env", &home, &tx, "_artifact-go", session, client, kind, id]);
-        format!("run-shell -b \"{command} || true\"")
+        let mut words = vec!["env", &home, &tx];
+        words.extend_from_slice(argv);
+        format!("run-shell -b \"{} || true\"", shlex_join(&words))
     }
 
-    fn go_artifact(&self, session: &str, client: &str, artifact_id: &str) -> Result<i32, BoxError> {
+    fn go_command(&self, session: &str, client: &str, mode: Mode, kind: &str, id: &str) -> String {
+        self.run_shell(&["_artifact-go", session, client, mode.name(), kind, id])
+    }
+
+    fn menu_command(&self, session: &str, client: &str, mode: Mode) -> String {
+        self.run_shell(&["_artifact-menu", session, client, mode.name()])
+    }
+
+    fn go_artifact(
+        &self,
+        session: &str,
+        client: &str,
+        mode: Mode,
+        artifact_id: &str,
+    ) -> Result<i32, BoxError> {
         let Some(record) = self.record(session, client)? else {
             return Ok(1);
         };
@@ -232,7 +348,7 @@ impl ArtifactNav {
             Some(view) => view,
             None => self.open_view(&record, artifact_id)?,
         };
-        self.rehost(session, client, &view)
+        self.show(session, client, mode, &view)
     }
 
     /// `tx artifact open` without the CLI: a bound nvim view whose `parent` is the opener.
@@ -260,7 +376,13 @@ impl ArtifactNav {
         Ok(view)
     }
 
-    fn go_session(&self, session: &str, client: &str, target_id: &str) -> Result<i32, BoxError> {
+    fn go_session(
+        &self,
+        session: &str,
+        client: &str,
+        mode: Mode,
+        target_id: &str,
+    ) -> Result<i32, BoxError> {
         let tmux = self.service.tmux();
         let Some(target) = self.service.get(target_id)? else {
             tmux.display_status(client, &format!("prefix+a: session {target_id} not found"));
@@ -270,7 +392,29 @@ impl ArtifactNav {
             tmux.display_status(client, &format!("prefix+a: {} has ended", target.name));
             return Ok(1);
         }
-        self.rehost(session, client, &target)
+        self.show(session, client, mode, &target)
+    }
+
+    /// Bring `target` in front of the user: in `Focus` mode move the terminal to a pane already
+    /// hosting it (falling back to attaching when none does); in `Attach` mode re-host here.
+    fn show(
+        &self,
+        session: &str,
+        client: &str,
+        mode: Mode,
+        target: &Session,
+    ) -> Result<i32, BoxError> {
+        let tmux = self.service.tmux();
+        if mode == Mode::Focus && tmux.pane_for_session(target.tmux_name(), "").is_some() {
+            return match tmux.focus_hosting_pane(client, target.tmux_name()) {
+                Ok(()) => Ok(0),
+                Err(reason) => {
+                    tmux.display_status(client, &format!("prefix+a: {}: {reason}", target.name));
+                    Ok(1)
+                }
+            };
+        }
+        self.rehost(session, client, target)
     }
 
     /// Re-host the pane the firing client paints into on `target` (`respawn-pane -k` onto a
@@ -366,7 +510,7 @@ struct Layout {
 }
 
 impl Layout {
-    fn fit(rows: &[Row], width: usize) -> Self {
+    fn fit(rows: &[Row], width: usize, location_first: bool) -> Self {
         let longest = rows
             .iter()
             .map(|row| row.name.chars().count())
@@ -379,11 +523,18 @@ impl Layout {
             namew = NAME_FLOOR.max(width.saturating_sub(FIXED_CELLS + chips_wanted).min(namew));
         }
         let mut left = spare(namew);
-        let mut chips = chips_wanted.min(left);
-        left -= chips;
+        let mut chips = 0;
+        if !location_first {
+            chips = chips_wanted.min(left);
+            left -= chips;
+        }
         let location = left > LOCATION_W;
         if location {
             left -= LOCATION_W + 1;
+        }
+        if location_first {
+            chips = chips_wanted.min(left);
+            left -= chips;
         }
         chips += left;
         Self {

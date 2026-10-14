@@ -31,35 +31,13 @@ pub const WHEEL_ZOOM_INTERVAL: Duration = Duration::from_millis(150);
 /// Session option on the resident's tmux session: the session id Enter asked to jump to.
 pub const GOTO_OPTION: &str = "@tx_timeline_goto";
 
-/// Focus the pane hosting `session_id` for the terminal the caller is shown on. The caller may
-/// itself sit in a nested session, so the client to move is the outer one (never the implicit
-/// current client: switching a nested client onto its own host view collapses the view). A pane
-/// in the outer client's session is selected in place; one in another plain session gets the
-/// outer client switched to it; one in another view is reported, not switched to — a view is a
-/// terminal's workspace, not a switch target. `Err` is the reason, for the user.
+/// Focus the pane hosting `session_id` for the terminal the caller is shown on
+/// (`Tmux::focus_hosting_pane` from the calling client). `Err` is the reason, for the user.
 pub fn focus_session_pane(tmux: &Tmux, session_id: &str) -> Result<(), String> {
     let client = tmux
         .current_client_name()
         .ok_or_else(|| "not inside tmux".to_owned())?;
-    let (outer, outer_session) = tmux
-        .outer_client(&client)
-        .ok_or_else(|| "no terminal client to move".to_owned())?;
-    let pane = tmux
-        .pane_for_session(session_id, &outer_session)
-        .ok_or_else(|| "not attached to any pane".to_owned())?;
-    let host = pane.split(':').next().unwrap_or_default();
-    let focused = if host == outer_session {
-        tmux.select_window(&pane) && tmux.select_pane(&pane)
-    } else if tmux.is_view(host) {
-        return Err(format!("attached in view {host}, not in {outer_session}"));
-    } else {
-        tmux.switch_client_of(&outer, &pane).is_ok()
-    };
-    if focused {
-        Ok(())
-    } else {
-        Err(format!("tmux could not focus {pane}"))
-    }
+    tmux.focus_hosting_pane(&client, session_id)
 }
 
 /// `resident` is the tmux session name of a popup-hosted timeline: q and Enter detach it
