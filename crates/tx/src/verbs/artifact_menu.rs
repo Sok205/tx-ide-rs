@@ -15,9 +15,8 @@ use cordis::BoxError;
 use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::artifact_service::ArtifactService;
-use crate::events;
 use crate::palette::{DIM_FG_HEX, FG_HEX, tag_hex};
-use crate::render::{LOCATION_W, ROLE_W, actor_label, location_text, reltime};
+use crate::render::{LOCATION_W, actor_label, location_text};
 use crate::service::SessionService;
 use crate::session::{OtherRole, Session, SessionKind};
 use crate::shlex::shlex_join;
@@ -34,8 +33,8 @@ const MENU_FRAME: usize = 4;
 const NUMBER_WIDTH: usize = 4;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
-/// The choice number, the NAME…columns separator and the ROLE cell.
-const FIXED_CELLS: usize = NUMBER_WIDTH + 3 + ROLE_W + 1;
+/// The choice number and the NAME…columns separator.
+const FIXED_CELLS: usize = NUMBER_WIDTH + 3;
 
 pub(super) struct ArtifactNav {
     pub(super) service: Rc<SessionService>,
@@ -130,7 +129,6 @@ impl ArtifactNav {
     }
 
     fn show_menu(&self, record: &Session, session: &str, client: &str) -> Result<i32, BoxError> {
-        let now = events::now();
         let mut artifacts = self.artifacts.artifacts_for_session(&record.id);
         artifacts.sort_by(|a, b| updated_at(b).total_cmp(&updated_at(a)));
         let live = self.service.live_sessions()?;
@@ -161,8 +159,6 @@ impl ArtifactNav {
                     .unwrap_or_else(|| artifact.filename.clone()),
                 location: view
                     .map_or_else(|| "—".to_owned(), |view| location_text(&view.attached_to)),
-                started: reltime(Some(&artifact.created_at), now),
-                role: "art",
                 chips,
                 command: self.go_command(session, client, "artifact", &artifact.id),
             });
@@ -175,8 +171,6 @@ impl ArtifactNav {
             rows.push(Row {
                 name: companion.name.clone(),
                 location: location_text(&companion.attached_to),
-                started: reltime(companion.created_at.as_ref(), now),
-                role: "nvim",
                 chips: companion.tags.clone(),
                 command: self.go_command(session, client, "session", &companion.id),
             });
@@ -318,12 +312,10 @@ fn updated_at(artifact: &Artifact) -> f64 {
     artifact.updated_at().as_f64().unwrap_or(0.0)
 }
 
-/// One menu line, laid out like a picker row: (n) NAME   LOCATION STARTED ROLE chips.
+/// One menu line, laid out like a picker row: (n) NAME   LOCATION chips.
 struct Row {
     name: String,
     location: String,
-    started: String,
-    role: &'static str,
     chips: Vec<String>,
     command: String,
 }
@@ -345,14 +337,6 @@ impl Row {
             line.push_str(&escape(&pad(&self.location, LOCATION_W)));
             line.push(' ');
         }
-        if layout.started {
-            line.push_str(&format!("{:<7} ", self.started));
-        }
-        line.push_str(&format!(
-            "#[fg={}]{:<ROLE_W$}#[default]",
-            tag_hex(self.role),
-            self.role,
-        ));
         let mut used = 0;
         for chip in &self.chips {
             used += chip.chars().count() + 3;
@@ -369,12 +353,11 @@ impl Row {
     }
 }
 
-/// Which picker columns fit the client: the number, NAME and ROLE always, LOCATION then STARTED
-/// when there is room, chips in whatever is left.
+/// Which picker columns fit the client: the number and NAME always, LOCATION when there is room,
+/// chips in whatever is left.
 struct Layout {
     namew: usize,
     location: bool,
-    started: bool,
     chips: usize,
 }
 
@@ -398,15 +381,10 @@ impl Layout {
         if location {
             left -= LOCATION_W + 1;
         }
-        let started = left >= 8;
-        if started {
-            left -= 8;
-        }
         chips += left;
         Self {
             namew,
             location,
-            started,
             chips,
         }
     }
@@ -422,10 +400,7 @@ impl Layout {
         if self.location {
             line.push_str(&format!("{:<LOCATION_W$} ", "LOCATION"));
         }
-        if self.started {
-            line.push_str(&format!("{:<7} ", "STARTED"));
-        }
-        line.push_str(&format!("{:<ROLE_W$}  TAGS#[default]", "ROLE"));
+        line.push_str("TAGS#[default]");
         line
     }
 }
