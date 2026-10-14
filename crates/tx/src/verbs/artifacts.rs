@@ -21,7 +21,7 @@ use crate::storage::{
     Config, ConfigError, Home, LocalStorage, RemoteSpec, Storage, StorageError, expand_user,
 };
 use crate::sync::{self, SyncError, SyncResult};
-use crate::verbs::artifact_menu::{ArtifactGo, ArtifactMenu, ArtifactNav};
+use crate::verbs::artifact_menu::{ArtifactGo, ArtifactMenu, ArtifactNav, ArtifactPick};
 use crate::verbs::common::{group_value, split_tags};
 
 pub struct ArtifactVerbs;
@@ -64,6 +64,7 @@ impl Component for ArtifactVerbs {
             env: Rc::clone(&env),
         });
         table.register(ctx, Visibility::Hidden, ArtifactMenu(Rc::clone(&nav)));
+        table.register(ctx, Visibility::Hidden, ArtifactPick(Rc::clone(&nav)));
         table.register(ctx, Visibility::Hidden, ArtifactGo(nav));
         table.register(ctx, Visibility::Public, SyncCmd { home, env });
         Ok(())

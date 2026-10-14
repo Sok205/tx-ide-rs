@@ -1,12 +1,13 @@
-//! `_artifact-menu` / `_artifact-go`: the prefix+a seam (PoC).
+//! `_artifact-menu` / `_artifact-pick` / `_artifact-go`: the prefix+a seam (PoC).
 //!
 //! The key fires INSIDE the nested session — the outer bind forwards it one level down while the
 //! pane hosts a `tmux` client — so `#{session_name}` is the tx id and `#{client_name}` the nested
-//! client whose screen is the hosting pane. In an llm session the menu (a native `display-menu`,
-//! painted in the pane) lists the artifacts it touched and its live nvim companions; a pick
-//! re-hosts the pane on that view while the llm session keeps running detached. In an nvim view
-//! the same key re-hosts the pane on the controlling session: the artifact's most recent live
-//! non-`user` toucher (else its creator), or the companion's `parent`.
+//! client whose screen is the hosting pane. In an llm session `_artifact-menu` opens a popup over
+//! the pane running `_artifact-pick`, a list of the artifacts the session touched and its live
+//! nvim companions drawn like the tx picker's rows. Enter re-hosts the pane on the chosen view
+//! (the llm session keeps running detached); → moves the terminal to the pane already showing it.
+//! In an nvim view the key re-hosts the pane on the controlling session: the artifact's most
+//! recent live non-`user` toucher (else its creator), or the companion's `parent`.
 
 use std::rc::Rc;
 
@@ -14,8 +15,9 @@ use cordis::BoxError;
 
 use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
+use crate::artifact_picker::{self, HINT, Pick, visible_width};
 use crate::artifact_service::ArtifactService;
-use crate::palette::{DIM_FG_HEX, FG_HEX, tag_hex};
+use crate::palette::{DIM_FG_ANSI, FG_ANSI, RESET_FG, tag_ansi};
 use crate::render::{LOCATION_W, actor_label, location_text};
 use crate::service::SessionService;
 use crate::session::{OtherRole, Session, SessionKind};
@@ -27,12 +29,12 @@ use super::common::{bin_tx, nest_attach_command};
 
 const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
-/// Menu border + padding columns tmux adds around an item (`menu->width + 4`).
-const MENU_FRAME: usize = 4;
 /// The `(k) ` choice number drawn at the row's left, as choose-tree does.
 const NUMBER_WIDTH: usize = 4;
-/// The ` (k)` tmux appends (invisibly, see `Tmux::display_menu`) at the right of a keyed item.
-const KEY_WIDTH: usize = 4;
+/// Popup border plus one column of padding each side.
+const POPUP_FRAME: usize = 4;
+/// Header, rows, a blank line, the hint, and the border rows.
+const POPUP_ROWS_OVERHEAD: usize = 5;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
 /// The choice number and the NAME…columns separator.
@@ -52,25 +54,34 @@ impl Command for ArtifactMenu {
         "_artifact-menu"
     }
     fn summary(&self) -> &'static str {
-        "Internal: prefix+a — in an llm session, a menu of its artifacts and nvim companions; in \
-         an nvim view, back to the controlling session. Usage: _artifact-menu SESSION CLIENT [MODE]"
+        "Internal: prefix+a — in an llm session, open the artifacts picker over the pane; in an \
+         nvim view, back to the controlling session. Usage: _artifact-menu SESSION CLIENT"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
-        let words: Vec<&str> = argv.iter().map(String::as_str).collect();
-        match words[..] {
-            [session, client] => self.0.menu(session, client, None),
-            [session, client, mode] => match Mode::parse(mode) {
-                Some(mode) => self.0.menu(session, client, Some(mode)),
-                None => {
-                    eprintln!("tx _artifact-menu: unknown mode '{mode}' (attach|focus)");
-                    Ok(2)
-                }
-            },
-            _ => {
-                eprintln!("usage: tx _artifact-menu SESSION CLIENT [attach|focus]");
-                Ok(2)
-            }
-        }
+        let [session, client] = argv else {
+            eprintln!("usage: tx _artifact-menu SESSION CLIENT");
+            return Ok(2);
+        };
+        self.0.menu(session, client)
+    }
+}
+
+pub(super) struct ArtifactPick(pub(super) Rc<ArtifactNav>);
+
+impl Command for ArtifactPick {
+    fn name(&self) -> &'static str {
+        "_artifact-pick"
+    }
+    fn summary(&self) -> &'static str {
+        "Internal: the picker inside prefix+a's popup — Enter attaches the row's view in the pane, \
+         → focuses the pane already showing it. Usage: _artifact-pick SESSION CLIENT"
+    }
+    fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let [session, client] = argv else {
+            eprintln!("usage: tx _artifact-pick SESSION CLIENT");
+            return Ok(2);
+        };
+        self.0.pick(session, client)
     }
 }
 
@@ -107,17 +118,14 @@ impl Command for ArtifactGo {
     }
 }
 
-/// What a pick does with the chosen view. Remembered per nested session in the
-/// `@tx_artifact_menu` tmux option, so the menu's toggle row sticks until changed.
+/// What a pick does with the chosen view.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    /// Re-host the pane the key fired in on the view (the default).
+    /// Re-host the pane the key fired in on the view.
     Attach,
     /// Move the terminal to the pane already hosting the view; attach here when there is none.
     Focus,
 }
-
-const MODE_OPTION: &str = "@tx_artifact_menu";
 
 impl Mode {
     fn parse(text: &str) -> Option<Self> {
@@ -134,21 +142,20 @@ impl Mode {
             Self::Focus => "focus",
         }
     }
+}
 
-    fn other(self) -> Self {
-        match self {
-            Self::Attach => Self::Focus,
-            Self::Focus => Self::Attach,
-        }
-    }
+/// What a row stands for, as `_artifact-go` names it.
+struct Target {
+    kind: &'static str,
+    id: String,
+}
 
-    /// The toggle row's text: what the OTHER mode would do.
-    fn toggle_label(self) -> &'static str {
-        match self {
-            Self::Attach => "focus the pane already showing it instead",
-            Self::Focus => "attach it in this pane instead",
-        }
-    }
+/// The picker's content for one llm session: its rows laid out for `client`'s width.
+struct Listing {
+    title: String,
+    header: String,
+    lines: Vec<String>,
+    targets: Vec<Target>,
 }
 
 impl ArtifactNav {
@@ -166,28 +173,29 @@ impl ArtifactNav {
         Ok(record)
     }
 
-    /// `requested` (the toggle row) is stored on the llm session's tmux session; otherwise the
-    /// stored mode, else `Attach`. A session with no tmux session (ended) reads as `Attach`.
-    fn mode(&self, session: &str, requested: Option<Mode>) -> Result<Mode, BoxError> {
-        let tmux = self.service.tmux();
-        if let Some(mode) = requested {
-            tmux.set_session_option(session, MODE_OPTION, mode.name())?;
-            return Ok(mode);
-        }
-        Ok(tmux
-            .session_option(session, MODE_OPTION)
-            .and_then(|text| Mode::parse(&text))
-            .unwrap_or(Mode::Attach))
-    }
-
-    fn menu(&self, session: &str, client: &str, requested: Option<Mode>) -> Result<i32, BoxError> {
+    fn menu(&self, session: &str, client: &str) -> Result<i32, BoxError> {
         let Some(record) = self.record(session, client)? else {
             return Ok(1);
         };
         match &record.kind {
             SessionKind::Llm(_) => {
-                let mode = self.mode(session, requested)?;
-                self.show_menu(&record, session, client, mode)
+                let listing = self.listing(&record, client)?;
+                let content = listing
+                    .lines
+                    .iter()
+                    .map(|line| visible_width(line))
+                    .chain([visible_width(&listing.header), HINT.chars().count()])
+                    .max()
+                    .unwrap_or(0);
+                let client_width = self.client_width(client);
+                self.service.tmux().display_popup(
+                    client,
+                    (content + POPUP_FRAME).min(client_width),
+                    listing.lines.len().max(1) + POPUP_ROWS_OVERHEAD,
+                    &listing.title,
+                    &self.tx_command(&["_artifact-pick", session, client]),
+                )?;
+                Ok(0)
             }
             SessionKind::Other(other) => {
                 let back = match &other.artifact_id {
@@ -202,20 +210,48 @@ impl ArtifactNav {
                         .display_status(client, "prefix+a: nothing to go back to");
                     return Ok(1);
                 };
-                // The way back honours the mode the controlling session's menu was left in.
-                let mode = self.mode(&back, None)?;
-                self.go_session(session, client, mode, &back)
+                self.go_session(session, client, Mode::Attach, &back)
             }
         }
     }
 
-    fn show_menu(
-        &self,
-        record: &Session,
-        session: &str,
-        client: &str,
-        mode: Mode,
-    ) -> Result<i32, BoxError> {
+    /// Inside the popup: run the list, then hand the choice to a background `_artifact-go` so the
+    /// popup is gone before the pane it sits on is re-hosted.
+    fn pick(&self, session: &str, client: &str) -> Result<i32, BoxError> {
+        let Some(record) = self.record(session, client)? else {
+            return Ok(1);
+        };
+        let listing = self.listing(&record, client)?;
+        let Some(pick) = artifact_picker::pick(&listing.header, &listing.lines)? else {
+            return Ok(0);
+        };
+        let (mode, index) = match pick {
+            Pick::Attach(index) => (Mode::Attach, index),
+            Pick::Focus(index) => (Mode::Focus, index),
+        };
+        let target = &listing.targets[index];
+        let command = self.tx_command(&[
+            "_artifact-go",
+            session,
+            client,
+            mode.name(),
+            target.kind,
+            &target.id,
+        ]);
+        self.service
+            .tmux()
+            .run_shell_background(&format!("{command} || true"))?;
+        Ok(0)
+    }
+
+    fn client_width(&self, client: &str) -> usize {
+        self.service
+            .tmux()
+            .client_width(client)
+            .unwrap_or(DEFAULT_WIDTH)
+    }
+
+    fn listing(&self, record: &Session, client: &str) -> Result<Listing, BoxError> {
         let mut artifacts = self.artifacts.artifacts_for_session(&record.id);
         artifacts.sort_by(|a, b| updated_at(b).total_cmp(&updated_at(a)));
         let live = self.service.live_sessions()?;
@@ -227,6 +263,7 @@ impl ArtifactNav {
         );
 
         let mut rows: Vec<Row> = Vec::new();
+        let mut targets: Vec<Target> = Vec::new();
         for artifact in &artifacts {
             let view = live.iter().find(|candidate| {
                 matches!(&candidate.kind, SessionKind::Other(other)
@@ -247,7 +284,10 @@ impl ArtifactNav {
                 location: view
                     .map_or_else(|| "—".to_owned(), |view| location_text(&view.attached_to)),
                 chips,
-                command: self.go_command(session, client, mode, "artifact", &artifact.id),
+            });
+            targets.push(Target {
+                kind: "artifact",
+                id: artifact.id.clone(),
             });
         }
         for companion in live.iter().filter(|candidate| {
@@ -259,77 +299,36 @@ impl ArtifactNav {
                 name: companion.name.clone(),
                 location: location_text(&companion.attached_to),
                 chips: companion.tags.clone(),
-                command: self.go_command(session, client, mode, "session", &companion.id),
+            });
+            targets.push(Target {
+                kind: "session",
+                id: companion.id.clone(),
             });
         }
 
-        // tmux caps an item at the client's width minus its frame and the ` (k)` key, and cuts
-        // an over-long one from the LEFT (`format_trim_right`), so every row is laid out to fit.
-        // In focus mode LOCATION is what the pick acts on, so it outranks the chips.
-        let client_width = self
-            .service
-            .tmux()
-            .client_width(client)
-            .unwrap_or(DEFAULT_WIDTH);
-        let layout = Layout::fit(
-            &rows,
-            client_width.saturating_sub(MENU_FRAME + KEY_WIDTH),
-            mode == Mode::Focus,
-        );
-        let mut items: Vec<(String, String, String)> =
-            vec![(layout.header(), String::new(), String::new())];
-        if rows.is_empty() {
-            items.push((
-                format!("-#[fg={DIM_FG_HEX}]  (no artifacts or companions)#[default]"),
-                String::new(),
-                String::new(),
-            ));
-        }
-        // The number is drawn as text at the left, like choose-tree; the digit is also the tmux
-        // key, whose own right-hand rendering the menu style hides (see `Tmux::display_menu`).
-        for (index, row) in rows.iter().enumerate() {
-            let key = if index < 10 {
-                index.to_string()
-            } else {
-                String::new()
-            };
-            items.push((row.render(index, &layout), key, row.command.clone()));
-        }
-        // A separator (empty name), then the mode toggle: re-posts the menu in the other mode.
-        items.push((String::new(), String::new(), String::new()));
-        items.push((
-            format!(
-                "#[fg={DIM_FG_HEX}]{:<NUMBER_WIDTH$}#[default]#[fg={DIM_FG_HEX}]{}#[default]",
-                "(m)",
-                mode.toggle_label()
-            ),
-            "m".to_owned(),
-            self.menu_command(session, client, mode.other()),
-        ));
-        self.service.tmux().display_menu(
-            client,
-            &format!(" {} · {} ", record.name, mode.name()),
-            &items,
-        )?;
-        Ok(0)
+        // Laid out for the popup's usable width so no row wraps.
+        let layout = Layout::fit(&rows, self.client_width(client).saturating_sub(POPUP_FRAME));
+        let lines = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| row.render(index, &layout))
+            .collect();
+        Ok(Listing {
+            title: format!(" {} ", record.name),
+            header: layout.header(),
+            lines,
+            targets,
+        })
     }
 
-    /// A background `run-shell` of this binary (the server's environment has no PATH or home to
-    /// rely on; both are baked in, as prefix+f does).
-    fn run_shell(&self, argv: &[&str]) -> String {
+    /// This binary with the home baked in: `run-shell` and the popup run in the server's
+    /// environment, which has neither (as prefix+f does).
+    fn tx_command(&self, argv: &[&str]) -> String {
         let home = format!("TX_IDE_HOME={}", self.home.root().display());
         let tx = bin_tx(&self.env).display().to_string();
         let mut words = vec!["env", &home, &tx];
         words.extend_from_slice(argv);
-        format!("run-shell -b \"{} || true\"", shlex_join(&words))
-    }
-
-    fn go_command(&self, session: &str, client: &str, mode: Mode, kind: &str, id: &str) -> String {
-        self.run_shell(&["_artifact-go", session, client, mode.name(), kind, id])
-    }
-
-    fn menu_command(&self, session: &str, client: &str, mode: Mode) -> String {
-        self.run_shell(&["_artifact-menu", session, client, mode.name()])
+        shlex_join(&words)
     }
 
     fn go_artifact(
@@ -461,12 +460,11 @@ fn updated_at(artifact: &Artifact) -> f64 {
     artifact.updated_at().as_f64().unwrap_or(0.0)
 }
 
-/// One menu line, laid out like a picker row: (n) NAME   LOCATION chips.
+/// One picker line, laid out like a picker row: (n) NAME   LOCATION chips.
 struct Row {
     name: String,
     location: String,
     chips: Vec<String>,
-    command: String,
 }
 
 impl Row {
@@ -474,18 +472,18 @@ impl Row {
         self.chips.iter().map(|chip| chip.chars().count() + 3).sum()
     }
 
-    /// tmux `#[…]` styles stand in for the picker's SGR escapes; literal `#` is doubled. Chips
-    /// past the layout's chip budget are dropped (tmux would cut the row's left end instead).
+    /// The picker's SGR styling; chips past the layout's chip budget are dropped.
     fn render(&self, index: usize, layout: &Layout) -> String {
         let name = pad(&truncate(&self.name, layout.namew), layout.namew);
         let mut line = format!(
-            "#[fg={DIM_FG_HEX}]{:<NUMBER_WIDTH$}#[default]#[fg={FG_HEX}]{}#[default]   ",
-            format!("({index})"),
-            escape(&name)
+            "{DIM_FG_ANSI}{:<NUMBER_WIDTH$}{FG_ANSI}{name}{RESET_FG}   ",
+            format!("({index})")
         );
         if layout.location {
-            line.push_str(&escape(&pad(&self.location, LOCATION_W)));
-            line.push(' ');
+            line.push_str(&format!(
+                "{DIM_FG_ANSI}{}{RESET_FG} ",
+                pad(&self.location, LOCATION_W)
+            ));
         }
         let mut used = 0;
         for chip in &self.chips {
@@ -493,18 +491,14 @@ impl Row {
             if used > layout.chips {
                 break;
             }
-            line.push_str(&format!(
-                " #[fg={}][{}]#[default]",
-                tag_hex(chip),
-                escape(chip)
-            ));
+            line.push_str(&format!(" {}[{chip}]{RESET_FG}", tag_ansi(chip)));
         }
         line
     }
 }
 
-/// Which picker columns fit the client: the number and NAME always, LOCATION when there is room,
-/// chips in whatever is left.
+/// Which picker columns fit: the number and NAME always, LOCATION when there is room, chips in
+/// whatever is left.
 struct Layout {
     namew: usize,
     location: bool,
@@ -512,7 +506,7 @@ struct Layout {
 }
 
 impl Layout {
-    fn fit(rows: &[Row], width: usize, location_first: bool) -> Self {
+    fn fit(rows: &[Row], width: usize) -> Self {
         let longest = rows
             .iter()
             .map(|row| row.name.chars().count())
@@ -525,18 +519,11 @@ impl Layout {
             namew = NAME_FLOOR.max(width.saturating_sub(FIXED_CELLS + chips_wanted).min(namew));
         }
         let mut left = spare(namew);
-        let mut chips = 0;
-        if !location_first {
-            chips = chips_wanted.min(left);
-            left -= chips;
-        }
+        let mut chips = chips_wanted.min(left);
+        left -= chips;
         let location = left > LOCATION_W;
         if location {
             left -= LOCATION_W + 1;
-        }
-        if location_first {
-            chips = chips_wanted.min(left);
-            left -= chips;
         }
         chips += left;
         Self {
@@ -546,10 +533,10 @@ impl Layout {
         }
     }
 
-    /// The picker's column header as a disabled (unselectable) first line.
+    /// The picker's column header (drawn dim by the picker).
     fn header(&self) -> String {
         let mut line = format!(
-            "-#[fg={DIM_FG_HEX}]{:<NUMBER_WIDTH$}{:<namew$}   ",
+            "{:<NUMBER_WIDTH$}{:<namew$}   ",
             "",
             "NAME",
             namew = self.namew
@@ -558,7 +545,7 @@ impl Layout {
             line.push_str(&format!("{:<LOCATION_W$} ", "LOCATION"));
         }
         // One extra column: each chip carries a leading space.
-        line.push_str(" TAGS#[default]");
+        line.push_str(" TAGS");
         line
     }
 }
@@ -566,10 +553,6 @@ impl Layout {
 fn pad(text: &str, width: usize) -> String {
     let fill = width.saturating_sub(text.chars().count());
     format!("{text}{}", " ".repeat(fill))
-}
-
-fn escape(text: &str) -> String {
-    text.replace('#', "##")
 }
 
 fn truncate(text: &str, width: usize) -> String {

@@ -12,7 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::process::{Command, Stdio};
 
-use crate::palette::{ACCENT_HEX, BG_DEEP_HEX, SELECTION_BG};
+use crate::palette::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX};
 use crate::session::Location;
 
 /// Injected into every spawned session so colours render in a detached `new-session -d`.
@@ -398,47 +398,26 @@ impl Tmux {
             .map(drop)
     }
 
-    /// Post a native menu on `client`, centred and in the picker's palette: one `(name, key,
-    /// command)` per item. A name starting with `-` is a disabled line (tmux's own convention).
-    ///
-    /// Every visible segment of an item must carry its own `#[fg=…]`: the base and selected
-    /// styles paint foreground = background so the ` (k)` tmux appends at the right of a keyed
-    /// item (after a `#[default]` reset) stays invisible — the caller draws the key at the left.
-    pub fn display_menu(
+    /// Open a `width`×`height` popup centred on `client`, in the picker's palette, running
+    /// `command`; closes when it exits (`-E`). Returns once the popup is up (the command runs on).
+    pub fn display_popup(
         &self,
         client: &str,
+        width: usize,
+        height: usize,
         title: &str,
-        items: &[(String, String, String)],
+        command: &str,
     ) -> Result<(), TmuxError> {
-        let style = format!("bg={BG_DEEP_HEX},fg={BG_DEEP_HEX}");
-        let selected = format!("bg=colour{SELECTION_BG},fg=colour{SELECTION_BG},bold");
+        let width = width.to_string();
+        let height = height.to_string();
+        let style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
         let border = format!("bg={BG_DEEP_HEX},fg={ACCENT_HEX}");
         let title = format!("#[fg={ACCENT_HEX},bold]{title}#[default]");
-        let mut args = vec![
-            "display-menu",
-            "-c",
-            client,
-            "-T",
-            &title,
-            "-x",
-            "C",
-            "-y",
-            "C",
-            "-b",
-            "rounded",
-            "-s",
-            &style,
-            "-H",
-            &selected,
-            "-S",
-            &border,
-            // A disabled line starts with `-`: end option parsing so it is not read as a flag.
-            "--",
-        ];
-        for (name, key, command) in items {
-            args.extend([name.as_str(), key.as_str(), command.as_str()]);
-        }
-        self.run(&args).map(drop)
+        self.run(&[
+            "display-popup", "-c", client, "-E", "-x", "C", "-y", "C", "-w", &width, "-h",
+            &height, "-b", "rounded", "-s", &style, "-S", &border, "-T", &title, command,
+        ])
+        .map(drop)
     }
 
     /// Split `session`'s `pane` (a position token: `top-left`, `top-right`, …), the new pane
