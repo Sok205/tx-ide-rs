@@ -16,7 +16,7 @@ use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::artifact_service::ArtifactService;
 use crate::events;
-use crate::palette::{DIM_FG_HEX, FG_HEX, WARN_HEX, tag_hex};
+use crate::palette::{DIM_FG_HEX, FG_HEX, tag_hex};
 use crate::render::{LOCATION_W, ROLE_W, actor_label, location_text, reltime};
 use crate::service::SessionService;
 use crate::session::{OtherRole, Session, SessionKind};
@@ -30,12 +30,12 @@ const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
 /// Menu border + padding columns tmux adds around an item (`menu->width + 4`).
 const MENU_FRAME: usize = 4;
-/// The ` (k)` key suffix tmux appends to a keyed item.
-const KEY_WIDTH: usize = 4;
+/// The `(k) ` choice number drawn at the row's left, as choose-tree does.
+const NUMBER_WIDTH: usize = 4;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
-/// NAME…chips separators plus the fixed IDLE / ROLE / note cells.
-const FIXED_CELLS: usize = 3 + 6 + 1 + ROLE_W + 1 + 3;
+/// The choice number, the NAME…columns separator and the ROLE cell.
+const FIXED_CELLS: usize = NUMBER_WIDTH + 3 + ROLE_W + 1;
 
 pub(super) struct ArtifactNav {
     pub(super) service: Rc<SessionService>,
@@ -162,9 +162,7 @@ impl ArtifactNav {
                 location: view
                     .map_or_else(|| "—".to_owned(), |view| location_text(&view.attached_to)),
                 started: reltime(Some(&artifact.created_at), now),
-                idle: reltime(Some(artifact.updated_at()), now),
                 role: "art",
-                note: format!("{}r", artifact.history().len()),
                 chips,
                 command: self.go_command(session, client, "artifact", &artifact.id),
             });
@@ -178,9 +176,7 @@ impl ArtifactNav {
                 name: companion.name.clone(),
                 location: location_text(&companion.attached_to),
                 started: reltime(companion.created_at.as_ref(), now),
-                idle: "—".to_owned(),
                 role: "nvim",
-                note: String::new(),
                 chips: companion.tags.clone(),
                 command: self.go_command(session, client, "session", &companion.id),
             });
@@ -193,7 +189,7 @@ impl ArtifactNav {
             .tmux()
             .client_width(client)
             .unwrap_or(DEFAULT_WIDTH);
-        let layout = Layout::fit(&rows, client_width.saturating_sub(MENU_FRAME + KEY_WIDTH));
+        let layout = Layout::fit(&rows, client_width.saturating_sub(MENU_FRAME));
         let mut items: Vec<(String, String, String)> =
             vec![(layout.header(), String::new(), String::new())];
         if rows.is_empty() {
@@ -203,13 +199,14 @@ impl ArtifactNav {
                 String::new(),
             ));
         }
+        // The number is text at the left, like choose-tree; a tmux key would be drawn at the
+        // right as well, so none is set and j/k/Enter navigate.
         for (index, row) in rows.iter().enumerate() {
-            let key = if index < 9 {
-                (index + 1).to_string()
-            } else {
-                String::new()
-            };
-            items.push((row.render(&layout), key, row.command.clone()));
+            items.push((
+                row.render(index, &layout),
+                String::new(),
+                row.command.clone(),
+            ));
         }
         self.service
             .tmux()
@@ -321,15 +318,12 @@ fn updated_at(artifact: &Artifact) -> f64 {
     artifact.updated_at().as_f64().unwrap_or(0.0)
 }
 
-/// One menu line, laid out like a picker row: NAME   LOCATION STARTED IDLE ROLE chips.
+/// One menu line, laid out like a picker row: (n) NAME   LOCATION STARTED ROLE chips.
 struct Row {
     name: String,
     location: String,
     started: String,
-    idle: String,
     role: &'static str,
-    /// A dim annotation before the chips (an artifact's revision count).
-    note: String,
     chips: Vec<String>,
     command: String,
 }
@@ -341,9 +335,12 @@ impl Row {
 
     /// tmux `#[…]` styles stand in for the picker's SGR escapes; literal `#` is doubled. Chips
     /// past the layout's chip budget are dropped (tmux would cut the row's left end instead).
-    fn render(&self, layout: &Layout) -> String {
+    fn render(&self, index: usize, layout: &Layout) -> String {
         let name = pad(&truncate(&self.name, layout.namew), layout.namew);
-        let mut line = format!("#[fg={FG_HEX}]{}#[default]   ", escape(&name));
+        let mut line = format!(
+            "#[fg={DIM_FG_HEX}]({index})#[default] #[fg={FG_HEX}]{}#[default]   ",
+            escape(&name)
+        );
         if layout.location {
             line.push_str(&escape(&pad(&self.location, LOCATION_W)));
             line.push(' ');
@@ -352,11 +349,9 @@ impl Row {
             line.push_str(&format!("{:<7} ", self.started));
         }
         line.push_str(&format!(
-            "#[fg={WARN_HEX}]{:<6}#[default] #[fg={}]{:<ROLE_W$}#[default] #[fg={DIM_FG_HEX}]{:<3}#[default]",
-            self.idle,
+            "#[fg={}]{:<ROLE_W$}#[default]",
             tag_hex(self.role),
             self.role,
-            self.note,
         ));
         let mut used = 0;
         for chip in &self.chips {
@@ -374,7 +369,7 @@ impl Row {
     }
 }
 
-/// Which picker columns fit the client: NAME and the fixed cells always, LOCATION then STARTED
+/// Which picker columns fit the client: the number, NAME and ROLE always, LOCATION then STARTED
 /// when there is room, chips in whatever is left.
 struct Layout {
     namew: usize,
@@ -419,7 +414,8 @@ impl Layout {
     /// The picker's column header as a disabled (unselectable) first line.
     fn header(&self) -> String {
         let mut line = format!(
-            "-#[fg={DIM_FG_HEX}]{:<namew$}   ",
+            "-#[fg={DIM_FG_HEX}]{:<NUMBER_WIDTH$}{:<namew$}   ",
+            "",
             "NAME",
             namew = self.namew
         );
@@ -429,10 +425,7 @@ impl Layout {
         if self.started {
             line.push_str(&format!("{:<7} ", "STARTED"));
         }
-        line.push_str(&format!(
-            "{:<6} {:<ROLE_W$}     TAGS#[default]",
-            "IDLE", "ROLE"
-        ));
+        line.push_str(&format!("{:<ROLE_W$}  TAGS#[default]", "ROLE"));
         line
     }
 }
