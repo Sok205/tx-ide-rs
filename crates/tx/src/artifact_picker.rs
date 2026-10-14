@@ -1,21 +1,51 @@
 //! The prefix+a picker: a list in a popup over the pane, drawn like the tx picker's rows.
 //!
 //! Pure list logic ([`Picker`]) — keys in, the chosen action out — around the session editor's
-//! terminal layer. Enter attaches the row's view in the pane, → focuses the pane already showing
-//! it (so does l, vim-style), a digit picks that row for attach, Esc / q close. A pick the caller
-//! declines (a focus with nothing to focus) becomes a notice line and the list stays open.
+//! terminal layer. Enter attaches the cursor's row in the pane and a digit attaches that row;
+//! f (focus the pane already showing it) and p (open it in a popup) arm the operation instead,
+//! and the next digit or Enter applies it to that row — so `f 3` focuses the third row, as does
+//! `f ↓ ↓ Enter`. Esc disarms, then closes (q too). A pick the caller declines (a focus with
+//! nothing to focus) becomes a notice line and the list stays open.
 
 use std::io;
 
 use crate::palette::{DIM_FG_ANSI, RESET, SELECTION_BG, WARN_ANSI};
 use crate::session_editor::{Decoder, Key, Terminal, read_key, write_all};
 
-pub const HINT: &str = "Enter attach here   →/l focus its pane   Esc close";
+pub const HINT: &str = "Enter/digit attach here   f focus its pane   p popup   Esc close";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     Attach(usize),
     Focus(usize),
+    /// Open the row's view nest-attached in a popup over the terminal.
+    Popup(usize),
+}
+
+/// What f / p arm: the operation the next digit or Enter applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Operation {
+    Attach,
+    Focus,
+    Popup,
+}
+
+impl Operation {
+    fn pick(self, index: usize) -> Pick {
+        match self {
+            Self::Attach => Pick::Attach(index),
+            Self::Focus => Pick::Focus(index),
+            Self::Popup => Pick::Popup(index),
+        }
+    }
+
+    fn hint(self) -> &'static str {
+        match self {
+            Self::Attach => HINT,
+            Self::Focus => "focus mode: digit or Enter picks the row   Esc back",
+            Self::Popup => "popup mode: digit or Enter picks the row   Esc back",
+        }
+    }
 }
 
 /// The list state: `lines` are fully styled rows (SGR, no background), `header` the dim column
@@ -24,6 +54,9 @@ pub struct Picker<'a> {
     header: &'a str,
     lines: &'a [String],
     cursor: usize,
+    /// The operation f / p armed; Enter and digits (rows are numbered from 1) apply it.
+    /// `Attach` when nothing is armed.
+    operation: Operation,
     /// A one-line message under the rows (a declined pick); the next key clears it.
     notice: Option<String>,
 }
@@ -34,6 +67,7 @@ impl<'a> Picker<'a> {
             header,
             lines,
             cursor: 0,
+            operation: Operation::Attach,
             notice: None,
         }
     }
@@ -51,14 +85,18 @@ impl<'a> Picker<'a> {
                 self.cursor = (self.cursor + 1).min(self.lines.len().saturating_sub(1));
             }
             Key::Enter | Key::Char('\r') | Key::Char('\n') => {
-                return Some(self.row().map(Pick::Attach));
+                return Some(self.row().map(|index| self.disarm().pick(index)));
             }
-            Key::Right | Key::Char('l') => return Some(self.row().map(Pick::Focus)),
-            Key::Char(digit @ '0'..='9') => {
-                let index = digit as usize - '0' as usize;
+            Key::Char('f') => self.operation = Operation::Focus,
+            Key::Char('p') => self.operation = Operation::Popup,
+            Key::Char(digit @ '1'..='9') => {
+                let index = digit as usize - '1' as usize;
                 if index < self.lines.len() {
-                    return Some(Some(Pick::Attach(index)));
+                    return Some(Some(self.disarm().pick(index)));
                 }
+            }
+            Key::Char('\x1b') if self.operation != Operation::Attach => {
+                self.disarm();
             }
             Key::Char('\x1b' | 'q' | '\x03') => return Some(None),
             _ => {}
@@ -68,6 +106,11 @@ impl<'a> Picker<'a> {
 
     fn row(&self) -> Option<usize> {
         (!self.lines.is_empty()).then_some(self.cursor)
+    }
+
+    /// Back to plain attach; the operation that was armed.
+    fn disarm(&mut self) -> Operation {
+        std::mem::replace(&mut self.operation, Operation::Attach)
     }
 
     /// The screen: header, rows (the cursor's on the selection background), the hint last.
@@ -96,7 +139,11 @@ impl<'a> Picker<'a> {
             if let Some(notice) = &self.notice {
                 out += &format!("\x1b[{};1H{WARN_ANSI}{notice}{RESET}", height - 1);
             }
-            out += &format!("\x1b[{};1H{DIM_FG_ANSI}{HINT}{RESET}", height);
+            out += &format!(
+                "\x1b[{};1H{DIM_FG_ANSI}{}{RESET}",
+                height,
+                self.operation.hint()
+            );
         }
         out
     }
@@ -155,11 +202,32 @@ mod tests {
         let mut picker = Picker::new("H", &lines);
         assert_eq!(picker.handle(Key::Down), None);
         assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Attach(1))));
-        assert_eq!(picker.handle(Key::Right), Some(Some(Pick::Focus(1))));
-        assert_eq!(picker.handle(Key::Char('l')), Some(Some(Pick::Focus(1))));
-        assert_eq!(picker.handle(Key::Char('0')), Some(Some(Pick::Attach(0))));
+        assert_eq!(picker.handle(Key::Char('1')), Some(Some(Pick::Attach(0))));
+        assert_eq!(picker.handle(Key::Char('0')), None);
         assert_eq!(picker.handle(Key::Char('7')), None);
+        assert_eq!(picker.handle(Key::Right), None);
+        assert_eq!(picker.handle(Key::Char('l')), None);
         assert_eq!(picker.handle(Key::Char('q')), Some(None));
+    }
+
+    #[test]
+    fn f_and_p_arm_the_operation_for_the_next_digit_or_enter() {
+        let lines = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+        let mut picker = Picker::new("H", &lines);
+        assert_eq!(picker.handle(Key::Char('f')), None);
+        assert!(picker.render(8, 40).contains("focus mode:"));
+        assert_eq!(picker.handle(Key::Char('3')), Some(Some(Pick::Focus(2))));
+        // Applied once: the next Enter is a plain attach again.
+        assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Attach(0))));
+        assert_eq!(picker.handle(Key::Char('p')), None);
+        assert_eq!(picker.handle(Key::Down), None);
+        assert_eq!(picker.handle(Key::Down), None);
+        assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Popup(2))));
+        // Esc disarms first, then closes.
+        assert_eq!(picker.handle(Key::Char('f')), None);
+        assert_eq!(picker.handle(Key::Char('\x1b')), None);
+        assert!(picker.render(8, 40).contains(HINT));
+        assert_eq!(picker.handle(Key::Char('\x1b')), Some(None));
     }
 
     #[test]
