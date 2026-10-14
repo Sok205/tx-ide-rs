@@ -3,8 +3,9 @@
 //! The key fires INSIDE the nested session — the outer bind forwards it one level down while the
 //! pane hosts a `tmux` client — so `#{session_name}` is the tx id and `#{client_name}` the nested
 //! client whose screen is the hosting pane. In an llm session `_artifact-menu` opens a popup over
-//! the pane running `_artifact-pick`, a list of the artifacts the session touched and its live
-//! nvim companions drawn like the tx picker's rows. Enter (or a digit) re-hosts the pane on the
+//! the pane running `_artifact-pick`, a list of the artifacts the session touched, its live
+//! children (sessions it spawned: workers, shells, nvim companions) and its parent, drawn like
+//! the tx picker's rows. Enter (or a digit) re-hosts the pane on the
 //! chosen view (the llm session keeps running detached); f then a digit or Enter moves the
 //! terminal to the pane already showing it; p then a digit or Enter nest-attaches it in a popup
 //! over the terminal, leaving the panes as they are.
@@ -23,7 +24,7 @@ use crate::artifact_service::ArtifactService;
 use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ansi, tag_hex};
 use crate::render::{LOCATION_W, actor_label, location_text};
 use crate::service::SessionService;
-use crate::session::{OtherRole, Session, SessionKind};
+use crate::session::{Session, SessionKind};
 use crate::shlex::shlex_join;
 use crate::spawn::SpawnSpec;
 use crate::storage::Home;
@@ -40,8 +41,10 @@ const POPUP_FRAME: usize = 4;
 const POPUP_ROWS_OVERHEAD: usize = 6;
 /// Assumed client width when tmux cannot report one.
 const DEFAULT_WIDTH: usize = 120;
-/// The choice number and the NAME…columns separator.
-const FIXED_CELLS: usize = NUMBER_WIDTH + 3;
+/// The REL column: `artifact`, `child <role>`, `parent <role>`.
+const RELATION_W: usize = 12;
+/// The choice number, the NAME…columns separator and the REL column.
+const FIXED_CELLS: usize = NUMBER_WIDTH + 3 + RELATION_W + 1;
 
 pub(super) struct ArtifactNav {
     pub(super) service: Rc<SessionService>,
@@ -307,6 +310,7 @@ impl ArtifactNav {
                     .title
                     .clone()
                     .unwrap_or_else(|| artifact.filename.clone()),
+                relation: "artifact".to_owned(),
                 location: view
                     .map_or_else(|| "—".to_owned(), |view| location_text(&view.attached_to)),
                 chips,
@@ -316,19 +320,28 @@ impl ArtifactNav {
                 id: artifact.id.clone(),
             });
         }
-        for companion in live.iter().filter(|candidate| {
+        // Artifact views are already rows above, under their artifact.
+        let children = live.iter().filter(|candidate| {
             candidate.parent.as_deref() == Some(record.id.as_str())
-                && matches!(&candidate.kind, SessionKind::Other(other)
-                    if other.role == OtherRole::Nvim && other.artifact_id.is_none())
-        }) {
+                && !matches!(&candidate.kind, SessionKind::Other(other) if other.artifact_id.is_some())
+        });
+        let parent = record
+            .parent
+            .as_deref()
+            .and_then(|parent_id| live.iter().find(|candidate| candidate.id == parent_id));
+        let related = children
+            .map(|child| ("child", child))
+            .chain(parent.map(|parent| ("parent", parent)));
+        for (relation, related_session) in related {
             rows.push(Row {
-                name: companion.name.clone(),
-                location: location_text(&companion.attached_to),
-                chips: companion.tags.clone(),
+                name: related_session.name.clone(),
+                relation: format!("{relation} {}", related_session.role().as_str()),
+                location: location_text(&related_session.attached_to),
+                chips: related_session.tags.clone(),
             });
             targets.push(Target {
                 kind: "session",
-                id: companion.id.clone(),
+                id: related_session.id.clone(),
             });
         }
 
@@ -559,9 +572,11 @@ fn popup_footer(prefix: &str) -> String {
     )
 }
 
-/// One picker line, laid out like a picker row: (n) NAME   LOCATION chips.
+/// One picker line, laid out like a picker row: (n) NAME   REL LOCATION chips.
 struct Row {
     name: String,
+    /// `artifact`, `child <role>` or `parent <role>`.
+    relation: String,
     location: String,
     chips: Vec<String>,
 }
@@ -575,8 +590,9 @@ impl Row {
     fn render(&self, index: usize, layout: &Layout) -> String {
         let name = pad(&truncate(&self.name, layout.namew), layout.namew);
         let mut line = format!(
-            "{DIM_FG_ANSI}{:<NUMBER_WIDTH$}{FG_ANSI}{name}{RESET_FG}   ",
-            format!("({})", index + 1)
+            "{DIM_FG_ANSI}{:<NUMBER_WIDTH$}{FG_ANSI}{name}{RESET_FG}   {DIM_FG_ANSI}{} {RESET_FG}",
+            format!("({})", index + 1),
+            pad(&self.relation, RELATION_W)
         );
         if layout.location {
             line.push_str(&format!(
@@ -640,6 +656,7 @@ impl Layout {
             "NAME",
             namew = self.namew
         );
+        line.push_str(&format!("{:<RELATION_W$} ", "REL"));
         if self.location {
             line.push_str(&format!("{:<LOCATION_W$} ", "LOCATION"));
         }
