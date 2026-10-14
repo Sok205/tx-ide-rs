@@ -344,6 +344,12 @@ impl Tmux {
 
     /// The client this process is displayed on (`#{client_name}`); `None` outside tmux. Inside
     /// a nested session this is the nested client — see [`Self::outer_client`].
+    /// `client`'s terminal width in columns; `None` when there is no such client.
+    pub fn client_width(&self, client: &str) -> Option<usize> {
+        let (_, out) = self.run_quiet(&["display-message", "-p", "-c", client, "#{client_width}"]);
+        out.trim().parse().ok()
+    }
+
     pub fn current_client_name(&self) -> Option<String> {
         if !self.env.inside_tmux() {
             return None;

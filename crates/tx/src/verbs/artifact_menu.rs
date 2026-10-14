@@ -28,6 +28,14 @@ use super::common::{bin_tx, nest_attach_command};
 
 const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
+/// Menu border + padding columns tmux adds around an item (`menu->width + 4`).
+const MENU_FRAME: usize = 4;
+/// The ` (k)` key suffix tmux appends to a keyed item.
+const KEY_WIDTH: usize = 4;
+/// Assumed client width when tmux cannot report one.
+const DEFAULT_WIDTH: usize = 120;
+/// NAME…chips separators plus the fixed IDLE / ROLE / note cells.
+const FIXED_CELLS: usize = 3 + 6 + 1 + ROLE_W + 1 + 3;
 
 pub(super) struct ArtifactNav {
     pub(super) service: Rc<SessionService>,
@@ -178,14 +186,16 @@ impl ArtifactNav {
             });
         }
 
-        let namew = rows
-            .iter()
-            .map(|row| row.name.chars().count())
-            .max()
-            .unwrap_or(0)
-            .clamp(NAME_FLOOR, NAME_CEILING);
+        // tmux caps an item at the client's width minus its frame and the ` (k)` key, and cuts
+        // an over-long one from the LEFT (`format_trim_right`), so every row is laid out to fit.
+        let client_width = self
+            .service
+            .tmux()
+            .client_width(client)
+            .unwrap_or(DEFAULT_WIDTH);
+        let layout = Layout::fit(&rows, client_width.saturating_sub(MENU_FRAME + KEY_WIDTH));
         let mut items: Vec<(String, String, String)> =
-            vec![(header(namew), String::new(), String::new())];
+            vec![(layout.header(), String::new(), String::new())];
         if rows.is_empty() {
             items.push((
                 "-  (no artifacts or companions)".into(),
@@ -199,7 +209,7 @@ impl ArtifactNav {
             } else {
                 String::new()
             };
-            items.push((row.render(namew), key, row.command.clone()));
+            items.push((row.render(&layout), key, row.command.clone()));
         }
         self.service
             .tmux()
@@ -325,33 +335,106 @@ struct Row {
 }
 
 impl Row {
-    /// tmux `#[…]` styles stand in for the picker's SGR escapes; literal `#` is doubled.
-    fn render(&self, namew: usize) -> String {
-        let name = pad(&truncate(&self.name, namew), namew);
-        let chips: String = self
-            .chips
-            .iter()
-            .map(|chip| format!(" #[fg={}][{}]#[default]", tag_hex(chip), escape(chip)))
-            .collect();
-        format!(
-            "#[fg={FG_HEX}]{}#[default]   {} {:<7} #[fg={WARN_HEX}]{:<6}#[default] #[fg={}]{:<ROLE_W$}#[default] #[fg={DIM_FG_HEX}]{:<3}#[default]{chips}",
-            escape(&name),
-            escape(&pad(&self.location, LOCATION_W)),
-            self.started,
+    fn chips_width(&self) -> usize {
+        self.chips.iter().map(|chip| chip.chars().count() + 3).sum()
+    }
+
+    /// tmux `#[…]` styles stand in for the picker's SGR escapes; literal `#` is doubled. Chips
+    /// past the layout's chip budget are dropped (tmux would cut the row's left end instead).
+    fn render(&self, layout: &Layout) -> String {
+        let name = pad(&truncate(&self.name, layout.namew), layout.namew);
+        let mut line = format!("#[fg={FG_HEX}]{}#[default]   ", escape(&name));
+        if layout.location {
+            line.push_str(&escape(&pad(&self.location, LOCATION_W)));
+            line.push(' ');
+        }
+        if layout.started {
+            line.push_str(&format!("{:<7} ", self.started));
+        }
+        line.push_str(&format!(
+            "#[fg={WARN_HEX}]{:<6}#[default] #[fg={}]{:<ROLE_W$}#[default] #[fg={DIM_FG_HEX}]{:<3}#[default]",
             self.idle,
             tag_hex(self.role),
             self.role,
             self.note,
-        )
+        ));
+        let mut used = 0;
+        for chip in &self.chips {
+            used += chip.chars().count() + 3;
+            if used > layout.chips {
+                break;
+            }
+            line.push_str(&format!(
+                " #[fg={}][{}]#[default]",
+                tag_hex(chip),
+                escape(chip)
+            ));
+        }
+        line
     }
 }
 
-/// The picker's column header as a disabled (unselectable) first line.
-fn header(namew: usize) -> String {
-    format!(
-        "-#[fg={DIM_FG_HEX}]{:<namew$}   {:<LOCATION_W$} {:<7} {:<6} {:<ROLE_W$}     TAGS#[default]",
-        "NAME", "LOCATION", "STARTED", "IDLE", "ROLE"
-    )
+/// Which picker columns fit the client: NAME and the fixed cells always, LOCATION then STARTED
+/// when there is room, chips in whatever is left.
+struct Layout {
+    namew: usize,
+    location: bool,
+    started: bool,
+    chips: usize,
+}
+
+impl Layout {
+    fn fit(rows: &[Row], width: usize) -> Self {
+        let longest = rows
+            .iter()
+            .map(|row| row.name.chars().count())
+            .max()
+            .unwrap_or(0);
+        let chips_wanted = rows.iter().map(Row::chips_width).max().unwrap_or(0);
+        let mut namew = longest.clamp(NAME_FLOOR, NAME_CEILING);
+        let spare = |namew: usize| width.saturating_sub(namew + FIXED_CELLS);
+        if spare(namew) < chips_wanted {
+            namew = NAME_FLOOR.max(width.saturating_sub(FIXED_CELLS + chips_wanted).min(namew));
+        }
+        let mut left = spare(namew);
+        let mut chips = chips_wanted.min(left);
+        left -= chips;
+        let location = left > LOCATION_W;
+        if location {
+            left -= LOCATION_W + 1;
+        }
+        let started = left >= 8;
+        if started {
+            left -= 8;
+        }
+        chips += left;
+        Self {
+            namew,
+            location,
+            started,
+            chips,
+        }
+    }
+
+    /// The picker's column header as a disabled (unselectable) first line.
+    fn header(&self) -> String {
+        let mut line = format!(
+            "-#[fg={DIM_FG_HEX}]{:<namew$}   ",
+            "NAME",
+            namew = self.namew
+        );
+        if self.location {
+            line.push_str(&format!("{:<LOCATION_W$} ", "LOCATION"));
+        }
+        if self.started {
+            line.push_str(&format!("{:<7} ", "STARTED"));
+        }
+        line.push_str(&format!(
+            "{:<6} {:<ROLE_W$}     TAGS#[default]",
+            "IDLE", "ROLE"
+        ));
+        line
+    }
 }
 
 fn pad(text: &str, width: usize) -> String {
