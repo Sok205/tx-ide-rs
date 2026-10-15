@@ -26,6 +26,8 @@ pub const COMPANION_SUFFIX: &str = "-playground";
 pub const OUTPUT_LINE_LIMIT: usize = 200;
 /// The companion shell's env: where the hook leaves records for it.
 pub const PENDING_ENV: &str = "TX_PLAYGROUND_PENDING";
+/// The companion shell's env: its own history file.
+pub const HISTFILE_ENV: &str = "TX_PLAYGROUND_HISTFILE";
 pub const ZDOTDIR_ENV: &str = "ZDOTDIR";
 const ZDOTDIR_NAME: &str = "zdotdir";
 const RC_FILES: [(&str, &str); 2] = [
@@ -45,6 +47,10 @@ pub fn log_path(home: &Home, worker_id: &str) -> PathBuf {
 
 pub fn pending_path(home: &Home, worker_id: &str) -> PathBuf {
     home.playground_dir().join(format!("{worker_id}.pending"))
+}
+
+pub fn history_path(home: &Home, worker_id: &str) -> PathBuf {
+    home.playground_dir().join(format!("{worker_id}.history"))
 }
 
 pub fn companion_name(worker_name: &str) -> String {
@@ -94,13 +100,18 @@ pub fn prepare_companion(home: &Home, worker: &Session) -> io::Result<SpawnSpec>
             PENDING_ENV.to_owned(),
             pending.to_string_lossy().into_owned(),
         ),
+        (
+            HISTFILE_ENV.to_owned(),
+            history_path(home, &worker.id).to_string_lossy().into_owned(),
+        ),
     ];
     Ok(spec)
 }
 
 /// Mirror one tool-hook payload: append its entry to the worker's log and, when the companion
 /// lives, hand it to the shell. Nothing for a tool other than Bash or an event other than the
-/// three Bash hooks carry. The log is never created here: no log means no companion to feed.
+/// three Bash hooks carry. A worker with neither a companion nor a log (spawned before
+/// companions existed) records nothing; a live companion gets its log back if it went missing.
 pub fn mirror(
     home: &Home,
     worker: &Session,
@@ -110,10 +121,14 @@ pub fn mirror(
     let Some(entry) = entry_for(payload) else {
         return Ok(());
     };
-    // The log is the gate: it exists only for a worker spawned with a companion.
+    let log = log_path(home, &worker.id);
+    if companion.is_none() && !log.exists() {
+        return Ok(());
+    }
     OpenOptions::new()
         .append(true)
-        .open(log_path(home, &worker.id))?
+        .create(true)
+        .open(log)?
         .write_all(entry.text.as_bytes())?;
     let Some(companion) = companion else {
         return Ok(());
