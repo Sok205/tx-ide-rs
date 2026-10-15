@@ -519,9 +519,10 @@ impl ArtifactNav {
                 let prefix = tmux
                     .global_option("prefix")
                     .unwrap_or_else(|| "C-b".to_owned());
+                let owner = self.service.get(session)?;
                 tmux.popup_attach(
                     &outer,
-                    &popup_title(target),
+                    &popup_title(target, owner.as_ref()),
                     &popup_footer(&prefix),
                     target.tmux_name(),
                 )?;
@@ -573,11 +574,15 @@ fn updated_at(artifact: &Artifact) -> f64 {
     artifact.updated_at().as_f64().unwrap_or(0.0)
 }
 
-/// The popup's title, as the picker shows a row: the view's name, then its tags as chips.
-fn popup_title(view: &Session) -> String {
+/// The popup's title, as the picker shows a row: the view's name, then its tags as chips, then
+/// `◂ owner` — the display name of the session the key fired in (none when it is not tx-managed).
+fn popup_title(view: &Session, owner: Option<&Session>) -> String {
     let mut title = format!(" {} ", view.name);
     for tag in &view.tags {
         title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
+    }
+    if let Some(owner) = owner {
+        title.push_str(&format!("#[fg={DIM_FG_HEX},nobold]◂ {}#[default] ", owner.name));
     }
     title
 }
