@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a186e33223cf8605b6f926079f43f3daeef404810f8c850f1b37cbb1e33569bf # shrinks to session = Session { id: SessionId("¡"), name: "", parent: None, tags: [], cwd: "", created_at: 1.0, ended_at: Some(NaN), lifecycle: Running, launch: Agent { engine: "", profile: [], model: None, effort: None } }
+cc f198e0407136a9f6fd29ece058729ca8074d522ffa9d6caf97a001b86ccad96f # shrinks to session = Session { id: SessionId("¡"), name: "", parent: None, tags: [], cwd: "", created_at: NaN, ended_at: None, lifecycle: Running, launch: Agent { engine: "", profile: [], model: None, effort: None } }
+cc 1996b3b0c25fbd96128492912714fb62aedd52208e263a048938002073576b77 # shrinks to state_dir = "", tmux_socket = None
