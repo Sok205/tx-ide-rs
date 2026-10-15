@@ -5,10 +5,11 @@
 //! (completion and output capture stay the engine's); the companion only *mirrors* them.
 //!
 //! The service spawns the companion right after the worker. `tx hook working` appends each Bash
-//! hook payload to the worker's durable log and, while the companion lives, hands the entry to
-//! its shell: NUL-separated records in a pending file + `SIGUSR1`, drained by the rc in
-//! `playground/zshrc`. A worker without a log (spawned before the companion existed) records
-//! nothing.
+//! hook payload to the worker's durable log as it arrives (the prompt line at `PreToolUse`, the
+//! output at `PostToolUse`), and when a command finishes hands the whole block to the shell —
+//! NUL-separated records in a pending file + `SIGUSR1`, drained by the rc in `playground/zshrc`
+//! — so each command lands under one prompt, as a terminal transcript reads. A worker without a
+//! log (spawned before the companion existed) records nothing.
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -117,14 +118,15 @@ pub fn mirror(
     let Some(companion) = companion else {
         return Ok(());
     };
+    let Some(replay) = entry.replay else {
+        return Ok(());
+    };
     let mut records = Vec::new();
-    records.extend_from_slice(entry.text.as_bytes());
+    records.extend_from_slice(replay.block.as_bytes());
     records.push(0);
-    if let Some(command) = entry.command {
-        records.push(HISTORY_MARK as u8);
-        records.extend_from_slice(command.as_bytes());
-        records.push(0);
-    }
+    records.push(HISTORY_MARK as u8);
+    records.extend_from_slice(replay.command.as_bytes());
+    records.push(0);
     // The shell renames the pending file away to drain it, so each append may start a new one.
     OpenOptions::new()
         .append(true)
@@ -141,23 +143,37 @@ pub fn mirror(
     Ok(())
 }
 
-/// One log entry: the text, plus the command itself when the entry opens a command (for the
-/// companion's history).
+/// One log entry: the text appended to the log now, plus — once the command has finished — the
+/// block the companion shell replays.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Entry {
     pub text: String,
-    pub command: Option<String>,
+    pub replay: Option<Replay>,
+}
+
+/// A finished command for the shell: the prompt line with its output, and the bare command for
+/// the shell's history.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Replay {
+    pub block: String,
+    pub command: String,
 }
 
 /// The entry a payload describes: the prompt line on `PreToolUse`, the output plus a trailer on
-/// `PostToolUse` / `PostToolUseFailure`.
+/// `PostToolUse` / `PostToolUseFailure` (which also carry the command, so the replay block is
+/// complete).
 pub fn entry_for(payload: &Value) -> Option<Entry> {
     if text(payload, &["tool_name"]) != Some("Bash") {
         return None;
     }
     let event = text(payload, &["hook_event_name"])?;
-    match event {
-        "PreToolUse" => Some(prompt_entry(payload)),
+    let result = match event {
+        "PreToolUse" => {
+            return Some(Entry {
+                text: prompt_line(payload),
+                replay: None,
+            });
+        }
         "PostToolUse" => {
             let output = text(payload, &["tool_response", "stdout"]).unwrap_or("");
             let interrupted = payload
@@ -165,18 +181,29 @@ pub fn entry_for(payload: &Value) -> Option<Entry> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let status = if interrupted { "interrupted" } else { "ok" };
-            Some(result_entry(output, status, duration(payload)))
+            result_text(output, status, duration(payload))
         }
         "PostToolUseFailure" => {
             let error = text(payload, &["error"]).unwrap_or("");
             let (status, output) = split_failure(error);
-            Some(result_entry(output, &status, duration(payload)))
+            result_text(output, &status, duration(payload))
         }
-        _ => None,
-    }
+        _ => return None,
+    };
+    Some(Entry {
+        replay: Some(Replay {
+            block: format!("{}{result}", prompt_line(payload)),
+            command: command(payload).to_owned(),
+        }),
+        text: result,
+    })
 }
 
-fn prompt_entry(payload: &Value) -> Entry {
+fn command(payload: &Value) -> &str {
+    text(payload, &["tool_input", "command"]).unwrap_or("")
+}
+
+fn prompt_line(payload: &Value) -> String {
     let mut line = String::new();
     if let Some(description) = text(payload, &["tool_input", "description"]) {
         line.push_str(&format!("{DIM}# {description}{RESET}\n"));
@@ -186,15 +213,14 @@ fn prompt_entry(payload: &Value) -> Entry {
         .and_then(Path::file_name)
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let command = text(payload, &["tool_input", "command"]).unwrap_or("");
-    line.push_str(&format!("{BOLD}{directory} $ {command}{RESET}\n"));
-    Entry {
-        text: line,
-        command: Some(command.to_owned()),
-    }
+    line.push_str(&format!(
+        "{BOLD}{directory} $ {}{RESET}\n",
+        command(payload)
+    ));
+    line
 }
 
-fn result_entry(output: &str, status: &str, duration: Option<u64>) -> Entry {
+fn result_text(output: &str, status: &str, duration: Option<u64>) -> String {
     let mut entry = String::new();
     let lines: Vec<&str> = output.lines().collect();
     for line in lines.iter().take(OUTPUT_LINE_LIMIT) {
@@ -209,10 +235,7 @@ fn result_entry(output: &str, status: &str, duration: Option<u64>) -> Entry {
     }
     let timing = duration.map(format_duration).unwrap_or_default();
     entry.push_str(&format!("{DIM}[{status}{timing}]{RESET}\n\n"));
-    Entry {
-        text: entry,
-        command: None,
-    }
+    entry
 }
 
 /// `"Exit code 3\n<output>"` → (`"exit 3"`, output); anything else is the whole text as output.
@@ -269,7 +292,7 @@ mod tests {
                 text: format!(
                     "{DIM}# Run the tests{RESET}\n{BOLD}repo--feature $ cargo test{RESET}\n"
                 ),
-                command: Some("cargo test".into()),
+                replay: None,
             }
         );
     }
@@ -282,7 +305,15 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(entry.text, format!("a\nb\n{DIM}[ok · 347ms]{RESET}\n\n"));
-        assert_eq!(entry.command, None);
+        assert_eq!(
+            entry.replay,
+            Some(Replay {
+                block: format!(
+                    "{DIM}# Run the tests{RESET}\n{BOLD}repo--feature $ cargo test{RESET}\na\nb\n{DIM}[ok · 347ms]{RESET}\n\n"
+                ),
+                command: "cargo test".into(),
+            })
+        );
     }
 
     #[test]
@@ -298,6 +329,7 @@ mod tests {
         );
         let entry = entry_for(&bash("PostToolUseFailure", json!({"error": "boom"}))).unwrap();
         assert_eq!(entry.text, format!("boom\n{DIM}[failed]{RESET}\n\n"));
+        assert_eq!(entry.replay.unwrap().command, "cargo test");
     }
 
     #[test]
