@@ -17,6 +17,7 @@ use crate::engines::EngineRegistry;
 use crate::engines::adapter::CapturedChat;
 use crate::events::EventLog;
 use crate::history::{History, HistoryError, IngestMode};
+use crate::playground::{self, PLAYGROUND_ENV};
 use crate::service::{ServiceError, SessionService};
 use crate::session::{LlmSession, Session, State};
 use crate::storage::Home;
@@ -84,6 +85,10 @@ impl Hooks<'_> {
         if matches!(event, "session-start" | "prompt-submit") {
             // A hook must never fail a turn: the next capture event retries.
             let _ = self.capture_chat_ref(session, &read_payload(stdin));
+        }
+        if event == "working" && self.env.var(PLAYGROUND_ENV) == Some("1") {
+            // Mirroring is best-effort too: a lost log line never fails the tool call.
+            let _ = playground::record(self.home, session_id, &read_payload(stdin));
         }
 
         let state = match event {

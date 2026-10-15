@@ -124,6 +124,25 @@ pub fn parse_skill_grants(path: &Path) -> Result<Vec<String>, RoleError> {
         .unwrap_or_default())
 }
 
+/// Whether any of the role files behind `names` grants a playground companion: a frontmatter
+/// `playground: true` line.
+pub fn role_grants_playground(home: &Home, names: &[String]) -> Result<bool, RoleError> {
+    for path in resolve_role_files(home, names)? {
+        let (frontmatter, _) = split_frontmatter(&path)?;
+        if frontmatter.iter().any(|line| playground_grant(line)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// `^\s*playground:\s*true\s*$` on one line.
+fn playground_grant(line: &str) -> bool {
+    line.trim_start_matches(py_is_space)
+        .strip_prefix("playground:")
+        .is_some_and(|rest| py_strip(rest) == "true")
+}
+
 /// `^\s*skills:\s*\[(.*)\]\s*$` on one line (no newlines inside): the captured list text.
 fn skills_list(line: &str) -> Option<&str> {
     let rest = line
@@ -319,6 +338,19 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    #[test]
+    fn playground_grant_from_any_role_file() {
+        let fx = Fixture::new();
+        fx.agent("COMMON.md", "common");
+        fx.agent("DEV.md", "---\ntx:\n  skills: [a]\n  playground: true\n---\nbody");
+        fx.agent("OTHER.md", "---\nplayground: false\n---\nbody");
+        assert!(role_grants_playground(&fx.home, &names(&["DEV"])).unwrap());
+        assert!(!role_grants_playground(&fx.home, &names(&["OTHER"])).unwrap());
+        assert!(!role_grants_playground(&fx.home, &[]).unwrap());
+        fx.user("OTHER.local.md", "---\nplayground: true\n---\n");
+        assert!(role_grants_playground(&fx.home, &names(&["OTHER"])).unwrap());
     }
 
     #[test]

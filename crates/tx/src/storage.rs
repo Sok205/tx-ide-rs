@@ -73,6 +73,10 @@ impl Home {
     pub fn nvim_dir(&self) -> PathBuf {
         self.root.join("nvim")
     }
+    /// Per-worker playground logs (`<session-id>.log`); created on first use, like `nvim_dir`.
+    pub fn playground_dir(&self) -> PathBuf {
+        self.root.join("playground")
+    }
 
     /// Create the skeleton (idempotent): exactly the dirs `ensure_home` makes.
     pub fn ensure(&self) -> std::io::Result<()> {

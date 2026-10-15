@@ -107,7 +107,8 @@ if [[ -n "$SETTINGS" ]]; then SANDBOX=1; else SETTINGS="$DEFAULT_SETTINGS"; fi
 # the two shims that establish a chat — SessionStart (at startup) and UserPromptSubmit (first turn) —
 # KEEP stdin (`keep-stdin`) so `tx hook` can read `session_id` + `transcript_path` off the payload.
 # SessionStart closes the id-unknown window before the first turn. The rest still drain stdin (their
-# state maps from the event name alone); notify keeps it to read notification_type.
+# state maps from the event name alone); notify keeps it to read notification_type, and work keeps
+# it so a playground worker can mirror its Bash commands (tool_input / tool_response) into its log.
 START_SHIM="$TX_HOME/hooks/claude/start.sh"    # SessionStart                                      → session-start → chat capture
 PRE_SHIM="$TX_HOME/hooks/claude/pre.sh"        # UserPromptSubmit                                  → prompt-submit → WORKING + capture
 WORK_SHIM="$TX_HOME/hooks/claude/work.sh"      # PreToolUse/PostToolUse/…/SubagentStart/PreCompact → working      → WORKING
@@ -241,7 +242,7 @@ cmd_install() {
   header "Hook shims under $TX_HOME/hooks (C9-baked)"
   write_shim "$START_SHIM"  session-start keep-stdin
   write_shim "$PRE_SHIM"    prompt-submit keep-stdin
-  write_shim "$WORK_SHIM"   working
+  write_shim "$WORK_SHIM"   working keep-stdin
   write_shim "$POST_SHIM"   stop
   write_shim "$NOTIFY_SHIM" notification keep-stdin
   write_shim "$END_SHIM"    session-end
