@@ -25,6 +25,12 @@ pub const DIFF_PATCH: &str = "diff.patch";
 pub enum KindError {
     #[error("artifact kind '{0}' is not supported yet")]
     Unsupported(&'static str),
+    #[error("{} file {file} is missing from {} (see `tx artifact doctor`)", kind, dir.display())]
+    ContentMissing {
+        kind: &'static str,
+        file: String,
+        dir: PathBuf,
+    },
     #[error("{}: {source}", path.display())]
     Io {
         path: PathBuf,
@@ -134,6 +140,7 @@ pub fn open(
     name: String,
     tags: Vec<String>,
 ) -> Result<Opened, KindError> {
+    require_content(&artifact.kind, dir)?;
     match &artifact.kind {
         Kind::Document { file } => {
             let path = dir.join(file);
@@ -150,6 +157,20 @@ pub fn open(
         }
         other => Err(KindError::Unsupported(other.name())),
     }
+}
+
+/// The kind's content file must be there before a view opens on it: nvim on a missing path
+/// would silently start a new empty buffer (and a save would recreate the artifact's file).
+fn require_content(kind: &Kind, dir: &Path) -> Result<(), KindError> {
+    let file = content_file(kind);
+    if dir.join(file).is_file() {
+        return Ok(());
+    }
+    Err(KindError::ContentMissing {
+        kind: kind.name(),
+        file: file.to_owned(),
+        dir: dir.to_owned(),
+    })
 }
 
 /// Run a pending close step.
@@ -198,6 +219,15 @@ mod tests {
         );
         assert_eq!(opened.spec.tags, ["t"]);
         assert_eq!(content_file(&artifact.kind), "my plan.md");
+        fs::remove_file(dir.join("my plan.md")).unwrap();
+        let missing = open(&artifact, &dir, "Plan".into(), vec![]).unwrap_err();
+        assert!(matches!(missing, KindError::ContentMissing { .. }));
+        assert!(
+            missing
+                .to_string()
+                .starts_with("document file my plan.md is missing from "),
+            "{missing}"
+        );
         assert_eq!(describe(&artifact.kind), "document");
         assert_eq!(view_suffix(&artifact.kind), "");
     }
