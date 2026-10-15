@@ -1,12 +1,14 @@
-//! The playground companion: a shell session beside a worker that replays every Bash command the
-//! agent runs, with its output, as if the agent had typed it there. The agent's commands still
-//! execute inside the engine's own tool (so completion and output capture stay the engine's);
-//! the companion only *mirrors* them, from the engine's tool hooks, into a per-session log that
-//! the companion pane tails.
+//! The playground companion: a real interactive zsh beside every worker, in the worker's
+//! worktree, that replays each Bash command the agent runs — prompt line, output, trailer — as if
+//! the agent had typed it there, and pushes the command into the shell's history so the operator
+//! can recall, edit and rerun it. The agent's commands still execute inside the engine's own tool
+//! (completion and output capture stay the engine's); the companion only *mirrors* them.
 //!
-//! Every worker gets one: the service spawns the companion right after the worker, and
-//! `tx hook working` appends to the worker's log — a session without a log (spawned before the
-//! companion existed) simply records nothing.
+//! The service spawns the companion right after the worker. `tx hook working` appends each Bash
+//! hook payload to the worker's durable log and, while the companion lives, hands the entry to
+//! its shell: NUL-separated records in a pending file + `SIGUSR1`, drained by the rc in
+//! `playground/zshrc`. A worker without a log (spawned before the companion existed) records
+//! nothing.
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -15,72 +17,136 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::session::{Role, Session};
-use crate::shlex::shlex_quote;
 use crate::spawn::SpawnSpec;
 use crate::storage::Home;
 
 pub const COMPANION_SUFFIX: &str = "-playground";
-/// Output lines kept per command in the log; the rest is summarised in one line.
+/// Output lines kept per command; the rest is summarised in one line.
 pub const OUTPUT_LINE_LIMIT: usize = 200;
+/// The companion shell's env: where the hook leaves records for it.
+pub const PENDING_ENV: &str = "TX_PLAYGROUND_PENDING";
+pub const ZDOTDIR_ENV: &str = "ZDOTDIR";
+const ZDOTDIR_NAME: &str = "zdotdir";
+const RC_FILES: [(&str, &str); 2] = [
+    (".zshenv", include_str!("playground/zshenv")),
+    (".zshrc", include_str!("playground/zshrc")),
+];
+/// A pending record that is a history entry rather than text to print.
+const HISTORY_MARK: char = '\x01';
 
 const BOLD: &str = "\x1b[1m";
 const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 
-pub fn log_path(home: &Home, session_id: &str) -> PathBuf {
-    home.playground_dir().join(format!("{session_id}.log"))
+pub fn log_path(home: &Home, worker_id: &str) -> PathBuf {
+    home.playground_dir().join(format!("{worker_id}.log"))
+}
+
+pub fn pending_path(home: &Home, worker_id: &str) -> PathBuf {
+    home.playground_dir().join(format!("{worker_id}.pending"))
 }
 
 pub fn companion_name(worker_name: &str) -> String {
     format!("{worker_name}{COMPANION_SUFFIX}")
 }
 
-/// Create the worker's log (its header line) and the companion's spawn spec: a shell session
-/// tailing the log, same tags, cwd = the worker's worktree, parent = the worker.
+/// The worker's live companion among `sessions`: named for it, spawned by it, not ended.
+pub fn companion_of<'a>(worker: &Session, sessions: &'a [Session]) -> Option<&'a Session> {
+    let name = companion_name(&worker.name);
+    sessions.iter().find(|session| {
+        session.name == name && session.parent.as_deref() == Some(&worker.id) && session.is_alive()
+    })
+}
+
+/// Create the worker's log and pending file, materialise the shell rc, and build the companion's
+/// spawn spec: an interactive zsh, same tags, cwd = the worker's worktree, parent = the worker.
 pub fn prepare_companion(home: &Home, worker: &Session) -> io::Result<SpawnSpec> {
-    let log = log_path(home, &worker.id);
     let directory = home.playground_dir();
-    std::fs::create_dir_all(&directory)?;
+    let zdotdir = directory.join(ZDOTDIR_NAME);
+    std::fs::create_dir_all(&zdotdir)?;
+    for (name, contents) in RC_FILES {
+        std::fs::write(zdotdir.join(name), contents)?;
+    }
     std::fs::write(
-        &log,
+        log_path(home, &worker.id),
         format!(
             "{DIM}# playground of {} — every Bash command the agent runs, mirrored{RESET}\n",
             worker.name
         ),
     )?;
-    let cmd = format!(
-        "sh -c {}",
-        shlex_quote(&format!(
-            "exec tail -n +1 -F {}",
-            shlex_quote(&log.to_string_lossy())
-        ))
-    );
+    let pending = pending_path(home, &worker.id);
+    std::fs::write(&pending, "")?;
     let mut spec = SpawnSpec::for_role(
         companion_name(&worker.name),
         Role::Shell,
         worker.tags.clone(),
         worker.cwd.clone(),
-        cmd,
+        "zsh",
     );
     spec.parent = Some(worker.id.clone());
+    spec.env = vec![
+        (
+            ZDOTDIR_ENV.to_owned(),
+            zdotdir.to_string_lossy().into_owned(),
+        ),
+        (
+            PENDING_ENV.to_owned(),
+            pending.to_string_lossy().into_owned(),
+        ),
+    ];
     Ok(spec)
 }
 
-/// Append the entry a tool-hook payload describes — nothing for a tool other than Bash or an
-/// event other than the three Bash hooks carry. The log is never created here: a worker without
-/// one has no companion to feed.
-pub fn record(home: &Home, session_id: &str, payload: &Value) -> io::Result<()> {
+/// Mirror one tool-hook payload: append its entry to the worker's log and, when the companion
+/// lives, hand it to the shell. Nothing for a tool other than Bash or an event other than the
+/// three Bash hooks carry. Neither file is created here: no log means no companion to feed.
+pub fn mirror(
+    home: &Home,
+    worker: &Session,
+    companion: Option<&Session>,
+    payload: &Value,
+) -> io::Result<()> {
     let Some(entry) = entry_for(payload) else {
         return Ok(());
     };
-    let path = log_path(home, session_id);
-    let mut file = OpenOptions::new().append(true).open(path)?;
-    file.write_all(entry.as_bytes())
+    append(&log_path(home, &worker.id), entry.text.as_bytes())?;
+    let Some(companion) = companion else {
+        return Ok(());
+    };
+    let mut records = Vec::new();
+    records.extend_from_slice(entry.text.as_bytes());
+    records.push(0);
+    if let Some(command) = entry.command {
+        records.push(HISTORY_MARK as u8);
+        records.extend_from_slice(command.as_bytes());
+        records.push(0);
+    }
+    append(&pending_path(home, &worker.id), &records)?;
+    if let Some(pid) = companion.pid.as_ref().and_then(serde_json::Number::as_i64) {
+        // SAFETY: a plain signal send; a vanished pid (or a reused one) only yields an error or
+        // a stray SIGUSR1 to a process that ignores it by default.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGUSR1);
+        }
+    }
+    Ok(())
 }
 
-/// The log text for one payload: the prompt line on `PreToolUse`, the output plus a trailer on
+fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    OpenOptions::new().append(true).open(path)?.write_all(bytes)
+}
+
+/// One log entry: the text, plus the command itself when the entry opens a command (for the
+/// companion's history).
+#[derive(Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub text: String,
+    pub command: Option<String>,
+}
+
+/// The entry a payload describes: the prompt line on `PreToolUse`, the output plus a trailer on
 /// `PostToolUse` / `PostToolUseFailure`.
-pub fn entry_for(payload: &Value) -> Option<String> {
+pub fn entry_for(payload: &Value) -> Option<Entry> {
     if text(payload, &["tool_name"]) != Some("Bash") {
         return None;
     }
@@ -105,10 +171,10 @@ pub fn entry_for(payload: &Value) -> Option<String> {
     }
 }
 
-fn prompt_entry(payload: &Value) -> String {
-    let mut entry = String::new();
+fn prompt_entry(payload: &Value) -> Entry {
+    let mut line = String::new();
     if let Some(description) = text(payload, &["tool_input", "description"]) {
-        entry.push_str(&format!("{DIM}# {description}{RESET}\n"));
+        line.push_str(&format!("{DIM}# {description}{RESET}\n"));
     }
     let directory = text(payload, &["cwd"])
         .map(Path::new)
@@ -116,11 +182,14 @@ fn prompt_entry(payload: &Value) -> String {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let command = text(payload, &["tool_input", "command"]).unwrap_or("");
-    entry.push_str(&format!("{BOLD}{directory} $ {command}{RESET}\n"));
-    entry
+    line.push_str(&format!("{BOLD}{directory} $ {command}{RESET}\n"));
+    Entry {
+        text: line,
+        command: Some(command.to_owned()),
+    }
 }
 
-fn result_entry(output: &str, status: &str, duration: Option<u64>) -> String {
+fn result_entry(output: &str, status: &str, duration: Option<u64>) -> Entry {
     let mut entry = String::new();
     let lines: Vec<&str> = output.lines().collect();
     for line in lines.iter().take(OUTPUT_LINE_LIMIT) {
@@ -135,7 +204,10 @@ fn result_entry(output: &str, status: &str, duration: Option<u64>) -> String {
     }
     let timing = duration.map(format_duration).unwrap_or_default();
     entry.push_str(&format!("{DIM}[{status}{timing}]{RESET}\n\n"));
-    entry
+    Entry {
+        text: entry,
+        command: None,
+    }
 }
 
 /// `"Exit code 3\n<output>"` → (`"exit 3"`, output); anything else is the whole text as output.
@@ -188,7 +260,12 @@ mod tests {
         let entry = entry_for(&bash("PreToolUse", json!({}))).unwrap();
         assert_eq!(
             entry,
-            format!("{DIM}# Run the tests{RESET}\n{BOLD}repo--feature $ cargo test{RESET}\n")
+            Entry {
+                text: format!(
+                    "{DIM}# Run the tests{RESET}\n{BOLD}repo--feature $ cargo test{RESET}\n"
+                ),
+                command: Some("cargo test".into()),
+            }
         );
     }
 
@@ -199,7 +276,8 @@ mod tests {
             json!({"tool_response": {"stdout": "a\nb", "interrupted": false}, "duration_ms": 347}),
         ))
         .unwrap();
-        assert_eq!(entry, format!("a\nb\n{DIM}[ok · 347ms]{RESET}\n\n"));
+        assert_eq!(entry.text, format!("a\nb\n{DIM}[ok · 347ms]{RESET}\n\n"));
+        assert_eq!(entry.command, None);
     }
 
     #[test]
@@ -210,11 +288,11 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(
-            entry,
+            entry.text,
             format!("before\nls: no such file\n{DIM}[exit 3 · 1.0s]{RESET}\n\n")
         );
         let entry = entry_for(&bash("PostToolUseFailure", json!({"error": "boom"}))).unwrap();
-        assert_eq!(entry, format!("boom\n{DIM}[failed]{RESET}\n\n"));
+        assert_eq!(entry.text, format!("boom\n{DIM}[failed]{RESET}\n\n"));
     }
 
     #[test]
@@ -228,9 +306,12 @@ mod tests {
             json!({"tool_response": {"stdout": output}}),
         ))
         .unwrap();
-        assert!(entry.contains(&format!("\n{}\n{DIM}… 5 more lines not shown", OUTPUT_LINE_LIMIT - 1)));
-        assert!(!entry.contains(&format!("\n{}\n", OUTPUT_LINE_LIMIT)));
-        assert!(entry.ends_with(&format!("{DIM}[ok]{RESET}\n\n")));
+        assert!(entry.text.contains(&format!(
+            "\n{}\n{DIM}… 5 more lines not shown",
+            OUTPUT_LINE_LIMIT - 1
+        )));
+        assert!(!entry.text.contains(&format!("\n{}\n", OUTPUT_LINE_LIMIT)));
+        assert!(entry.text.ends_with(&format!("{DIM}[ok]{RESET}\n\n")));
     }
 
     #[test]

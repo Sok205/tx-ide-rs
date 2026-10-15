@@ -37,9 +37,9 @@ skill (`~/.tx-ide/agents/skills/tx-sessions/SKILL.md`); flag syntax is in `tx sp
 
 ## Playground
 
-Every Bash command you run, with its output, is mirrored into a `<your-name>-playground` shell
-session the operator watches and scrolls through. Nothing for you to do — it is a view of your
-commands, not a shell you can type into.
+Every Bash command you run, with its output, is replayed into `<your-name>-playground` — a real
+shell in your worktree that the operator types into alongside you, and where your commands land
+in history for them to recall. Nothing for you to do; your commands still run in your own tool.
 
 ## Inter-session communication
 

@@ -82,13 +82,15 @@ impl Hooks<'_> {
             return Ok(0);
         }
 
+        if event == "working" {
+            // Mirroring is best-effort: a lost log line never fails the tool call.
+            let sessions = self.store.all();
+            let companion = playground::companion_of(&session, &sessions);
+            let _ = playground::mirror(self.home, &session, companion, &read_payload(stdin));
+        }
         if matches!(event, "session-start" | "prompt-submit") {
             // A hook must never fail a turn: the next capture event retries.
             let _ = self.capture_chat_ref(session, &read_payload(stdin));
-        }
-        if event == "working" {
-            // Mirroring is best-effort too: a lost log line never fails the tool call.
-            let _ = playground::record(self.home, session_id, &read_payload(stdin));
         }
 
         let state = match event {
