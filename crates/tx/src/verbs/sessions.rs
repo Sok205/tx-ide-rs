@@ -20,8 +20,7 @@ use crate::events::{self, EventLog};
 use crate::grouping::GroupResolver;
 use crate::history::{History, IngestMode};
 use crate::migrations::{migrate_artifacts, migrate_sessions};
-use crate::playground::PLAYGROUND_ENV;
-use crate::roles::{RoleError, load_role_priming, role_grants_playground};
+use crate::roles::{RoleError, load_role_priming};
 use crate::service::{Revival, ServiceError, SessionService};
 use crate::session::{
     ChatRef, Engine, LlmSession, Origin, Role, SCHEMA_VERSION, Session, SessionKind, State,
@@ -454,9 +453,6 @@ fn resolve_command(
     let skill_names = resolve_role_skills(&deps.home, &role_names)?;
     if !skill_names.is_empty() {
         env_set(environment, SKILLS_ENV, skill_names.join(","));
-    }
-    if role_grants_playground(&deps.home, &role_names)? {
-        env_set(environment, PLAYGROUND_ENV, "1".into());
     }
     let priming = if role_names.is_empty() {
         None

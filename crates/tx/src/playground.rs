@@ -4,9 +4,9 @@
 //! the companion only *mirrors* them, from the engine's tool hooks, into a per-session log that
 //! the companion pane tails.
 //!
-//! Opt-in travels on the launch env ([`PLAYGROUND_ENV`]) like the skills grant: a role file
-//! grants it via frontmatter (`playground: true`), `tx spawn` stamps the env, the service spawns
-//! the companion after the worker, and `tx hook working` appends to the log when the env is set.
+//! Every worker gets one: the service spawns the companion right after the worker, and
+//! `tx hook working` appends to the worker's log — a session without a log (spawned before the
+//! companion existed) simply records nothing.
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -19,8 +19,6 @@ use crate::shlex::shlex_quote;
 use crate::spawn::SpawnSpec;
 use crate::storage::Home;
 
-/// The launch-env entry marking a worker as mirrored (`"1"`).
-pub const PLAYGROUND_ENV: &str = "TX_PLAYGROUND";
 pub const COMPANION_SUFFIX: &str = "-playground";
 /// Output lines kept per command in the log; the rest is summarised in one line.
 pub const OUTPUT_LINE_LIMIT: usize = 200;
@@ -69,13 +67,14 @@ pub fn prepare_companion(home: &Home, worker: &Session) -> io::Result<SpawnSpec>
 }
 
 /// Append the entry a tool-hook payload describes — nothing for a tool other than Bash or an
-/// event other than the three Bash hooks carry.
+/// event other than the three Bash hooks carry. The log is never created here: a worker without
+/// one has no companion to feed.
 pub fn record(home: &Home, session_id: &str, payload: &Value) -> io::Result<()> {
     let Some(entry) = entry_for(payload) else {
         return Ok(());
     };
     let path = log_path(home, session_id);
-    let mut file = OpenOptions::new().append(true).create(true).open(path)?;
+    let mut file = OpenOptions::new().append(true).open(path)?;
     file.write_all(entry.as_bytes())
 }
 
