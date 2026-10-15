@@ -3,6 +3,7 @@ use std::ffi::OsString;
 pub mod app;
 pub mod argparse;
 pub mod artifact;
+pub mod artifact_kinds;
 pub mod artifact_picker;
 pub mod artifact_service;
 pub mod artifact_store;

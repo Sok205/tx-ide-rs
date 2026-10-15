@@ -13,6 +13,7 @@ use std::rc::Rc;
 use serde_json::Number;
 
 use crate::artifact::{Artifact, Kind};
+use crate::artifact_kinds::{self, KindError, Opened};
 use crate::artifact_store::{ArtifactContent, ArtifactStore, ArtifactStoreError, Scan};
 use crate::events::{self, EventLog};
 use crate::storage::Home;
@@ -29,8 +30,8 @@ pub enum ArtifactError {
         "artifact {0} is a diff — its patch is rewritten from the worktree; `modify` takes no file"
     )]
     NotEditable(String),
-    #[error("artifact kind '{0}' is not supported yet")]
-    UnsupportedKind(&'static str),
+    #[error(transparent)]
+    Kind(#[from] KindError),
     #[error(transparent)]
     Store(#[from] ArtifactStoreError),
     #[error("{}: {source}", path.display())]
@@ -115,17 +116,7 @@ impl ArtifactService {
         );
         let dir = self.files.content_dir(&artifact);
         std::fs::create_dir_all(&dir).map_err(io_at(&dir))?;
-        match (&artifact.kind, source) {
-            (Kind::Document { .. }, Some(source)) => {
-                self.files
-                    .copy_in(&artifact, source)
-                    .map_err(io_at(source))?;
-            }
-            (Kind::Document { .. }, None) => {
-                unreachable!("a document is always created from a file")
-            }
-            (other, _) => return Err(ArtifactError::UnsupportedKind(other.name())),
-        }
+        artifact_kinds::create_content(&artifact.kind, &dir, source)?;
         self.save(&artifact)?;
         self.append(
             "artifact-create",
@@ -144,21 +135,13 @@ impl ArtifactService {
     /// document's or tour's file first. A diff's patch is rewritten instead.
     pub fn modify(&self, artifact_id: &str, actor: &str, file: Option<&Path>) -> Result<Artifact> {
         let mut artifact = self.require(artifact_id)?;
-        match (&artifact.kind, file) {
-            (Kind::Diff { .. }, Some(_)) => {
+        let dir = self.files.content_dir(&artifact);
+        match file {
+            Some(_) if artifact.kind.is_diff() => {
                 return Err(ArtifactError::NotEditable(artifact.id));
             }
-            (Kind::Diff { .. }, None) => {
-                return Err(ArtifactError::UnsupportedKind("diff"));
-            }
-            (Kind::Document { file: name } | Kind::Tour { stops: name, .. }, Some(source)) => {
-                let content = std::fs::read(source).map_err(io_at(source))?;
-                let target = self.files.file_path(&artifact, name);
-                self.files
-                    .write_file(&artifact, name, &content)
-                    .map_err(io_at(&target))?;
-            }
-            (_, None) => {}
+            Some(source) => artifact_kinds::replace_content(&artifact.kind, &dir, source)?,
+            None => artifact_kinds::refresh(&artifact.kind, &dir)?,
         }
         artifact.modified_at = float(events::now());
         self.save(&artifact)?;
@@ -194,21 +177,26 @@ impl ArtifactService {
         Ok(self.files.content_dir(&self.require(artifact_id)?))
     }
 
-    /// The file a document's view opens.
-    pub fn document_path(&self, artifact: &Artifact) -> Result<PathBuf> {
-        match &artifact.kind {
-            Kind::Document { file } => Ok(self.files.file_path(artifact, file)),
-            other => Err(ArtifactError::UnsupportedKind(other.name())),
+    /// Decide the view for an artifact: refresh derived content (a diff's patch, which also
+    /// stamps `modified_at`), then the kind's spawn spec named `name`. The caller spawns it and
+    /// binds the session; one `artifact-open` line is logged as `actor`.
+    pub fn open(
+        &self,
+        artifact_id: &str,
+        actor: &str,
+        name: String,
+        tags: Vec<String>,
+    ) -> Result<Opened> {
+        let mut artifact = self.require(artifact_id)?;
+        let dir = self.files.content_dir(&artifact);
+        if artifact.kind.is_diff() {
+            artifact_kinds::refresh(&artifact.kind, &dir)?;
+            artifact.modified_at = float(events::now());
+            self.save(&artifact)?;
         }
-    }
-
-    /// Record that a session opened the artifact's view (read-visibility, not a mutation).
-    pub fn opened(&self, artifact_id: &str, session_id: &str) -> Result<()> {
-        self.append(
-            "artifact-open",
-            &format!("{artifact_id} → {session_id}"),
-            session_id,
-        )
+        let opened = artifact_kinds::open(&artifact, &dir, name, tags)?;
+        self.append("artifact-open", &format!("{artifact_id} → {actor}"), actor)?;
+        Ok(opened)
     }
 
     /// Every unarchived artifact `session_id` owns.
@@ -233,11 +221,7 @@ impl ArtifactService {
                 problems.push(format!("{}: content directory is missing", artifact.id));
                 continue;
             }
-            let file = match &artifact.kind {
-                Kind::Document { file } => file.as_str(),
-                Kind::Diff { .. } => "diff.patch",
-                Kind::Tour { stops, .. } => stops.as_str(),
-            };
+            let file = artifact_kinds::content_file(&artifact.kind);
             if !dir.join(file).is_file() {
                 problems.push(format!(
                     "{}: {} file {file} is missing",
@@ -345,8 +329,12 @@ mod tests {
             .unwrap();
         assert_eq!(artifact.owner, "s1");
         assert_eq!(artifact.created_at, artifact.modified_at);
-        let path = service.document_path(&artifact).unwrap();
+        let path = service.dir(&artifact.id).unwrap().join("p.md");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\nb\n");
+        let opened = service
+            .open(&artifact.id, "s1", "Plan".into(), vec!["t".into()])
+            .unwrap();
+        assert!(opened.spec.cmd.ends_with("/p.md"), "{}", opened.spec.cmd);
         assert!(service.doctor().unwrap().is_empty());
 
         std::fs::write(&source, "a\nc\n").unwrap();

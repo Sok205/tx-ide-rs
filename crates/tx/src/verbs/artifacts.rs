@@ -10,13 +10,13 @@ use cordis::{BoxError, Component, Ctx};
 use crate::app::{COMMANDS, Command, ENV, EVENTS, Env, HOME, SERVICE, Visibility};
 use crate::argparse::{Arg, Matches, ParseExit, Parser};
 use crate::artifact::{Artifact, Kind, USER_ACTOR};
+use crate::artifact_kinds::view_suffix;
 use crate::artifact_service::ArtifactService;
 use crate::events;
 use crate::grouping::GroupResolver;
 use crate::render::{render_artifact_show, render_artifacts};
 use crate::service::SessionService;
 use crate::session::Session;
-use crate::spawn::SpawnSpec;
 use crate::storage::{
     Config, ConfigError, Home, LocalStorage, RemoteSpec, Storage, StorageError, expand_user,
 };
@@ -24,10 +24,10 @@ use crate::sync::{self, SyncError, SyncResult};
 use crate::verbs::artifact_menu::{ArtifactGo, ArtifactMenu, ArtifactNav, ArtifactPick};
 use crate::verbs::common::split_tags;
 
-/// The display name of an artifact's nvim view: the artifact's title, with a short id appended
-/// only when a live session already holds that name.
+/// The display name of an artifact's nvim view: the artifact's title (`-diff` / `-tour` suffixed
+/// for those kinds), with a short id appended only when a live session already holds that name.
 pub(crate) fn view_name(service: &SessionService, artifact: &Artifact) -> Result<String, BoxError> {
-    let title = artifact.title.clone();
+    let title = format!("{}{}", artifact.title, view_suffix(&artifact.kind));
     if service.is_live_name(&title)? {
         let short_id: String = artifact.id.chars().take(8).collect();
         return Ok(format!("{title} ({short_id})"));
@@ -423,25 +423,20 @@ impl ArtifactCmd {
         };
         let artifact_id = self.resolve(&args)?;
         let artifact = self.artifacts.require(&artifact_id)?;
-        let content_path = self.artifacts.document_path(&artifact)?;
-        let content_path = content_path.to_string_lossy();
         let tags = self.open_tags(args.get_one("tag"))?;
         if tags.is_empty() {
             return fail(parser.error("--tag requires at least one value"));
         }
-        let cwd = self
-            .artifacts
-            .files()
-            .content_dir(&artifact)
-            .to_string_lossy()
-            .into_owned();
         let name = view_name(&self.service, &artifact)?;
-        let spec = SpawnSpec::for_nvim(name, tags, cwd, None, Some(&content_path));
-        let session = self.service.spawn_nvim(spec)?;
+        let opened = self
+            .artifacts
+            .open(&artifact_id, &self.actor(), name, tags)?;
+        let cwd = opened.spec.cwd.clone();
+        let session = self.service.spawn_nvim(opened.spec)?;
         self.service.bind_artifact(&session.id, &artifact_id)?;
-        self.artifacts.opened(&artifact_id, &self.actor())?;
         println!(
-            "Opened artifact {artifact_id} in nvim view '{}' ({content_path})",
+            "Opened {} artifact {artifact_id} in nvim view '{}' (cwd {cwd})",
+            artifact.kind.name(),
             session.name
         );
         Ok(0)

@@ -21,6 +21,7 @@ use cordis::BoxError;
 
 use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
+use crate::artifact_kinds::describe;
 use crate::artifact_picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::artifact_service::ArtifactService;
 use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ansi, tag_hex};
@@ -29,7 +30,6 @@ use crate::service::SessionService;
 use crate::session::{Session, SessionKind};
 use crate::session_editor::Terminal;
 use crate::shlex::shlex_join;
-use crate::spawn::SpawnSpec;
 use crate::storage::Home;
 use crate::verbs::artifacts::view_name;
 
@@ -370,7 +370,7 @@ impl ArtifactNav {
             });
             let chips = vec![
                 actor_label(&artifact.owner, &names),
-                artifact.kind.name().to_owned(),
+                describe(&artifact.kind),
             ];
             rows.push(Row {
                 name: artifact.title.clone(),
@@ -493,25 +493,16 @@ impl ArtifactNav {
     /// `tx artifact open` without the CLI: a bound nvim view whose `parent` is the opener.
     fn open_view(&self, opener: &Session, artifact_id: &str) -> Result<Session, BoxError> {
         let artifact = self.artifacts.require(artifact_id)?;
-        let content_path = self.artifacts.document_path(&artifact)?;
-        let cwd = self.artifacts.files().content_dir(&artifact);
         let tags = if opener.tags.is_empty() {
             vec!["artifact".to_owned()]
         } else {
             opener.tags.clone()
         };
         let name = view_name(&self.service, &artifact)?;
-        let mut spec = SpawnSpec::for_nvim(
-            name,
-            tags,
-            cwd.to_string_lossy(),
-            None,
-            Some(&content_path.to_string_lossy()),
-        );
-        spec.parent = Some(opener.id.clone());
-        let view = self.service.spawn_nvim(spec)?;
+        let mut opened = self.artifacts.open(artifact_id, &opener.id, name, tags)?;
+        opened.spec.parent = Some(opener.id.clone());
+        let view = self.service.spawn_nvim(opened.spec)?;
         self.service.bind_artifact(&view.id, artifact_id)?;
-        self.artifacts.opened(artifact_id, &opener.id)?;
         Ok(view)
     }
 
