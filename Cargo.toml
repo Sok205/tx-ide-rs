@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/cordis", "crates/tx"]
+# The tx-core proof of concept is its own workspace.
+exclude = ["poc"]
 
 [workspace.package]
 edition = "2024"

@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["tx-core", "tx-engine-claude", "tx-engine-codex", "tx-core-cli"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.92"
+
+[workspace.dependencies]
+tx-core = { path = "tx-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

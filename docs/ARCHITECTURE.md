@@ -9,6 +9,9 @@ out of **components** loaded into a `cordis::Runtime` — the paradigm in `cordi
 |---|---|
 | `crates/cordis` | the runtime: `Component` (inject / provide / apply), `Ctx` (get, provide, effect, plug), fibers with the paper's lifecycle (`Inactive → Active → Unloading`), the unload guard, LIFO undo stacks, failure unwinding; `loader` reconciles a list of entries into fibers (§5.2). Synchronous; `apply` runs to completion, so `Reloading` is transient. |
 | `crates/tx` | the `tx` binary: domain model, adapters (tmux, git, fs), and the components that implement the verbs. |
+| `poc/tx-core` | the plain core (no Cordis): `TxCore` runs and manages agent sessions on tx's own tmux server. Design in `docs/superpowers/specs/2026-10-15-tx-core-design.md`, usage in `poc/tx-core/README.md`; `poc/` is its own Cargo workspace. |
+| `poc/tx-engine-claude`, `poc/tx-engine-codex` | one `EngineAdapter` per coding-agent CLI, depending only on `tx-core`. |
+| `poc/tx-core-cli` | `txc`, the thin CLI over `tx-core`; registers the bundled engines. |
 
 ## How an invocation runs
 
