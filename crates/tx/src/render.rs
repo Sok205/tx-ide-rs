@@ -236,7 +236,8 @@ pub fn actor_label(session_id: &str, names: &HashMap<String, String>) -> String 
     }
 }
 
-fn title_or_filename(artifact: &Artifact) -> &str {
+/// An artifact's display name: its title, or the filename when it has none.
+pub fn title_or_filename(artifact: &Artifact) -> &str {
     artifact
         .title
         .as_deref()

@@ -28,6 +28,7 @@ use crate::session::{Session, SessionKind};
 use crate::shlex::shlex_join;
 use crate::spawn::SpawnSpec;
 use crate::storage::Home;
+use crate::verbs::artifacts::view_name;
 
 use super::common::{bin_tx, nest_attach_command};
 
@@ -439,7 +440,7 @@ impl ArtifactNav {
         } else {
             opener.tags.clone()
         };
-        let name = format!("art-{}", artifact_id.chars().take(8).collect::<String>());
+        let name = view_name(&self.service, &artifact)?;
         let mut spec = SpawnSpec::for_nvim(
             name,
             tags,
