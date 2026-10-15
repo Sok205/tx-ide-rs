@@ -9,7 +9,8 @@
 //! | close    | nothing                       | remove a temp worktree, if one was made| nothing                               |
 //!
 //! A diff whose worktree is gone is opened in a temporary detached worktree at `base` (made
-//! from a sibling checkout of the same repository) with the patch applied; `close` removes it.
+//! from a sibling checkout of the same repository, one per open) with the patch applied;
+//! `close` removes it.
 //! When no checkout of the repository can be found, the patch itself is opened as text.
 
 use std::ffi::OsStr;
@@ -246,13 +247,12 @@ pub fn open(
                     cleanup: None,
                 });
             };
+            // One temp worktree per open: two views of the same diff never share one, so each
+            // view's close removes only its own.
             let short_id: String = artifact.id.chars().take(8).collect();
-            let temp = worktrees_root.join(format!("artifact-{short_id}"));
+            let token: String = uuid::Uuid::new_v4().to_string().chars().take(8).collect();
+            let temp = worktrees_root.join(format!("artifact-{short_id}-{token}"));
             fs::create_dir_all(worktrees_root).map_err(io_at(worktrees_root))?;
-            if temp.exists() {
-                // Debris from a view that was never closed: start over.
-                remove_worktree(&temp)?;
-            }
             git(
                 &checkout,
                 "worktree add",
@@ -656,11 +656,12 @@ mod tests {
             &worktrees_root,
         )
         .unwrap();
-        let temp = worktrees_root.join("artifact-d1234567");
-        assert_eq!(
-            fallback.cleanup,
-            Some(Cleanup::RemoveWorktree(temp.clone()))
-        );
+        let Some(Cleanup::RemoveWorktree(temp)) = fallback.cleanup.clone() else {
+            panic!("a gone worktree opens in a temp one: {fallback:?}");
+        };
+        assert!(temp.starts_with(&worktrees_root));
+        let temp_name = temp.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(temp_name.starts_with("artifact-d1234567-"), "{temp_name}");
         assert_eq!(fallback.spec.cwd, temp.to_string_lossy());
         assert_eq!(
             fs::read_to_string(temp.join("a.txt")).unwrap(),
@@ -668,7 +669,7 @@ mod tests {
         );
         assert_eq!(git_ok(&temp, &["rev-parse", "HEAD"]), *base);
 
-        // Opening again while the debris is still there starts over rather than failing.
+        // A second open gets its own temp worktree; closing one leaves the other intact.
         let again = open(
             &artifact,
             &dir,
@@ -677,10 +678,15 @@ mod tests {
             &worktrees_root,
         )
         .unwrap();
-        assert_eq!(again.cleanup, fallback.cleanup);
-
+        let Some(Cleanup::RemoveWorktree(other)) = again.cleanup.clone() else {
+            panic!("{again:?}");
+        };
+        assert_ne!(other, temp);
         close(fallback.cleanup.as_ref().unwrap()).unwrap();
         assert!(!temp.exists());
+        assert!(other.join("a.txt").exists());
+        close(again.cleanup.as_ref().unwrap()).unwrap();
+        assert!(!other.exists());
         close(fallback.cleanup.as_ref().unwrap()).unwrap();
         assert!(!git_ok(main, &["worktree", "list"]).contains("artifact-d1234567"));
 
