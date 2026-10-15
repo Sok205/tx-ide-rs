@@ -14,9 +14,9 @@ Leader below means `Space` (LazyVim's leader key).
 
 - `tx spawn-nvim NAME --tag TAG --open FILE` starts an nvim that is its own tx session. Only
   such an nvim can talk to agents; this lesson pane belongs to the view, so it cannot.
-- `Space a C` queues a question or request about the code under the cursor (or a selection).
+- `Space a Q` queues a question or request about the code under the cursor (or a selection).
   A `? Q1 queued` marker appears at the end of the line; nothing is written to the file.
-- `Space a c` opens the review panel: the queued questions, and the live agent chats to send
+- `Space a q` opens the review panel: the queued questions, and the live agent chats to send
   them to. `Tab` moves, `Space` (un)selects, `Enter` sends, `q` closes. The agent receives the
   question with its place in the code (`server.py:12`).
 - `Space a i`, inside a diff of your working tree (`:DiffviewOpen <commit>`), flips the file to
@@ -30,10 +30,10 @@ Leader below means `Space` (LazyVim's leader key).
 
 1. In the shell: `tx spawn-nvim edit --tag tutor --open server.py`, then in the viewer
    `prefix+t` → `edit`. This is your editor from now on; the lesson stays where it is.
-2. In `edit`, put the cursor on `def send_text` and press `Space a C`. Type:
+2. In `edit`, put the cursor on `def send_text` and press `Space a Q`. Type:
    `Add an X-Served-By: tx-tutor header to every response. Commit on a new branch named tutor/header.`
    and press `Enter` to queue it.
-3. `Space a c`, make sure `time` is the chat (`Tab` to it if not), `Enter` to send. Watch the
+3. `Space a q`, make sure `time` is the chat (`Tab` to it if not), `Enter` to send. Watch the
    worker: in the viewer, `prefix+t` → `time`.
 4. When it has committed, review it the lesson-06 way:
    `tx spawn-nvim review-header --tag tutor --diff main...tutor/header`, then in the viewer
@@ -55,7 +55,7 @@ From the shell pane, `prefix+/`:
 - Step 1: "spawn nvim here named edit tagged tutor with server.py open"
 - Step 4: "spawn nvim here named review-header tagged tutor with a diff of main...tutor/header"
 
-Steps 2–3 stay in nvim: `Space a C` / `Space a c` are how you talk to an agent *from the code*.
+Steps 2–3 stay in nvim: `Space a Q` / `Space a q` are how you talk to an agent *from the code*.
 
 ## Check
 

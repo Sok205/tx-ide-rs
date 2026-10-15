@@ -1,7 +1,7 @@
 -- Ask a live tx llm session about the code under the cursor.
 --
---   <leader>aC  queue a question here, to send with the rest later
---   <leader>ac  review queued questions, their source, and the target chat
+--   <leader>aQ  queue a question here, to send with the rest later
+--   <leader>aq  review queued questions, their source, and the target chat
 --
 -- Queued questions are ephemeral: a virtual "? Qn queued" marker sits at the end
 -- of the line, and nothing is ever written to the file -- that is what AINotes are
@@ -125,7 +125,7 @@ local function context()
   return { text = where, display_file = display_file, buffer = buffer, file = file, line = line }
 end
 
--- The queue: questions banked with <leader>aC, flushed by <leader>ac.
+-- The queue: questions banked with <leader>aQ, flushed by <leader>aq.
 local namespace = vim.api.nvim_create_namespace("tx_ask_queue")
 local queue = {}
 
@@ -210,8 +210,8 @@ local active_layout
 local active_question_input
 local last_question
 
--- <leader>aC : bank a question about this spot to send with the others later.
-vim.keymap.set({ "n", "x" }, "<leader>aC", function()
+-- <leader>aQ : bank a question about this spot to send with the others later.
+vim.keymap.set({ "n", "x" }, "<leader>aQ", function()
   if active_question_input and active_question_input:valid() then
     active_question_input:focus()
     vim.cmd("startinsert!")
@@ -283,8 +283,8 @@ vim.keymap.set({ "n", "x" }, "<leader>aC", function()
   active_question_input = question_input
 end, { desc = "Queue a question for the tx target" })
 
--- <leader>ac : review a subset of queued questions and send them to one live chat.
-vim.keymap.set({ "n", "x" }, "<leader>ac", function()
+-- <leader>aq : review a subset of queued questions and send them to one live chat.
+vim.keymap.set({ "n", "x" }, "<leader>aq", function()
   if #queue == 0 then
     return vim.notify("no queued questions", vim.log.levels.WARN)
   end

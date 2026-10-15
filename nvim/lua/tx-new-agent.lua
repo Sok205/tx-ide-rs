@@ -21,7 +21,7 @@
 -- Project is a one-line field beside Tags showing the picked project: Left/Right or h/l cycle
 -- through them (so there h/l do not step panels), and while it is active the help line shows
 -- its path. Titles are centred,
--- and Project's and Model's carry the pick's position after the label (like <leader>ac's
+-- and Project's and Model's carry the pick's position after the label (like <leader>aq's
 -- panels). Enter spawns from any panel; Esc leaves insert mode, and Esc or q in normal mode
 -- cancels.
 
