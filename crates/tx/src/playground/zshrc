@@ -5,6 +5,9 @@
 # running. A record starting with \x01 is the command itself, pushed into history so Up recalls it.
 [[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
 unset ZDOTDIR
+# This shell's history is its own: the worker's commands never enter the operator's global
+# history, and companions never import each other's (share_history would, through one file).
+HISTFILE="$TX_PLAYGROUND_HISTFILE"
 
 tx_playground_drain() {
   local pending="$TX_PLAYGROUND_PENDING" draining="$TX_PLAYGROUND_PENDING.draining"

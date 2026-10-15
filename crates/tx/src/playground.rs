@@ -26,6 +26,8 @@ pub const COMPANION_SUFFIX: &str = "-playground";
 pub const OUTPUT_LINE_LIMIT: usize = 200;
 /// The companion shell's env: where the hook leaves records for it.
 pub const PENDING_ENV: &str = "TX_PLAYGROUND_PENDING";
+/// The companion shell's env: its own history file.
+pub const HISTFILE_ENV: &str = "TX_PLAYGROUND_HISTFILE";
 pub const ZDOTDIR_ENV: &str = "ZDOTDIR";
 const ZDOTDIR_NAME: &str = "zdotdir";
 const RC_FILES: [(&str, &str); 2] = [
@@ -45,6 +47,10 @@ pub fn log_path(home: &Home, worker_id: &str) -> PathBuf {
 
 pub fn pending_path(home: &Home, worker_id: &str) -> PathBuf {
     home.playground_dir().join(format!("{worker_id}.pending"))
+}
+
+pub fn history_path(home: &Home, worker_id: &str) -> PathBuf {
+    home.playground_dir().join(format!("{worker_id}.history"))
 }
 
 pub fn companion_name(worker_name: &str) -> String {
@@ -93,6 +99,10 @@ pub fn prepare_companion(home: &Home, worker: &Session) -> io::Result<SpawnSpec>
         (
             PENDING_ENV.to_owned(),
             pending.to_string_lossy().into_owned(),
+        ),
+        (
+            HISTFILE_ENV.to_owned(),
+            history_path(home, &worker.id).to_string_lossy().into_owned(),
         ),
     ];
     Ok(spec)
