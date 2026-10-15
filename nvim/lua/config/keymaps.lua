@@ -154,7 +154,7 @@ require("config.diffview-return").setup()
 -- Keymap usage telemetry (see lua/config/keylog.lua)
 require("config.keylog").setup()
 
--- <leader>at / <leader>ac / <leader>aC — ask a live tx llm session about the code
+-- <leader>aq / <leader>aQ — ask a live tx llm session about the code
 -- under the cursor, one question or a queued batch (see lua/config/tx-ask.lua)
 require("config.tx-ask")
 
