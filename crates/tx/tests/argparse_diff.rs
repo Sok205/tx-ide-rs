@@ -83,25 +83,30 @@ fn specs() -> Vec<Json> {
             {"name": "body", "help": "single-line message — escape literal newlines as \\n; the recipient receives it wrapped in a <from-agent session='<your-name>'> envelope"},
         ]}),
         json!({"prog": "tx artifact create", "args": [
-            {"name": "file"}, {"flags": ["--title"]},
-            {"flags": ["--group"], "type": "group", "help": "explicit effort-group override (default: derived from the creator)"},
+            {"name": "file", "nargs": "?", "help": "the document or tour stops file (not for --kind diff)"},
+            {"flags": ["--title"], "help": "the artifact's title (required)"},
+            {"flags": ["--kind"], "choices": ["document", "diff", "tour"], "default": "document", "help": "what the artifact is (default: document)"},
+            {"flags": ["--cwd"], "help": "diff/tour: the worktree the artifact points into (default: cwd)"},
+            {"flags": ["--base"], "help": "diff: the pinned base commit (default: merge-base)"},
         ]}),
         json!({"prog": "tx artifact modify", "args": [
-            {"name": "id"}, {"name": "file", "nargs": "?"}, {"flags": ["--changes"]},
+            {"name": "id"}, {"name": "file", "nargs": "?", "help": "replace the document's or tour's file with this one"},
         ]}),
         json!({"prog": "tx artifact ls", "args": [
-            {"flags": ["--session"], "help": "only artifacts this session created or touched"},
+            {"flags": ["--session"], "help": "only artifacts this session owns"},
+            {"flags": ["--kind"], "choices": ["document", "diff", "tour"], "help": "only artifacts of this kind"},
+            {"flags": ["--archived"], "action": "store_true", "help": "include archived artifacts (hidden by default)"},
         ]}),
-        json!({"prog": "tx artifact diff", "args": [
-            {"name": "id"}, {"name": "rev_a", "nargs": "?", "type": "int"}, {"name": "rev_b", "nargs": "?", "type": "int"},
-        ]}),
+        json!({"prog": "tx artifact archive", "args": [{"name": "id"}]}),
+        json!({"prog": "tx artifact unarchive", "args": [{"name": "id"}]}),
         json!({"prog": "tx artifact open", "args": [
             {"name": "id"},
             {"flags": ["--tag"], "help": "tags for the nvim view (overrides the invoker's tags)"},
-            {"flags": ["--cwd"], "help": "working directory for the view (default: the artifact's dir)"},
         ]}),
+        json!({"prog": "tx artifact close", "args": [{"name": "id"}]}),
+        json!({"prog": "tx artifact path", "args": [{"name": "id"}]}),
         json!({"prog": "tx artifact doctor", "args": [
-            {"flags": ["--repair"], "action": "store_true", "help": "remove orphan rev files so a retried modify can claim the slot (run when quiescent)"},
+            {"flags": ["--repair"], "action": "store_true", "help": "run the close steps of views that have ended"},
         ]}),
         json!({"prog": "tx sync", "description": "Manual archive sync of the reproducible corpus (push/pull/status) — never hot-path.", "args": [
             {"name": "action", "choices": ["push", "pull", "status"]},

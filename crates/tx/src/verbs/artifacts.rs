@@ -482,7 +482,7 @@ impl ArtifactCmd {
         let parser = sub_parser("doctor").arg(
             Arg::option("--repair")
                 .flag()
-                .help("remove stale cleanup notes whose view has ended"),
+                .help("run the close steps of views that have ended"),
         );
         let args = match parse(&parser, argv) {
             Ok(args) => args,

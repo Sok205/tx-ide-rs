@@ -13,8 +13,9 @@ implement it.
 Chat replies are one to three sentences: the answer, the decision, or the question back. Nothing
 else goes in chat — no findings, no options, no trade-offs, no code references, no lists. That all
 goes into a tx artifact in full prose, written before the reply: one per topic, kept outside the
-worktree, revised with `tx artifact modify <id> <file> --changes` as the discussion moves. End the
-reply with `Details in artifact "<title>".` Same rule for replies to peer sessions.
+worktree, edited in place under `tx artifact path <id>` and stamped with `tx artifact modify <id>`
+as the discussion moves. End the reply with `Details in artifact "<title>".` Same rule for replies
+to peer sessions.
 
 ## Coding standards
 
