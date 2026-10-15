@@ -30,6 +30,7 @@ use crate::events::{self, EventLog};
 use crate::messages::{TAG_AGENT, TAG_USER, build_envelope};
 use crate::read_only::{ReadOnlySandboxError, SandboxHost, System, wrap_read_only_command};
 use crate::reconcile::{ReconcileError, Reconciler};
+use crate::playground;
 use crate::session::{
     ChatRef, Engine, LlmSession, NvimSocket, Origin, OtherRole, OtherSession, READ_ONLY_ENV,
     REQUIRE_WORKTREE_ENV, Role, SCHEMA_VERSION, Session, SessionKind, State,
@@ -233,7 +234,7 @@ impl SessionService {
             let directory = PathBuf::from(&spec.cwd);
             let prepared = self.prepare_worker_access(spec, &directory, environment)?;
             before_spawn(&prepared).map_err(ServiceError::BeforeSpawn)?;
-            return self.launch(prepared);
+            return self.launch_worker(prepared);
         }
 
         let unavailable = self.live_names()?;
@@ -245,11 +246,25 @@ impl SessionService {
             let prepared =
                 self.prepare_worker_access(SpawnSpec { name, ..spec }, &directory, environment)?;
             before_spawn(&prepared).map_err(ServiceError::BeforeSpawn)?;
-            self.launch(prepared)
+            self.launch_worker(prepared)
         };
         attempt().inspect_err(|_| {
             let _ = self.worktrees.remove(&directory);
         })
+    }
+
+    /// Launch a prepared worker, then its playground companion. A live companion left by an
+    /// earlier session of the same name (a resume, a rollover) is replaced.
+    fn launch_worker(&self, prepared: SpawnSpec) -> Result<Session> {
+        let worker = self.launch(prepared)?;
+        let companion_name = playground::companion_name(&worker.name);
+        if self.is_live_name(&companion_name)? {
+            self.kill(&companion_name)?;
+        }
+        let companion = playground::prepare_companion(&self.home, &worker)
+            .map_err(ServiceError::io(&playground::log_path(&self.home, &worker.id)))?;
+        self.launch(companion)?;
+        Ok(worker)
     }
 
     fn prepare_worker_access(

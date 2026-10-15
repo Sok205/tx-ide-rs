@@ -85,6 +85,20 @@ impl SpawnSpec {
         }
     }
 
+    /// A session whose role the caller already knows (a tx-built companion command).
+    pub fn for_role(
+        name: impl Into<String>,
+        role: Role,
+        tags: Vec<String>,
+        cwd: impl Into<String>,
+        cmd: impl Into<String>,
+    ) -> Self {
+        Self {
+            tags,
+            ..Self::new(name.into(), role, cwd.into(), cmd.into())
+        }
+    }
+
     /// A worker / agent / shell session (`tx spawn`); the role is inferred from `cmd`.
     pub fn for_process(
         name: impl Into<String>,

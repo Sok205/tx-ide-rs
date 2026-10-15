@@ -16,6 +16,7 @@ pub mod hooks;
 pub mod messages;
 pub mod migrations;
 pub mod palette;
+pub mod playground;
 pub mod plugins;
 pub mod pyjson;
 pub mod read_only;

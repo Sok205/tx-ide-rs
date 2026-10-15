@@ -1,0 +1,29 @@
+# tx playground shell — a real interactive zsh beside a worker. When a Bash command of the
+# worker finishes, its hook leaves the block (prompt line, output, trailer) in
+# $TX_PLAYGROUND_PENDING as NUL-separated records and sends SIGUSR1; this shell prints them
+# above the prompt when it is idle, or right before the next prompt when a command of yours was
+# running. A record starting with \x01 is the command itself, pushed into history so Up recalls it.
+[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
+unset ZDOTDIR
+
+tx_playground_drain() {
+  local pending="$TX_PLAYGROUND_PENDING" draining="$TX_PLAYGROUND_PENDING.draining"
+  [[ -s "$pending" ]] || return 0
+  mv -f "$pending" "$draining"
+  local record
+  while IFS= read -r -d '' record; do
+    if [[ "$record" == $'\x01'* ]]; then
+      print -s -- "${record#$'\x01'}"
+    else
+      print -rn -- "$record"
+    fi
+  done < "$draining"
+  rm -f "$draining"
+}
+TRAPUSR1() {
+  if zle; then
+    zle -I
+    tx_playground_drain
+  fi
+}
+precmd_functions+=(tx_playground_drain)
