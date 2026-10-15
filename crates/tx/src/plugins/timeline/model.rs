@@ -93,7 +93,7 @@ pub enum EdgeKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Edge {
     pub at: f64,
-    /// Sender lane; `None` when the sender has no lane (tx-assistant, out of window).
+    /// Sender lane; `None` when the sender has no lane (out of window).
     pub from: Option<usize>,
     pub to: usize,
     pub token: String,
@@ -123,6 +123,13 @@ pub struct Lane {
     pub events: Vec<Event>,
     /// Every parsed row, time-sorted; epoch seconds.
     pub rows: Vec<Row>,
+}
+
+impl Lane {
+    /// The operator's hub conversation (`tx-assistant`, any `@MonDD` suffix).
+    pub fn hub(&self) -> bool {
+        SUFFIX_RX.replace(&self.name, "") == ASSISTANT_NAME
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -690,8 +697,7 @@ impl Builder {
                     blurb
                 },
                 state,
-                sys: tags.contains("tx-system")
-                    || records.iter().any(|record| record.name == ASSISTANT_NAME),
+                sys: tags.contains("tx-system"),
                 live,
                 kill: kill.map(|at| round2(minutes(at))),
                 a: round2(minutes(times[0]).max(0.0)),
@@ -714,6 +720,8 @@ impl Builder {
         }
         for (index, seed) in seeds.iter().enumerate() {
             resolve.entry(seed.name.clone()).or_insert(index);
+        }
+        for (index, seed) in seeds.iter().enumerate() {
             resolve
                 .entry(SUFFIX_RX.replace(&seed.name, "").into_owned())
                 .or_insert(index);

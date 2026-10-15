@@ -251,7 +251,7 @@ impl App {
                 .enumerate()
                 .filter(|(_, lane)| lane.group == group.key)
                 .filter(|(_, lane)| lane.b >= self.observation_start() && lane.a <= self.now)
-                .filter(|(_, lane)| self.show_sys || !lane.sys)
+                .filter(|(_, lane)| self.show_sys || lane.hub() || !lane.sys)
                 .filter(|(_, lane)| !self.hide_idle || !self.lane_dim(lane))
                 .map(|(index, _)| index)
                 .collect();
