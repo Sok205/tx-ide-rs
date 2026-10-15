@@ -35,12 +35,6 @@ scrolling, copy-mode.
 Before spawning anything — a worker, an nvim companion, an ad-hoc shell — follow the `tx-sessions`
 skill (`~/.tx-ide/agents/skills/tx-sessions/SKILL.md`); flag syntax is in `tx spawn --help`.
 
-## Playground
-
-Every Bash command you run, with its output, is replayed into `<your-name>-playground` — a real
-shell in your worktree that the operator types into alongside you, and where your commands land
-in history for them to recall. Nothing for you to do; your commands still run in your own tool.
-
 ## Inter-session communication
 
 Other agent sessions may be running alongside you, and you can message each other.
