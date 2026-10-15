@@ -13,7 +13,7 @@ use crate::artifact::{Artifact, USER_ACTOR};
 use crate::artifact_service::ArtifactService;
 use crate::events;
 use crate::grouping::GroupResolver;
-use crate::render::{render_artifact_show, render_artifacts};
+use crate::render::{render_artifact_show, render_artifacts, title_or_filename};
 use crate::service::SessionService;
 use crate::session::Session;
 use crate::spawn::SpawnSpec;
@@ -23,6 +23,17 @@ use crate::storage::{
 use crate::sync::{self, SyncError, SyncResult};
 use crate::verbs::artifact_menu::{ArtifactGo, ArtifactMenu, ArtifactNav, ArtifactPick};
 use crate::verbs::common::{group_value, split_tags};
+
+/// The display name of an artifact's nvim view: the artifact's title (its filename when
+/// untitled), with a short id appended only when a live session already holds that name.
+pub(crate) fn view_name(service: &SessionService, artifact: &Artifact) -> Result<String, BoxError> {
+    let title = title_or_filename(artifact).to_owned();
+    if service.is_live_name(&title)? {
+        let short_id: String = artifact.id.chars().take(8).collect();
+        return Ok(format!("{title} ({short_id})"));
+    }
+    Ok(title)
+}
 
 pub struct ArtifactVerbs;
 
@@ -441,7 +452,7 @@ impl ArtifactCmd {
                 .to_string_lossy()
                 .into_owned(),
         };
-        let name = format!("art-{}", artifact_id.chars().take(8).collect::<String>());
+        let name = view_name(&self.service, &artifact)?;
         let spec = SpawnSpec::for_nvim(name, tags, cwd, None, Some(&content_path));
         let session = self.service.spawn_nvim(spec)?;
         self.service.bind_artifact(&session.id, &artifact_id)?;
