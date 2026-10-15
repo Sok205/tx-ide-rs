@@ -99,7 +99,7 @@ pub fn prepare_companion(home: &Home, worker: &Session) -> io::Result<SpawnSpec>
 
 /// Mirror one tool-hook payload: append its entry to the worker's log and, when the companion
 /// lives, hand it to the shell. Nothing for a tool other than Bash or an event other than the
-/// three Bash hooks carry. Neither file is created here: no log means no companion to feed.
+/// three Bash hooks carry. The log is never created here: no log means no companion to feed.
 pub fn mirror(
     home: &Home,
     worker: &Session,
@@ -109,7 +109,11 @@ pub fn mirror(
     let Some(entry) = entry_for(payload) else {
         return Ok(());
     };
-    append(&log_path(home, &worker.id), entry.text.as_bytes())?;
+    // The log is the gate: it exists only for a worker spawned with a companion.
+    OpenOptions::new()
+        .append(true)
+        .open(log_path(home, &worker.id))?
+        .write_all(entry.text.as_bytes())?;
     let Some(companion) = companion else {
         return Ok(());
     };
@@ -121,7 +125,12 @@ pub fn mirror(
         records.extend_from_slice(command.as_bytes());
         records.push(0);
     }
-    append(&pending_path(home, &worker.id), &records)?;
+    // The shell renames the pending file away to drain it, so each append may start a new one.
+    OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(pending_path(home, &worker.id))?
+        .write_all(&records)?;
     if let Some(pid) = companion.pid.as_ref().and_then(serde_json::Number::as_i64) {
         // SAFETY: a plain signal send; a vanished pid (or a reused one) only yields an error or
         // a stray SIGUSR1 to a process that ignores it by default.
@@ -130,10 +139,6 @@ pub fn mirror(
         }
     }
     Ok(())
-}
-
-fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    OpenOptions::new().append(true).open(path)?.write_all(bytes)
 }
 
 /// One log entry: the text, plus the command itself when the entry opens a command (for the
