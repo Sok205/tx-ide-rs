@@ -1,6 +1,8 @@
-//! The operation log: `<state_dir>/log.jsonl`, one compact JSON line per mutation,
-//! `{"ts":<float>,"actor":"…","type":"…","msg":"…"}`, appended with a single write on an
-//! `O_APPEND` descriptor so concurrent writers never tear a line (the line fits `PIPE_BUF`).
+//! Events: what happened to one session. Every mutation produces [`Event`]s that go to the
+//! operation log (`<state_dir>/log.jsonl`, one compact JSON line
+//! `{"ts","actor","type","id","name","msg"}` per event, appended with a single write on an
+//! `O_APPEND` descriptor so concurrent writers never tear a line) and then to every in-process
+//! [`EventSink`].
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -87,8 +89,19 @@ impl Event {
 }
 
 /// An in-process listener. Called after the operation's record is saved and every lock is
-/// released, in registration order; cannot veto; a panic is contained. Hand slow work to your
-/// own thread.
+/// released, in registration order; cannot veto; never receives a handle to the core (open a
+/// second `TxCore` on the same state dir if you need one). Hand slow work to your own thread.
+///
+/// Order is per core: another process's events reach you only through the log, and log order
+/// across processes is write order, not causal order.
+///
+/// A panicking sink is contained with `catch_unwind`: the operation already happened and the
+/// log line is already written. The default panic hook still prints the panic to stderr (core
+/// installs no hook; that is the front end's call), the sink's own `Mutex`es are poisoned
+/// afterwards, and nothing is contained under `panic = "abort"`.
+///
+/// Closures (`|e: &Event| …`) and `Arc<impl EventSink>` are sinks. The closure impl rules out a
+/// future blanket impl for `Box<T>` or `&T`; box your sink when registering it.
 pub trait EventSink: Send + Sync {
     fn on_event(&self, event: &Event);
 }

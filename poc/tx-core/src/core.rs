@@ -127,6 +127,7 @@ impl LaunchOptions {
         self
     }
 
+    /// No effect on a `Process` launch.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         if let Self::Agent { model: slot, .. } = &mut self {
             *slot = Some(model.into());
@@ -134,6 +135,7 @@ impl LaunchOptions {
         self
     }
 
+    /// No effect on a `Process` launch.
     pub fn effort(mut self, effort: Effort) -> Self {
         if let Self::Agent { effort: slot, .. } = &mut self {
             *slot = Some(effort);
@@ -141,6 +143,7 @@ impl LaunchOptions {
         self
     }
 
+    /// No effect on a `Process` launch.
     pub fn initial_prompt(mut self, prompt: impl Into<String>) -> Self {
         if let Self::Agent { initial_prompt, .. } = &mut self {
             *initial_prompt = Some(prompt.into());
@@ -148,6 +151,7 @@ impl LaunchOptions {
         self
     }
 
+    /// No effect on a `Process` launch.
     pub fn resume(mut self, resume: impl Into<String>) -> Self {
         if let Self::Agent { resume: slot, .. } = &mut self {
             *slot = Some(resume.into());
@@ -271,11 +275,14 @@ fn validate_env(env: &[(String, String)]) -> Result<(), CoreError> {
 }
 
 /// tmux's ways of saying the session we just made is already gone: no server behind the socket,
-/// the session is not there, or the server quit while answering (`exit-empty` after the last
-/// session ended, which is ours). Anything else is an unknown answer, never read as "exited".
+/// the session is not there (`can't find session` from session-typed targets, `no such session`
+/// from the pane-typed `set-option` target), or the server quit while answering (`exit-empty`
+/// after the last session ended, which is ours). Anything else is an unknown answer, never read
+/// as "exited".
 fn session_vanished(stderr: &str) -> bool {
     crate::tmux::is_no_server(stderr)
         || stderr.starts_with("can't find session")
+        || stderr.starts_with("no such session")
         || stderr == "server exited unexpectedly"
 }
 
@@ -668,7 +675,6 @@ impl TxCore {
         let records = self.store.all()?;
         let live = self.tmux.list_live()?;
         let mut changed = Vec::new();
-        let mut events = Vec::new();
         for session in records {
             if session.lifecycle != Lifecycle::Running || live.contains(&session.id) {
                 continue;
@@ -683,12 +689,13 @@ impl TxCore {
                     _ => None,
                 }
             };
+            // Emitted per record, right after its lock is released: a later failure cannot
+            // swallow an exit that was already saved, and sinks see each exit as it happens.
             if let Some((session, exited)) = exited {
+                self.emit(vec![exited]);
                 changed.push(session);
-                events.push(exited);
             }
         }
-        self.emit(events);
         Ok(changed)
     }
 
@@ -954,10 +961,10 @@ mod tests {
         assert!(session_vanished("error connecting to /tmp/x.sock (No such file or directory)"));
         assert!(session_vanished("can't find session: =x"));
         assert!(session_vanished("server exited unexpectedly"));
+        assert!(session_vanished("no such session: =quick:"));
         for unknown in [
             "error connecting to /tmp/x.sock (Resource temporarily unavailable)",
             "error connecting to /tmp/x.sock (Socket operation on non-socket)",
-            "no such session: =x",
             "lost server",
             "",
         ] {
