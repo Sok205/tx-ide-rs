@@ -24,6 +24,7 @@ use std::time::Duration;
 use serde_json::Number;
 
 use crate::app::Env;
+use crate::artifact_service::ArtifactService;
 use crate::engines::EngineRegistry;
 use crate::engines::adapter::{EngineAdapter, EngineError, env_set};
 use crate::events::{self, EventLog};
@@ -149,6 +150,8 @@ pub struct SessionService {
     home: Rc<Home>,
     env: Rc<Env>,
     worktrees: WorktreeManager,
+    /// Runs an artifact view's pending close step when the view ends.
+    artifacts: ArtifactService,
     system: System,
 }
 
@@ -162,6 +165,12 @@ impl SessionService {
         env: Rc<Env>,
     ) -> Self {
         let worktrees = WorktreeManager::new(home.worktrees_dir());
+        let artifacts = ArtifactService::new(
+            &home,
+            Rc::clone(&events),
+            env.actor(),
+            Rc::new(|line: &str| eprintln!("{line}")),
+        );
         Self {
             store,
             tmux,
@@ -170,6 +179,7 @@ impl SessionService {
             home,
             env,
             worktrees,
+            artifacts,
             system: System::host(),
         }
     }
@@ -569,7 +579,25 @@ impl SessionService {
         }
         self.store.save(&session)?;
         self.log("kill", &session.name)?;
+        self.close_artifact_view(&session);
         Ok(Some(session))
+    }
+
+    /// An artifact view that ended runs the close step its `open` left behind (a diff's
+    /// temporary worktree). A failure is reported, never fatal to the caller's verb.
+    fn close_artifact_view(&self, session: &Session) {
+        let SessionKind::Other(other) = &session.kind else {
+            return;
+        };
+        let Some(artifact_id) = &other.artifact_id else {
+            return;
+        };
+        if let Err(error) = self.artifacts.close(artifact_id, &session.id) {
+            eprintln!(
+                "tx: artifact {artifact_id}: close step after view '{}' ended failed: {error}",
+                session.name
+            );
+        }
     }
 
     /// Retire a record to ARCHIVED, keeping it.
@@ -784,7 +812,13 @@ impl SessionService {
             home: &self.home,
             actor: self.env.actor(),
         };
-        Ok(reconciler.reconcile()?)
+        let changed = reconciler.reconcile()?;
+        for session in &changed {
+            if session.state.is_terminal() {
+                self.close_artifact_view(session);
+            }
+        }
+        Ok(changed)
     }
 
     /// Reconcile, then the live records with a fresh in-memory `attached_to` (one attachment

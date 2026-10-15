@@ -5,18 +5,24 @@
 //! `archived_at` instead), `open` logs a read-visibility line,
 //! and the cross-store queries (`artifacts_for_session`, `doctor`) do not log.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use serde_json::Number;
+use serde_json::{Map, Number, Value};
 
 use crate::artifact::{Artifact, Kind};
-use crate::artifact_kinds::{self, KindError, Opened};
-use crate::artifact_store::{ArtifactContent, ArtifactStore, ArtifactStoreError, Scan};
+use crate::artifact_kinds::{self, Cleanup, KindError, Opened};
+use crate::artifact_store::{
+    ArtifactContent, ArtifactStore, ArtifactStoreError, Scan, atomic_write,
+};
 use crate::events::{self, EventLog};
+use crate::pyjson::dumps_pretty;
 use crate::storage::Home;
+
+/// Pending close steps beside the record, keyed by the view session that needs them.
+const CLEANUP_FILE: &str = ".cleanup.json";
 
 /// An artifact use-case precondition failed; the CLI prints `tx artifact: <error>`, exit 1.
 #[derive(Debug, thiserror::Error)]
@@ -53,6 +59,8 @@ pub type SkipWarn = Rc<dyn Fn(&str)>;
 pub struct ArtifactService {
     store: ArtifactStore,
     files: ArtifactContent,
+    /// Where a diff's temporary worktree goes when its own is gone.
+    worktrees_root: PathBuf,
     log: Rc<EventLog>,
     /// `$TX_SESSION_ID`: the actor of the read lines (`EventLog.append`'s default).
     env_actor: String,
@@ -64,6 +72,7 @@ impl ArtifactService {
         Self {
             store: ArtifactStore::new(home),
             files: ArtifactContent::new(home),
+            worktrees_root: home.worktrees_dir(),
             log,
             env_actor: env_actor.to_owned(),
             warn,
@@ -99,7 +108,8 @@ impl ArtifactService {
     // ----- mutations -----------------------------------------------------------------------
 
     /// Register a new artifact: its directory with the kind's content, the record, one log line.
-    /// `source` is the file a document or tour is created from.
+    /// `source` is the file a document or tour is created from; a diff's empty `base` is
+    /// resolved to the merge-base with the default branch.
     pub fn create(
         &self,
         owner: &str,
@@ -107,6 +117,13 @@ impl ArtifactService {
         title: String,
         source: Option<&Path>,
     ) -> Result<Artifact> {
+        let kind = match kind {
+            Kind::Diff { worktree, base } => {
+                let base = artifact_kinds::resolve_base(&worktree, &base)?;
+                Kind::Diff { worktree, base }
+            }
+            other => other,
+        };
         let artifact = Artifact::new(
             uuid::Uuid::new_v4().to_string(),
             kind,
@@ -189,14 +206,99 @@ impl ArtifactService {
     ) -> Result<Opened> {
         let mut artifact = self.require(artifact_id)?;
         let dir = self.files.content_dir(&artifact);
-        if artifact.kind.is_diff() {
+        if artifact.kind.is_diff() && artifact.kind.worktree().is_some_and(Path::is_dir) {
             artifact_kinds::refresh(&artifact.kind, &dir)?;
             artifact.modified_at = float(events::now());
             self.save(&artifact)?;
         }
-        let opened = artifact_kinds::open(&artifact, &dir, name, tags)?;
+        let opened = artifact_kinds::open(&artifact, &dir, name, tags, &self.worktrees_root)?;
         self.append("artifact-open", &format!("{artifact_id} → {actor}"), actor)?;
         Ok(opened)
+    }
+
+    // ----- close steps ---------------------------------------------------------------------
+
+    fn cleanup_path(&self, artifact: &Artifact) -> PathBuf {
+        self.files.file_path(artifact, CLEANUP_FILE)
+    }
+
+    /// The pending close steps of an artifact, by view session id.
+    pub fn pending_cleanups(&self, artifact: &Artifact) -> Result<BTreeMap<String, Cleanup>> {
+        let path = self.cleanup_path(artifact);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(source) => return Err(io_at(&path)(source)),
+        };
+        let data: Value = serde_json::from_slice(&bytes).map_err(ArtifactStoreError::from)?;
+        let entries = data.as_object().cloned().unwrap_or_default();
+        Ok(entries
+            .iter()
+            .filter_map(|(session, value)| Some((session.clone(), Cleanup::from_value(value)?)))
+            .collect())
+    }
+
+    fn write_cleanups(
+        &self,
+        artifact: &Artifact,
+        cleanups: &BTreeMap<String, Cleanup>,
+    ) -> Result<()> {
+        let path = self.cleanup_path(artifact);
+        if cleanups.is_empty() {
+            return match std::fs::remove_file(&path) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(io_at(&path)(error)),
+                _ => Ok(()),
+            };
+        }
+        let map: Map<String, Value> = cleanups
+            .iter()
+            .map(|(session, cleanup)| (session.clone(), cleanup.to_value()))
+            .collect();
+        let payload = dumps_pretty(&Value::Object(map));
+        let dir = self.files.content_dir(artifact);
+        atomic_write(&dir, ".cleanup.", payload.as_bytes(), &path).map_err(io_at(&path))
+    }
+
+    /// Remember the close step an `open` left behind, keyed by the view that needs it, so the
+    /// close can run from whichever `tx` process sees that view end.
+    pub fn record_cleanup(
+        &self,
+        artifact_id: &str,
+        view_session_id: &str,
+        cleanup: Cleanup,
+    ) -> Result<()> {
+        let artifact = self.require(artifact_id)?;
+        let mut cleanups = self.pending_cleanups(&artifact)?;
+        cleanups.insert(view_session_id.to_owned(), cleanup);
+        self.write_cleanups(&artifact, &cleanups)
+    }
+
+    /// Run the close step recorded for `view_session_id`, if any; whether one ran. Logs one
+    /// `artifact-close` line per step run.
+    pub fn close(&self, artifact_id: &str, view_session_id: &str) -> Result<bool> {
+        let artifact = self.require(artifact_id)?;
+        let mut cleanups = self.pending_cleanups(&artifact)?;
+        let Some(cleanup) = cleanups.remove(view_session_id) else {
+            return Ok(false);
+        };
+        artifact_kinds::close(&cleanup)?;
+        self.write_cleanups(&artifact, &cleanups)?;
+        self.append(
+            "artifact-close",
+            &format!("{artifact_id} {view_session_id} {}", cleanup.describe()),
+            &self.env_actor,
+        )?;
+        Ok(true)
+    }
+
+    /// Run every pending close step of an artifact now (`tx artifact close`); how many ran.
+    pub fn close_all(&self, artifact_id: &str) -> Result<usize> {
+        let artifact = self.require(artifact_id)?;
+        let views: Vec<String> = self.pending_cleanups(&artifact)?.into_keys().collect();
+        for view in &views {
+            self.close(artifact_id, view)?;
+        }
+        Ok(views.len())
     }
 
     /// Every unarchived artifact `session_id` owns.
@@ -210,8 +312,9 @@ impl ArtifactService {
     // ----- diagnostics ---------------------------------------------------------------------
 
     /// Invariant check across the store (read-only); an empty list means clean. Every record has
-    /// its directory and its kind's file; every directory has a record.
-    pub fn doctor(&self) -> Result<Vec<String>> {
+    /// its directory and its kind's file; every directory has a record; no close step waits on
+    /// a view that has already ended (`view_is_alive` is the session store's answer).
+    pub fn doctor(&self, view_is_alive: &dyn Fn(&str) -> bool) -> Result<Vec<String>> {
         let mut problems = Vec::new();
         let artifacts = self.all();
         let record_ids: HashSet<&str> = artifacts.iter().map(|a| a.id.as_str()).collect();
@@ -227,6 +330,14 @@ impl ArtifactService {
                     "{}: {} file {file} is missing",
                     artifact.id,
                     artifact.kind.name()
+                ));
+            }
+            for (view, cleanup) in self.stale_cleanups(artifact, view_is_alive)? {
+                problems.push(format!(
+                    "{}: close step for ended view {view} never ran ({}) — `doctor --repair` \
+                     runs it",
+                    artifact.id,
+                    cleanup.describe()
                 ));
             }
         }
@@ -251,6 +362,34 @@ impl ArtifactService {
             }
         }
         Ok(problems)
+    }
+
+    fn stale_cleanups(
+        &self,
+        artifact: &Artifact,
+        view_is_alive: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<(String, Cleanup)>> {
+        Ok(self
+            .pending_cleanups(artifact)?
+            .into_iter()
+            .filter(|(view, _)| !view_is_alive(view))
+            .collect())
+    }
+
+    /// Run every close step whose view has ended (`doctor --repair`); the lines describe what ran.
+    pub fn repair(&self, view_is_alive: &dyn Fn(&str) -> bool) -> Result<Vec<String>> {
+        let mut lines = Vec::new();
+        for artifact in self.all() {
+            for (view, cleanup) in self.stale_cleanups(&artifact, view_is_alive)? {
+                self.close(&artifact.id, &view)?;
+                lines.push(format!(
+                    "{}: ran the close step of ended view {view} ({})",
+                    artifact.id,
+                    cleanup.describe()
+                ));
+            }
+        }
+        Ok(lines)
     }
 
     // ----- resolution ----------------------------------------------------------------------
@@ -335,7 +474,7 @@ mod tests {
             .open(&artifact.id, "s1", "Plan".into(), vec!["t".into()])
             .unwrap();
         assert!(opened.spec.cmd.ends_with("/p.md"), "{}", opened.spec.cmd);
-        assert!(service.doctor().unwrap().is_empty());
+        assert!(service.doctor(&|_| true).unwrap().is_empty());
 
         std::fs::write(&source, "a\nc\n").unwrap();
         let modified = service.modify(&artifact.id, "s2", Some(&source)).unwrap();
@@ -356,7 +495,7 @@ mod tests {
 
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(home.artifacts_dir().join("stray")).unwrap();
-        let problems = service.doctor().unwrap();
+        let problems = service.doctor(&|_| true).unwrap();
         assert_eq!(problems.len(), 2, "{problems:?}");
         assert!(problems[0].ends_with("document file p.md is missing"));
         assert!(problems[1].starts_with("stray: content directory"));
@@ -389,6 +528,63 @@ mod tests {
         let back = service.set_archived(&artifact.id, "s1", false).unwrap();
         assert!(!back.is_archived());
         assert_eq!(service.artifacts_for_session("s1").len(), 1);
-        assert!(service.doctor().unwrap().is_empty());
+        assert!(service.doctor(&|_| true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cleanups_are_recorded_closed_and_repaired() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let service = service(&home);
+        let source = dir.path().join("p.md");
+        std::fs::write(&source, "x").unwrap();
+        let artifact = service
+            .create(
+                "s1",
+                Kind::Document {
+                    file: "p.md".into(),
+                },
+                "Plan".into(),
+                Some(&source),
+            )
+            .unwrap();
+        let temp = dir.path().join("temp-worktree");
+        std::fs::create_dir(&temp).unwrap();
+        service
+            .record_cleanup(
+                &artifact.id,
+                "view-1",
+                Cleanup::RemoveWorktree(temp.clone()),
+            )
+            .unwrap();
+        service
+            .record_cleanup(
+                &artifact.id,
+                "view-2",
+                Cleanup::RemoveWorktree(dir.path().join("gone")),
+            )
+            .unwrap();
+        assert_eq!(service.pending_cleanups(&artifact).unwrap().len(), 2);
+        assert!(service.doctor(&|_| true).unwrap().is_empty());
+        let stale = service.doctor(&|view| view == "view-1").unwrap();
+        assert_eq!(stale.len(), 1);
+        assert!(stale[0].contains("ended view view-2"), "{stale:?}");
+
+        assert!(!service.close(&artifact.id, "nobody").unwrap());
+        assert!(service.close(&artifact.id, "view-1").unwrap());
+        assert!(!temp.exists());
+        let repaired = service.repair(&|_| false).unwrap();
+        assert_eq!(repaired.len(), 1);
+        assert!(service.pending_cleanups(&artifact).unwrap().is_empty());
+        assert!(
+            !service
+                .dir(&artifact.id)
+                .unwrap()
+                .join(CLEANUP_FILE)
+                .exists()
+        );
+        assert_eq!(service.close_all(&artifact.id).unwrap(), 0);
+        let log = std::fs::read_to_string(home.log_path()).unwrap();
+        assert_eq!(log.matches("artifact-close").count(), 2, "{log}");
     }
 }

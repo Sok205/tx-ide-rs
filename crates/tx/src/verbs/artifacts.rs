@@ -10,7 +10,7 @@ use cordis::{BoxError, Component, Ctx};
 use crate::app::{COMMANDS, Command, ENV, EVENTS, Env, HOME, SERVICE, Visibility};
 use crate::argparse::{Arg, Matches, ParseExit, Parser};
 use crate::artifact::{Artifact, Kind, USER_ACTOR};
-use crate::artifact_kinds::view_suffix;
+use crate::artifact_kinds::{Opened, view_suffix};
 use crate::artifact_service::ArtifactService;
 use crate::events;
 use crate::grouping::GroupResolver;
@@ -102,7 +102,7 @@ fn fail(exit: ParseExit) -> Result<i32, BoxError> {
 
 // ----- tx artifact ----------------------------------------------------------------------------
 
-const HELP_ROWS: [(&str, &str); 10] = [
+const HELP_ROWS: [(&str, &str); 11] = [
     (
         "create <file> --title T [--kind document|tour]",
         "a document (default) or tour from a file",
@@ -116,6 +116,10 @@ const HELP_ROWS: [(&str, &str); 10] = [
         "stamp modified_at; diff: rewrite the patch; file: replace a document/tour's file",
     ),
     ("open <id> [--tag T]", "open in a bound nvim view"),
+    (
+        "close <id>",
+        "run a pending close step now (a diff's temp worktree)",
+    ),
     ("path <id>", "print the artifact directory"),
     (
         "archive <id>",
@@ -129,7 +133,7 @@ const HELP_ROWS: [(&str, &str); 10] = [
     ("show <id>", "metadata + the kind's subfield"),
     (
         "doctor [--repair]",
-        "check store invariants; --repair removes stale cleanup notes",
+        "check store invariants; --repair runs close steps of ended views",
     ),
 ];
 
@@ -162,6 +166,7 @@ impl Command for ArtifactCmd {
             "create" => self.create(rest),
             "modify" => self.modify(rest),
             "open" => self.open(rest),
+            "close" => self.close(rest),
             "path" => self.path(rest),
             "archive" => self.set_archived(rest, true),
             "unarchive" => self.set_archived(rest, false),
@@ -337,6 +342,18 @@ impl ArtifactCmd {
         Ok(0)
     }
 
+    fn close(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let parser = sub_parser("close").arg(Arg::positional("id"));
+        let args = match parse(&parser, argv) {
+            Ok(args) => args,
+            Err(code) => return Ok(code),
+        };
+        let artifact_id = self.resolve(&args)?;
+        let ran = self.artifacts.close_all(&artifact_id)?;
+        println!("Closed artifact {artifact_id}: {ran} close step(s) run");
+        Ok(0)
+    }
+
     fn path(&self, argv: &[String]) -> Result<i32, BoxError> {
         let parser = sub_parser("path").arg(Arg::positional("id"));
         let args = match parse(&parser, argv) {
@@ -428,12 +445,16 @@ impl ArtifactCmd {
             return fail(parser.error("--tag requires at least one value"));
         }
         let name = view_name(&self.service, &artifact)?;
-        let opened = self
-            .artifacts
-            .open(&artifact_id, &self.actor(), name, tags)?;
-        let cwd = opened.spec.cwd.clone();
-        let session = self.service.spawn_nvim(opened.spec)?;
+        let Opened { spec, cleanup } =
+            self.artifacts
+                .open(&artifact_id, &self.actor(), name, tags)?;
+        let cwd = spec.cwd.clone();
+        let session = self.service.spawn_nvim(spec)?;
         self.service.bind_artifact(&session.id, &artifact_id)?;
+        if let Some(cleanup) = cleanup {
+            self.artifacts
+                .record_cleanup(&artifact_id, &session.id, cleanup)?;
+        }
         println!(
             "Opened {} artifact {artifact_id} in nvim view '{}' (cwd {cwd})",
             artifact.kind.name(),
@@ -467,8 +488,20 @@ impl ArtifactCmd {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
-        let _repair = args.get_flag("repair");
-        let problems = self.artifacts.doctor()?;
+        let view_is_alive = |view: &str| {
+            self.service
+                .store()
+                .load(view)
+                .ok()
+                .flatten()
+                .is_some_and(|session| session.is_alive())
+        };
+        if args.get_flag("repair") {
+            for line in self.artifacts.repair(&view_is_alive)? {
+                println!("  {line}");
+            }
+        }
+        let problems = self.artifacts.doctor(&view_is_alive)?;
         if problems.is_empty() {
             println!("artifacts: clean");
             return Ok(0);

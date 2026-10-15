@@ -21,7 +21,7 @@ use cordis::BoxError;
 
 use crate::app::{Command, Env};
 use crate::artifact::{Artifact, USER_ACTOR};
-use crate::artifact_kinds::describe;
+use crate::artifact_kinds::{Opened, describe};
 use crate::artifact_picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::artifact_service::ArtifactService;
 use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ansi, tag_hex};
@@ -499,10 +499,15 @@ impl ArtifactNav {
             opener.tags.clone()
         };
         let name = view_name(&self.service, &artifact)?;
-        let mut opened = self.artifacts.open(artifact_id, &opener.id, name, tags)?;
-        opened.spec.parent = Some(opener.id.clone());
-        let view = self.service.spawn_nvim(opened.spec)?;
+        let Opened { mut spec, cleanup } =
+            self.artifacts.open(artifact_id, &opener.id, name, tags)?;
+        spec.parent = Some(opener.id.clone());
+        let view = self.service.spawn_nvim(spec)?;
         self.service.bind_artifact(&view.id, artifact_id)?;
+        if let Some(cleanup) = cleanup {
+            self.artifacts
+                .record_cleanup(artifact_id, &view.id, cleanup)?;
+        }
         Ok(view)
     }
 
