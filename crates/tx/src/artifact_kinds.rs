@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 
 use crate::artifact::{Artifact, Kind};
 use crate::artifact_store::atomic_write;
+use crate::shlex::shlex_quote;
 use crate::spawn::SpawnSpec;
 
 /// The patch a diff keeps beside its record.
@@ -273,8 +274,48 @@ pub fn open(
                 cleanup: Some(Cleanup::RemoveWorktree(temp)),
             })
         }
-        Kind::Tour { .. } => Err(KindError::Unsupported("tour")),
+        Kind::Tour { worktree, stops } => {
+            let stops_path = dir.join(stops);
+            if !worktree.is_dir() {
+                return Ok(Opened {
+                    spec: SpawnSpec::for_nvim(
+                        name,
+                        tags,
+                        dir.to_string_lossy(),
+                        None,
+                        Some(&stops_path.to_string_lossy()),
+                    ),
+                    cleanup: None,
+                });
+            }
+            let mut spec = SpawnSpec::for_nvim(name, tags, worktree.to_string_lossy(), None, None);
+            spec.cmd.push(' ');
+            spec.cmd.push_str(&shlex_quote(&format!(
+                "+lua require(\"tx-tour\")({})",
+                lua_string(&stops_path.to_string_lossy())
+            )));
+            Ok(Opened {
+                spec,
+                cleanup: None,
+            })
+        }
     }
+}
+
+/// A Lua double-quoted string literal.
+fn lua_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Another checkout of the gone worktree's repository: a sibling directory (tx keeps a
@@ -430,6 +471,44 @@ mod tests {
         );
         assert_eq!(describe(&artifact.kind), "document");
         assert_eq!(view_suffix(&artifact.kind), "");
+    }
+
+    #[test]
+    fn tour_opens_in_the_worktree_with_the_runtime() {
+        let root = tempfile::tempdir().unwrap();
+        let worktree = root.path().join("tree");
+        fs::create_dir(&worktree).unwrap();
+        let dir = root.path().join("art");
+        fs::create_dir(&dir).unwrap();
+        let source = root.path().join("stops.lua");
+        fs::write(&source, "return {}").unwrap();
+        let kind = Kind::Tour {
+            worktree: worktree.clone(),
+            stops: "stops.lua".into(),
+        };
+        create_content(&kind, &dir, Some(&source)).unwrap();
+        let artifact = Artifact::new(
+            "t".into(),
+            kind,
+            "tour".into(),
+            "s1".into(),
+            Number::from(1),
+        );
+        let opened = open(&artifact, &dir, "tour-tour".into(), vec![], root.path()).unwrap();
+        assert_eq!(opened.cleanup, None);
+        assert_eq!(opened.spec.cwd, worktree.to_string_lossy());
+        assert_eq!(
+            opened.spec.cmd,
+            format!(
+                "{NVIM_BASE_COMMAND} '+lua require(\"tx-tour\")(\"{}\")'",
+                dir.join("stops.lua").display()
+            )
+        );
+        fs::remove_dir(&worktree).unwrap();
+        let text = open(&artifact, &dir, "tour-tour".into(), vec![], root.path()).unwrap();
+        assert_eq!(text.spec.cwd, dir.to_string_lossy());
+        assert!(text.spec.cmd.ends_with("stops.lua"), "{}", text.spec.cmd);
+        assert_eq!(lua_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
     }
 
     #[test]

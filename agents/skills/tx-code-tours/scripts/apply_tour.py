@@ -17,12 +17,9 @@ def parse_arguments() -> argparse.Namespace:
 
 def main() -> None:
     arguments = parse_arguments()
-    runtime_path = Path(__file__).with_name("apply_tour.lua").resolve()
-    lua_expression = "(dofile(_A.runtime))(_A.stops)"
-    lua_arguments = {
-        "runtime": str(runtime_path),
-        "stops": str(arguments.stops.resolve()),
-    }
+    # The tour runtime ships with the tx-ide nvim config as lua/tx-tour.lua.
+    lua_expression = "require('tx-tour')(_A.stops)"
+    lua_arguments = {"stops": str(arguments.stops.resolve())}
     remote_expression = (
         f"luaeval({json.dumps(lua_expression)}, {json.dumps(lua_arguments)})"
     )

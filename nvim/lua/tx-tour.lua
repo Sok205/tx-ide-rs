@@ -1,3 +1,8 @@
+-- tx-tour: a code tour as session-local diagnostics plus ordered quickfix navigation.
+-- `require("tx-tour")(stops_path)` loads a Lua file returning the ordered stops
+-- ({file, line, label, message, severity}) and opens at stop 1. Spawned by
+-- `tx artifact open` on a tour artifact, or applied into a running nvim over RPC
+-- by the tx-code-tours skill's apply_tour.py.
 return function(stops_path)
   local tour_stops = dofile(stops_path)
   local namespace = vim.api.nvim_create_namespace("tx_code_tour")
