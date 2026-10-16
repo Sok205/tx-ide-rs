@@ -31,11 +31,16 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
     core.subscribe(Box::new(Arc::clone(&recorder)));
     let cwd = h.workdir("a");
     let a = core.create_session(agent("alice", &cwd)).unwrap();
-    let b = core.create_session(process("bob", &h.workdir("b"))).unwrap();
-    assert!(wait_for(Duration::from_secs(5), || cwd.join("env.txt").exists()));
+    let b = core
+        .create_session(process("bob", &h.workdir("b")))
+        .unwrap();
+    assert!(wait_for(Duration::from_secs(5), || cwd
+        .join("env.txt")
+        .exists()));
     core.rename_session(&a, "alice2").unwrap();
     core.set_session_tags(&a, vec!["t".into()]).unwrap();
-    core.send_message(&a, "hi", SendOptions::from_agent(b.clone())).unwrap();
+    core.send_message(&a, "hi", SendOptions::from_agent(b.clone()))
+        .unwrap();
     h.tmux_ok(&["kill-session", "-t", "=bob"]);
     core.refresh_all().unwrap();
     core.stop_session(&a).unwrap();
@@ -59,10 +64,17 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
     assert_eq!(events[0].name, "alice");
     assert_eq!(events[2].name, "alice2");
     assert_eq!(events[4].actor, Some(b.clone()));
-    assert_eq!(events[4].id, a, "message-sent is attributed to the recipient");
+    assert_eq!(
+        events[4].id, a,
+        "message-sent is attributed to the recipient"
+    );
     assert_eq!(events[5].id, b);
     assert_eq!(events[7].id, b);
-    assert!(events.iter().all(|e| e.actor.is_none() || e.type_ == EventType::MessageSent));
+    assert!(
+        events
+            .iter()
+            .all(|e| e.actor.is_none() || e.type_ == EventType::MessageSent)
+    );
     assert!(events.windows(2).all(|w| w[0].ts <= w[1].ts));
     // The log carries the same facts, including the session id.
     let log = h.log_lines();
@@ -84,10 +96,15 @@ impl EventSink for Reentrant {
     fn on_event(&self, event: &Event) {
         let session = self.core.get_session(&event.id).ok();
         if session.is_some() && event.type_ == EventType::Created {
-            self.core.set_session_tags(&event.id, vec!["seen".into()]).unwrap();
+            self.core
+                .set_session_tags(&event.id, vec!["seen".into()])
+                .unwrap();
         }
         if let Some(session) = session {
-            self.seen.lock().unwrap().push((event.type_, session.lifecycle));
+            self.seen
+                .lock()
+                .unwrap()
+                .push((event.type_, session.lifecycle));
         }
     }
 }
@@ -114,7 +131,11 @@ fn sinks_run_after_the_record_is_saved_and_locks_are_released() {
         ]
     );
     assert_eq!(core.get_session(&id).unwrap().tags, ["seen"]);
-    let types: Vec<String> = h.log_lines().iter().map(|l| l["type"].as_str().unwrap().to_owned()).collect();
+    let types: Vec<String> = h
+        .log_lines()
+        .iter()
+        .map(|l| l["type"].as_str().unwrap().to_owned())
+        .collect();
     assert_eq!(types, ["created", "tagged", "stopped"]);
 }
 
@@ -171,6 +192,13 @@ fn a_failed_operation_emits_nothing() {
     let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
     assert!(core.create_session(process("p", &h.workdir("q"))).is_err());
     assert!(core.rename_session(&id, "bad name").is_err());
-    assert!(core.send_message(&"zz".parse::<SessionId>().unwrap(), "x", SendOptions::default()).is_err());
+    assert!(
+        core.send_message(
+            &"zz".parse::<SessionId>().unwrap(),
+            "x",
+            SendOptions::default()
+        )
+        .is_err()
+    );
     assert_eq!(types(&recorder.0.lock().unwrap()), [EventType::Created]);
 }

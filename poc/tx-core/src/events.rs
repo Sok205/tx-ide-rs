@@ -226,7 +226,14 @@ mod tests {
 
     #[test]
     fn short_line_shape() {
-        let line = encode(1727000000.123456, "sess-1", "created", "id-9", "w1", "wörker→ (r2)");
+        let line = encode(
+            1727000000.123456,
+            "sess-1",
+            "created",
+            "id-9",
+            "w1",
+            "wörker→ (r2)",
+        );
         assert_eq!(
             String::from_utf8(line).unwrap(),
             "{\"ts\":1727000000.123456,\"actor\":\"sess-1\",\"type\":\"created\",\"id\":\"id-9\",\"name\":\"w1\",\"msg\":\"wörker→ (r2)\"}\n"
@@ -268,7 +275,11 @@ mod tests {
         ] {
             let line = encode(0.0, "a", "t", "i", "n", &msg);
             assert!(line.len() <= PIPE_BUF, "{}", line.len());
-            assert!(line.len() > PIPE_BUF - 8, "{} too short for {msg:?}", line.len());
+            assert!(
+                line.len() > PIPE_BUF - 8,
+                "{} too short for {msg:?}",
+                line.len()
+            );
             let kept = parse(&line);
             assert!(msg.starts_with(kept["msg"].as_str().unwrap()));
         }
@@ -280,13 +291,22 @@ mod tests {
         let budget = PIPE_BUF - skeleton;
         let msg = "\u{1}".repeat(budget / 6 + 1);
         let line = encode(0.0, "", "t", "i", "n", &msg);
-        assert_eq!(parse(&line)["msg"].as_str().unwrap().chars().count(), budget / 6);
+        assert_eq!(
+            parse(&line)["msg"].as_str().unwrap().chars().count(),
+            budget / 6
+        );
     }
 
     #[test]
     fn non_finite_timestamp_is_null() {
-        assert_eq!(parse(&encode(f64::NAN, "", "t", "i", "n", "m"))["ts"], Value::Null);
-        assert_eq!(parse(&encode(f64::INFINITY, "", "t", "i", "n", "m"))["ts"], Value::Null);
+        assert_eq!(
+            parse(&encode(f64::NAN, "", "t", "i", "n", "m"))["ts"],
+            Value::Null
+        );
+        assert_eq!(
+            parse(&encode(f64::INFINITY, "", "t", "i", "n", "m"))["ts"],
+            Value::Null
+        );
     }
 
     #[test]
@@ -304,7 +324,10 @@ mod tests {
         log.append(&event).unwrap();
         let text = std::fs::read_to_string(log.path()).unwrap();
         let lines: Vec<_> = text.lines().collect();
-        assert_eq!(lines[0], r#"{"ts":1.0,"actor":"","type":"created","id":"i","name":"n","msg":"a"}"#);
+        assert_eq!(
+            lines[0],
+            r#"{"ts":1.0,"actor":"","type":"created","id":"i","name":"n","msg":"a"}"#
+        );
         let second: Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(second["type"], "tagged");
         assert_eq!(second["id"], "i");
@@ -339,7 +362,10 @@ mod tests {
         for line in lines {
             let value: Value = serde_json::from_str(line).unwrap();
             let msg = value["msg"].as_str().unwrap();
-            assert!(msg.chars().all(|c| c == msg.chars().next().unwrap()), "torn: {msg}");
+            assert!(
+                msg.chars().all(|c| c == msg.chars().next().unwrap()),
+                "torn: {msg}"
+            );
         }
     }
 
@@ -349,7 +375,15 @@ mod tests {
         let names: Vec<&str> = EventType::ALL.iter().map(|t| t.as_str()).collect();
         assert_eq!(
             names,
-            ["created", "renamed", "tagged", "message-sent", "exited", "stopped", "forgotten"]
+            [
+                "created",
+                "renamed",
+                "tagged",
+                "message-sent",
+                "exited",
+                "stopped",
+                "forgotten"
+            ]
         );
     }
 

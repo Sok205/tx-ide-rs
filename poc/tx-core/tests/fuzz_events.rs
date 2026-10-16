@@ -56,7 +56,8 @@ fn arb_ts() -> impl Strategy<Value = f64> {
 }
 
 fn parse(line: &[u8]) -> Value {
-    serde_json::from_slice(line).unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(line)))
+    serde_json::from_slice(line)
+        .unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(line)))
 }
 
 /// Exact number of bytes `c` takes once serde_json has escaped it, measured, not tabulated.
@@ -161,7 +162,10 @@ fn del_0x7f_is_one_byte_not_escaped() {
     let msg = "\u{7f}".repeat(PIPE_BUF);
     let line = encode(0.0, "", "", "i", "n", &msg);
     assert_eq!(line.len(), PIPE_BUF);
-    assert_eq!(parse(&line)["msg"].as_str().unwrap().len(), PIPE_BUF - skeleton);
+    assert_eq!(
+        parse(&line)["msg"].as_str().unwrap().len(),
+        PIPE_BUF - skeleton
+    );
 }
 
 #[test]
@@ -173,13 +177,26 @@ fn every_control_and_short_escape_boundary() {
         let budget = PIPE_BUF - skeleton;
         let msg: String = std::iter::repeat_n(c, budget / per + 1).collect();
         let line = encode(0.0, "", "", "i", "n", &msg);
-        assert_eq!(line.len(), skeleton + (budget / per) * per, "char {code:#x}");
+        assert_eq!(
+            line.len(),
+            skeleton + (budget / per) * per,
+            "char {code:#x}"
+        );
     }
 }
 
 #[test]
 fn timestamp_edge_cases_roundtrip_or_null() {
-    for ts in [-0.0, 0.0, 1e300, -1e300, f64::MIN_POSITIVE, 5e-324, f64::MAX, f64::MIN] {
+    for ts in [
+        -0.0,
+        0.0,
+        1e300,
+        -1e300,
+        f64::MIN_POSITIVE,
+        5e-324,
+        f64::MAX,
+        f64::MIN,
+    ] {
         let v = parse(&encode(ts, "a", "t", "i", "n", "m"));
         assert_eq!(v["ts"].as_f64().unwrap().to_bits(), ts.to_bits(), "{ts:e}");
     }
@@ -232,7 +249,8 @@ fn eight_threads_five_hundred_appends_untorn() {
             std::thread::spawn(move || {
                 let msg = char::from(b'a' + worker).to_string().repeat(430);
                 for _ in 0..500 {
-                    log.append_at(f64::from(worker), "t", "i", "n", &msg, "s").unwrap();
+                    log.append_at(f64::from(worker), "t", "i", "n", &msg, "s")
+                        .unwrap();
                 }
             })
         })
@@ -242,7 +260,10 @@ fn eight_threads_five_hundred_appends_untorn() {
     }
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(bytes.last(), Some(&b'\n'));
-    let lines: Vec<&[u8]> = bytes.split(|&b| b == b'\n').filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&[u8]> = bytes
+        .split(|&b| b == b'\n')
+        .filter(|l| !l.is_empty())
+        .collect();
     assert_eq!(lines.len(), 8 * 500);
     let mut counts = [0usize; 8];
     for line in &lines {
@@ -344,15 +365,33 @@ fn event_type_names_unique_and_stable() {
     let names: Vec<&'static str> = EventType::ALL.iter().map(|t| t.as_str()).collect();
     let unique: HashSet<&str> = names.iter().copied().collect();
     assert_eq!(unique.len(), EventType::ALL.len());
-    assert_eq!(names, ["created", "renamed", "tagged", "message-sent", "exited", "stopped", "forgotten"]);
+    assert_eq!(
+        names,
+        [
+            "created",
+            "renamed",
+            "tagged",
+            "message-sent",
+            "exited",
+            "stopped",
+            "forgotten"
+        ]
+    );
     let variants: HashSet<EventType> = EventType::ALL.iter().copied().collect();
     assert_eq!(variants.len(), EventType::ALL.len());
     for t in EventType::ALL {
         let s = t.as_str();
         assert!(!s.is_empty());
-        assert!(s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'), "{s}");
+        assert!(
+            s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'),
+            "{s}"
+        );
         assert_eq!(t.as_str(), s, "as_str not stable");
-        assert_eq!(serde_json::to_string(s).unwrap().len(), s.len() + 2, "needs escaping: {s}");
+        assert_eq!(
+            serde_json::to_string(s).unwrap().len(),
+            s.len() + 2,
+            "needs escaping: {s}"
+        );
     }
 }
 

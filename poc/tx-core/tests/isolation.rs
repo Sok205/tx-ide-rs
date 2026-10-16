@@ -17,18 +17,27 @@ fn probe_server_sessions() -> Option<Vec<String>> {
         .args(["-L", PROBE_LABEL, "list-sessions", "-F", "#{session_name}"])
         .output()
         .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).lines().map(str::to_owned).collect())
+    output.status.success().then(|| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 #[test]
 fn private_server_never_touches_the_default_one_or_the_home_conf() {
     require_tmux!();
     let before = probe_server_sessions();
-    let home = tempfile::Builder::new().prefix("txc-home").tempdir_in("/tmp").unwrap();
-    std::fs::write(home.path().join(".tmux.conf"), "set -g @probe yes\nset -g status off\n").unwrap();
+    let home = tempfile::Builder::new()
+        .prefix("txc-home")
+        .tempdir_in("/tmp")
+        .unwrap();
+    std::fs::write(
+        home.path().join(".tmux.conf"),
+        "set -g @probe yes\nset -g status off\n",
+    )
+    .unwrap();
     let h = Harness::new();
     // Run core in a child process with HOME pointing at the conf, so the test process's own
     // environment stays untouched (and so the check covers the real tmux start path).
@@ -38,15 +47,26 @@ fn private_server_never_touches_the_default_one_or_the_home_conf() {
         .env("HOME", home.path())
         .env("TMUX_TMPDIR", home.path())
         .env_remove("TMUX")
-        .env("TX_CORE_ISOLATION_CHILD", format!("{}:{}", h.state_dir().display(), h.workdir("w").display()))
+        .env(
+            "TX_CORE_ISOLATION_CHILD",
+            format!("{}:{}", h.state_dir().display(), h.workdir("w").display()),
+        )
         .status()
         .unwrap();
     assert!(status.success());
     assert_eq!(h.live_names(), ["iso"]);
     let output = h.tmux(&["show-options", "-gv", "@probe"]);
-    assert!(!output.status.success(), "~/.tmux.conf leaked into the private server: {}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "~/.tmux.conf leaked into the private server: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     assert_eq!(h.tmux_ok(&["show-options", "-gv", "status"]).trim(), "on");
-    assert_eq!(probe_server_sessions(), before, "the default server changed");
+    assert_eq!(
+        probe_server_sessions(),
+        before,
+        "the default server changed"
+    );
     assert!(
         !home.path().join("tmux-".to_owned() + &users_uid()).exists(),
         "a default-socket server was started under the child's TMUX_TMPDIR"
@@ -65,12 +85,16 @@ fn child_create() {
     };
     let (state, cwd) = spec.split_once(':').unwrap();
     let core = TxCore::open(CoreConfig::new(state)).unwrap();
-    core.create_session(process("iso", std::path::Path::new(cwd))).unwrap();
+    core.create_session(process("iso", std::path::Path::new(cwd)))
+        .unwrap();
 }
 
 #[test]
 fn overlong_socket_path_fails_before_any_file_exists() {
-    let root = tempfile::Builder::new().prefix("txc").tempdir_in("/tmp").unwrap();
+    let root = tempfile::Builder::new()
+        .prefix("txc")
+        .tempdir_in("/tmp")
+        .unwrap();
     let state = root.path().join("d".repeat(110));
     let error = TxCore::open(CoreConfig::new(&state)).unwrap_err();
     let CoreError::SocketPathTooLong(path) = error else {

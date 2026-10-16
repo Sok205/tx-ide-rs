@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use tx_core::{
     CoreConfig, CreateOptions, Effort, EngineAdapter, EventType, LaunchOptions, LaunchPlan,
-    LaunchRequest, Lifecycle, ListFilter, Profile, ResolvedProfile, SendOptions, SessionId,
-    TxCore, WorkspaceAction,
+    LaunchRequest, Lifecycle, ListFilter, Profile, ResolvedProfile, SendOptions, SessionId, TxCore,
+    WorkspaceAction,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -57,7 +57,12 @@ fn launch_request_builder() {
     assert_eq!(request.initial_prompt, Some("go"));
     assert_eq!(request.resume, Some("chat-1"));
     let bare = LaunchRequest::new(dir.path(), &profile);
-    assert!(bare.model.is_none() && bare.effort.is_none() && bare.initial_prompt.is_none() && bare.resume.is_none());
+    assert!(
+        bare.model.is_none()
+            && bare.effort.is_none()
+            && bare.initial_prompt.is_none()
+            && bare.resume.is_none()
+    );
 }
 
 #[test]
@@ -82,7 +87,15 @@ fn create_options_and_launch_options_builders() {
     assert_eq!(opts.tags, ["a", "b"]);
     assert_eq!(opts.env, [("K".to_owned(), "v".to_owned())]);
     match &opts.launch {
-        LaunchOptions::Agent { engine, profile, model, effort, initial_prompt, resume, .. } => {
+        LaunchOptions::Agent {
+            engine,
+            profile,
+            model,
+            effort,
+            initial_prompt,
+            resume,
+            ..
+        } => {
             assert_eq!(engine, "claude");
             assert_eq!(profile, &["dev", "ops"]);
             assert_eq!(model.as_deref(), Some("opus"));
@@ -93,7 +106,9 @@ fn create_options_and_launch_options_builders() {
         other => panic!("{other:?}"),
     }
     let process = LaunchOptions::process("sh", ["-c", "true"]);
-    assert!(matches!(&process, LaunchOptions::Process { program, args, .. } if program == "sh" && args == &["-c", "true"]));
+    assert!(
+        matches!(&process, LaunchOptions::Process { program, args, .. } if program == "sh" && args == &["-c", "true"])
+    );
 }
 
 #[test]
@@ -105,10 +120,16 @@ fn config_filter_and_send_builders() {
         .skill_dirs(["/sk"]);
     assert_eq!(config.socket_path(), PathBuf::from("/k.sock"));
     assert_eq!(config.env, [("A".to_owned(), "1".to_owned())]);
-    assert_eq!(config.profile_dirs, [PathBuf::from("/p1"), PathBuf::from("/p2")]);
+    assert_eq!(
+        config.profile_dirs,
+        [PathBuf::from("/p1"), PathBuf::from("/p2")]
+    );
     assert_eq!(config.skill_dirs, [PathBuf::from("/sk")]);
     let id: SessionId = "x".parse().unwrap();
-    let filter = ListFilter::new().parent(id.clone()).tag("t").lifecycle(Lifecycle::Exited);
+    let filter = ListFilter::new()
+        .parent(id.clone())
+        .tag("t")
+        .lifecycle(Lifecycle::Exited);
     assert_eq!(filter.parent, Some(id.clone()));
     assert_eq!(filter.tag.as_deref(), Some("t"));
     assert_eq!(filter.lifecycle, Some(Lifecycle::Exited));

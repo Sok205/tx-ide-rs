@@ -35,7 +35,10 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new(tag: &str) -> Self {
         static SEQ: AtomicU64 = AtomicU64::new(0);
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let path = std::env::temp_dir().join(format!(
             "tx-fuzz-locks-{tag}-{}-{nanos}-{}",
             std::process::id(),
@@ -131,14 +134,21 @@ fn hammer(
     for worker in workers {
         worker.join().unwrap();
     }
-    assert_eq!(counter.get(), (threads * iters) as u64, "{what}: lost updates");
+    assert_eq!(
+        counter.get(),
+        (threads * iters) as u64,
+        "{what}: lost updates"
+    );
     let spans = Arc::try_unwrap(spans).unwrap().into_inner().unwrap();
     assert_eq!(spans.len(), threads * iters);
     assert_disjoint(spans, what);
 }
 
 fn now_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -186,7 +196,12 @@ fn per_thread_locks_values_serialize_session_lock() {
 fn shared_locks_value_serializes_create_lock() {
     let scratch = Scratch::new("create");
     let locks = Arc::new(Locks::new(scratch.locks_dir()));
-    hammer(8, 200, move |_| locks.create().unwrap(), "create() on one shared Locks");
+    hammer(
+        8,
+        200,
+        move |_| locks.create().unwrap(),
+        "create() on one shared Locks",
+    );
 }
 
 #[test]
@@ -318,7 +333,8 @@ fn create_then_session_order_never_deadlocks() {
     let deadline = Instant::now() + Duration::from_secs(10);
     for _ in 0..8 {
         let left = deadline.saturating_duration_since(Instant::now());
-        rx.recv_timeout(left).expect("deadlock: a worker did not finish within 10 s");
+        rx.recv_timeout(left)
+            .expect("deadlock: a worker did not finish within 10 s");
     }
 }
 
@@ -339,7 +355,16 @@ fn entries(dir: &Path) -> Vec<String> {
 /// Ids outside `[A-Za-z0-9_-]{1,64}` cannot be constructed, so no lock file can leave the dir.
 #[test]
 fn ids_that_could_escape_the_locks_dir_cannot_be_built() {
-    for bad in ["", ".", "..", "a\nb", "a/b", "../x", "/tmp/evil", &"x".repeat(65)] {
+    for bad in [
+        "",
+        ".",
+        "..",
+        "a\nb",
+        "a/b",
+        "../x",
+        "/tmp/evil",
+        &"x".repeat(65),
+    ] {
         assert!(bad.parse::<SessionId>().is_err(), "{bad:?}");
     }
 }
@@ -427,7 +452,10 @@ fn guard_outlives_the_locks_value_and_still_excludes() {
         let _guard = Locks::new(other_dir).create().unwrap();
         tx.send(()).unwrap();
     });
-    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "lock was not held");
+    assert!(
+        rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "lock was not held"
+    );
     drop(guard);
     rx.recv_timeout(Duration::from_secs(5)).unwrap();
 }
@@ -481,10 +509,17 @@ fn lock_files_are_never_truncated_or_deleted() {
         let after = fs::metadata(path).unwrap();
         assert_eq!(fs::read(path).unwrap(), payload, "{path:?} content changed");
         assert_eq!(after.len(), payload.len() as u64);
-        assert_eq!(after.permissions().mode() & 0o777, 0o640, "{path:?} mode changed");
+        assert_eq!(
+            after.permissions().mode() & 0o777,
+            0o640,
+            "{path:?} mode changed"
+        );
         assert_eq!(after.ino(), meta.ino(), "{path:?} was replaced");
     }
-    assert_eq!(entries(&scratch.locks_dir()), vec![CREATE_LOCK.to_owned(), "x.lock".to_owned()]);
+    assert_eq!(
+        entries(&scratch.locks_dir()),
+        vec![CREATE_LOCK.to_owned(), "x.lock".to_owned()]
+    );
 }
 
 use std::os::unix::fs::MetadataExt;
@@ -494,7 +529,11 @@ fn fresh_lock_files_have_default_umask_mode() {
     let scratch = Scratch::new("mode");
     let locks = Locks::new(scratch.locks_dir());
     let _guard = locks.create().unwrap();
-    let mode = fs::metadata(scratch.locks_dir().join(CREATE_LOCK)).unwrap().permissions().mode() & 0o777;
+    let mode = fs::metadata(scratch.locks_dir().join(CREATE_LOCK))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
     // OpenOptions::create uses 0o666 & !umask; whatever the umask, the owner can read and write
     // and nothing is executable.
     assert_eq!(mode & 0o600, 0o600, "{mode:o}");
@@ -513,7 +552,10 @@ fn read_only_lock_file_cannot_be_acquired() {
     fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
     let result = locks.create();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        result.unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -528,7 +570,10 @@ fn deleting_lock_file_under_a_holder_observed_to_break_exclusion() {
     fs::remove_file(scratch.locks_dir().join(CREATE_LOCK)).unwrap();
     let started = Instant::now();
     let _second = locks.create().unwrap();
-    assert!(started.elapsed() < Duration::from_millis(100), "a new inode does not contend");
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "a new inode does not contend"
+    );
 }
 
 #[test]
@@ -544,5 +589,8 @@ fn deleting_lock_file_under_a_holder_keeps_exclusion() {
         let _second = other.create().unwrap();
         tx.send(()).unwrap();
     });
-    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "exclusion lost");
+    assert!(
+        rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "exclusion lost"
+    );
 }

@@ -210,7 +210,10 @@ fn normalize(path: &Path) -> Option<PathBuf> {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                if !matches!(normalized.components().next_back(), Some(Component::Normal(_))) {
+                if !matches!(
+                    normalized.components().next_back(),
+                    Some(Component::Normal(_))
+                ) {
                     return None;
                 }
                 normalized.pop();
@@ -283,7 +286,10 @@ mod tests {
         registry.register(Box::new(Stub("zeta"))).unwrap();
         registry.register(Box::new(Stub("alpha"))).unwrap();
         let error = registry.register(Box::new(Stub("zeta"))).unwrap_err();
-        assert!(matches!(&error, CoreError::EngineTaken(id) if id == "zeta"), "{error:?}");
+        assert!(
+            matches!(&error, CoreError::EngineTaken(id) if id == "zeta"),
+            "{error:?}"
+        );
         assert_eq!(registry.ids(), ["alpha", "zeta"]);
         assert_eq!(registry.get("alpha").unwrap().id(), "alpha");
         assert!(registry.get("omega").is_none());
@@ -295,7 +301,10 @@ mod tests {
         let mut registry = EngineRegistry::new();
         for bad in ["", "a/b", "a b", "ä"] {
             let error = registry.register(Box::new(Stub(bad))).unwrap_err();
-            assert!(matches!(&error, CoreError::InvalidName(id) if id == bad), "{bad:?}: {error:?}");
+            assert!(
+                matches!(&error, CoreError::InvalidName(id) if id == bad),
+                "{bad:?}: {error:?}"
+            );
         }
     }
 
@@ -340,8 +349,14 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(std::fs::read_to_string(dir.path().join("a/b/c.txt")).unwrap(), "three");
-        assert_eq!(std::fs::read_to_string(dir.path().join("abs.txt")).unwrap(), "two");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a/b/c.txt")).unwrap(),
+            "three"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("abs.txt")).unwrap(),
+            "two"
+        );
     }
 
     #[test]
@@ -354,18 +369,30 @@ mod tests {
             dst: ".claude/skills/one".into(),
         };
         apply_workspace(dir.path(), std::slice::from_ref(&link)).unwrap();
-        assert_eq!(std::fs::read_link(dir.path().join(".claude/skills/one")).unwrap(), target);
+        assert_eq!(
+            std::fs::read_link(dir.path().join(".claude/skills/one")).unwrap(),
+            target
+        );
         // Replaces a stale link.
         std::fs::remove_file(dir.path().join(".claude/skills/one")).unwrap();
         std::os::unix::fs::symlink("/nonexistent", dir.path().join(".claude/skills/one")).unwrap();
         apply_workspace(dir.path(), std::slice::from_ref(&link)).unwrap();
-        assert_eq!(std::fs::read_link(dir.path().join(".claude/skills/one")).unwrap(), target);
+        assert_eq!(
+            std::fs::read_link(dir.path().join(".claude/skills/one")).unwrap(),
+            target
+        );
         // Refuses to clobber a real file.
         std::fs::remove_file(dir.path().join(".claude/skills/one")).unwrap();
         std::fs::write(dir.path().join(".claude/skills/one"), "data").unwrap();
         let error = apply_workspace(dir.path(), std::slice::from_ref(&link)).unwrap_err();
-        assert!(matches!(&error, EngineError::Workspace { path, .. } if *path == dir.path().join(".claude/skills/one")), "{error:?}");
-        assert_eq!(std::fs::read_to_string(dir.path().join(".claude/skills/one")).unwrap(), "data");
+        assert!(
+            matches!(&error, EngineError::Workspace { path, .. } if *path == dir.path().join(".claude/skills/one")),
+            "{error:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".claude/skills/one")).unwrap(),
+            "data"
+        );
         // Refuses to clobber a directory.
         std::fs::remove_file(dir.path().join(".claude/skills/one")).unwrap();
         std::fs::create_dir(dir.path().join(".claude/skills/one")).unwrap();
@@ -386,7 +413,10 @@ mod tests {
                 }],
             )
             .unwrap_err();
-            assert!(matches!(error, EngineError::Workspace { .. }), "{bad}: {error:?}");
+            assert!(
+                matches!(error, EngineError::Workspace { .. }),
+                "{bad}: {error:?}"
+            );
             let error = apply_workspace(
                 &cwd,
                 &[WorkspaceAction::Symlink {
@@ -395,7 +425,10 @@ mod tests {
                 }],
             )
             .unwrap_err();
-            assert!(matches!(error, EngineError::Workspace { .. }), "{bad}: {error:?}");
+            assert!(
+                matches!(error, EngineError::Workspace { .. }),
+                "{bad}: {error:?}"
+            );
         }
         assert!(!dir.path().join("x").exists());
         // `a/../b` stays inside and is fine.
@@ -413,13 +446,28 @@ mod tests {
     #[test]
     fn resolve_in_normalizes_cwd_and_refuses_relative_cwd() {
         let cwd = Path::new("/w/x/../root/");
-        assert_eq!(resolve_in(cwd, Path::new("a")).unwrap(), Path::new("/w/root/a"));
-        assert_eq!(resolve_in(cwd, Path::new("")).unwrap(), Path::new("/w/root"));
-        assert_eq!(resolve_in(cwd, Path::new("/w/root/a")).unwrap(), Path::new("/w/root/a"));
+        assert_eq!(
+            resolve_in(cwd, Path::new("a")).unwrap(),
+            Path::new("/w/root/a")
+        );
+        assert_eq!(
+            resolve_in(cwd, Path::new("")).unwrap(),
+            Path::new("/w/root")
+        );
+        assert_eq!(
+            resolve_in(cwd, Path::new("/w/root/a")).unwrap(),
+            Path::new("/w/root/a")
+        );
         assert!(resolve_in(cwd, Path::new("/w/x/a")).is_err());
         for bad in ["", ".", "rel", "../x"] {
-            assert!(resolve_in(Path::new(bad), Path::new("a")).is_err(), "{bad:?}");
-            assert!(resolve_in(Path::new(bad), Path::new("/etc/passwd")).is_err(), "{bad:?}");
+            assert!(
+                resolve_in(Path::new(bad), Path::new("a")).is_err(),
+                "{bad:?}"
+            );
+            assert!(
+                resolve_in(Path::new(bad), Path::new("/etc/passwd")).is_err(),
+                "{bad:?}"
+            );
         }
     }
 
@@ -435,7 +483,10 @@ mod tests {
             }],
         )
         .unwrap_err();
-        assert!(matches!(&error, EngineError::Workspace { path, .. } if *path == dir.path().join("f/inner.txt")), "{error:?}");
+        assert!(
+            matches!(&error, EngineError::Workspace { path, .. } if *path == dir.path().join("f/inner.txt")),
+            "{error:?}"
+        );
         assert!(error.to_string().contains("inner.txt"), "{error}");
     }
 

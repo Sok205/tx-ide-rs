@@ -93,15 +93,19 @@ struct ProfileDir {
 }
 
 fn role_file(tag: String) -> impl Strategy<Value = RoleFile> {
-    ("[a-z]{1,8}", any::<[bool; 2]>(), any::<bool>()).prop_map(move |(body, skills, nested)| RoleFile {
-        body: format!("{tag}-{body}"),
-        skills,
-        nested,
+    ("[a-z]{1,8}", any::<[bool; 2]>(), any::<bool>()).prop_map(move |(body, skills, nested)| {
+        RoleFile {
+            body: format!("{tag}-{body}"),
+            skills,
+            nested,
+        }
     })
 }
 
 fn profile_dir(index: usize) -> impl Strategy<Value = ProfileDir> {
-    let slot = |role: &'static str, kind: &'static str| prop::option::of(role_file(format!("d{index}-{role}-{kind}")));
+    let slot = |role: &'static str, kind: &'static str| {
+        prop::option::of(role_file(format!("d{index}-{role}-{kind}")))
+    };
     (
         (slot("a", "md"), slot("a", "local")),
         (slot("b", "md"), slot("b", "local")),
@@ -133,7 +137,10 @@ fn role_list() -> impl Strategy<Value = Vec<String>> {
 
 #[derive(Debug, PartialEq)]
 enum Expected {
-    Ok { text: String, skill_dirs: Vec<PathBuf> },
+    Ok {
+        text: String,
+        skill_dirs: Vec<PathBuf>,
+    },
     Invalid(String),
     UnknownRole(String),
     UnknownSkill(String),
@@ -314,8 +321,18 @@ fn empty_frontmatter_yields_empty_text() {
 #[test]
 fn closer_with_trailing_spaces_closes() {
     let tree = Tree::new();
-    assert_eq!(resolve_one(&tree, "---\nx: 1\n---   \nbody\n").unwrap().text, "body");
-    assert_eq!(resolve_one(&tree, "---\nx: 1\n\t---\t\nbody\n").unwrap().text, "body");
+    assert_eq!(
+        resolve_one(&tree, "---\nx: 1\n---   \nbody\n")
+            .unwrap()
+            .text,
+        "body"
+    );
+    assert_eq!(
+        resolve_one(&tree, "---\nx: 1\n\t---\t\nbody\n")
+            .unwrap()
+            .text,
+        "body"
+    );
 }
 
 #[test]
@@ -323,7 +340,12 @@ fn four_dashes_do_not_close() {
     let tree = Tree::new();
     let err = resolve_one(&tree, "---\nx: 1\n----\nbody\n").unwrap_err();
     assert!(matches!(err, RoleError::UnclosedFrontmatter(_)), "{err:?}");
-    assert_eq!(resolve_one(&tree, "---\nx: 1\n----\n---\nbody\n").unwrap().text, "body");
+    assert_eq!(
+        resolve_one(&tree, "---\nx: 1\n----\n---\nbody\n")
+            .unwrap()
+            .text,
+        "body"
+    );
 }
 
 #[test]
@@ -361,8 +383,16 @@ fn bom_before_frontmatter_is_still_frontmatter() {
 #[test]
 fn body_may_contain_delimiter_lines() {
     let tree = Tree::new();
-    assert_eq!(resolve_one(&tree, "---\n---\nfoo\n---\nbar\n---\n").unwrap().text, "foo\n---\nbar\n---");
-    assert_eq!(resolve_one(&tree, "body\n---\nmore").unwrap().text, "body\n---\nmore");
+    assert_eq!(
+        resolve_one(&tree, "---\n---\nfoo\n---\nbar\n---\n")
+            .unwrap()
+            .text,
+        "foo\n---\nbar\n---"
+    );
+    assert_eq!(
+        resolve_one(&tree, "body\n---\nmore").unwrap().text,
+        "body\n---\nmore"
+    );
 }
 
 #[test]
@@ -395,7 +425,12 @@ fn skills_line_with_comment_or_nested_brackets_is_ignored_or_refused() {
     let tree = Tree::new();
     tree.write("s/a/SKILL.md", "");
     // trailing comment: whole line ignored (no `]` at end)
-    assert!(resolve_one(&tree, "---\nskills: [a] # c\n---\nb").unwrap().skill_dirs.is_empty());
+    assert!(
+        resolve_one(&tree, "---\nskills: [a] # c\n---\nb")
+            .unwrap()
+            .skill_dirs
+            .is_empty()
+    );
     // nested bracket yields the name "[a]" which is refused
     let err = resolve_one(&tree, "---\nskills: [[a]]\n---\nb").unwrap_err();
     assert!(is_invalid(&err, "[a]"), "{err:?}");
@@ -403,7 +438,12 @@ fn skills_line_with_comment_or_nested_brackets_is_ignored_or_refused() {
     let err = resolve_one(&tree, "---\nskills: [\"a\"]\n---\nb").unwrap_err();
     assert!(is_invalid(&err, "\"a\""), "{err:?}");
     // `skills:` inside the body is not a grant
-    assert!(resolve_one(&tree, "---\n---\nskills: [a]").unwrap().skill_dirs.is_empty());
+    assert!(
+        resolve_one(&tree, "---\n---\nskills: [a]")
+            .unwrap()
+            .skill_dirs
+            .is_empty()
+    );
 }
 
 #[test]
@@ -413,7 +453,10 @@ fn skills_are_deduplicated_across_files_and_case_sensitive() {
     tree.write("s/A/SKILL.md", "");
     tree.write("r/a.md", "---\nskills: [a, a]\n---\nA");
     tree.write("r/a.local.md", "---\nskills: [A, a]\n---\nL");
-    let r = tree.profiles(&["r"], &["s"]).resolve(&names(&["a"])).unwrap();
+    let r = tree
+        .profiles(&["r"], &["s"])
+        .resolve(&names(&["a"]))
+        .unwrap();
     // On a case-insensitive filesystem (macOS default) `s/a` and `s/A` are the same dir; only the
     // order and dedup of names is asserted here.
     assert_eq!(r.skill_dirs.len(), 2);
@@ -428,10 +471,16 @@ fn invalid_role_name_wins_over_unknown_role_without_touching_the_fs() {
     let tree = Tree::new();
     let missing = tree.path("does-not-exist");
     let profiles = Profiles::new(vec![missing.clone()], vec![missing]);
-    for bad in ["", " ", "a b", "ä", "日本", "a.b", "a/b", "/a", "a\\b", "a\0", "\0", "..", "a\n", "a-", "-"] {
+    for bad in [
+        "", " ", "a b", "ä", "日本", "a.b", "a/b", "/a", "a\\b", "a\0", "\0", "..", "a\n", "a-",
+        "-",
+    ] {
         let result = profiles.resolve(&names(&[bad]));
         if bad == "a-" || bad == "-" {
-            assert!(matches!(result, Err(RoleError::UnknownRole { .. })), "{bad:?}: {result:?}");
+            assert!(
+                matches!(result, Err(RoleError::UnknownRole { .. })),
+                "{bad:?}: {result:?}"
+            );
             continue;
         }
         let err = result.unwrap_err();
@@ -442,7 +491,10 @@ fn invalid_role_name_wins_over_unknown_role_without_touching_the_fs() {
     assert!(is_invalid(&err, "a/b"), "{err:?}");
     // and over a real role
     tree.write("r/a.md", "A");
-    let err = tree.profiles(&["r"], &[]).resolve(&names(&["a", "a/b"])).unwrap_err();
+    let err = tree
+        .profiles(&["r"], &[])
+        .resolve(&names(&["a", "a/b"]))
+        .unwrap_err();
     assert!(is_invalid(&err, "a/b"), "{err:?}");
 }
 
@@ -451,7 +503,10 @@ fn invalid_skill_name_in_frontmatter_is_refused_before_skill_fs_access() {
     let tree = Tree::new();
     for bad in ["a b", "ä", "s.1", "s/1", "../s", "s\\1"] {
         tree.write("r/a.md", &format!("---\nskills: [{bad}]\n---\nA"));
-        let err = tree.profiles(&["r"], &["nonexistent"]).resolve(&names(&["a"])).unwrap_err();
+        let err = tree
+            .profiles(&["r"], &["nonexistent"])
+            .resolve(&names(&["a"]))
+            .unwrap_err();
         assert!(is_invalid(&err, bad), "{bad:?}: {err:?}");
     }
 }
@@ -462,8 +517,14 @@ fn unknown_skill_before_invalid_skill_reports_unknown() {
     // list masks an invalid one later. Not a safety issue (nothing is read), just error priority.
     let tree = Tree::new();
     tree.write("r/a.md", "---\nskills: [ghost, ../x]\n---\nA");
-    let err = tree.profiles(&["r"], &["s"]).resolve(&names(&["a"])).unwrap_err();
-    assert!(matches!(&err, RoleError::UnknownSkill { name, .. } if name == "ghost"), "{err:?}");
+    let err = tree
+        .profiles(&["r"], &["s"])
+        .resolve(&names(&["a"]))
+        .unwrap_err();
+    assert!(
+        matches!(&err, RoleError::UnknownSkill { name, .. } if name == "ghost"),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -471,7 +532,10 @@ fn skill_name_matching_a_file_not_a_dir_is_unknown() {
     let tree = Tree::new();
     tree.write("r/a.md", "---\nskills: [x]\n---\nA");
     tree.write("s/x", "a file, not a dir");
-    let err = tree.profiles(&["r"], &["s"]).resolve(&names(&["a"])).unwrap_err();
+    let err = tree
+        .profiles(&["r"], &["s"])
+        .resolve(&names(&["a"]))
+        .unwrap_err();
     assert!(matches!(err, RoleError::UnknownSkill { .. }), "{err:?}");
 }
 
@@ -484,7 +548,10 @@ fn role_file_symlink_to_a_file_works() {
     tree.write("s/k/SKILL.md", "");
     std::fs::create_dir_all(tree.path("r")).unwrap();
     std::os::unix::fs::symlink(tree.path("real/base.md"), tree.path("r/a.md")).unwrap();
-    let r = tree.profiles(&["r"], &["s"]).resolve(&names(&["a"])).unwrap();
+    let r = tree
+        .profiles(&["r"], &["s"])
+        .resolve(&names(&["a"]))
+        .unwrap();
     assert_eq!(r.text, "REAL");
     assert_eq!(r.skill_dirs, vec![tree.path("s/k")]);
 }
@@ -497,12 +564,18 @@ fn symlink_loop_role_file_is_an_error_not_a_hang() {
     std::fs::create_dir_all(tree.path("r")).unwrap();
     std::os::unix::fs::symlink(tree.path("r/b.md"), tree.path("r/a.md")).unwrap();
     std::os::unix::fs::symlink(tree.path("r/a.md"), tree.path("r/b.md")).unwrap();
-    let err = tree.profiles(&["r"], &[]).resolve(&names(&["a"])).unwrap_err();
+    let err = tree
+        .profiles(&["r"], &[])
+        .resolve(&names(&["a"]))
+        .unwrap_err();
     assert!(
         matches!(err, RoleError::UnknownRole { .. } | RoleError::Read { .. }),
         "{err:?}"
     );
-    assert!(matches!(err, RoleError::UnknownRole { .. }), "documented behaviour: {err:?}");
+    assert!(
+        matches!(err, RoleError::UnknownRole { .. }),
+        "documented behaviour: {err:?}"
+    );
 }
 
 #[test]
@@ -510,7 +583,10 @@ fn dangling_symlink_role_file_is_unknown_role() {
     let tree = Tree::new();
     std::fs::create_dir_all(tree.path("r")).unwrap();
     std::os::unix::fs::symlink(tree.path("nowhere.md"), tree.path("r/a.md")).unwrap();
-    let err = tree.profiles(&["r"], &[]).resolve(&names(&["a"])).unwrap_err();
+    let err = tree
+        .profiles(&["r"], &[])
+        .resolve(&names(&["a"]))
+        .unwrap_err();
     assert!(matches!(err, RoleError::UnknownRole { .. }), "{err:?}");
 }
 
@@ -524,8 +600,14 @@ fn symlinked_skill_dir_is_returned_as_the_link_path() {
     std::os::unix::fs::symlink(tree.path("real/k"), tree.path("s/k")).unwrap();
     // whole skill root is a symlink
     std::os::unix::fs::symlink(tree.path("real-skills"), tree.path("linked-root")).unwrap();
-    let r = tree.profiles(&["r"], &["linked-root", "s"]).resolve(&names(&["a"])).unwrap();
-    assert_eq!(r.skill_dirs, vec![tree.path("s/k"), tree.path("linked-root/j")]);
+    let r = tree
+        .profiles(&["r"], &["linked-root", "s"])
+        .resolve(&names(&["a"]))
+        .unwrap();
+    assert_eq!(
+        r.skill_dirs,
+        vec![tree.path("s/k"), tree.path("linked-root/j")]
+    );
     assert_ne!(r.skill_dirs[0], tree.path("real/k").canonicalize().unwrap());
 }
 
@@ -535,7 +617,10 @@ fn symlink_loop_skill_dir_is_unknown_skill() {
     tree.write("r/a.md", "---\nskills: [k]\n---\nA");
     std::fs::create_dir_all(tree.path("s")).unwrap();
     std::os::unix::fs::symlink(tree.path("s/k"), tree.path("s/k")).unwrap();
-    let err = tree.profiles(&["r"], &["s"]).resolve(&names(&["a"])).unwrap_err();
+    let err = tree
+        .profiles(&["r"], &["s"])
+        .resolve(&names(&["a"]))
+        .unwrap_err();
     assert!(matches!(err, RoleError::UnknownSkill { .. }), "{err:?}");
 }
 
@@ -544,7 +629,10 @@ fn profile_dir_that_is_a_file_is_just_skipped() {
     let tree = Tree::new();
     tree.write("not-a-dir", "x");
     tree.write("r/a.md", "A");
-    let r = tree.profiles(&["not-a-dir", "r"], &[]).resolve(&names(&["a"])).unwrap();
+    let r = tree
+        .profiles(&["not-a-dir", "r"], &[])
+        .resolve(&names(&["a"]))
+        .unwrap();
     assert_eq!(r.text, "A");
 }
 
@@ -563,7 +651,10 @@ fn write_under_a_file_parent_fails() {
     tree.write("file", "x");
     let err = Profile::write(resolved("t"), &tree.path("file/child.md")).unwrap_err();
     assert!(
-        matches!(err.kind(), std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::NotADirectory),
+        matches!(
+            err.kind(),
+            std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::NotADirectory
+        ),
         "{err:?}"
     );
     assert_eq!(std::fs::read_to_string(tree.path("file")).unwrap(), "x");
@@ -626,7 +717,10 @@ fn bodies_are_trimmed_and_joined_with_blank_line() {
     let tree = Tree::new();
     tree.write("r/a.md", "\n\n  A  \n\n\n");
     tree.write("r/b.md", "B");
-    let r = tree.profiles(&["r"], &[]).resolve(&names(&["a", "b"])).unwrap();
+    let r = tree
+        .profiles(&["r"], &[])
+        .resolve(&names(&["a", "b"]))
+        .unwrap();
     assert_eq!(r.text, "A\n\nB");
 }
 
@@ -659,8 +753,14 @@ fn errors_name_the_offending_file() {
     let tree = Tree::new();
     tree.write("r/a.md", "A");
     let local = tree.write("r/a.local.md", "---\nunclosed");
-    let err = tree.profiles(&["r"], &[]).resolve(&names(&["a"])).unwrap_err();
-    assert!(matches!(&err, RoleError::UnclosedFrontmatter(p) if *p == local), "{err:?}");
+    let err = tree
+        .profiles(&["r"], &[])
+        .resolve(&names(&["a"]))
+        .unwrap_err();
+    assert!(
+        matches!(&err, RoleError::UnclosedFrontmatter(p) if *p == local),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -669,8 +769,14 @@ fn invalid_utf8_role_file_is_a_read_error() {
     let path = tree.path("r/a.md");
     std::fs::create_dir_all(tree.path("r")).unwrap();
     std::fs::write(&path, [0xff, 0xfe, b'A']).unwrap();
-    let err = tree.profiles(&["r"], &[]).resolve(&names(&["a"])).unwrap_err();
-    assert!(matches!(&err, RoleError::Read { path: p, .. } if *p == path), "{err:?}");
+    let err = tree
+        .profiles(&["r"], &[])
+        .resolve(&names(&["a"]))
+        .unwrap_err();
+    assert!(
+        matches!(&err, RoleError::Read { path: p, .. } if *p == path),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -679,6 +785,9 @@ fn skill_lookup_is_lazy_only_after_all_roles_read() {
     // roles are resolved before skills.
     let tree = Tree::new();
     tree.write("r/a.md", "---\nskills: [ghost]\n---\nA");
-    let err = tree.profiles(&["r"], &["s"]).resolve(&names(&["a", "nope"])).unwrap_err();
+    let err = tree
+        .profiles(&["r"], &["s"])
+        .resolve(&names(&["a", "nope"]))
+        .unwrap_err();
     assert!(matches!(err, RoleError::UnknownRole { .. }), "{err:?}");
 }

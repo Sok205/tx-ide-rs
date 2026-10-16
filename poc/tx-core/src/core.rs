@@ -193,7 +193,10 @@ impl ListFilter {
         self.parent
             .as_ref()
             .is_none_or(|parent| session.parent.as_ref() == Some(parent))
-            && self.tag.as_ref().is_none_or(|tag| session.tags.contains(tag))
+            && self
+                .tag
+                .as_ref()
+                .is_none_or(|tag| session.tags.contains(tag))
             && self
                 .lifecycle
                 .is_none_or(|lifecycle| session.lifecycle == lifecycle)
@@ -296,8 +299,19 @@ fn merge_env(env: &mut Vec<(String, String)>, layer: &[(String, String)]) {
     }
 }
 
-fn event(type_: EventType, session: &Session, actor: Option<SessionId>, detail: impl Into<String>) -> Event {
-    Event::new(type_, session.id.clone(), session.name.clone(), actor, detail)
+fn event(
+    type_: EventType,
+    session: &Session,
+    actor: Option<SessionId>,
+    detail: impl Into<String>,
+) -> Event {
+    Event::new(
+        type_,
+        session.id.clone(),
+        session.name.clone(),
+        actor,
+        detail,
+    )
 }
 
 fn store_io(path: &Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {
@@ -451,7 +465,10 @@ impl TxCore {
                     .engines
                     .get(engine)
                     .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
-                (Some((adapter, self.profiles.resolve(profile)?)), profile.clone())
+                (
+                    Some((adapter, self.profiles.resolve(profile)?)),
+                    profile.clone(),
+                )
             }
             LaunchOptions::Process { program, .. } => {
                 if program.is_empty() {
@@ -468,7 +485,11 @@ impl TxCore {
             return Err(CoreError::NameTaken(opts.name));
         }
         let id = SessionId::mint();
-        let profile_file = self.config.state_dir.join(PROFILES_DIR).join(format!("{id}.md"));
+        let profile_file = self
+            .config
+            .state_dir
+            .join(PROFILES_DIR)
+            .join(format!("{id}.md"));
         let cleanup_profile = || {
             let _ = std::fs::remove_file(&profile_file);
         };
@@ -499,8 +520,8 @@ impl TxCore {
                 },
                 Some((adapter, resolved)),
             ) => {
-                let profile = Profile::write(resolved, &profile_file)
-                    .map_err(store_io(&profile_file))?;
+                let profile =
+                    Profile::write(resolved, &profile_file).map_err(store_io(&profile_file))?;
                 let request = LaunchRequest {
                     cwd: &opts.cwd,
                     profile: &profile,
@@ -509,7 +530,9 @@ impl TxCore {
                     initial_prompt: initial_prompt.as_deref(),
                     resume: resume.as_deref(),
                 };
-                let plan = adapter.launch(&request).inspect_err(|_| cleanup_profile())?;
+                let plan = adapter
+                    .launch(&request)
+                    .inspect_err(|_| cleanup_profile())?;
                 apply_workspace(&opts.cwd, &plan.workspace).inspect_err(|_| cleanup_profile())?;
                 validate_env(&plan.env).inspect_err(|_| cleanup_profile())?;
                 merge_env(&mut env, &plan.env);
@@ -586,7 +609,12 @@ impl TxCore {
         }
         let mut events = vec![event(EventType::Created, &session, None, "")];
         if exited_at_once {
-            events.push(event(EventType::Exited, &session, None, "exited before registration"));
+            events.push(event(
+                EventType::Exited,
+                &session,
+                None,
+                "exited before registration",
+            ));
         }
         Ok((id, events))
     }
@@ -608,7 +636,11 @@ impl TxCore {
         Ok(session)
     }
 
-    fn rename_locked(&self, id: &SessionId, name: &str) -> Result<(Session, Vec<Event>), CoreError> {
+    fn rename_locked(
+        &self,
+        id: &SessionId,
+        name: &str,
+    ) -> Result<(Session, Vec<Event>), CoreError> {
         validate_name(name)?;
         let _create = self.locks.create().map_err(CoreError::Lock)?;
         let _session = self.locks.session(id).map_err(CoreError::Lock)?;
@@ -634,11 +666,20 @@ impl TxCore {
         }
         let old = std::mem::replace(&mut session.name, name.to_owned());
         self.store.save(&session)?;
-        let renamed = event(EventType::Renamed, &session, None, format!("{old} -> {name}"));
+        let renamed = event(
+            EventType::Renamed,
+            &session,
+            None,
+            format!("{old} -> {name}"),
+        );
         Ok((session, vec![renamed]))
     }
 
-    pub fn set_session_tags(&self, id: &SessionId, tags: Vec<String>) -> Result<Session, CoreError> {
+    pub fn set_session_tags(
+        &self,
+        id: &SessionId,
+        tags: Vec<String>,
+    ) -> Result<Session, CoreError> {
         let (session, tagged) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
@@ -769,10 +810,18 @@ impl TxCore {
     pub fn forget_session(&self, id: &SessionId) -> Result<bool, CoreError> {
         let (existed, name) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-            let name = self.store.load(id).ok().flatten().map(|session| session.name);
+            let name = self
+                .store
+                .load(id)
+                .ok()
+                .flatten()
+                .map(|session| session.name);
             let existed = self.store.delete(id)?;
             let _ = std::fs::remove_file(
-                self.config.state_dir.join(PROFILES_DIR).join(format!("{id}.md")),
+                self.config
+                    .state_dir
+                    .join(PROFILES_DIR)
+                    .join(format!("{id}.md")),
             );
             (existed, name)
         };
@@ -836,7 +885,10 @@ mod tests {
     use crate::engine::{EngineError, LaunchPlan};
 
     fn dir() -> tempfile::TempDir {
-        tempfile::Builder::new().prefix("txc").tempdir_in("/tmp").unwrap()
+        tempfile::Builder::new()
+            .prefix("txc")
+            .tempdir_in("/tmp")
+            .unwrap()
     }
 
     #[test]
@@ -862,7 +914,10 @@ mod tests {
         std::fs::create_dir_all(&state).unwrap();
         std::fs::write(state.join("tmux.conf"), "mine\n").unwrap();
         TxCore::open(CoreConfig::new(&state)).unwrap();
-        assert_eq!(std::fs::read_to_string(state.join("tmux.conf")).unwrap(), "mine\n");
+        assert_eq!(
+            std::fs::read_to_string(state.join("tmux.conf")).unwrap(),
+            "mine\n"
+        );
     }
 
     #[test]
@@ -870,7 +925,10 @@ mod tests {
         let dir = dir();
         let state = dir.path().join("s".repeat(120));
         let error = TxCore::open(CoreConfig::new(&state)).unwrap_err();
-        assert!(matches!(error, CoreError::SocketPathTooLong(_)), "{error:?}");
+        assert!(
+            matches!(error, CoreError::SocketPathTooLong(_)),
+            "{error:?}"
+        );
         assert!(!state.exists());
         let mut config = CoreConfig::new(dir.path().join("short"));
         config.tmux_socket = Some(dir.path().join("s".repeat(120)));
@@ -883,7 +941,10 @@ mod tests {
         let dir = dir();
         let state = dir.path().join("file");
         std::fs::write(&state, "").unwrap();
-        assert!(matches!(TxCore::open(CoreConfig::new(&state)).unwrap_err(), CoreError::Store(_)));
+        assert!(matches!(
+            TxCore::open(CoreConfig::new(&state)).unwrap_err(),
+            CoreError::Store(_)
+        ));
     }
 
     struct Stub;
@@ -901,14 +962,23 @@ mod tests {
         let dir = dir();
         let mut core = TxCore::open(CoreConfig::new(dir.path().join("s"))).unwrap();
         core.register_engine(Box::new(Stub)).unwrap();
-        assert!(matches!(core.register_engine(Box::new(Stub)).unwrap_err(), CoreError::EngineTaken(_)));
+        assert!(matches!(
+            core.register_engine(Box::new(Stub)).unwrap_err(),
+            CoreError::EngineTaken(_)
+        ));
         assert_eq!(core.engine_ids(), ["stub"]);
     }
 
     #[test]
     fn env_keys_are_validated() {
         assert!(validate_env(&[("A".into(), "1".into()), ("B_c-d".into(), "".into())]).is_ok());
-        for (key, value) in [("", "1"), ("A=B", "1"), ("A", "x\0y"), ("A\0", "1"), ("A B", "1")] {
+        for (key, value) in [
+            ("", "1"),
+            ("A=B", "1"),
+            ("A", "x\0y"),
+            ("A\0", "1"),
+            ("A B", "1"),
+        ] {
             assert!(
                 matches!(validate_env(&[(key.into(), value.into())]), Err(CoreError::InvalidEnvKey(k)) if k == key),
                 "{key:?}"
@@ -918,11 +988,21 @@ mod tests {
 
     #[test]
     fn env_merge_replaces_in_place_and_appends() {
-        let mut env = vec![("A".to_owned(), "1".to_owned()), ("B".to_owned(), "2".to_owned())];
-        merge_env(&mut env, &[("B".into(), "3".into()), ("C".into(), "4".into())]);
+        let mut env = vec![
+            ("A".to_owned(), "1".to_owned()),
+            ("B".to_owned(), "2".to_owned()),
+        ];
+        merge_env(
+            &mut env,
+            &[("B".into(), "3".into()), ("C".into(), "4".into())],
+        );
         assert_eq!(
             env,
-            [("A".to_owned(), "1".to_owned()), ("B".to_owned(), "3".to_owned()), ("C".to_owned(), "4".to_owned())]
+            [
+                ("A".to_owned(), "1".to_owned()),
+                ("B".to_owned(), "3".to_owned()),
+                ("C".to_owned(), "4".to_owned())
+            ]
         );
     }
 
@@ -939,26 +1019,52 @@ mod tests {
         let process = || LaunchOptions::process("sleep", ["1"]);
         let mut bad = opts(process());
         bad.name = "no spaces".into();
-        assert!(matches!(core.create_session(bad).unwrap_err(), CoreError::InvalidName(_)));
+        assert!(matches!(
+            core.create_session(bad).unwrap_err(),
+            CoreError::InvalidName(_)
+        ));
         let mut bad = opts(process());
         bad.env = vec![("=".into(), "1".into())];
-        assert!(matches!(core.create_session(bad).unwrap_err(), CoreError::InvalidEnvKey(_)));
+        assert!(matches!(
+            core.create_session(bad).unwrap_err(),
+            CoreError::InvalidEnvKey(_)
+        ));
         let mut bad = opts(process());
         bad.cwd = dir.path().join("missing");
-        assert!(matches!(core.create_session(bad).unwrap_err(), CoreError::NotADirectory(_)));
+        assert!(matches!(
+            core.create_session(bad).unwrap_err(),
+            CoreError::NotADirectory(_)
+        ));
         let bad = opts(LaunchOptions::agent("ghost"));
-        assert!(matches!(core.create_session(bad).unwrap_err(), CoreError::UnknownEngine(e) if e == "ghost"));
+        assert!(
+            matches!(core.create_session(bad).unwrap_err(), CoreError::UnknownEngine(e) if e == "ghost")
+        );
         let bad = opts(LaunchOptions::process("", Vec::<String>::new()));
-        assert!(matches!(core.create_session(bad).unwrap_err(), CoreError::InvalidName(_)));
-        assert!(std::fs::read_dir(state.join("sessions")).unwrap().next().is_none());
-        assert!(std::fs::read_dir(state.join("profiles")).unwrap().next().is_none());
+        assert!(matches!(
+            core.create_session(bad).unwrap_err(),
+            CoreError::InvalidName(_)
+        ));
+        assert!(
+            std::fs::read_dir(state.join("sessions"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+        assert!(
+            std::fs::read_dir(state.join("profiles"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
         assert!(!state.join("log.jsonl").exists());
     }
 
     #[test]
     fn only_a_gone_session_counts_as_vanished() {
         assert!(session_vanished("no server running on /tmp/x.sock"));
-        assert!(session_vanished("error connecting to /tmp/x.sock (No such file or directory)"));
+        assert!(session_vanished(
+            "error connecting to /tmp/x.sock (No such file or directory)"
+        ));
         assert!(session_vanished("can't find session: =x"));
         assert!(session_vanished("server exited unexpectedly"));
         assert!(session_vanished("no such session: =quick:"));

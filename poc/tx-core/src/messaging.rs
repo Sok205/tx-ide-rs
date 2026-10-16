@@ -19,17 +19,11 @@ pub fn build_envelope(sender: Option<&str>, text: &str) -> String {
 }
 
 /// Types `envelope` into `pane`, waits `pause`, submits with `Enter`.
-pub fn deliver(
-    tmux: &Tmux,
-    pane: &str,
-    envelope: &str,
-    pause: Duration,
-) -> Result<(), TmuxError> {
+pub fn deliver(tmux: &Tmux, pane: &str, envelope: &str, pause: Duration) -> Result<(), TmuxError> {
     tmux.send_keys_literal(pane, envelope)?;
     std::thread::sleep(pause);
     tmux.send_enter(pane)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -72,7 +66,10 @@ mod tests {
             eprintln!("tmux not available; skipping");
             return;
         }
-        let dir = tempfile::Builder::new().prefix("txc").tempdir_in("/tmp").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("txc")
+            .tempdir_in("/tmp")
+            .unwrap();
         let tmux = Tmux::new("tmux", dir.path().join("tmux.sock"), "/dev/null");
         let out = dir.path().join("got.txt");
         let id: crate::session::SessionId = "m".parse().unwrap();
@@ -80,7 +77,10 @@ mod tests {
             "m",
             Path::new("/"),
             "sh",
-            &["-c".into(), format!("head -n 2 > {}; sleep 30", out.display())],
+            &[
+                "-c".into(),
+                format!("head -n 2 > {}; sleep 30", out.display()),
+            ],
             &[],
         )
         .unwrap();
@@ -97,6 +97,8 @@ mod tests {
         }
         assert_eq!(std::fs::read_to_string(&out).unwrap(), "-x ; one;\ntwo\n");
         assert!(deliver(&tmux, "%999", "x", Duration::ZERO).is_err());
-        let _ = Command::new("tmux").args(tmux.argv(&["kill-server".into()])).output();
+        let _ = Command::new("tmux")
+            .args(tmux.argv(&["kill-server".into()]))
+            .output();
     }
 }

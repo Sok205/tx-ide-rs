@@ -17,10 +17,22 @@ const FRONTMATTER_DELIMITER: &str = "---";
 pub enum RoleError {
     #[error("invalid role or skill name {0:?} (must be a bare name: [A-Za-z0-9_-]+)")]
     InvalidName(String),
-    #[error("unknown role {name:?} (no {name}{ROLE_SUFFIX} under {})", dirs(searched))]
-    UnknownRole { name: String, searched: Vec<PathBuf> },
-    #[error("unknown skill {name:?} (no {name}/{SKILL_FILE} under {})", dirs(searched))]
-    UnknownSkill { name: String, searched: Vec<PathBuf> },
+    #[error(
+        "unknown role {name:?} (no {name}{ROLE_SUFFIX} under {})",
+        dirs(searched)
+    )]
+    UnknownRole {
+        name: String,
+        searched: Vec<PathBuf>,
+    },
+    #[error(
+        "unknown skill {name:?} (no {name}/{SKILL_FILE} under {})",
+        dirs(searched)
+    )]
+    UnknownSkill {
+        name: String,
+        searched: Vec<PathBuf>,
+    },
     #[error("{}: unclosed frontmatter block", .0.display())]
     UnclosedFrontmatter(PathBuf),
     #[error("{}: {source}", path.display())]
@@ -209,7 +221,10 @@ fn split_frontmatter(path: &Path) -> Result<(Vec<String>, String), RoleError> {
     let close = (1..lines.len())
         .find(|&index| lines[index].trim() == FRONTMATTER_DELIMITER)
         .ok_or_else(|| RoleError::UnclosedFrontmatter(path.to_owned()))?;
-    let frontmatter = lines[1..close].iter().map(|line| (*line).to_owned()).collect();
+    let frontmatter = lines[1..close]
+        .iter()
+        .map(|line| (*line).to_owned())
+        .collect();
     Ok((frontmatter, lines[close + 1..].join("\n")))
 }
 
@@ -322,12 +337,12 @@ mod tests {
     #[test]
     fn frontmatter_is_stripped_and_grants_skills() {
         let tree = Tree::new();
-        tree.write(
-            "r/a.md",
-            "---\ntx:\n  skills: [one, two]\n---\n# A\nbody\n",
-        );
+        tree.write("r/a.md", "---\ntx:\n  skills: [one, two]\n---\n# A\nbody\n");
         tree.write("r/b.md", "---\nskills: [two, three]\n---\nB");
-        tree.write("skills/one/SKILL.md", "---\nname: one\ndescription: d\n---\n");
+        tree.write(
+            "skills/one/SKILL.md",
+            "---\nname: one\ndescription: d\n---\n",
+        );
         tree.write("skills/two/SKILL.md", "x");
         tree.write("skills/three/SKILL.md", "x");
         tree.write("user-skills/two/SKILL.md", "override");
@@ -394,7 +409,10 @@ mod tests {
             .profiles(&["r"], &[])
             .resolve(&names(&["a"]))
             .unwrap_err();
-        assert!(matches!(&error, RoleError::UnclosedFrontmatter(p) if *p == path), "{error:?}");
+        assert!(
+            matches!(&error, RoleError::UnclosedFrontmatter(p) if *p == path),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -406,7 +424,10 @@ mod tests {
                 .profiles(&["r"], &[])
                 .resolve(&names(&[bad]))
                 .unwrap_err();
-            assert!(matches!(&error, RoleError::InvalidName(n) if n == bad), "{bad:?}: {error:?}");
+            assert!(
+                matches!(&error, RoleError::InvalidName(n) if n == bad),
+                "{bad:?}: {error:?}"
+            );
         }
     }
 
@@ -421,7 +442,10 @@ mod tests {
     #[test]
     fn crlf_files_read_as_lf_and_bodies_are_trimmed() {
         let tree = Tree::new();
-        tree.write("r/a.md", "---\r\nskills: [ ]\r\n---\r\n\r\n  A line\r\n\r\n");
+        tree.write(
+            "r/a.md",
+            "---\r\nskills: [ ]\r\n---\r\n\r\n  A line\r\n\r\n",
+        );
         let resolved = tree.profiles(&["r"], &[]).resolve(&names(&["a"])).unwrap();
         assert_eq!(resolved.text, "A line");
     }
@@ -438,14 +462,20 @@ mod tests {
             return; // root reads anything; nothing to assert
         }
         let error = result.unwrap_err();
-        assert!(matches!(&error, RoleError::Read { path: p, .. } if *p == path), "{error:?}");
+        assert!(
+            matches!(&error, RoleError::Read { path: p, .. } if *p == path),
+            "{error:?}"
+        );
     }
 
     #[test]
     fn a_directory_named_like_a_role_is_not_a_role() {
         let tree = Tree::new();
         std::fs::create_dir_all(tree.path("r/a.md")).unwrap();
-        let error = tree.profiles(&["r"], &[]).resolve(&names(&["a"])).unwrap_err();
+        let error = tree
+            .profiles(&["r"], &[])
+            .resolve(&names(&["a"]))
+            .unwrap_err();
         assert!(matches!(error, RoleError::UnknownRole { .. }), "{error:?}");
     }
 
@@ -491,7 +521,10 @@ mod tests {
         tree.write("r/b.md", "B");
         tree.write("r/b.local.md", "---\nskills: []\n---\n");
         let profiles = tree.profiles(&["r"], &[]);
-        assert_eq!(profiles.resolve(&names(&["a", "e", "b"])).unwrap().text, "A\n\nB");
+        assert_eq!(
+            profiles.resolve(&names(&["a", "e", "b"])).unwrap().text,
+            "A\n\nB"
+        );
         assert_eq!(profiles.resolve(&names(&["e", "a"])).unwrap().text, "A");
         assert_eq!(profiles.resolve(&names(&["b"])).unwrap().text, "B");
         assert_eq!(profiles.resolve(&names(&["e"])).unwrap().text, "");
@@ -502,7 +535,10 @@ mod tests {
         assert_eq!(skills_in(&["skills: [a, b]"]), ["a", "b"]);
         assert_eq!(skills_in(&["tx:", "  skills: [ a ,b ,, ]"]), ["a", "b"]);
         assert_eq!(skills_in(&["skills: []"]), Vec::<String>::new());
-        assert_eq!(skills_in(&["skillset: [a]", "other: 1"]), Vec::<String>::new());
+        assert_eq!(
+            skills_in(&["skillset: [a]", "other: 1"]),
+            Vec::<String>::new()
+        );
         assert_eq!(skills_in(&["skills: [a]", "skills: [b]"]), ["a", "b"]);
         assert_eq!(skills_in(&["skills:[a]"]), ["a"]);
         assert_eq!(skills_in(&["skills: [a] # c"]), Vec::<String>::new());
@@ -512,7 +548,13 @@ mod tests {
     fn skill_names_must_be_bare_too() {
         let tree = Tree::new();
         tree.write("r/a.md", "---\nskills: [../evil]\n---\nA");
-        let error = tree.profiles(&["r"], &["s"]).resolve(&names(&["a"])).unwrap_err();
-        assert!(matches!(&error, RoleError::InvalidName(n) if n == "../evil"), "{error:?}");
+        let error = tree
+            .profiles(&["r"], &["s"])
+            .resolve(&names(&["a"]))
+            .unwrap_err();
+        assert!(
+            matches!(&error, RoleError::InvalidName(n) if n == "../evil"),
+            "{error:?}"
+        );
     }
 }

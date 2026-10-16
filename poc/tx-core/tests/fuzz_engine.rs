@@ -52,8 +52,7 @@ fn link(src: impl Into<PathBuf>, dst: &str) -> WorkspaceAction {
 fn is_bare_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
-        && s
-            .bytes()
+        && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
@@ -206,7 +205,14 @@ fn resolve_in_absolute_inside_cwd_is_ok_and_outside_is_err() {
         resolve_in(cwd, Path::new("/w/root/a/../b")).unwrap(),
         PathBuf::from("/w/root/b")
     );
-    for bad in ["/w/root2/x", "/w/roo", "/w", "/", "/w/root/../other", "/etc/passwd"] {
+    for bad in [
+        "/w/root2/x",
+        "/w/roo",
+        "/w",
+        "/",
+        "/w/root/../other",
+        "/etc/passwd",
+    ] {
         assert!(resolve_in(cwd, Path::new(bad)).is_err(), "{bad}");
     }
 }
@@ -232,24 +238,42 @@ fn resolve_in_cwd_with_inner_dot_is_harmless() {
 #[test]
 fn resolve_in_cwd_containing_dotdot_accepts_relative_paths() {
     let cwd = Path::new("/w/x/../root");
-    assert_eq!(resolve_in(cwd, Path::new("a")).unwrap(), PathBuf::from("/w/root/a"));
-    assert_eq!(resolve_in(cwd, Path::new("")).unwrap(), PathBuf::from("/w/root"));
-    assert_eq!(resolve_in(cwd, Path::new("/w/root/a")).unwrap(), PathBuf::from("/w/root/a"));
+    assert_eq!(
+        resolve_in(cwd, Path::new("a")).unwrap(),
+        PathBuf::from("/w/root/a")
+    );
+    assert_eq!(
+        resolve_in(cwd, Path::new("")).unwrap(),
+        PathBuf::from("/w/root")
+    );
+    assert_eq!(
+        resolve_in(cwd, Path::new("/w/root/a")).unwrap(),
+        PathBuf::from("/w/root/a")
+    );
     assert!(resolve_in(cwd, Path::new("/w/x/a")).is_err());
 }
 
 #[test]
 fn resolve_in_refuses_a_relative_cwd() {
     for cwd in ["rel/w", "", ".", "../x"] {
-        assert!(resolve_in(Path::new(cwd), Path::new("x")).is_err(), "{cwd:?}");
-        assert!(resolve_in(Path::new(cwd), Path::new("/etc/passwd")).is_err(), "{cwd:?}");
+        assert!(
+            resolve_in(Path::new(cwd), Path::new("x")).is_err(),
+            "{cwd:?}"
+        );
+        assert!(
+            resolve_in(Path::new(cwd), Path::new("/etc/passwd")).is_err(),
+            "{cwd:?}"
+        );
     }
 }
 
 #[test]
 fn resolve_in_root_cwd() {
     let cwd = Path::new("/");
-    assert_eq!(resolve_in(cwd, Path::new("x")).unwrap(), PathBuf::from("/x"));
+    assert_eq!(
+        resolve_in(cwd, Path::new("x")).unwrap(),
+        PathBuf::from("/x")
+    );
     assert!(resolve_in(cwd, Path::new("..")).is_err());
     assert!(resolve_in(cwd, Path::new("../x")).is_err());
     assert_eq!(resolve_in(cwd, Path::new("")).unwrap(), PathBuf::from("/"));
@@ -337,7 +361,10 @@ fn symlink_action_then_write_escapes_cwd_within_one_plan() {
     std::fs::create_dir_all(&elsewhere).unwrap();
     apply_workspace(
         &cwd,
-        &[link(elsewhere.clone(), "skills/one"), write("skills/one/SKILL.md", "pwned")],
+        &[
+            link(elsewhere.clone(), "skills/one"),
+            write("skills/one/SKILL.md", "pwned"),
+        ],
     )
     .unwrap();
     assert_eq!(
@@ -367,7 +394,11 @@ fn late_escaping_write_leaves_nothing_written() {
     let dir = tmp();
     let error = apply_workspace(
         dir.path(),
-        &[write("a.txt", "1"), write("b/c.txt", "2"), write("../escape", "3")],
+        &[
+            write("a.txt", "1"),
+            write("b/c.txt", "2"),
+            write("../escape", "3"),
+        ],
     )
     .unwrap_err();
     let is_workspace = matches!(error, EngineError::Workspace { .. });
@@ -384,7 +415,11 @@ fn apply_time_failure_is_not_rolled_back() {
     std::fs::write(dir.path().join("existing"), "keep").unwrap();
     let error = apply_workspace(
         dir.path(),
-        &[write("first.txt", "written"), link("/tmp", "existing"), write("third.txt", "never")],
+        &[
+            write("first.txt", "written"),
+            link("/tmp", "existing"),
+            write("third.txt", "never"),
+        ],
     )
     .unwrap_err();
     match &error {
@@ -411,8 +446,8 @@ fn parents_are_created_for_later_actions_before_an_earlier_apply_failure_is_noti
     // later actions. (Pinned so a reordering is noticed.)
     let dir = tmp();
     std::fs::create_dir(dir.path().join("isdir")).unwrap();
-    let _ = apply_workspace(dir.path(), &[write("isdir", "x"), write("later/leaf", "y")])
-        .unwrap_err();
+    let _ =
+        apply_workspace(dir.path(), &[write("isdir", "x"), write("later/leaf", "y")]).unwrap_err();
     assert!(!dir.path().join("later").exists());
 }
 
@@ -425,7 +460,10 @@ fn relative_src_is_stored_verbatim() {
     let dir = tmp();
     apply_workspace(dir.path(), &[link("../skills/one", ".claude/skills/one")]).unwrap();
     let dst = dir.path().join(".claude/skills/one");
-    assert_eq!(std::fs::read_link(&dst).unwrap(), PathBuf::from("../skills/one"));
+    assert_eq!(
+        std::fs::read_link(&dst).unwrap(),
+        PathBuf::from("../skills/one")
+    );
     // It resolves relative to the link's parent (.claude/skills), i.e. .claude/skills/../skills/one
     // = .claude/skills/one — the link points at itself. Dangling, allowed, no error.
     assert!(dst.is_symlink());
@@ -472,7 +510,10 @@ fn existing_symlink_to_directory_is_replaced_and_target_dir_survives() {
     assert!(l.is_dir(), "precondition: symlink-to-dir");
     apply_workspace(dir.path(), &[link("/other", "l")]).unwrap();
     assert_eq!(std::fs::read_link(&l).unwrap(), PathBuf::from("/other"));
-    assert!(real.join("keep").exists(), "remove_file must unlink, not recurse");
+    assert!(
+        real.join("keep").exists(),
+        "remove_file must unlink, not recurse"
+    );
 }
 
 #[test]
@@ -483,7 +524,10 @@ fn symlink_dst_with_trailing_slash_onto_existing_symlink_to_dir() {
     std::fs::create_dir(&real).unwrap();
     std::os::unix::fs::symlink(&real, dir.path().join("l")).unwrap();
     apply_workspace(dir.path(), &[link("/x", "l/")]).unwrap();
-    assert_eq!(std::fs::read_link(dir.path().join("l")).unwrap(), PathBuf::from("/x"));
+    assert_eq!(
+        std::fs::read_link(dir.path().join("l")).unwrap(),
+        PathBuf::from("/x")
+    );
 }
 
 #[test]
@@ -559,12 +603,18 @@ fn write_content_edge_cases() {
         &[write("nul", nul), write("big", &big), write("empty", "")],
     )
     .unwrap();
-    assert_eq!(std::fs::read(dir.path().join("nul")).unwrap(), nul.as_bytes());
+    assert_eq!(
+        std::fs::read(dir.path().join("nul")).unwrap(),
+        nul.as_bytes()
+    );
     assert_eq!(
         std::fs::metadata(dir.path().join("big")).unwrap().len(),
         10 * 1024 * 1024
     );
-    assert_eq!(std::fs::metadata(dir.path().join("empty")).unwrap().len(), 0);
+    assert_eq!(
+        std::fs::metadata(dir.path().join("empty")).unwrap().len(),
+        0
+    );
 }
 
 #[test]
@@ -598,7 +648,10 @@ fn write_under_parent_that_is_symlink_to_file_errs_naming_target() {
         EngineError::Workspace { path, .. } => assert_eq!(path, &dir.path().join("lf/x")),
         other => panic!("{other:?}"),
     }
-    assert_eq!(std::fs::read_to_string(dir.path().join("file")).unwrap(), "");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("file")).unwrap(),
+        ""
+    );
 }
 
 #[test]
@@ -638,8 +691,14 @@ fn write_unicode_and_odd_names() {
         std::fs::read_to_string(dir.path().join("日本/ünï cødé/..a/a..")).unwrap(),
         "u"
     );
-    assert_eq!(std::fs::read_to_string(dir.path().join("a b/ c /-")).unwrap(), "s");
-    assert_eq!(std::fs::read_to_string(dir.path().join("--/-rf")).unwrap(), "d");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a b/ c /-")).unwrap(),
+        "s"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("--/-rf")).unwrap(),
+        "d"
+    );
 }
 
 proptest! {
@@ -779,7 +838,17 @@ fn registry_id_at_128_bytes_ok_129_refused() {
 #[test]
 fn registry_rejects_unicode_lookalikes_and_whitespace() {
     let mut registry = EngineRegistry::new();
-    for bad in ["ａ", "a\u{200b}", "a\n", " a", "a ", "a/b", "a.b", "a:b", "é"] {
+    for bad in [
+        "ａ",
+        "a\u{200b}",
+        "a\n",
+        " a",
+        "a ",
+        "a/b",
+        "a.b",
+        "a:b",
+        "é",
+    ] {
         let error = registry.register(stub(bad)).unwrap_err();
         let invalid = matches!(error, CoreError::InvalidName(ref n) if n == bad);
         assert!(invalid, "{bad:?}: {error:?}");
@@ -803,7 +872,9 @@ fn core_accepts_a_plan_with_empty_program() {
         &dir.path().join("p.md"),
     )
     .unwrap();
-    let request = LaunchRequest::new(dir.path(), &profile).effort(Effort::Low).initial_prompt("");
+    let request = LaunchRequest::new(dir.path(), &profile)
+        .effort(Effort::Low)
+        .initial_prompt("");
     let mut registry = EngineRegistry::new();
     registry.register(stub("empty")).unwrap();
     let plan = registry.get("empty").unwrap().launch(&request).unwrap();
@@ -815,5 +886,8 @@ fn core_accepts_a_plan_with_empty_program() {
 #[test]
 fn error_display_names_the_offending_path() {
     let error = resolve_in(Path::new("/w"), Path::new("../x")).unwrap_err();
-    assert_eq!(error.to_string(), "workspace action on ../x: escapes the working directory");
+    assert_eq!(
+        error.to_string(),
+        "workspace action on ../x: escapes the working directory"
+    );
 }

@@ -218,11 +218,17 @@ fn parse_sharp_edges() {
     // an id with '\r' is not a valid id, so the row is "not ours" and silently skipped
     assert!(LiveTable::parse("id\r\t$0\t%0\n").unwrap().is_empty());
     // trailing tab → 4 fields → InspectionFailed
-    assert!(is_inspection_failed(&LiveTable::parse("id\t$0\t%0\t\n").unwrap_err()));
+    assert!(is_inspection_failed(
+        &LiveTable::parse("id\t$0\t%0\t\n").unwrap_err()
+    ));
     // tab inside the id (a hand-set @tx-id) corrupts the row → InspectionFailed, never a guess
-    assert!(is_inspection_failed(&LiveTable::parse("a\tb\t$0\t%0\n").unwrap_err()));
+    assert!(is_inspection_failed(
+        &LiveTable::parse("a\tb\t$0\t%0\n").unwrap_err()
+    ));
     // one bad row poisons the whole table
-    assert!(is_inspection_failed(&LiveTable::parse("ok\t$0\t%0\nbad\n").unwrap_err()));
+    assert!(is_inspection_failed(
+        &LiveTable::parse("ok\t$0\t%0\nbad\n").unwrap_err()
+    ));
     // ids with '\r', unicode, spaces or > 64 bytes are not core-minted → skipped, not errors
     let long = "a".repeat(65);
     let text = format!("a\rb\t$1\t%1\nżółć\t$2\t%2\na b\t$3\t%3\n{long}\t$4\t%4\nok\t$5\t%5\n");
@@ -232,7 +238,12 @@ fn parse_sharp_edges() {
     // a row of only tabs: empty id → skipped
     assert!(LiveTable::parse("\t\t\n").unwrap().is_empty());
     // 64-byte id is the maximum
-    assert_eq!(LiveTable::parse(&format!("{}\t$0\t%0\n", "b".repeat(64))).unwrap().len(), 1);
+    assert_eq!(
+        LiveTable::parse(&format!("{}\t$0\t%0\n", "b".repeat(64)))
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -281,10 +292,14 @@ fn probe_name(server: &Server, name: &str) -> NameOutcome {
             _ => NameOutcome::Unaddressable,
         };
     }
-    let live = tmux.is_live(&id).unwrap().expect("set_tx_id succeeded → listed");
+    let live = tmux
+        .is_live(&id)
+        .unwrap()
+        .expect("set_tx_id succeeded → listed");
     assert!(live.session_target.starts_with('$'), "{live:?}");
     assert!(live.pane_target.starts_with('%'), "{live:?}");
-    tmux.rename_session(&live.session_target, "renamed").unwrap();
+    tmux.rename_session(&live.session_target, "renamed")
+        .unwrap();
     assert_eq!(tmux.is_live(&id).unwrap().unwrap(), live);
     assert!(tmux.kill_session(&live.session_target).unwrap());
     assert!(tmux.is_live(&id).unwrap().is_none());
@@ -358,7 +373,12 @@ fn exact_target_does_not_prefix_match() {
 // 3. new_session env
 // ---------------------------------------------------------------------------------------------
 
-fn env_probe(server: &Server, name: &str, env: &[(String, String)], keys: &[&str]) -> Result<Vec<Option<String>>, TmuxError> {
+fn env_probe(
+    server: &Server,
+    name: &str,
+    env: &[(String, String)],
+    keys: &[&str],
+) -> Result<Vec<Option<String>>, TmuxError> {
     let out = server.dir.path().join(format!("{name}.env"));
     let script = keys
         .iter()
@@ -369,7 +389,13 @@ fn env_probe(server: &Server, name: &str, env: &[(String, String)], keys: &[&str
         name,
         Path::new("/"),
         "sh",
-        &["-c".into(), format!("{{ {script}; }} > {}.tmp && mv {0}.tmp {0}; sleep 60", out.display())],
+        &[
+            "-c".into(),
+            format!(
+                "{{ {script}; }} > {}.tmp && mv {0}.tmp {0}; sleep 60",
+                out.display()
+            ),
+        ],
         env,
     )?;
     let bytes = wait_for(&out, |b| !b.is_empty());
@@ -396,7 +422,13 @@ fn env_values_reach_the_process_verbatim() {
         ("LONG".into(), long.clone()),
         ("TAB".into(), "a\tb".into()),
     ];
-    let got = env_probe(&server, "env", &env, &["EQ", "SP", "NL", "UNI", "EMPTY", "LONG", "TAB"]).unwrap();
+    let got = env_probe(
+        &server,
+        "env",
+        &env,
+        &["EQ", "SP", "NL", "UNI", "EMPTY", "LONG", "TAB"],
+    )
+    .unwrap();
     let expected: Vec<Option<String>> = env.iter().map(|(_, v)| Some(v.clone())).collect();
     assert_eq!(got, expected);
 }
@@ -438,7 +470,8 @@ fn env_key_containing_equals_splits_at_first_equals() {
 #[test]
 fn later_env_entry_wins() {
     let server = server!();
-    let env: Vec<(String, String)> = vec![("K".into(), "first".into()), ("K".into(), "second".into())];
+    let env: Vec<(String, String)> =
+        vec![("K".into(), "first".into()), ("K".into(), "second".into())];
     let got = env_probe(&server, "e3", &env, &["K"]).unwrap();
     assert_eq!(got, vec![Some("second".into())]);
 }
@@ -449,7 +482,10 @@ fn later_env_entry_wins() {
 
 fn typed(server: &Server, name: &str, text: &str) -> Vec<u8> {
     let (_, live, out) = server.cat_pane(name);
-    server.tmux.send_keys_literal(&live.pane_target, text).unwrap();
+    server
+        .tmux
+        .send_keys_literal(&live.pane_target, text)
+        .unwrap();
     server.tmux.send_enter(&live.pane_target).unwrap();
     let want = text.len() + 1;
     wait_for(&out, |b| b.len() >= want)
@@ -471,7 +507,11 @@ fn send_keys_literal_is_verbatim_for_shell_like_text() {
     ];
     for (i, text) in cases.iter().enumerate() {
         let got = typed(&server, &format!("t{i}"), text);
-        assert_eq!(String::from_utf8_lossy(&got), format!("{text}\n"), "case {text:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            format!("{text}\n"),
+            "case {text:?}"
+        );
     }
 }
 
@@ -494,7 +534,10 @@ fn send_keys_literal_cr_becomes_newline_via_tty() {
 fn send_keys_literal_empty_text_is_ok() {
     let server = server!();
     let (_, live, out) = server.cat_pane("empty");
-    server.tmux.send_keys_literal(&live.pane_target, "").unwrap();
+    server
+        .tmux
+        .send_keys_literal(&live.pane_target, "")
+        .unwrap();
     server.tmux.send_enter(&live.pane_target).unwrap();
     assert_eq!(wait_for(&out, |b| !b.is_empty()), b"\n");
 }
@@ -521,7 +564,11 @@ fn send_keys_literal_trailing_semicolon_is_verbatim() {
     let server = server!();
     for (i, text) in ["a;", ";", "b\\;"].iter().enumerate() {
         let got = typed(&server, &format!("semi{i}"), text);
-        assert_eq!(String::from_utf8_lossy(&got), format!("{text}\n"), "case {text:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            format!("{text}\n"),
+            "case {text:?}"
+        );
     }
 }
 
@@ -540,8 +587,12 @@ fn stale_targets_fail_cleanly_while_server_lives() {
     assert!(tmux.kill_session(&live.session_target).unwrap());
 
     assert!(!tmux.kill_session(&live.session_target).unwrap());
-    assert!(is_failed(&tmux.rename_session(&live.session_target, "x").unwrap_err()));
-    assert!(is_failed(&tmux.send_keys_literal(&live.pane_target, "x").unwrap_err()));
+    assert!(is_failed(
+        &tmux.rename_session(&live.session_target, "x").unwrap_err()
+    ));
+    assert!(is_failed(
+        &tmux.send_keys_literal(&live.pane_target, "x").unwrap_err()
+    ));
     assert!(is_failed(&tmux.send_enter(&live.pane_target).unwrap_err()));
     assert!(is_failed(&tmux.set_tx_id("victim", &sid("v")).unwrap_err()));
     assert_eq!(tmux.list_live().unwrap().len(), 0);
@@ -561,8 +612,12 @@ fn everything_fails_cleanly_after_kill_server() {
     assert!(tmux.is_live(&sid("a")).unwrap().is_none());
     assert!(!tmux.kill_session(&live.session_target).unwrap());
     assert!(!tmux.kill_session(&exact("a")).unwrap());
-    assert!(is_failed(&tmux.rename_session(&live.session_target, "x").unwrap_err()));
-    assert!(is_failed(&tmux.send_keys_literal(&live.pane_target, "x").unwrap_err()));
+    assert!(is_failed(
+        &tmux.rename_session(&live.session_target, "x").unwrap_err()
+    ));
+    assert!(is_failed(
+        &tmux.send_keys_literal(&live.pane_target, "x").unwrap_err()
+    ));
     assert!(is_failed(&tmux.send_enter(&live.pane_target).unwrap_err()));
     assert!(is_failed(&tmux.set_tx_id("a", &sid("a")).unwrap_err()));
     // the socket file is gone, so a fresh server can start again
@@ -646,10 +701,16 @@ fn socket_under_unreadable_dir_is_inspection_failed() {
 fn missing_conf_file_does_not_stop_the_server() {
     // sharp edge check: a nonexistent -f is a startup error inside tmux; does new_session fail?
     let server = server!();
-    let tmux = Tmux::new("tmux", server.dir.path().join("x.sock"), server.dir.path().join("missing.conf"));
+    let tmux = Tmux::new(
+        "tmux",
+        server.dir.path().join("x.sock"),
+        server.dir.path().join("missing.conf"),
+    );
     let result = tmux.new_session("a", Path::new("/"), "sleep", &["60".into()], &[]);
     let listed = tmux.list_live();
-    let _ = Command::new("tmux").args(tmux.argv(&["kill-server".into()])).output();
+    let _ = Command::new("tmux")
+        .args(tmux.argv(&["kill-server".into()]))
+        .output();
     assert!(result.is_ok(), "{result:?}");
     assert!(listed.unwrap().is_empty());
 }
@@ -679,7 +740,10 @@ fn fifty_sessions_all_listed_with_unique_targets() {
     }
     // kill every other one by `$N`; the rest stay
     for id in ids.iter().step_by(2) {
-        assert!(tmux.kill_session(&table.get(id).unwrap().session_target).unwrap());
+        assert!(
+            tmux.kill_session(&table.get(id).unwrap().session_target)
+                .unwrap()
+        );
     }
     let table = tmux.list_live().unwrap();
     assert_eq!(table.len(), 25);
@@ -696,13 +760,27 @@ fn cloned_session_shares_the_tx_id_and_first_wins() {
     let tmux = &server.tmux;
     server.sleeper("a").unwrap();
     tmux.set_tx_id("a", &sid("a")).unwrap();
-    assert!(server.raw(&["new-session", "-d", "-s", "b", "-t", "=a"]).status.success());
+    assert!(
+        server
+            .raw(&["new-session", "-d", "-s", "b", "-t", "=a"])
+            .status
+            .success()
+    );
     assert_eq!(tmux.list_live().unwrap().len(), 1);
-    assert!(server.raw(&["set-option", "-t", "=b:", "@tx-id", "a"]).status.success());
+    assert!(
+        server
+            .raw(&["set-option", "-t", "=b:", "@tx-id", "a"])
+            .status
+            .success()
+    );
     let table = tmux.list_live().unwrap();
     assert_eq!(table.len(), 1);
     let live = table.get(&sid("a")).unwrap();
     let raw = server.raw(&["list-sessions", "-F", "#{session_id}"]);
-    let first_line = String::from_utf8_lossy(&raw.stdout).lines().next().unwrap().to_owned();
+    let first_line = String::from_utf8_lossy(&raw.stdout)
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
     assert_eq!(live.session_target, first_line);
 }

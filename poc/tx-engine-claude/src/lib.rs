@@ -106,7 +106,12 @@ mod tests {
         assert_eq!(plan.program, "claude");
         assert_eq!(
             plan.args,
-            argv(&["--effort", "high", "--no-chrome", "--dangerously-skip-permissions"])
+            argv(&[
+                "--effort",
+                "high",
+                "--no-chrome",
+                "--dangerously-skip-permissions"
+            ])
         );
         assert!(plan.env.is_empty());
         assert!(plan.workspace.is_empty());
@@ -116,7 +121,12 @@ mod tests {
     fn every_option() {
         let (dir, profile) = profile("# Role\nbe good", &["/skills/one", "/other/two"]);
         let plan = Claude
-            .launch(&LaunchRequest::new(dir.path(), &profile).model("opus").effort(Effort::Medium).initial_prompt("go"))
+            .launch(
+                &LaunchRequest::new(dir.path(), &profile)
+                    .model("opus")
+                    .effort(Effort::Medium)
+                    .initial_prompt("go"),
+            )
             .unwrap();
         assert_eq!(
             plan.args,
@@ -151,11 +161,21 @@ mod tests {
     fn empty_model_and_prompt_are_absent() {
         let (dir, profile) = profile("", &[]);
         let plan = Claude
-            .launch(&LaunchRequest::new(dir.path(), &profile).model("").effort(Effort::Max).initial_prompt(""))
+            .launch(
+                &LaunchRequest::new(dir.path(), &profile)
+                    .model("")
+                    .effort(Effort::Max)
+                    .initial_prompt(""),
+            )
             .unwrap();
         assert_eq!(
             plan.args,
-            argv(&["--effort", "max", "--no-chrome", "--dangerously-skip-permissions"])
+            argv(&[
+                "--effort",
+                "max",
+                "--no-chrome",
+                "--dangerously-skip-permissions"
+            ])
         );
     }
 
@@ -163,7 +183,11 @@ mod tests {
     fn resume_continues_a_conversation() {
         let (dir, profile) = profile("role", &[]);
         let plan = Claude
-            .launch(&LaunchRequest::new(dir.path(), &profile).resume("chat-42").initial_prompt("more"))
+            .launch(
+                &LaunchRequest::new(dir.path(), &profile)
+                    .resume("chat-42")
+                    .initial_prompt("more"),
+            )
             .unwrap();
         assert_eq!(
             plan.args,
@@ -182,7 +206,10 @@ mod tests {
         let plan = Claude
             .launch(&LaunchRequest::new(dir.path(), &profile).resume(""))
             .unwrap();
-        assert!(!plan.args.iter().any(|a| a == "--resume"), "empty resume is absent");
+        assert!(
+            !plan.args.iter().any(|a| a == "--resume"),
+            "empty resume is absent"
+        );
     }
 
     #[test]

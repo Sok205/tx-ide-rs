@@ -25,7 +25,10 @@ impl EngineAdapter for Codex {
     }
 
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        let model = req.model.filter(|model| !model.is_empty()).unwrap_or(CODEX_MODEL);
+        let model = req
+            .model
+            .filter(|model| !model.is_empty())
+            .unwrap_or(CODEX_MODEL);
         let effort = req.effort.unwrap_or(DEFAULT_EFFORT);
         let mut args = Vec::new();
         if let Some(resume) = req.resume.filter(|resume| !resume.is_empty()) {
@@ -124,7 +127,12 @@ mod tests {
     fn every_option() {
         let (dir, profile) = profile("be good", &["/skills/one"]);
         let plan = Codex
-            .launch(&LaunchRequest::new(dir.path(), &profile).model("o3").effort(Effort::Low).initial_prompt("go"))
+            .launch(
+                &LaunchRequest::new(dir.path(), &profile)
+                    .model("o3")
+                    .effort(Effort::Low)
+                    .initial_prompt("go"),
+            )
             .unwrap();
         assert_eq!(
             plan.args,
@@ -153,7 +161,11 @@ mod tests {
     fn resume_is_the_subcommand() {
         let (dir, profile) = profile("", &[]);
         let plan = Codex
-            .launch(&LaunchRequest::new(dir.path(), &profile).resume("sess-7").model("o3"))
+            .launch(
+                &LaunchRequest::new(dir.path(), &profile)
+                    .resume("sess-7")
+                    .model("o3"),
+            )
             .unwrap();
         assert_eq!(
             plan.args,
@@ -178,7 +190,11 @@ mod tests {
     fn empty_model_and_prompt_fall_back() {
         let (dir, profile) = profile("", &[]);
         let plan = Codex
-            .launch(&LaunchRequest::new(dir.path(), &profile).model("").initial_prompt(""))
+            .launch(
+                &LaunchRequest::new(dir.path(), &profile)
+                    .model("")
+                    .initial_prompt(""),
+            )
             .unwrap();
         assert_eq!(plan.args[1], "gpt-5.6-sol");
         assert_eq!(plan.args.len(), 6);

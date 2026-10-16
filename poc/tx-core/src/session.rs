@@ -251,7 +251,8 @@ impl Session {
         let value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)?;
         match value.get("version") {
             None => return Err(RecordError::MissingVersion),
-            Some(serde_json::Value::Number(version)) if version.as_u64() == Some(RECORD_VERSION) => {}
+            Some(serde_json::Value::Number(version))
+                if version.as_u64() == Some(RECORD_VERSION) => {}
             Some(serde_json::Value::Number(version)) => {
                 return Err(match version.as_u64() {
                     Some(other) => RecordError::UnsupportedVersion(other),
@@ -364,7 +365,9 @@ mod tests {
         assert_eq!(session.parent, None);
         assert_eq!(session.ended_at, None);
         assert_eq!(session.lifecycle, Lifecycle::Exited);
-        assert!(matches!(session.launch, Launch::Agent { ref model, ref effort, ref resume, .. } if model.is_none() && effort.is_none() && resume.is_none()));
+        assert!(
+            matches!(session.launch, Launch::Agent { ref model, ref effort, ref resume, .. } if model.is_none() && effort.is_none() && resume.is_none())
+        );
     }
 
     #[test]
@@ -376,7 +379,10 @@ mod tests {
 
     #[test]
     fn newer_version_is_refused() {
-        let text = process().to_json().unwrap().replace("\"version\": 1", "\"version\": 2");
+        let text = process()
+            .to_json()
+            .unwrap()
+            .replace("\"version\": 1", "\"version\": 2");
         assert!(matches!(
             Session::from_json(&text),
             Err(RecordError::UnsupportedVersion(2))
@@ -385,7 +391,10 @@ mod tests {
 
     #[test]
     fn missing_version_is_refused() {
-        let text = process().to_json().unwrap().replace("\"version\": 1,\n", "");
+        let text = process()
+            .to_json()
+            .unwrap()
+            .replace("\"version\": 1,\n", "");
         assert!(matches!(
             Session::from_json(&text),
             Err(RecordError::MissingVersion)
@@ -395,7 +404,10 @@ mod tests {
     #[test]
     fn garbage_is_a_json_error() {
         assert!(matches!(Session::from_json("{"), Err(RecordError::Json(_))));
-        assert!(matches!(Session::from_json("[]"), Err(RecordError::Json(_))));
+        assert!(matches!(
+            Session::from_json("[]"),
+            Err(RecordError::Json(_))
+        ));
         assert!(matches!(
             Session::from_json(r#"{"version":1}"#),
             Err(RecordError::Json(_))
@@ -429,7 +441,10 @@ mod tests {
         let mut session = process();
         session.created_at = -0.0;
         session.ended_at = Some(f64::MIN_POSITIVE / 2.0);
-        assert_eq!(Session::from_json(&session.to_json().unwrap()).unwrap(), session);
+        assert_eq!(
+            Session::from_json(&session.to_json().unwrap()).unwrap(),
+            session
+        );
     }
 
     #[test]
@@ -472,7 +487,18 @@ mod tests {
         for ok in ["abc", "a-b_C9", "-", &"x".repeat(MAX_ID_BYTES)] {
             assert_eq!(ok.parse::<SessionId>().unwrap().as_str(), ok, "{ok:?}");
         }
-        for bad in ["", "a/b", "..", ".", "a b", "a\n", "ä", "a.b", "/abs", &"x".repeat(MAX_ID_BYTES + 1)] {
+        for bad in [
+            "",
+            "a/b",
+            "..",
+            ".",
+            "a b",
+            "a\n",
+            "ä",
+            "a.b",
+            "/abs",
+            &"x".repeat(MAX_ID_BYTES + 1),
+        ] {
             assert!(
                 matches!(bad.parse::<SessionId>(), Err(InvalidSessionId(found)) if found == bad),
                 "{bad:?}"
@@ -485,10 +511,22 @@ mod tests {
     #[test]
     fn from_json_rejects_ids_outside_the_grammar() {
         for bad in ["\"\"", "\"a/b\"", "\"..\"", "\"a b\""] {
-            let text = process().to_json().unwrap().replace("\"id\": \"x\"", &format!("\"id\": {bad}"));
-            assert!(matches!(Session::from_json(&text), Err(RecordError::Json(_))), "{bad}");
-            let text = agent().to_json().unwrap().replace("\"parent\": \"p\"", &format!("\"parent\": {bad}"));
-            assert!(matches!(Session::from_json(&text), Err(RecordError::Json(_))), "{bad}");
+            let text = process()
+                .to_json()
+                .unwrap()
+                .replace("\"id\": \"x\"", &format!("\"id\": {bad}"));
+            assert!(
+                matches!(Session::from_json(&text), Err(RecordError::Json(_))),
+                "{bad}"
+            );
+            let text = agent()
+                .to_json()
+                .unwrap()
+                .replace("\"parent\": \"p\"", &format!("\"parent\": {bad}"));
+            assert!(
+                matches!(Session::from_json(&text), Err(RecordError::Json(_))),
+                "{bad}"
+            );
         }
     }
 
@@ -513,7 +551,15 @@ mod tests {
 
     #[test]
     fn valid_names() {
-        for name in ["a", "worker-1", "A_B", "-x", "3", "_", &"a".repeat(MAX_NAME_BYTES)] {
+        for name in [
+            "a",
+            "worker-1",
+            "A_B",
+            "-x",
+            "3",
+            "_",
+            &"a".repeat(MAX_NAME_BYTES),
+        ] {
             assert!(validate_name(name).is_ok(), "{name:?}");
         }
     }

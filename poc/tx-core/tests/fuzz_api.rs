@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Effort, EngineAdapter, EventType, Launch,
-    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, MAX_SOCKET_PATH_BYTES,
-    Profile, ResolvedProfile, SendOptions, Session, SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CoreError, CreateOptions, Effort, EngineAdapter, EventType, Launch, LaunchOptions,
+    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, MAX_SOCKET_PATH_BYTES, Profile,
+    ResolvedProfile, SendOptions, Session, SessionId, TxCore, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -111,11 +111,7 @@ fn short_tempdir() -> tempfile::TempDir {
         .unwrap()
 }
 
-fn session_with(
-    parent: Option<SessionId>,
-    tags: Vec<String>,
-    lifecycle: Lifecycle,
-) -> Session {
+fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecycle) -> Session {
     Session {
         id: SessionId::mint(),
         name: "s".into(),
@@ -428,7 +424,9 @@ fn public_types_have_the_promised_auto_traits() {
 fn core_error_boxes_into_a_threadsafe_error_and_crosses_threads() {
     let error = CoreError::InvalidName("x".into());
     let boxed: Box<dyn std::error::Error + Send + Sync + 'static> = Box::new(error);
-    let text = std::thread::spawn(move || boxed.to_string()).join().unwrap();
+    let text = std::thread::spawn(move || boxed.to_string())
+        .join()
+        .unwrap();
     assert!(text.contains("invalid session name"), "{text}");
 }
 
@@ -446,7 +444,9 @@ fn engine_adapter_object_is_usable_from_another_thread() {
         }
     }
     let adapter: Box<dyn EngineAdapter> = Box::new(Stub);
-    let id = std::thread::spawn(move || adapter.id().to_owned()).join().unwrap();
+    let id = std::thread::spawn(move || adapter.id().to_owned())
+        .join()
+        .unwrap();
     assert_eq!(id, "stub");
 }
 
@@ -458,14 +458,23 @@ fn engine_adapter_object_is_usable_from_another_thread() {
 fn event_type_all_is_seven_unique_lowercase_kebab_names() {
     let all: &[EventType] = EventType::ALL;
     assert_eq!(all.len(), 7);
-    let variants: BTreeSet<&str> = all.iter().map(|t| format!("{t:?}").leak() as &str).collect();
+    let variants: BTreeSet<&str> = all
+        .iter()
+        .map(|t| format!("{t:?}").leak() as &str)
+        .collect();
     assert_eq!(variants.len(), 7, "duplicate variant in ALL");
     let names: BTreeSet<&'static str> = all.iter().map(|t| t.as_str()).collect();
     assert_eq!(names.len(), 7, "duplicate as_str in ALL");
     for name in names {
         assert!(!name.is_empty());
-        assert!(!name.starts_with('-') && !name.ends_with('-') && !name.contains("--"), "{name}");
-        assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'), "{name}");
+        assert!(
+            !name.starts_with('-') && !name.ends_with('-') && !name.contains("--"),
+            "{name}"
+        );
+        assert!(
+            name.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'),
+            "{name}"
+        );
     }
     // `as_str` is a function of the variant, so equal variants give equal names and vice versa.
     for (i, a) in all.iter().enumerate() {
@@ -551,7 +560,10 @@ fn check_socket_path_counts_bytes_not_chars() {
     assert!(ok.check_socket_path().is_ok());
     let too_long = CoreConfig::new("/s").tmux_socket(format!("/{}", "é".repeat(50)));
     assert_eq!(too_long.socket_path().as_os_str().len(), 101);
-    assert!(matches!(too_long.check_socket_path(), Err(CoreError::SocketPathTooLong(_))));
+    assert!(matches!(
+        too_long.check_socket_path(),
+        Err(CoreError::SocketPathTooLong(_))
+    ));
     let exact = CoreConfig::new("/s").tmux_socket(format!("/{}x", "é".repeat(49)));
     assert_eq!(exact.socket_path().as_os_str().len(), MAX_SOCKET_PATH_BYTES);
     assert!(exact.check_socket_path().is_ok());
@@ -562,10 +574,16 @@ fn check_socket_path_counts_bytes_not_chars() {
 /// discovered when tmux is first invoked with `-S ""`.
 #[test]
 fn empty_or_relative_socket_is_refused_before_open() {
-    let dir = tempfile::Builder::new().prefix("txcf").tempdir_in("/tmp").unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("txcf")
+        .tempdir_in("/tmp")
+        .unwrap();
     for bad in ["", "rel.sock", "."] {
         let config = CoreConfig::new(dir.path().join("state")).tmux_socket(bad);
-        let refused = matches!(config.check_socket_path(), Err(CoreError::SocketPathNotAbsolute(_)));
+        let refused = matches!(
+            config.check_socket_path(),
+            Err(CoreError::SocketPathNotAbsolute(_))
+        );
         assert!(refused, "{bad:?}");
         assert!(TxCore::open(config).is_err());
         assert!(!dir.path().join("state").exists());

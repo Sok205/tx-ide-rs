@@ -75,15 +75,36 @@ pub enum Verb {
         tag: Option<String>,
         lifecycle: Option<Lifecycle>,
     },
-    Show { target: String },
-    Rename { target: String, name: String },
-    Tag { target: String, tags: Vec<String> },
-    Send { target: String, text: String },
-    Refresh { target: Option<String> },
-    Where { target: String },
-    Attach { target: String },
-    Stop { target: String },
-    Forget { target: String },
+    Show {
+        target: String,
+    },
+    Rename {
+        target: String,
+        name: String,
+    },
+    Tag {
+        target: String,
+        tags: Vec<String>,
+    },
+    Send {
+        target: String,
+        text: String,
+    },
+    Refresh {
+        target: Option<String>,
+    },
+    Where {
+        target: String,
+    },
+    Attach {
+        target: String,
+    },
+    Stop {
+        target: String,
+    },
+    Forget {
+        target: String,
+    },
     Engines,
     Help,
 }
@@ -149,7 +170,9 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             }
             Some("--profile-dir") => {
                 cursor.next();
-                global.profile_dirs.push(cursor.value("--profile-dir")?.into());
+                global
+                    .profile_dirs
+                    .push(cursor.value("--profile-dir")?.into());
             }
             Some("--skill-dir") => {
                 cursor.next();
@@ -168,15 +191,23 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("engines") => Verb::Engines,
         Some("create") => parse_create(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
-        Some("show") => Verb::Show { target: target(&mut cursor, "show")? },
+        Some("show") => Verb::Show {
+            target: target(&mut cursor, "show")?,
+        },
         Some("rename") => {
             let target = target(&mut cursor, "rename")?;
-            let name = cursor.next().ok_or_else(|| usage("rename needs a new name"))?.to_owned();
+            let name = cursor
+                .next()
+                .ok_or_else(|| usage("rename needs a new name"))?
+                .to_owned();
             Verb::Rename { target, name }
         }
         Some("tag") => {
             let target = target(&mut cursor, "tag")?;
-            Verb::Tag { target, tags: cursor.rest() }
+            Verb::Tag {
+                target,
+                tags: cursor.rest(),
+            }
         }
         Some("send") => {
             let target = target(&mut cursor, "send")?;
@@ -187,13 +218,26 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             if words.is_empty() {
                 return Err(usage("send needs the message text"));
             }
-            Verb::Send { target, text: words.join(" ") }
+            Verb::Send {
+                target,
+                text: words.join(" "),
+            }
         }
-        Some("refresh") => Verb::Refresh { target: cursor.next().map(str::to_owned) },
-        Some("where") => Verb::Where { target: target(&mut cursor, "where")? },
-        Some("attach") => Verb::Attach { target: target(&mut cursor, "attach")? },
-        Some("stop") => Verb::Stop { target: target(&mut cursor, "stop")? },
-        Some("forget") => Verb::Forget { target: target(&mut cursor, "forget")? },
+        Some("refresh") => Verb::Refresh {
+            target: cursor.next().map(str::to_owned),
+        },
+        Some("where") => Verb::Where {
+            target: target(&mut cursor, "where")?,
+        },
+        Some("attach") => Verb::Attach {
+            target: target(&mut cursor, "attach")?,
+        },
+        Some("stop") => Verb::Stop {
+            target: target(&mut cursor, "stop")?,
+        },
+        Some("forget") => Verb::Forget {
+            target: target(&mut cursor, "forget")?,
+        },
         Some(other) => return Err(usage(format!("unknown verb {other:?}"))),
     };
     if let Some(extra) = cursor.peek() {
@@ -239,10 +283,15 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             "--resume" => resume = Some(cursor.value(flag)?.to_owned()),
             "--effort" => {
                 let text = cursor.value(flag)?;
-                effort = Some(text.parse::<Effort>().map_err(|error| usage(error.to_string()))?);
+                effort = Some(
+                    text.parse::<Effort>()
+                        .map_err(|error| usage(error.to_string()))?,
+                );
             }
             "--exec" => {
-                let program = cursor.next().ok_or_else(|| usage("--exec needs a program"))?;
+                let program = cursor
+                    .next()
+                    .ok_or_else(|| usage("--exec needs a program"))?;
                 exec = Some((program.to_owned(), cursor.rest()));
             }
             other => return Err(usage(format!("create: unexpected argument {other:?}"))),
@@ -250,16 +299,37 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     }
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
     let launch = match (engine, exec) {
-        (Some(engine), None) => LaunchSpec::Agent { engine, roles, model, effort, prompt, resume },
+        (Some(engine), None) => LaunchSpec::Agent {
+            engine,
+            roles,
+            model,
+            effort,
+            prompt,
+            resume,
+        },
         (None, Some((program, args))) => {
-            if !roles.is_empty() || model.is_some() || effort.is_some() || prompt.is_some() || resume.is_some() {
-                return Err(usage("--role, --model, --effort, --prompt and --resume belong to --engine, not --exec"));
+            if !roles.is_empty()
+                || model.is_some()
+                || effort.is_some()
+                || prompt.is_some()
+                || resume.is_some()
+            {
+                return Err(usage(
+                    "--role, --model, --effort, --prompt and --resume belong to --engine, not --exec",
+                ));
             }
             LaunchSpec::Process { program, args }
         }
         _ => return Err(usage("create needs exactly one of --engine or --exec")),
     };
-    Ok(Verb::Create { name, cwd, parent, tags, env, launch })
+    Ok(Verb::Create {
+        name,
+        cwd,
+        parent,
+        tags,
+        env,
+        launch,
+    })
 }
 
 fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
@@ -272,14 +342,20 @@ fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             "--tag" => tag = Some(cursor.value(flag)?.to_owned()),
             "--lifecycle" => {
                 let text = cursor.value(flag)?;
-                lifecycle = Some(text.parse::<Lifecycle>().map_err(|error| usage(error.to_string()))?);
+                lifecycle = Some(
+                    text.parse::<Lifecycle>()
+                        .map_err(|error| usage(error.to_string()))?,
+                );
             }
             other => return Err(usage(format!("ls: unexpected argument {other:?}"))),
         }
     }
-    Ok(Verb::Ls { parent, tag, lifecycle })
+    Ok(Verb::Ls {
+        parent,
+        tag,
+        lifecycle,
+    })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -287,7 +363,13 @@ mod tests {
     use std::path::Path;
 
     fn parse_str(line: &str) -> Result<Invocation, UsageError> {
-        parse(&line.split(' ').filter(|s| !s.is_empty()).map(str::to_owned).collect::<Vec<_>>())
+        parse(
+            &line
+                .split(' ')
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+        )
     }
 
     #[test]
@@ -295,9 +377,18 @@ mod tests {
         let inv = parse_str("--state-dir /s --socket /k.sock --profile-dir /p1 --profile-dir /p2 --skill-dir /sk --env A=1 --env B=x=y ls").unwrap();
         assert_eq!(inv.global.state_dir.as_deref(), Some(Path::new("/s")));
         assert_eq!(inv.global.socket.as_deref(), Some(Path::new("/k.sock")));
-        assert_eq!(inv.global.profile_dirs, [PathBuf::from("/p1"), PathBuf::from("/p2")]);
+        assert_eq!(
+            inv.global.profile_dirs,
+            [PathBuf::from("/p1"), PathBuf::from("/p2")]
+        );
         assert_eq!(inv.global.skill_dirs, [PathBuf::from("/sk")]);
-        assert_eq!(inv.global.env, [("A".to_owned(), "1".to_owned()), ("B".to_owned(), "x=y".to_owned())]);
+        assert_eq!(
+            inv.global.env,
+            [
+                ("A".to_owned(), "1".to_owned()),
+                ("B".to_owned(), "x=y".to_owned())
+            ]
+        );
         assert!(matches!(inv.verb, Verb::Ls { .. }));
         let inv = parse_str("ls").unwrap();
         assert!(inv.global.state_dir.is_none() && inv.global.env.is_empty());
@@ -306,7 +397,15 @@ mod tests {
     #[test]
     fn create_agent() {
         let inv = parse_str("create w1 --cwd /w --engine claude --role dev --role ops --model opus --effort xhigh --prompt go --resume chat-1 --parent p-1 --tag a --tag b --env K=V").unwrap();
-        let Verb::Create { name, cwd, parent, tags, env, launch } = inv.verb else {
+        let Verb::Create {
+            name,
+            cwd,
+            parent,
+            tags,
+            env,
+            launch,
+        } = inv.verb
+        else {
             panic!()
         };
         assert_eq!(name, "w1");
@@ -349,13 +448,22 @@ mod tests {
             ("create", "name"),
             ("create n", "--cwd"),
             ("create n --cwd /w", "--engine or --exec"),
-            ("create n --cwd /w --engine e --exec sh", "--engine or --exec"),
+            (
+                "create n --cwd /w --engine e --exec sh",
+                "--engine or --exec",
+            ),
             ("create n --cwd /w --exec", "--exec needs a program"),
             ("create n --cwd /w --engine e --effort ultra", "effort"),
-            ("create n --cwd /w --engine e --role", "--role needs a value"),
+            (
+                "create n --cwd /w --engine e --role",
+                "--role needs a value",
+            ),
             ("create n --cwd /w --model m --exec sh", "--model"),
             ("create n --cwd /w --resume x --exec sh", "--resume"),
-            ("create n --cwd /w --engine e --resume", "--resume needs a value"),
+            (
+                "create n --cwd /w --engine e --resume",
+                "--resume needs a value",
+            ),
             ("create n --cwd /w --bogus --exec sh", "--bogus"),
             ("create n extra --cwd /w --exec sh", "extra"),
         ] {
@@ -366,20 +474,82 @@ mod tests {
 
     #[test]
     fn other_verbs() {
-        assert_eq!(parse_str("ls --parent p --tag t --lifecycle exited").unwrap().verb, Verb::Ls { parent: Some("p".into()), tag: Some("t".into()), lifecycle: Some(Lifecycle::Exited) });
+        assert_eq!(
+            parse_str("ls --parent p --tag t --lifecycle exited")
+                .unwrap()
+                .verb,
+            Verb::Ls {
+                parent: Some("p".into()),
+                tag: Some("t".into()),
+                lifecycle: Some(Lifecycle::Exited)
+            }
+        );
         assert!(parse_str("ls --lifecycle gone").is_err());
-        assert_eq!(parse_str("show x").unwrap().verb, Verb::Show { target: "x".into() });
-        assert_eq!(parse_str("rename x y").unwrap().verb, Verb::Rename { target: "x".into(), name: "y".into() });
-        assert_eq!(parse_str("tag x").unwrap().verb, Verb::Tag { target: "x".into(), tags: vec![] });
-        assert_eq!(parse_str("tag x a b").unwrap().verb, Verb::Tag { target: "x".into(), tags: vec!["a".into(), "b".into()] });
-        assert_eq!(parse_str("send x hello big world").unwrap().verb, Verb::Send { target: "x".into(), text: "hello big world".into() });
-        assert_eq!(parse_str("send x -- --flag").unwrap().verb, Verb::Send { target: "x".into(), text: "--flag".into() });
-        assert_eq!(parse_str("refresh").unwrap().verb, Verb::Refresh { target: None });
-        assert_eq!(parse_str("refresh x").unwrap().verb, Verb::Refresh { target: Some("x".into()) });
-        assert_eq!(parse_str("where x").unwrap().verb, Verb::Where { target: "x".into() });
-        assert_eq!(parse_str("attach x").unwrap().verb, Verb::Attach { target: "x".into() });
-        assert_eq!(parse_str("stop x").unwrap().verb, Verb::Stop { target: "x".into() });
-        assert_eq!(parse_str("forget x").unwrap().verb, Verb::Forget { target: "x".into() });
+        assert_eq!(
+            parse_str("show x").unwrap().verb,
+            Verb::Show { target: "x".into() }
+        );
+        assert_eq!(
+            parse_str("rename x y").unwrap().verb,
+            Verb::Rename {
+                target: "x".into(),
+                name: "y".into()
+            }
+        );
+        assert_eq!(
+            parse_str("tag x").unwrap().verb,
+            Verb::Tag {
+                target: "x".into(),
+                tags: vec![]
+            }
+        );
+        assert_eq!(
+            parse_str("tag x a b").unwrap().verb,
+            Verb::Tag {
+                target: "x".into(),
+                tags: vec!["a".into(), "b".into()]
+            }
+        );
+        assert_eq!(
+            parse_str("send x hello big world").unwrap().verb,
+            Verb::Send {
+                target: "x".into(),
+                text: "hello big world".into()
+            }
+        );
+        assert_eq!(
+            parse_str("send x -- --flag").unwrap().verb,
+            Verb::Send {
+                target: "x".into(),
+                text: "--flag".into()
+            }
+        );
+        assert_eq!(
+            parse_str("refresh").unwrap().verb,
+            Verb::Refresh { target: None }
+        );
+        assert_eq!(
+            parse_str("refresh x").unwrap().verb,
+            Verb::Refresh {
+                target: Some("x".into())
+            }
+        );
+        assert_eq!(
+            parse_str("where x").unwrap().verb,
+            Verb::Where { target: "x".into() }
+        );
+        assert_eq!(
+            parse_str("attach x").unwrap().verb,
+            Verb::Attach { target: "x".into() }
+        );
+        assert_eq!(
+            parse_str("stop x").unwrap().verb,
+            Verb::Stop { target: "x".into() }
+        );
+        assert_eq!(
+            parse_str("forget x").unwrap().verb,
+            Verb::Forget { target: "x".into() }
+        );
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
         assert_eq!(parse_str("help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("--help").unwrap().verb, Verb::Help);
@@ -389,7 +559,17 @@ mod tests {
         assert!(parse_str("show a b").unwrap_err().0.contains("b"));
         assert!(parse_str("send x").unwrap_err().0.contains("text"));
         assert!(parse_str("rename x").unwrap_err().0.contains("name"));
-        assert!(parse_str("--state-dir").unwrap_err().0.contains("--state-dir"));
-        assert!(parse_str("--env NOEQ ls").unwrap_err().0.contains("KEY=VALUE"));
+        assert!(
+            parse_str("--state-dir")
+                .unwrap_err()
+                .0
+                .contains("--state-dir")
+        );
+        assert!(
+            parse_str("--env NOEQ ls")
+                .unwrap_err()
+                .0
+                .contains("KEY=VALUE")
+        );
     }
 }

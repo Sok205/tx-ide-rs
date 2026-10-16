@@ -70,7 +70,10 @@ impl Line {
             type_: event.type_.as_str().to_owned(),
             id: event.id.as_str().to_owned(),
             name: event.name.clone(),
-            actor: event.actor.as_ref().map_or(String::new(), |a| a.as_str().to_owned()),
+            actor: event
+                .actor
+                .as_ref()
+                .map_or(String::new(), |a| a.as_str().to_owned()),
             msg: event.detail.clone(),
         }
     }
@@ -109,14 +112,21 @@ fn verdict<T>(result: &Result<T, CoreError>) -> String {
 
 /// A process that exits at once: `created` + `exited` in one emit batch.
 fn exiting(name: &str, cwd: &std::path::Path) -> CreateOptions {
-    CreateOptions::new(name, cwd, LaunchOptions::process("true", Vec::<String>::new()))
+    CreateOptions::new(
+        name,
+        cwd,
+        LaunchOptions::process("true", Vec::<String>::new()),
+    )
 }
 
 /// Every lifecycle event of one id, checked against the lifecycle order: `created` first and
 /// only once; nothing after `forgotten`; at most one terminal (`exited` / `stopped`).
 fn check_lifecycle(id: &str, types: &[String]) -> Result<(), String> {
     if types.first().map(String::as_str) != Some("created") {
-        return Err(format!("{id}: first event is {:?}, not created", types.first()));
+        return Err(format!(
+            "{id}: first event is {:?}, not created",
+            types.first()
+        ));
     }
     if types.iter().filter(|t| *t == "created").count() != 1 {
         return Err(format!("{id}: created more than once: {types:?}"));
@@ -126,7 +136,10 @@ fn check_lifecycle(id: &str, types: &[String]) -> Result<(), String> {
     {
         return Err(format!("{id}: events after forgotten: {types:?}"));
     }
-    let terminal = types.iter().filter(|t| *t == "exited" || *t == "stopped").count();
+    let terminal = types
+        .iter()
+        .filter(|t| *t == "exited" || *t == "stopped")
+        .count();
     if terminal > 1 {
         return Err(format!("{id}: more than one terminal event: {types:?}"));
     }
@@ -178,7 +191,10 @@ fn id_for(ids: &[SessionId], who: usize) -> SessionId {
 
 fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<SessionId>, step: usize, op: &Op) -> String {
     match op {
-        Op::Create { name, exiting: at_once } => {
+        Op::Create {
+            name,
+            exiting: at_once,
+        } => {
             let cwd = h.workdir(&format!("w{step}"));
             let opts = if *at_once {
                 exiting(NAMES[*name], &cwd)
@@ -214,7 +230,12 @@ fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<SessionId>, step: usize, op:
     }
 }
 
-fn run_ops(h: &Harness, core: &TxCore, recorder: &Recorder, ops: &[Op]) -> Result<(), TestCaseError> {
+fn run_ops(
+    h: &Harness,
+    core: &TxCore,
+    recorder: &Recorder,
+    ops: &[Op],
+) -> Result<(), TestCaseError> {
     let mut ids = Vec::new();
     let mut seen = 0;
     let mut last_ts = 0.0f64;
@@ -297,17 +318,29 @@ fn scripted_sequence_sink_view_equals_the_log() {
     let mut core = h.open();
     core.subscribe(Box::new(Arc::clone(&recorder)));
     let ops = [
-        Op::Create { name: 0, exiting: false },
-        Op::Create { name: 1, exiting: true }, // created + exited in one batch
-        Op::Create { name: 0, exiting: false }, // NameTaken: nothing
-        Op::Rename { who: 0, name: 0 },        // same name: Ok, nothing
-        Op::Rename { who: 0, name: 6 },        // invalid: nothing
+        Op::Create {
+            name: 0,
+            exiting: false,
+        },
+        Op::Create {
+            name: 1,
+            exiting: true,
+        }, // created + exited in one batch
+        Op::Create {
+            name: 0,
+            exiting: false,
+        }, // NameTaken: nothing
+        Op::Rename { who: 0, name: 0 }, // same name: Ok, nothing
+        Op::Rename { who: 0, name: 6 }, // invalid: nothing
         Op::Kill(0),
-        Op::Send { to: 0, from: Some(1) },     // not live: nothing
-        Op::Refresh(0),                        // exited
-        Op::Stop(0),                           // NotRunning: nothing
+        Op::Send {
+            to: 0,
+            from: Some(1),
+        }, // not live: nothing
+        Op::Refresh(0), // exited
+        Op::Stop(0),    // NotRunning: nothing
         Op::Forget(0),
-        Op::Forget(0),                         // Ok(false): nothing
+        Op::Forget(0), // Ok(false): nothing
         Op::RefreshAll,
     ];
     run_ops(&h, &core, &recorder, &ops).unwrap();
@@ -365,17 +398,23 @@ fn every_lock_is_free_when_sinks_run() {
     let a = core.create_session(agent("a", &cwd)).unwrap();
     let b = core.create_session(process("b", &h.workdir("b"))).unwrap();
     let c = core.create_session(exiting("c", &h.workdir("c"))).unwrap();
-    assert!(wait_for(Duration::from_secs(5), || cwd.join("env.txt").exists()));
+    assert!(wait_for(Duration::from_secs(5), || cwd
+        .join("env.txt")
+        .exists()));
     core.rename_session(&a, "a2").unwrap();
     core.set_session_tags(&a, vec!["t".into()]).unwrap();
-    core.send_message(&a, "hi", SendOptions::from_agent(b.clone())).unwrap();
+    core.send_message(&a, "hi", SendOptions::from_agent(b.clone()))
+        .unwrap();
     h.tmux_ok(&["kill-session", "-t", "=b"]);
     core.refresh_session(&b).unwrap();
     core.refresh_all().unwrap();
     core.stop_session(&a).unwrap();
     core.forget_session(&b).unwrap();
     core.forget_session(&c).unwrap();
-    assert!(!relocker.stuck.load(Ordering::SeqCst), "a sink could not take a lock within 2 s");
+    assert!(
+        !relocker.stuck.load(Ordering::SeqCst),
+        "a sink could not take a lock within 2 s"
+    );
     let lines = h.log_lines().len();
     assert_eq!(relocker.acquired.load(Ordering::SeqCst), lines);
     assert_eq!(lines, 11);
@@ -426,7 +465,11 @@ fn a_sink_may_stop_the_session_it_was_told_about() {
         "create_session deadlocked against a sink that stops the session"
     );
     let session = worker.join().unwrap().unwrap();
-    assert_eq!(session.lifecycle, Lifecycle::Stopped, "the caller reads a stopped record");
+    assert_eq!(
+        session.lifecycle,
+        Lifecycle::Stopped,
+        "the caller reads a stopped record"
+    );
     assert_eq!(*stopper.outcome.lock().unwrap(), ["Ok"]);
     assert_eq!(types(&recorder.events()), [EventType::Created]);
     assert_eq!(log_types(&h), ["created", "stopped"]);
@@ -447,7 +490,10 @@ fn a_sink_may_forget_the_session_it_was_told_about() {
     }));
     let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
     let gone = matches!(core.get_session(&id), Err(CoreError::NotFound(_)));
-    assert!(gone, "create_session returned an id whose record a sink already deleted");
+    assert!(
+        gone,
+        "create_session returned an id whose record a sink already deleted"
+    );
     assert_eq!(log_types(&h), ["created", "forgotten"]);
     // The tmux session is an orphan now: forget never kills.
     assert_eq!(h.live_names(), ["p"]);
@@ -476,7 +522,10 @@ fn sixteen_sinks_run_in_registration_order_once_per_event() {
     let out = Arc::new(Mutex::new(Vec::new()));
     let mut core = h.open();
     for index in 0..SINKS {
-        core.subscribe(Box::new(Indexed { index, out: Arc::clone(&out) }));
+        core.subscribe(Box::new(Indexed {
+            index,
+            out: Arc::clone(&out),
+        }));
     }
     let a = core.create_session(process("a", &h.workdir("a"))).unwrap();
     let b = core.create_session(exiting("b", &h.workdir("b"))).unwrap();
@@ -491,7 +540,10 @@ fn sixteen_sinks_run_in_registration_order_once_per_event() {
     for (chunk, line) in calls.chunks(SINKS).zip(&lines) {
         let order: Vec<usize> = chunk.iter().map(|(i, _)| *i).collect();
         assert_eq!(order, (0..SINKS).collect::<Vec<_>>());
-        assert!(chunk.iter().all(|(_, e)| e == &chunk[0].1), "sinks saw different events");
+        assert!(
+            chunk.iter().all(|(_, e)| e == &chunk[0].1),
+            "sinks saw different events"
+        );
         assert_eq!(&Line::from_event(&chunk[0].1), line);
     }
     let mut distinct: Vec<Line> = calls.iter().map(|(_, e)| Line::from_event(e)).collect();
@@ -529,9 +581,18 @@ fn fifty_ops_through_alternating_panicking_and_recording_sinks() {
     let mut ok = 0;
     for step in 0..50 {
         let op = match step % 5 {
-            0 => Op::Create { name: step % 6, exiting: step % 10 == 5 },
-            1 => Op::Rename { who: step / 5, name: (step + 1) % 6 },
-            2 => Op::SetTags { who: step / 5, tags: 2 },
+            0 => Op::Create {
+                name: step % 6,
+                exiting: step % 10 == 5,
+            },
+            1 => Op::Rename {
+                who: step / 5,
+                name: (step + 1) % 6,
+            },
+            2 => Op::SetTags {
+                who: step / 5,
+                tags: 2,
+            },
             3 => Op::Stop(step / 5),
             _ => Op::Forget(step / 5),
         };
@@ -546,7 +607,12 @@ fn fifty_ops_through_alternating_panicking_and_recording_sinks() {
         let seen: Vec<Line> = recorder.events().iter().map(Line::from_event).collect();
         assert_eq!(seen, lines);
     }
-    assert_eq!(core.get_session(&ids[0]).map(|s| s.lifecycle).ok(), None.or(Some(Lifecycle::Stopped)).filter(|_| false).or(core.get_session(&ids[0]).map(|s| s.lifecycle).ok()));
+    assert_eq!(
+        core.get_session(&ids[0]).map(|s| s.lifecycle).ok(),
+        None.or(Some(Lifecycle::Stopped))
+            .filter(|_| false)
+            .or(core.get_session(&ids[0]).map(|s| s.lifecycle).ok())
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -574,25 +640,46 @@ fn a_failure_after_the_lock_is_taken_emits_nothing_and_leaves_the_record() {
     assert!(not_running);
     // send_message: running record, but the tmux session is gone (fails at `live_or_not_running`).
     h.tmux_ok(&["kill-session", "-t", "=a"]);
-    let not_live = matches!(core.send_message(&a, "x", SendOptions::default()), Err(CoreError::NotRunning(_)));
+    let not_live = matches!(
+        core.send_message(&a, "x", SendOptions::default()),
+        Err(CoreError::NotRunning(_))
+    );
     assert!(not_live);
-    assert_eq!(core.get_session(&a).unwrap().lifecycle, Lifecycle::Running, "send never marks exited");
+    assert_eq!(
+        core.get_session(&a).unwrap().lifecycle,
+        Lifecycle::Running,
+        "send never marks exited"
+    );
 
     // rename_session: name free in the store, taken on the server by a foreign session.
     let c = core.create_session(process("c", &h.workdir("c"))).unwrap();
     let output = h.tmux(&["new-session", "-d", "-s", "taken", "sleep", "30"]);
     assert!(output.status.success());
     let record = h.record_bytes(&c);
-    let taken = matches!(core.rename_session(&c, "taken"), Err(CoreError::NameTaken(_)));
+    let taken = matches!(
+        core.rename_session(&c, "taken"),
+        Err(CoreError::NameTaken(_))
+    );
     assert!(taken);
-    assert_eq!(h.record_bytes(&c), record, "record rewritten by a failed rename");
+    assert_eq!(
+        h.record_bytes(&c),
+        record,
+        "record rewritten by a failed rename"
+    );
     assert_eq!(core.get_session(&c).unwrap().name, "c");
     // create_session: same foreign name, fails at `new-session` after `create.lock`.
-    let taken = matches!(core.create_session(process("taken", &h.workdir("t"))), Err(CoreError::NameTaken(_)));
+    let taken = matches!(
+        core.create_session(process("taken", &h.workdir("t"))),
+        Err(CoreError::NameTaken(_))
+    );
     assert!(taken);
     assert!(!h.state_dir().join("profiles").join("taken.md").exists());
 
-    assert_eq!(h.log_lines().len(), before + 1, "only c's `created` was added");
+    assert_eq!(
+        h.log_lines().len(),
+        before + 1,
+        "only c's `created` was added"
+    );
     let seen: Vec<Line> = recorder.events().iter().map(Line::from_event).collect();
     assert_eq!(seen, log(&h));
     assert_eq!(types(&recorder.events()), [EventType::Created; 3]);
@@ -610,7 +697,9 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
     let h = Arc::new(Harness::new());
     let pool: Arc<Mutex<Vec<SessionId>>> = Arc::new(Mutex::new(Vec::new()));
     let barrier = Arc::new(Barrier::new(THREADS));
-    let recorders: Vec<Arc<Recorder>> = (0..THREADS).map(|_| Arc::new(Recorder::default())).collect();
+    let recorders: Vec<Arc<Recorder>> = (0..THREADS)
+        .map(|_| Arc::new(Recorder::default()))
+        .collect();
     let workers: Vec<_> = recorders
         .iter()
         .enumerate()
@@ -637,10 +726,12 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
                             ))
                             .map(|id| pool.lock().unwrap().push(id)),
                         1 => pick(step).map_or(Ok(()), |id| {
-                            core.rename_session(&id, &format!("r{worker}s{step}")).map(drop)
+                            core.rename_session(&id, &format!("r{worker}s{step}"))
+                                .map(drop)
                         }),
                         2 => pick(step).map_or(Ok(()), |id| {
-                            core.set_session_tags(&id, vec![format!("{worker}")]).map(drop)
+                            core.set_session_tags(&id, vec![format!("{worker}")])
+                                .map(drop)
                         }),
                         3 => pick(step).map_or(Ok(()), |id| core.stop_session(&id).map(drop)),
                         _ => pick(step).map_or(Ok(()), |id| core.forget_session(&id).map(drop)),
@@ -671,9 +762,14 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
     union.sort_by(|a, b| a.ts.partial_cmp(&b.ts).unwrap());
     let lines = log(&h);
     assert_eq!(union.len(), lines.len());
-    let mut union_keys: Vec<(String, String)> =
-        union.iter().map(|e| (e.type_.as_str().to_owned(), e.id.as_str().to_owned())).collect();
-    let mut log_keys: Vec<(String, String)> = lines.iter().map(|l| (l.type_.clone(), l.id.clone())).collect();
+    let mut union_keys: Vec<(String, String)> = union
+        .iter()
+        .map(|e| (e.type_.as_str().to_owned(), e.id.as_str().to_owned()))
+        .collect();
+    let mut log_keys: Vec<(String, String)> = lines
+        .iter()
+        .map(|l| (l.type_.clone(), l.id.clone()))
+        .collect();
     union_keys.sort();
     log_keys.sort();
     assert_eq!(union_keys, log_keys);
@@ -684,7 +780,10 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
     // Per-id order by timestamp follows the lifecycle (timestamps are taken under the lock).
     let mut per_id: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for event in &union {
-        per_id.entry(event.id.as_str().to_owned()).or_default().push(event.type_.as_str().to_owned());
+        per_id
+            .entry(event.id.as_str().to_owned())
+            .or_default()
+            .push(event.type_.as_str().to_owned());
     }
     for (id, types) in &per_id {
         check_lifecycle(id, types).unwrap();
@@ -693,7 +792,10 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
     // Per-core, each sink's own view is monotone in ts.
     for recorder in &recorders {
         let events = recorder.events();
-        assert!(events.windows(2).all(|w| w[0].ts <= w[1].ts), "a core's sink saw ts go backwards");
+        assert!(
+            events.windows(2).all(|w| w[0].ts <= w[1].ts),
+            "a core's sink saw ts go backwards"
+        );
     }
 }
 
@@ -707,7 +809,12 @@ fn log_line_order_per_id_follows_the_lifecycle_under_contention() {
     let mut violations = Vec::new();
     for round in 0..ROUNDS {
         let core = h.open();
-        let id = core.create_session(process(&format!("s{round}"), &h.workdir(&format!("s{round}")))).unwrap();
+        let id = core
+            .create_session(process(
+                &format!("s{round}"),
+                &h.workdir(&format!("s{round}")),
+            ))
+            .unwrap();
         let barrier = Arc::new(Barrier::new(3));
         let handles: Vec<_> = (0..3)
             .map(|worker| {
@@ -767,11 +874,18 @@ fn event_is_clone_send_sync_and_closures_and_shared_sinks_register() {
     // The same Arc registered twice is called twice per event.
     assert_eq!(
         types(&recorder.events()),
-        [EventType::Created, EventType::Created, EventType::Stopped, EventType::Stopped]
+        [
+            EventType::Created,
+            EventType::Created,
+            EventType::Stopped,
+            EventType::Stopped
+        ]
     );
     assert_eq!(h.log_lines().len(), 2);
     let event = recorder.events().remove(0);
-    let moved = std::thread::spawn(move || event.clone().name).join().unwrap();
+    let moved = std::thread::spawn(move || event.clone().name)
+        .join()
+        .unwrap();
     assert_eq!(moved, "p");
 }
 
@@ -790,6 +904,9 @@ fn sinks_still_run_when_the_log_cannot_be_appended() {
     std::fs::create_dir(&path).unwrap();
     core.stop_session(&id).unwrap();
     assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Stopped);
-    assert_eq!(types(&recorder.events()), [EventType::Created, EventType::Stopped]);
+    assert_eq!(
+        types(&recorder.events()),
+        [EventType::Created, EventType::Stopped]
+    );
     assert!(path.is_dir(), "the log directory was replaced");
 }

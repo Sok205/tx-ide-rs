@@ -121,13 +121,27 @@ fn run(invocation: Invocation) -> Result<(), CoreError> {
                 writeln!(out, "{id}").ok();
             }
         }
-        Verb::Create { name, cwd, parent, tags, env, launch } => {
+        Verb::Create {
+            name,
+            cwd,
+            parent,
+            tags,
+            env,
+            launch,
+        } => {
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
                 None => None,
             };
             let launch = match launch {
-                LaunchSpec::Agent { engine, roles, model, effort, prompt, resume } => {
+                LaunchSpec::Agent {
+                    engine,
+                    roles,
+                    model,
+                    effort,
+                    prompt,
+                    resume,
+                } => {
                     let mut launch = LaunchOptions::agent(engine).profile(roles);
                     if let Some(resume) = resume {
                         launch = launch.resume(resume);
@@ -155,7 +169,11 @@ fn run(invocation: Invocation) -> Result<(), CoreError> {
             let id = core.create_session(opts)?;
             writeln!(out, "{id}").ok();
         }
-        Verb::Ls { parent, tag, lifecycle } => {
+        Verb::Ls {
+            parent,
+            tag,
+            lifecycle,
+        } => {
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
                 None => None,
@@ -186,7 +204,10 @@ fn run(invocation: Invocation) -> Result<(), CoreError> {
         Verb::Show { target } => {
             let session = core.get_session(&core.resolve(&target)?)?;
             let text = session.to_json().map_err(|error| {
-                CoreError::Store(tx_core::StoreError::Encode { id: session.id.clone(), source: error })
+                CoreError::Store(tx_core::StoreError::Encode {
+                    id: session.id.clone(),
+                    source: error,
+                })
             })?;
             write!(out, "{text}").ok();
         }
@@ -213,7 +234,14 @@ fn run(invocation: Invocation) -> Result<(), CoreError> {
                 None => core.refresh_all()?,
             };
             for session in changed {
-                writeln!(out, "{}\t{}\t{}", session.id, session.name, session.lifecycle.as_str()).ok();
+                writeln!(
+                    out,
+                    "{}\t{}\t{}",
+                    session.id,
+                    session.name,
+                    session.lifecycle.as_str()
+                )
+                .ok();
             }
         }
         Verb::Where { target } => {
@@ -250,7 +278,13 @@ fn run(invocation: Invocation) -> Result<(), CoreError> {
         Verb::Forget { target } => {
             let id = core.resolve(&target)?;
             let existed = core.forget_session(&id)?;
-            writeln!(out, "{}\t{}", id, if existed { "forgotten" } else { "absent" }).ok();
+            writeln!(
+                out,
+                "{}\t{}",
+                id,
+                if existed { "forgotten" } else { "absent" }
+            )
+            .ok();
         }
     }
     Ok(())

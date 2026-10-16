@@ -91,7 +91,6 @@ impl CoreConfig {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,7 +150,10 @@ mod tests {
         for bad in ["", "rel.sock", "."] {
             let config = CoreConfig::new("/abs").tmux_socket(bad);
             assert!(
-                matches!(config.check_socket_path(), Err(CoreError::SocketPathNotAbsolute(_))),
+                matches!(
+                    config.check_socket_path(),
+                    Err(CoreError::SocketPathNotAbsolute(_))
+                ),
                 "{bad:?}"
             );
         }

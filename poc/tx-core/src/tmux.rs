@@ -99,7 +99,10 @@ pub(crate) fn literal_chunks(text: &str) -> Vec<&str> {
     if !head.is_empty() {
         chunks.push(head);
     }
-    chunks.extend(std::iter::repeat_n(ESCAPED_SEMICOLON, text.len() - head.len()));
+    chunks.extend(std::iter::repeat_n(
+        ESCAPED_SEMICOLON,
+        text.len() - head.len(),
+    ));
     chunks
 }
 
@@ -375,8 +378,20 @@ mod tests {
         assert_eq!(
             strs(&argv),
             [
-                "new-session", "-d", "-s", "-w", "-c", "/tmp/w", "-e", "A=1", "-e", "B=two words",
-                "--", "-prog", "-a", "x y"
+                "new-session",
+                "-d",
+                "-s",
+                "-w",
+                "-c",
+                "/tmp/w",
+                "-e",
+                "A=1",
+                "-e",
+                "B=two words",
+                "--",
+                "-prog",
+                "-a",
+                "x y"
             ]
         );
     }
@@ -425,11 +440,19 @@ mod tests {
     #[test]
     fn no_server_phrases() {
         assert!(is_no_server("no server running on /tmp/x.sock"));
-        assert!(is_no_server("error connecting to /tmp/x.sock (No such file or directory)"));
+        assert!(is_no_server(
+            "error connecting to /tmp/x.sock (No such file or directory)"
+        ));
         assert!(is_no_server("no server running on /tmp/x.sock\n"));
-        assert!(!is_no_server("error connecting to /tmp/x (Socket operation on non-socket)"));
-        assert!(!is_no_server("error connecting to /tmp/x (Permission denied)"));
-        assert!(!is_no_server("error connecting to /tmp/x (Connection refused)"));
+        assert!(!is_no_server(
+            "error connecting to /tmp/x (Socket operation on non-socket)"
+        ));
+        assert!(!is_no_server(
+            "error connecting to /tmp/x (Permission denied)"
+        ));
+        assert!(!is_no_server(
+            "error connecting to /tmp/x (Connection refused)"
+        ));
         assert!(!is_no_server(""));
         assert!(!is_no_server("usage: list-sessions [-F format]"));
     }
@@ -465,9 +488,15 @@ mod tests {
         assert_eq!(table.len(), 1);
         assert_eq!(table.get(&sid("ok")).unwrap().pane_target, "%2");
         let error = LiveTable::parse("id-1\t$0\n").unwrap_err();
-        assert!(matches!(error, TmuxError::InspectionFailed { .. }), "{error:?}");
+        assert!(
+            matches!(error, TmuxError::InspectionFailed { .. }),
+            "{error:?}"
+        );
         let error = LiveTable::parse("id-1\t$0\t%0\textra\n").unwrap_err();
-        assert!(matches!(error, TmuxError::InspectionFailed { .. }), "{error:?}");
+        assert!(
+            matches!(error, TmuxError::InspectionFailed { .. }),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -483,7 +512,11 @@ mod tests {
         let error = TmuxError::InspectionFailed {
             stderr: "error connecting to /d (Socket operation on non-socket)".into(),
         };
-        assert!(error.to_string().starts_with("cannot inspect tmux server: "));
+        assert!(
+            error
+                .to_string()
+                .starts_with("cannot inspect tmux server: ")
+        );
     }
 
     #[test]
@@ -556,7 +589,10 @@ mod tests {
                 "-c".into(),
                 format!("echo \"$TX_A|$TX_B\" > {}; sleep 30", out.display()),
             ],
-            &[("TX_A".into(), "1".into()), ("TX_B".into(), "two words".into())],
+            &[
+                ("TX_A".into(), "1".into()),
+                ("TX_B".into(), "two words".into()),
+            ],
         )
         .unwrap();
         tmux.set_tx_id("-w", &id).unwrap();
@@ -572,7 +608,8 @@ mod tests {
         }
         assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "1|two words");
 
-        tmux.rename_session(&live.session_target, "-renamed").unwrap();
+        tmux.rename_session(&live.session_target, "-renamed")
+            .unwrap();
         assert!(tmux.rename_session("=-w", "x").is_err());
         assert_eq!(tmux.is_live(&id).unwrap().unwrap(), live);
 
@@ -614,7 +651,11 @@ mod tests {
             std::fs::read_to_string(&out).unwrap(),
             "a;|a\\;|;|end\\|kill-server|v;|"
         );
-        assert_eq!(tmux.list_live().unwrap().len(), 0, "server still up, no @tx-id yet");
+        assert_eq!(
+            tmux.list_live().unwrap().len(),
+            0,
+            "server still up, no @tx-id yet"
+        );
     }
 
     #[test]
@@ -639,7 +680,10 @@ mod tests {
         let error = tmux
             .new_session("a", Path::new("/"), "sleep", &["30".into()], &[])
             .unwrap_err();
-        assert!(matches!(&error, TmuxError::Failed { stderr, .. } if stderr.contains("duplicate session")), "{error:?}");
+        assert!(
+            matches!(&error, TmuxError::Failed { stderr, .. } if stderr.contains("duplicate session")),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -652,14 +696,18 @@ mod tests {
             "k",
             Path::new("/"),
             "sh",
-            &["-c".into(), format!("head -n 1 > {}; sleep 30", out.display())],
+            &[
+                "-c".into(),
+                format!("head -n 1 > {}; sleep 30", out.display()),
+            ],
             &[],
         )
         .unwrap();
         tmux.set_tx_id("k", &id).unwrap();
         let live = tmux.is_live(&id).unwrap().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(200));
-        tmux.send_keys_literal(&live.pane_target, "-n ; Enter wörld").unwrap();
+        tmux.send_keys_literal(&live.pane_target, "-n ; Enter wörld")
+            .unwrap();
         tmux.send_keys_literal(&live.pane_target, "|a;").unwrap();
         tmux.send_keys_literal(&live.pane_target, "|b\\;;").unwrap();
         tmux.send_keys_literal(&live.pane_target, "").unwrap();
@@ -684,7 +732,10 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         let tmux = Tmux::new("tmux", &dir, server.tmux.conf());
         let error = tmux.list_live().unwrap_err();
-        assert!(matches!(&error, TmuxError::InspectionFailed { stderr } if stderr.contains("non-socket")), "{error:?}");
+        assert!(
+            matches!(&error, TmuxError::InspectionFailed { stderr } if stderr.contains("non-socket")),
+            "{error:?}"
+        );
         let error = tmux.is_live(&sid("x")).unwrap_err();
         assert!(matches!(error, TmuxError::InspectionFailed { .. }));
     }
@@ -705,7 +756,11 @@ mod tests {
             .args(tmux.argv(&["show-options".into(), "-gv".into(), "@tx-id".into()]))
             .output()
             .unwrap();
-        assert!(!output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        assert!(
+            !output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
         assert!(tmux.set_tx_id("nope", &sid("z")).is_err());
         let _ = PathBuf::new();
     }

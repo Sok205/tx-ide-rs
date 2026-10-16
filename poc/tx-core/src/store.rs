@@ -325,7 +325,10 @@ mod tests {
             matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::Json(_)) } if file == "x.json"),
             "{error:?}"
         );
-        assert!(error.to_string().starts_with("unreadable record x.json: "), "{error}");
+        assert!(
+            error.to_string().starts_with("unreadable record x.json: "),
+            "{error}"
+        );
         let error = store.all().unwrap_err();
         assert!(matches!(&error, StoreError::Unreadable { file, .. } if file == "x.json"));
     }
@@ -337,7 +340,13 @@ mod tests {
         std::fs::write(store.path(&sid("x")), b"\xff\xfe{}").unwrap();
         let error = store.load(&sid("x")).unwrap_err();
         assert!(
-            matches!(&error, StoreError::Unreadable { source: ReadError::Utf8(_), .. }),
+            matches!(
+                &error,
+                StoreError::Unreadable {
+                    source: ReadError::Utf8(_),
+                    ..
+                }
+            ),
             "{error:?}"
         );
     }
@@ -353,7 +362,13 @@ mod tests {
         std::fs::write(store.path(&sid("x")), text).unwrap();
         let error = store.load(&sid("x")).unwrap_err();
         assert!(
-            matches!(&error, StoreError::Unreadable { source: ReadError::Record(RecordError::UnsupportedVersion(9)), .. }),
+            matches!(
+                &error,
+                StoreError::Unreadable {
+                    source: ReadError::Record(RecordError::UnsupportedVersion(9)),
+                    ..
+                }
+            ),
             "{error:?}"
         );
     }
@@ -364,7 +379,12 @@ mod tests {
         store.save(&session("a", 1.0)).unwrap();
         // A dangling symlink is what a file deleted between read_dir and read looks like.
         std::os::unix::fs::symlink("/nonexistent/zzz.json", store.dir().join("zzz.json")).unwrap();
-        let ids: Vec<String> = store.all().unwrap().iter().map(|s| s.id.to_string()).collect();
+        let ids: Vec<String> = store
+            .all()
+            .unwrap()
+            .iter()
+            .map(|s| s.id.to_string())
+            .collect();
         assert_eq!(ids, ["a"]);
     }
 
@@ -376,7 +396,12 @@ mod tests {
         std::fs::write(store.dir().join(".a.12345678.tmp"), "x").unwrap();
         std::fs::write(store.dir().join(".hidden.json"), "garbage").unwrap();
         std::fs::create_dir(store.dir().join("sub.json")).unwrap();
-        let ids: Vec<String> = store.all().unwrap().iter().map(|s| s.id.to_string()).collect();
+        let ids: Vec<String> = store
+            .all()
+            .unwrap()
+            .iter()
+            .map(|s| s.id.to_string())
+            .collect();
         assert_eq!(ids, ["a"]);
     }
 
@@ -385,11 +410,22 @@ mod tests {
         let (_dir, store) = store();
         store.save(&session("a", 1.0)).unwrap();
         let fifo = store.dir().join("pipe.json");
-        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
         let (tx, rx) = std::sync::mpsc::channel();
         let scanner = store.clone();
         std::thread::spawn(move || {
-            let ids: Vec<String> = scanner.all().unwrap().iter().map(|s| s.id.to_string()).collect();
+            let ids: Vec<String> = scanner
+                .all()
+                .unwrap()
+                .iter()
+                .map(|s| s.id.to_string())
+                .collect();
             let by_name = scanner.load(&sid("pipe"));
             tx.send((ids, by_name.is_err())).unwrap();
         });
@@ -404,17 +440,27 @@ mod tests {
     fn a_record_must_carry_the_id_its_file_name_says() {
         let (_dir, store) = store();
         store.save(&session("a", 1.0)).unwrap();
-        std::fs::write(store.path(&sid("other")), session("inner", 1.0).to_json().unwrap()).unwrap();
+        std::fs::write(
+            store.path(&sid("other")),
+            session("inner", 1.0).to_json().unwrap(),
+        )
+        .unwrap();
         let error = store.load(&sid("other")).unwrap_err();
         assert!(
             matches!(&error, StoreError::Unreadable { file, source: ReadError::IdMismatch { found } } if file == "other.json" && found == "inner"),
             "{error:?}"
         );
-        assert!(matches!(store.all().unwrap_err(), StoreError::Unreadable { .. }));
+        assert!(matches!(
+            store.all().unwrap_err(),
+            StoreError::Unreadable { .. }
+        ));
         std::fs::remove_file(store.path(&sid("other"))).unwrap();
         std::os::unix::fs::symlink(store.path(&sid("a")), store.dir().join("alias.json")).unwrap();
         let error = store.all().unwrap_err();
-        assert!(matches!(&error, StoreError::Unreadable { file, .. } if file == "alias.json"), "{error:?}");
+        assert!(
+            matches!(&error, StoreError::Unreadable { file, .. } if file == "alias.json"),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -449,9 +495,15 @@ mod tests {
         std::fs::write(&file, "").unwrap();
         let store = SessionStore::new(&file);
         let error = store.save(&session("a", 1.0)).unwrap_err();
-        assert!(matches!(&error, StoreError::Io { path, .. } if *path == file), "{error:?}");
+        assert!(
+            matches!(&error, StoreError::Io { path, .. } if *path == file),
+            "{error:?}"
+        );
         let error = store.all().unwrap_err();
-        assert!(matches!(&error, StoreError::Io { path, .. } if *path == file), "{error:?}");
+        assert!(
+            matches!(&error, StoreError::Io { path, .. } if *path == file),
+            "{error:?}"
+        );
     }
 
     #[test]

@@ -88,9 +88,8 @@ fn text() -> impl Strategy<Value = String> {
 
 fn launch() -> impl Strategy<Value = Launch> {
     prop_oneof![
-        (text(), prop::collection::vec(text(), 0..4)).prop_map(|(program, args)| {
-            Launch::Process { program, args }
-        }),
+        (text(), prop::collection::vec(text(), 0..4))
+            .prop_map(|(program, args)| { Launch::Process { program, args } }),
         (
             text(),
             prop::collection::vec(text(), 0..4),
@@ -137,7 +136,11 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Sessi
 /// Bitwise equality so `-0.0` vs `0.0` and the exact subnormal are checked, not just `==`.
 fn assert_bitwise_eq(a: &Session, b: &Session) {
     assert_eq!(a, b);
-    assert_eq!(a.created_at.to_bits(), b.created_at.to_bits(), "created_at bits");
+    assert_eq!(
+        a.created_at.to_bits(),
+        b.created_at.to_bits(),
+        "created_at bits"
+    );
     assert_eq!(
         a.ended_at.map(f64::to_bits),
         b.ended_at.map(f64::to_bits),
@@ -197,10 +200,19 @@ fn non_finite_timestamps_are_refused_by_save_without_touching_disk() {
         s.ended_at = Some(value);
         let error = store.save(&s).unwrap_err();
         assert!(
-            matches!(&error, StoreError::Encode { source: RecordError::NonFiniteTime("ended_at"), .. }),
+            matches!(
+                &error,
+                StoreError::Encode {
+                    source: RecordError::NonFiniteTime("ended_at"),
+                    ..
+                }
+            ),
             "{error:?}"
         );
-        assert!(!store.dir().exists(), "save must not even create the dir on Encode");
+        assert!(
+            !store.dir().exists(),
+            "save must not even create the dir on Encode"
+        );
         assert_eq!(store.load(&s.id).unwrap(), None);
         assert!(store.all().unwrap().is_empty());
     }
@@ -213,7 +225,16 @@ fn non_utf8_cwd_is_refused_by_save() {
     let mut s = session("cwd", 1.0);
     s.cwd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/\xff"));
     let error = store.save(&s).unwrap_err();
-    assert!(matches!(&error, StoreError::Encode { source: RecordError::Json(_), .. }), "{error:?}");
+    assert!(
+        matches!(
+            &error,
+            StoreError::Encode {
+                source: RecordError::Json(_),
+                ..
+            }
+        ),
+        "{error:?}"
+    );
     assert!(!store.dir().exists());
 }
 
@@ -225,7 +246,16 @@ fn null_created_at_on_disk_is_unreadable() {
     assert!(text.contains("\"created_at\": null"), "{text}");
     std::fs::write(store.path(&sid("x")), text).unwrap();
     let error = store.load(&sid("x")).unwrap_err();
-    assert!(matches!(&error, StoreError::Unreadable { source: ReadError::Record(RecordError::Json(_)), .. }), "{error:?}");
+    assert!(
+        matches!(
+            &error,
+            StoreError::Unreadable {
+                source: ReadError::Record(RecordError::Json(_)),
+                ..
+            }
+        ),
+        "{error:?}"
+    );
 }
 
 // ---- 2. all(): set semantics + order ---------------------------------------------------------
@@ -317,7 +347,9 @@ fn concurrent_writers_never_expose_partial_or_temp_records() {
     let (_dir, store) = store();
     let store = Arc::new(store);
     let done = Arc::new(AtomicBool::new(false));
-    let big_tags: Vec<String> = (0..64).map(|i| format!("tag-{i}-{}", "x".repeat(64))).collect();
+    let big_tags: Vec<String> = (0..64)
+        .map(|i| format!("tag-{i}-{}", "x".repeat(64)))
+        .collect();
 
     let readers: Vec<_> = (0..2)
         .map(|_| {
@@ -397,7 +429,10 @@ fn concurrent_save_and_delete_of_one_id_leave_no_temp_files() {
         h.join().unwrap();
     }
     let left = entries(store.dir());
-    assert!(left.is_subset(&BTreeSet::from(["x.json".to_owned()])), "{left:?}");
+    assert!(
+        left.is_subset(&BTreeSet::from(["x.json".to_owned()])),
+        "{left:?}"
+    );
 }
 
 // ---- 4. weird ids ----------------------------------------------------------------------------
@@ -405,12 +440,36 @@ fn concurrent_save_and_delete_of_one_id_leave_no_temp_files() {
 #[test]
 fn ids_outside_the_grammar_cannot_be_built() {
     let bad = [
-        "", ".", "..", "a/b", "../x", "./../x", "/abs", ".hidden", "a b", "a\nb", "a\tb", "a.json",
-        "a.b", "a:b", "a\\b", "ä", "😀", "a\0b", &"a".repeat(65), &"a".repeat(300),
+        "",
+        ".",
+        "..",
+        "a/b",
+        "../x",
+        "./../x",
+        "/abs",
+        ".hidden",
+        "a b",
+        "a\nb",
+        "a\tb",
+        "a.json",
+        "a.b",
+        "a:b",
+        "a\\b",
+        "ä",
+        "😀",
+        "a\0b",
+        &"a".repeat(65),
+        &"a".repeat(300),
     ];
     for id in bad {
-        assert!(id.parse::<SessionId>().is_err(), "{id:?} should be rejected");
-        assert!(SessionId::try_from(id.to_owned()).is_err(), "{id:?} should be rejected");
+        assert!(
+            id.parse::<SessionId>().is_err(),
+            "{id:?} should be rejected"
+        );
+        assert!(
+            SessionId::try_from(id.to_owned()).is_err(),
+            "{id:?} should be rejected"
+        );
     }
     for ok in ["a", "-", "_", "A-b_0", &"z".repeat(64)] {
         assert_eq!(ok.parse::<SessionId>().unwrap().as_str(), ok);
@@ -441,12 +500,21 @@ fn record_with_out_of_grammar_id_on_disk_is_unreadable() {
     let (_dir, store) = store();
     std::fs::create_dir_all(store.dir()).unwrap();
     for bad in ["a/b", "..", "", "a b", ".h"] {
-        let text = record_text("x", 1.0).replace("\"id\": \"x\"", &format!("\"id\": {}", serde_json::json!(bad)));
+        let text = record_text("x", 1.0).replace(
+            "\"id\": \"x\"",
+            &format!("\"id\": {}", serde_json::json!(bad)),
+        );
         std::fs::write(store.path(&sid("x")), text).unwrap();
         let error = store.load(&sid("x")).unwrap_err();
-        assert!(matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::Json(_)) } if file == "x.json"), "{bad:?}: {error:?}");
+        assert!(
+            matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::Json(_)) } if file == "x.json"),
+            "{bad:?}: {error:?}"
+        );
         let error = store.all().unwrap_err();
-        assert!(matches!(&error, StoreError::Unreadable { file, .. } if file == "x.json"), "{bad:?}: {error:?}");
+        assert!(
+            matches!(&error, StoreError::Unreadable { file, .. } if file == "x.json"),
+            "{bad:?}: {error:?}"
+        );
     }
 }
 
@@ -461,7 +529,10 @@ fn case_variant_ids_may_collide_on_case_insensitive_fs() {
         // the first through the same directory entry; the store reports the corruption instead
         // of answering with the wrong record.
         let err = store.all().unwrap_err();
-        assert!(matches!(&err, StoreError::Unreadable { file, source: ReadError::IdMismatch { found } } if file == "CaseId.json" && found == "caseid"), "{err:?}");
+        assert!(
+            matches!(&err, StoreError::Unreadable { file, source: ReadError::IdMismatch { found } } if file == "CaseId.json" && found == "caseid"),
+            "{err:?}"
+        );
         assert!(store.load(&sid("CaseId")).is_err());
         assert_eq!(store.load(&sid("caseid")).unwrap().unwrap().created_at, 2.0);
     } else {
@@ -538,7 +609,10 @@ fn empty_file_is_unreadable_by_name() {
     std::fs::create_dir_all(store.dir()).unwrap();
     std::fs::write(store.dir().join("empty.json"), b"").unwrap();
     let source = unreadable_named(store.all(), "empty.json");
-    assert!(matches!(source, ReadError::Record(RecordError::Json(_))), "{source:?}");
+    assert!(
+        matches!(source, ReadError::Record(RecordError::Json(_))),
+        "{source:?}"
+    );
 }
 
 #[test]
@@ -546,7 +620,8 @@ fn symlink_to_dir_is_skipped() {
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
     std::fs::create_dir(store.dir().join("real_dir")).unwrap();
-    std::os::unix::fs::symlink(store.dir().join("real_dir"), store.dir().join("link.json")).unwrap();
+    std::os::unix::fs::symlink(store.dir().join("real_dir"), store.dir().join("link.json"))
+        .unwrap();
     assert_eq!(ids(&store.all().unwrap()), ["a"]);
 }
 
@@ -556,7 +631,10 @@ fn symlink_alias_of_a_record_is_unreadable_by_its_own_name() {
     store.save(&session("a", 1.0)).unwrap();
     std::os::unix::fs::symlink(store.path(&sid("a")), store.dir().join("alias.json")).unwrap();
     let err = store.all().unwrap_err();
-    assert!(matches!(&err, StoreError::Unreadable { file, .. } if file == "alias.json"), "{err:?}");
+    assert!(
+        matches!(&err, StoreError::Unreadable { file, .. } if file == "alias.json"),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -565,7 +643,10 @@ fn record_whose_id_disagrees_with_file_name_is_unreadable() {
     std::fs::create_dir_all(store.dir()).unwrap();
     std::fs::write(store.path(&sid("file")), record_text("inner", 1.0)).unwrap();
     let err = store.load(&sid("file")).unwrap_err();
-    assert!(matches!(&err, StoreError::Unreadable { file, .. } if file == "file.json"), "{err:?}");
+    assert!(
+        matches!(&err, StoreError::Unreadable { file, .. } if file == "file.json"),
+        "{err:?}"
+    );
     assert!(store.all().is_err());
     assert_eq!(store.load(&sid("inner")).unwrap(), None);
 }
@@ -581,7 +662,10 @@ fn unreadable_permissions_are_reported_by_name() {
     std::fs::write(&locked, record_text("locked", 1.0)).unwrap();
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
     let source = unreadable_named(store.all(), "locked.json");
-    assert!(matches!(&source, ReadError::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied), "{source:?}");
+    assert!(
+        matches!(&source, ReadError::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied),
+        "{source:?}"
+    );
     let error = store.load(&sid("locked")).unwrap_err();
     assert!(matches!(&error, StoreError::Unreadable { file, .. } if file == "locked.json"));
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -593,11 +677,25 @@ fn fifo_record_is_skipped_without_blocking() {
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
     let fifo = store.dir().join("pipe.json");
-    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
     let (tx, rx) = mpsc::channel();
     let scanner = store.clone();
-    std::thread::spawn(move || tx.send((ids(&scanner.all().unwrap()), scanner.load(&sid("pipe")).is_err())).unwrap());
-    let (listed, load_failed) = rx.recv_timeout(Duration::from_secs(2)).expect("all() hung on the FIFO");
+    std::thread::spawn(move || {
+        tx.send((
+            ids(&scanner.all().unwrap()),
+            scanner.load(&sid("pipe")).is_err(),
+        ))
+        .unwrap()
+    });
+    let (listed, load_failed) = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("all() hung on the FIFO");
     assert_eq!(listed, ["a"]);
     assert!(load_failed);
 }
@@ -639,12 +737,24 @@ fn unwritable_dir_fails_save_with_io_naming_the_dir_and_leaves_nothing() {
     store.save(&session("existing", 1.0)).unwrap();
     std::fs::set_permissions(store.dir(), std::fs::Permissions::from_mode(0o500)).unwrap();
     let error = store.save(&session("a", 1.0)).unwrap_err();
-    assert!(matches!(&error, StoreError::Io { path, .. } if path == store.dir()), "{error:?}");
+    assert!(
+        matches!(&error, StoreError::Io { path, .. } if path == store.dir()),
+        "{error:?}"
+    );
     let overwrite = store.save(&session("existing", 2.0)).unwrap_err();
-    assert!(matches!(&overwrite, StoreError::Io { path, .. } if path == store.dir()), "{overwrite:?}");
+    assert!(
+        matches!(&overwrite, StoreError::Io { path, .. } if path == store.dir()),
+        "{overwrite:?}"
+    );
     let error = store.delete(&sid("existing")).unwrap_err();
-    assert!(matches!(&error, StoreError::Io { path, .. } if *path == store.path(&sid("existing"))), "{error:?}");
-    assert_eq!(entries(store.dir()), BTreeSet::from(["existing.json".to_owned()]));
+    assert!(
+        matches!(&error, StoreError::Io { path, .. } if *path == store.path(&sid("existing"))),
+        "{error:?}"
+    );
+    assert_eq!(
+        entries(store.dir()),
+        BTreeSet::from(["existing.json".to_owned()])
+    );
     assert_eq!(store.all().unwrap()[0].created_at, 1.0);
     std::fs::set_permissions(store.dir(), std::fs::Permissions::from_mode(0o700)).unwrap();
 }
@@ -658,9 +768,15 @@ fn unlistable_dir_fails_all_with_io_naming_the_dir() {
     store.save(&session("a", 1.0)).unwrap();
     std::fs::set_permissions(store.dir(), std::fs::Permissions::from_mode(0o000)).unwrap();
     let error = store.all().unwrap_err();
-    assert!(matches!(&error, StoreError::Io { path, .. } if path == store.dir()), "{error:?}");
+    assert!(
+        matches!(&error, StoreError::Io { path, .. } if path == store.dir()),
+        "{error:?}"
+    );
     let error = store.load(&sid("a")).unwrap_err();
-    assert!(matches!(&error, StoreError::Unreadable { file, source: ReadError::Io(_) } if file == "a.json"), "{error:?}");
+    assert!(
+        matches!(&error, StoreError::Unreadable { file, source: ReadError::Io(_) } if file == "a.json"),
+        "{error:?}"
+    );
     std::fs::set_permissions(store.dir(), std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 

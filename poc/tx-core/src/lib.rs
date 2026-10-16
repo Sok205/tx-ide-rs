@@ -3,13 +3,6 @@
 
 pub mod config;
 pub mod core;
-pub mod session;
-/// Internal; no stability promise for plugin authors.
-#[doc(hidden)]
-pub mod store;
-/// Internal; no stability promise for plugin authors.
-#[doc(hidden)]
-pub mod tmux;
 pub mod engine;
 pub mod error;
 pub mod events;
@@ -20,29 +13,39 @@ pub mod locks;
 #[doc(hidden)]
 pub mod messaging;
 pub mod profile;
+pub mod session;
+/// Internal; no stability promise for plugin authors.
+#[doc(hidden)]
+pub mod store;
+/// Internal; no stability promise for plugin authors.
+#[doc(hidden)]
+pub mod tmux;
 
-pub use core::{CreateOptions, DeliveryReceipt, ExecutionLocation, LaunchOptions, ListFilter, RefreshResult, SendOptions, TxCore};
 pub use config::{CoreConfig, MAX_SOCKET_PATH_BYTES};
-pub use engine::{EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+pub use core::{
+    CreateOptions, DeliveryReceipt, ExecutionLocation, LaunchOptions, ListFilter, RefreshResult,
+    SendOptions, TxCore,
+};
 #[doc(hidden)]
 pub use engine::EngineRegistry;
+pub use engine::{EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
 pub use error::CoreError;
-pub use events::{Event, EventSink, EventType};
 #[doc(hidden)]
 pub use events::EventLog;
+pub use events::{Event, EventSink, EventType};
 #[doc(hidden)]
 pub use locks::{LockGuard, Locks};
 #[doc(hidden)]
-pub use tmux::{Live, LiveTable, Tmux};
-/// Stable: it is the payload of `CoreError::Tmux`.
-pub use tmux::TmuxError;
+pub use messaging::DELIVERY_PAUSE;
 /// The default envelope; an `EngineAdapter::envelope` override may wrap it.
 pub use messaging::build_envelope;
-#[doc(hidden)]
-pub use messaging::DELIVERY_PAUSE;
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
+pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
 #[doc(hidden)]
 pub use store::SessionStore;
 /// Stable: they are the payload of `CoreError::Store`.
 pub use store::{ReadError, StoreError};
-pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
+/// Stable: it is the payload of `CoreError::Tmux`.
+pub use tmux::TmuxError;
+#[doc(hidden)]
+pub use tmux::{Live, LiveTable, Tmux};

@@ -54,7 +54,10 @@ impl Server {
                 name,
                 Path::new("/"),
                 "sh",
-                &["-c".into(), format!("{stty}cat > {}; sleep 60", out.display())],
+                &[
+                    "-c".into(),
+                    format!("{stty}cat > {}; sleep 60", out.display()),
+                ],
                 &[],
             )
             .unwrap();
@@ -100,8 +103,17 @@ fn wait_for(path: &Path, pred: impl Fn(&[u8]) -> bool) -> Vec<u8> {
 }
 
 /// Types `text` + Enter into the pane and returns the bytes that arrived after `already`.
-fn deliver_and_read(server: &Server, live: &Live, out: &Path, already: usize, text: &str) -> Vec<u8> {
-    server.tmux.send_keys_literal(&live.pane_target, text).unwrap();
+fn deliver_and_read(
+    server: &Server,
+    live: &Live,
+    out: &Path,
+    already: usize,
+    text: &str,
+) -> Vec<u8> {
+    server
+        .tmux
+        .send_keys_literal(&live.pane_target, text)
+        .unwrap();
     server.tmux.send_enter(&live.pane_target).unwrap();
     let want = already + text.len() + 1;
     let bytes = wait_for(out, |b| b.len() >= want);
@@ -156,7 +168,10 @@ proptest! {
 fn sharp_edge_unvalidated_sender_name_breaks_tag_shape() {
     for name in ["a\"b", "a>b", "a b", "a\n", "</from-agent>", ""] {
         let env = build_envelope(Some(name), "x");
-        assert_eq!(env, format!("<from-agent session=\"{name}\">x</from-agent>"));
+        assert_eq!(
+            env,
+            format!("<from-agent session=\"{name}\">x</from-agent>")
+        );
         assert!(validate_name(name).is_err(), "core must reject {name:?}");
     }
 }
@@ -170,7 +185,10 @@ fn delivery_pause_is_a_sane_bound() {
 #[test]
 fn text_that_looks_like_an_envelope_is_not_escaped() {
     let text = "<from-user>nested</from-user><from-agent session=\"x\">";
-    assert_eq!(build_envelope(None, text), format!("<from-user>{text}</from-user>"));
+    assert_eq!(
+        build_envelope(None, text),
+        format!("<from-user>{text}</from-user>")
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -280,21 +298,29 @@ fn trailing_semicolon_forms_arrive_verbatim() {
     let server = server!();
     let (live, out) = server.cat_pane("semi", false);
     let cases = [
-        "a;", ";", ";;", "a\\;", "\\;", "a\\\\;", "a;\\", "a; ", ";;;;", "a\\;;", "\\;\\;",
-        "a ;", "x\n;", ";\n;",
+        "a;", ";", ";;", "a\\;", "\\;", "a\\\\;", "a;\\", "a; ", ";;;;", "a\\;;", "\\;\\;", "a ;",
+        "x\n;", ";\n;",
     ];
     let mut already = 0;
     for text in cases {
         let envelope = build_envelope(None, text);
         let got = deliver_and_read(&server, &live, &out, already, &envelope);
         already += envelope.len() + 1;
-        assert_eq!(String::from_utf8_lossy(&got), format!("{envelope}\n"), "text {text:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            format!("{envelope}\n"),
+            "text {text:?}"
+        );
     }
     // the raw text too (no envelope), so the fix is not hidden behind `</from-user>`
     for text in cases {
         let got = deliver_and_read(&server, &live, &out, already, text);
         already += text.len() + 1;
-        assert_eq!(String::from_utf8_lossy(&got), format!("{text}\n"), "raw {text:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            format!("{text}\n"),
+            "raw {text:?}"
+        );
     }
 }
 
@@ -302,7 +328,10 @@ fn trailing_semicolon_forms_arrive_verbatim() {
 fn empty_text_sends_nothing_and_enter_still_submits() {
     let server = server!();
     let (live, out) = server.cat_pane("empty", false);
-    server.tmux.send_keys_literal(&live.pane_target, "").unwrap();
+    server
+        .tmux
+        .send_keys_literal(&live.pane_target, "")
+        .unwrap();
     server.tmux.send_enter(&live.pane_target).unwrap();
     let got = wait_for(&out, |b| !b.is_empty());
     assert_eq!(got, b"\n");
@@ -381,11 +410,17 @@ fn sending_to_a_dead_pane_is_failed_not_a_hang() {
     let server = server!();
     let (live, _) = server.cat_pane("dead", false);
     // keep the server alive after the pane dies
-    server.tmux.new_session("keep", Path::new("/"), "sleep", &["60".into()], &[]).unwrap();
+    server
+        .tmux
+        .new_session("keep", Path::new("/"), "sleep", &["60".into()], &[])
+        .unwrap();
     assert!(server.tmux.kill_session(&live.session_target).unwrap());
 
     let start = Instant::now();
-    let e1 = server.tmux.send_keys_literal(&live.pane_target, "x;").unwrap_err();
+    let e1 = server
+        .tmux
+        .send_keys_literal(&live.pane_target, "x;")
+        .unwrap_err();
     let e2 = server.tmux.send_enter(&live.pane_target).unwrap_err();
     let e3 = server.tmux.send_keys_literal("%4242", "x").unwrap_err();
     let e4 = server.tmux.send_enter("%4242").unwrap_err();

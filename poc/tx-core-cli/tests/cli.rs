@@ -11,7 +11,10 @@ struct Cli {
 impl Cli {
     fn new() -> Self {
         Self {
-            dir: tempfile::Builder::new().prefix("txc").tempdir_in("/tmp").unwrap(),
+            dir: tempfile::Builder::new()
+                .prefix("txc")
+                .tempdir_in("/tmp")
+                .unwrap(),
         }
     }
 
@@ -49,7 +52,12 @@ impl Cli {
 
     fn fails(&self, args: &[&str], code: i32) -> String {
         let output = self.run(args);
-        assert_eq!(output.status.code(), Some(code), "txc {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "txc {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         String::from_utf8_lossy(&output.stderr).into_owned()
     }
 
@@ -92,7 +100,10 @@ fn wait_for(path: &Path, timeout: Duration) -> String {
 fn usage_errors_exit_2_without_touching_state() {
     let cli = Cli::new();
     let stderr = cli.fails(&[], 2);
-    assert!(stderr.contains("missing verb") && stderr.contains("usage: txc"), "{stderr}");
+    assert!(
+        stderr.contains("missing verb") && stderr.contains("usage: txc"),
+        "{stderr}"
+    );
     assert!(cli.fails(&["create", "x"], 2).contains("--cwd"));
     assert!(cli.fails(&["bogus"], 2).contains("bogus"));
     assert!(!cli.state().exists());
@@ -112,7 +123,17 @@ fn core_errors_exit_1() {
     let cwd = cli.workdir("w");
     let stderr = cli.fails(&["show", "nope"], 1);
     assert_eq!(stderr, "txc: no session \"nope\"\n");
-    let stderr = cli.fails(&["create", "a", "--cwd", cwd.to_str().unwrap(), "--engine", "ghost"], 1);
+    let stderr = cli.fails(
+        &[
+            "create",
+            "a",
+            "--cwd",
+            cwd.to_str().unwrap(),
+            "--engine",
+            "ghost",
+        ],
+        1,
+    );
     assert!(stderr.contains("ghost"), "{stderr}");
 }
 
@@ -126,11 +147,27 @@ fn process_session_round_trip() {
     let cwd = cli.workdir("w");
     let cwd_str = cwd.to_str().unwrap();
     let id = cli
-        .ok(&["create", "sh-1", "--cwd", cwd_str, "--tag", "t", "--env", "GREETING=hi", "--exec", "sh", "-c", "echo $GREETING > env.txt; cat > input.txt"])
+        .ok(&[
+            "create",
+            "sh-1",
+            "--cwd",
+            cwd_str,
+            "--tag",
+            "t",
+            "--env",
+            "GREETING=hi",
+            "--exec",
+            "sh",
+            "-c",
+            "echo $GREETING > env.txt; cat > input.txt",
+        ])
         .trim()
         .to_owned();
     assert_eq!(id.len(), 36);
-    assert_eq!(wait_for(&cwd.join("env.txt"), Duration::from_secs(5)), "hi\n");
+    assert_eq!(
+        wait_for(&cwd.join("env.txt"), Duration::from_secs(5)),
+        "hi\n"
+    );
 
     let ls = cli.ok(&["ls"]);
     let fields: Vec<&str> = ls.trim().split('\t').collect();
@@ -146,22 +183,40 @@ fn process_session_round_trip() {
     assert_eq!(shown["tags"], serde_json::json!(["t"]));
     assert_eq!(cli.ok(&["show", &id]), cli.ok(&["show", "sh-1"]));
 
-    assert_eq!(cli.ok(&["rename", "sh-1", "sh-2"]).trim(), format!("{id}\tsh-2"));
-    assert_eq!(cli.ok(&["tag", "sh-2", "a", "b"]).trim(), format!("{id}\ta,b"));
-    assert_eq!(cli.ok(&["tag", "sh-2"]).trim_end_matches('\n'), format!("{id}\t"));
+    assert_eq!(
+        cli.ok(&["rename", "sh-1", "sh-2"]).trim(),
+        format!("{id}\tsh-2")
+    );
+    assert_eq!(
+        cli.ok(&["tag", "sh-2", "a", "b"]).trim(),
+        format!("{id}\ta,b")
+    );
+    assert_eq!(
+        cli.ok(&["tag", "sh-2"]).trim_end_matches('\n'),
+        format!("{id}\t")
+    );
 
     let where_ = cli.ok(&["where", "sh-2"]);
     let fields: Vec<&str> = where_.trim().split('\t').collect();
     assert_eq!(fields[0], cli.state().join("tmux.sock").to_str().unwrap());
-    assert!(fields[1].starts_with('$') && fields[2].starts_with('%'), "{where_}");
+    assert!(
+        fields[1].starts_with('$') && fields[2].starts_with('%'),
+        "{where_}"
+    );
 
     cli.ok(&["send", "sh-2", "hello", "there;"]);
     cli.ok(&["send", "sh-2", "--", "--flag"]);
     // Inside tx's server, `send` carries the caller's id; elsewhere it does not.
     let fake_tmux = format!("{},0,0", cli.state().join("tmux.sock").display());
-    let output = cli.run_env(&["send", "sh-2", "from me"], &[("TMUX", &fake_tmux), ("TX_SESSION_ID", &id)]);
+    let output = cli.run_env(
+        &["send", "sh-2", "from me"],
+        &[("TMUX", &fake_tmux), ("TX_SESSION_ID", &id)],
+    );
     assert!(output.status.success());
-    let output = cli.run_env(&["send", "sh-2", "not me"], &[("TMUX", "/tmp/other,0,0"), ("TX_SESSION_ID", &id)]);
+    let output = cli.run_env(
+        &["send", "sh-2", "not me"],
+        &[("TMUX", "/tmp/other,0,0"), ("TX_SESSION_ID", &id)],
+    );
     assert!(output.status.success());
     let typed = loop {
         let text = wait_for(&cwd.join("input.txt"), Duration::from_secs(5));
@@ -171,7 +226,9 @@ fn process_session_round_trip() {
     };
     assert_eq!(
         typed,
-        format!("<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"sh-2\">from me</from-agent>\n<from-user>not me</from-user>\n")
+        format!(
+            "<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"sh-2\">from me</from-agent>\n<from-user>not me</from-user>\n"
+        )
     );
 
     assert_eq!(cli.ok(&["refresh"]), "");
@@ -179,7 +236,10 @@ fn process_session_round_trip() {
     assert_eq!(cli.ok(&["stop", "sh-2"]).trim(), format!("{id}\tstopped"));
     assert!(cli.fails(&["where", "sh-2"], 1).contains("not running"));
     assert!(!cli.tmux(&["has-session", "-t", "=sh-2"]).status.success());
-    assert_eq!(cli.ok(&["forget", "sh-2"]).trim(), format!("{id}\tforgotten"));
+    assert_eq!(
+        cli.ok(&["forget", "sh-2"]).trim(),
+        format!("{id}\tforgotten")
+    );
     assert!(cli.fails(&["forget", "sh-2"], 1).contains("no session"));
     assert_eq!(cli.ok(&["ls"]), "");
 }
@@ -194,18 +254,40 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
     // A relative --state-dir still yields absolute paths inside the session environment.
     let rel = Command::new(env!("CARGO_BIN_EXE_txc"))
         .current_dir(cli.dir.path())
-        .args(["--state-dir", "state", "create", "me", "--cwd", cwd.to_str().unwrap(), "--exec", "sh", "-c", "env > env.txt; cat > input.txt"])
+        .args([
+            "--state-dir",
+            "state",
+            "create",
+            "me",
+            "--cwd",
+            cwd.to_str().unwrap(),
+            "--exec",
+            "sh",
+            "-c",
+            "env > env.txt; cat > input.txt",
+        ])
         .env_remove("TMUX")
         .env_remove("TX_SESSION_ID")
         .output()
         .unwrap();
-    assert!(rel.status.success(), "{}", String::from_utf8_lossy(&rel.stderr));
+    assert!(
+        rel.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rel.stderr)
+    );
     let id = String::from_utf8_lossy(&rel.stdout).trim().to_owned();
     let env = wait_for(&cwd.join("env.txt"), Duration::from_secs(5));
-    let get = |key: &str| env.lines().find_map(|l| l.strip_prefix(&format!("{key}="))).map(str::to_owned);
+    let get = |key: &str| {
+        env.lines()
+            .find_map(|l| l.strip_prefix(&format!("{key}=")))
+            .map(str::to_owned)
+    };
     let home = get("TX_CORE_HOME").unwrap();
     let socket = get("TX_TMUX_SOCKET").unwrap();
-    assert_eq!(Path::new(&home).canonicalize().unwrap(), cli.state().canonicalize().unwrap());
+    assert_eq!(
+        Path::new(&home).canonicalize().unwrap(),
+        cli.state().canonicalize().unwrap()
+    );
     assert!(Path::new(&home).is_absolute() && Path::new(&socket).is_absolute());
     assert_eq!(Path::new(&socket).file_name().unwrap(), "tmux.sock");
     // From inside the session: no --state-dir, only the exported environment.
@@ -219,9 +301,16 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
         .current_dir("/")
         .output()
         .unwrap();
-    assert!(inner.status.success(), "{}", String::from_utf8_lossy(&inner.stderr));
+    assert!(
+        inner.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inner.stderr)
+    );
     let typed = wait_for(&cwd.join("input.txt"), Duration::from_secs(5));
-    assert_eq!(typed, "<from-agent session=\"me\">hello self</from-agent>\n");
+    assert_eq!(
+        typed,
+        "<from-agent session=\"me\">hello self</from-agent>\n"
+    );
 }
 
 #[test]
@@ -231,7 +320,18 @@ fn refresh_reports_vanished_sessions() {
     }
     let cli = Cli::new();
     let cwd = cli.workdir("w");
-    let id = cli.ok(&["create", "v", "--cwd", cwd.to_str().unwrap(), "--exec", "sleep", "30"]).trim().to_owned();
+    let id = cli
+        .ok(&[
+            "create",
+            "v",
+            "--cwd",
+            cwd.to_str().unwrap(),
+            "--exec",
+            "sleep",
+            "30",
+        ])
+        .trim()
+        .to_owned();
     assert!(cli.tmux(&["kill-session", "-t", "=v"]).status.success());
     assert_eq!(cli.ok(&["refresh"]).trim(), format!("{id}\tv\texited"));
     assert_eq!(cli.ok(&["refresh"]), "");

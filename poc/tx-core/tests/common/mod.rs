@@ -160,7 +160,10 @@ impl EngineAdapter for ShellStub {
         Ok(LaunchPlan::new("sh")
             .args(["-c".to_owned(), script])
             .env("STUB_PROFILE", req.profile.file().display().to_string())
-            .env("STUB_EFFORT", req.effort.map(|e| e.as_str()).unwrap_or("none"))
+            .env(
+                "STUB_EFFORT",
+                req.effort.map(|e| e.as_str()).unwrap_or("none"),
+            )
             .env("FROM_PLAN", "plan")
             .env("STUB_RESUME", req.resume.unwrap_or(""))
             .workspace(WorkspaceAction::Write {

@@ -15,7 +15,10 @@ fn sid(id: &str) -> tx_core::SessionId {
 use serde_json::{Map, Value, json};
 use tx_core::config::{MAX_SOCKET_PATH_BYTES, SOCKET_FILE};
 use tx_core::session::{MAX_NAME_BYTES, RECORD_VERSION};
-use tx_core::{CoreConfig, CoreError, Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
+use tx_core::{
+    CoreConfig, CoreError, Effort, Launch, Lifecycle, RecordError, Session, SessionId,
+    validate_name,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Strategies
@@ -85,7 +88,10 @@ fn arb_non_finite_f64() -> impl Strategy<Value = f64> {
     prop::sample::select(vec![f64::NAN, -f64::NAN, f64::INFINITY, f64::NEG_INFINITY])
 }
 
-fn arb_session_with(created_at: impl Strategy<Value = f64>, ended_at: impl Strategy<Value = Option<f64>>) -> impl Strategy<Value = Session> {
+fn arb_session_with(
+    created_at: impl Strategy<Value = f64>,
+    ended_at: impl Strategy<Value = Option<f64>>,
+) -> impl Strategy<Value = Session> {
     (
         arb_session_id(),
         arb_text(),
@@ -97,17 +103,19 @@ fn arb_session_with(created_at: impl Strategy<Value = f64>, ended_at: impl Strat
         arb_lifecycle(),
         arb_launch(),
     )
-        .prop_map(|(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch)| Session {
-            id,
-            name,
-            parent,
-            tags,
-            cwd,
-            created_at,
-            ended_at,
-            lifecycle,
-            launch,
-        })
+        .prop_map(
+            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch)| Session {
+                id,
+                name,
+                parent,
+                tags,
+                cwd,
+                created_at,
+                ended_at,
+                lifecycle,
+                launch,
+            },
+        )
 }
 
 fn arb_session() -> impl Strategy<Value = Session> {
@@ -141,11 +149,24 @@ fn session_value(session: &Session) -> Map<String, Value> {
 }
 
 const TOP_KEYS: [&str; 10] = [
-    "version", "id", "name", "parent", "tags", "cwd", "created_at", "ended_at", "lifecycle", "launch",
+    "version",
+    "id",
+    "name",
+    "parent",
+    "tags",
+    "cwd",
+    "created_at",
+    "ended_at",
+    "lifecycle",
+    "launch",
 ];
-const LAUNCH_KEYS: [&str; 7] = ["kind", "engine", "profile", "model", "effort", "program", "args"];
+const LAUNCH_KEYS: [&str; 7] = [
+    "kind", "engine", "profile", "model", "effort", "program", "args",
+];
 
-fn arb_extra_keys(reserved: &'static [&'static str]) -> impl Strategy<Value = BTreeMap<String, Value>> {
+fn arb_extra_keys(
+    reserved: &'static [&'static str],
+) -> impl Strategy<Value = BTreeMap<String, Value>> {
     prop::collection::btree_map(
         arb_text().prop_filter("not a schema key", move |k| !reserved.contains(&k.as_str())),
         arb_json(),
@@ -156,7 +177,9 @@ fn arb_extra_keys(reserved: &'static [&'static str]) -> impl Strategy<Value = BT
 fn is_valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= MAX_NAME_BYTES
-        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -232,7 +255,10 @@ fn to_json_does_not_panic_on_non_utf8_cwd() {
     let mut session = Session::from_json(&sample().to_json().unwrap()).unwrap();
     session.cwd = PathBuf::from(OsStr::from_bytes(b"/tmp/\xff\xfe"));
     let result = std::panic::catch_unwind(|| session.to_json());
-    assert!(matches!(result, Ok(Err(RecordError::Json(_)))), "to_json must refuse, not panic");
+    assert!(
+        matches!(result, Ok(Err(RecordError::Json(_)))),
+        "to_json must refuse, not panic"
+    );
 }
 
 fn sample() -> Session {
@@ -358,7 +384,10 @@ fn minted_ids_are_hyphenated_lowercase_uuid_v4() {
             }
         }
         assert_eq!(bytes[14], b'4', "version nibble in {s}");
-        assert!(matches!(bytes[19], b'8' | b'9' | b'a' | b'b'), "variant nibble in {s}");
+        assert!(
+            matches!(bytes[19], b'8' | b'9' | b'a' | b'b'),
+            "variant nibble in {s}"
+        );
         assert_eq!(SessionId::from_str(s).unwrap(), id);
         assert_eq!(id.to_string(), s);
     }
@@ -376,7 +405,10 @@ fn lifecycle_as_str_from_str_bijection_and_serde_names() {
         assert!(seen.insert(name), "duplicate name {name}");
         assert_eq!(Lifecycle::from_str(name).unwrap(), lifecycle);
         assert_eq!(serde_json::to_value(lifecycle).unwrap(), json!(name));
-        assert_eq!(serde_json::from_value::<Lifecycle>(json!(name)).unwrap(), lifecycle);
+        assert_eq!(
+            serde_json::from_value::<Lifecycle>(json!(name)).unwrap(),
+            lifecycle
+        );
     }
     assert_eq!(seen.len(), Lifecycle::ALL.len());
 }
@@ -389,7 +421,10 @@ fn effort_as_str_from_str_bijection_and_serde_names() {
         assert!(seen.insert(name), "duplicate name {name}");
         assert_eq!(Effort::from_str(name).unwrap(), effort);
         assert_eq!(serde_json::to_value(effort).unwrap(), json!(name));
-        assert_eq!(serde_json::from_value::<Effort>(json!(name)).unwrap(), effort);
+        assert_eq!(
+            serde_json::from_value::<Effort>(json!(name)).unwrap(),
+            effort
+        );
     }
     assert_eq!(seen.len(), Effort::ALL.len());
     // ALL is in ascending order, matching the derived Ord.
@@ -573,11 +608,17 @@ fn from_json_requires_all_mandatory_fields() {
         value.remove(key);
         let result = Session::from_json(&Value::Object(value).to_string());
         match key {
-            "version" => assert!(matches!(result, Err(RecordError::MissingVersion)), "{key}: {result:?}"),
+            "version" => assert!(
+                matches!(result, Err(RecordError::MissingVersion)),
+                "{key}: {result:?}"
+            ),
             // A missing Option field reads as None, same as an explicit null.
             "parent" => assert_eq!(result.unwrap().parent, None),
             "ended_at" => assert_eq!(result.unwrap().ended_at, None),
-            _ => assert!(matches!(result, Err(RecordError::Json(_))), "{key}: {result:?}"),
+            _ => assert!(
+                matches!(result, Err(RecordError::Json(_))),
+                "{key}: {result:?}"
+            ),
         }
     }
 }

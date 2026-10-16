@@ -13,9 +13,7 @@ use std::time::Duration;
 
 use common::{Harness, agent, process, typed, wait_for};
 use proptest::prelude::*;
-use tx_core::{
-    CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TxCore,
-};
+use tx_core::{CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TxCore};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -63,7 +61,9 @@ fn log_types(h: &Harness) -> Vec<String> {
 }
 
 fn env_text(cwd: &std::path::Path) -> String {
-    assert!(wait_for(Duration::from_secs(5), || cwd.join("env.txt").exists()));
+    assert!(wait_for(Duration::from_secs(5), || cwd
+        .join("env.txt")
+        .exists()));
     std::fs::read_to_string(cwd.join("env.txt")).unwrap()
 }
 
@@ -208,7 +208,12 @@ fn snapshot(h: &Harness, model: &Model) -> BTreeMap<SessionId, Vec<u8>> {
 }
 
 /// Every stored fact equals the model: lists, filters, fields, live names, resolve, log length.
-fn check_model(h: &Harness, core: &TxCore, model: &mut Model, step: usize) -> Result<(), TestCaseError> {
+fn check_model(
+    h: &Harness,
+    core: &TxCore,
+    model: &mut Model,
+    step: usize,
+) -> Result<(), TestCaseError> {
     let mut listed = core.list_sessions(&ListFilter::default()).unwrap();
     listed.sort();
     let mut expected: Vec<SessionId> = model.recs.keys().cloned().collect();
@@ -228,9 +233,7 @@ fn check_model(h: &Harness, core: &TxCore, model: &mut Model, step: usize) -> Re
     expected_running.sort();
     prop_assert_eq!(running, expected_running, "step {}: running filter", step);
 
-    let mut tagged = core
-        .list_sessions(&ListFilter::new().tag("t1"))
-        .unwrap();
+    let mut tagged = core.list_sessions(&ListFilter::new().tag("t1")).unwrap();
     tagged.sort();
     let mut expected_tagged: Vec<SessionId> = model
         .recs
@@ -259,9 +262,21 @@ fn check_model(h: &Harness, core: &TxCore, model: &mut Model, step: usize) -> Re
     for (id, rec) in &mut model.recs {
         let session = core.get_session(id).unwrap();
         prop_assert_eq!(&session.name, &rec.name, "step {}: name of {}", step, id);
-        prop_assert_eq!(session.lifecycle, rec.lifecycle, "step {}: lifecycle of {}", step, id);
+        prop_assert_eq!(
+            session.lifecycle,
+            rec.lifecycle,
+            "step {}: lifecycle of {}",
+            step,
+            id
+        );
         prop_assert_eq!(&session.tags, &rec.tags, "step {}: tags of {}", step, id);
-        prop_assert_eq!(&session.parent, &rec.parent, "step {}: parent of {}", step, id);
+        prop_assert_eq!(
+            &session.parent,
+            &rec.parent,
+            "step {}: parent of {}",
+            step,
+            id
+        );
         prop_assert_eq!(
             session.ended_at.is_some(),
             rec.lifecycle.is_terminal(),
@@ -271,18 +286,39 @@ fn check_model(h: &Harness, core: &TxCore, model: &mut Model, step: usize) -> Re
         );
         match rec.ended_at {
             None => rec.ended_at = session.ended_at,
-            Some(at) => prop_assert_eq!(session.ended_at, Some(at), "step {}: ended_at changed", step),
+            Some(at) => prop_assert_eq!(
+                session.ended_at,
+                Some(at),
+                "step {}: ended_at changed",
+                step
+            ),
         }
     }
 
-    prop_assert_eq!(sorted_live(h), model.expected_live(), "step {}: live names", step);
+    prop_assert_eq!(
+        sorted_live(h),
+        model.expected_live(),
+        "step {}: live names",
+        step
+    );
 
     let names: BTreeSet<String> = model.recs.values().map(|rec| rec.name.clone()).collect();
     for name in names {
         let resolved = core.resolve(&name).ok();
-        prop_assert_eq!(resolved, model.expected_resolve(&name), "step {}: resolve {}", step, name);
+        prop_assert_eq!(
+            resolved,
+            model.expected_resolve(&name),
+            "step {}: resolve {}",
+            step,
+            name
+        );
     }
-    prop_assert_eq!(h.log_lines().len(), model.log_len, "step {}: log length", step);
+    prop_assert_eq!(
+        h.log_lines().len(),
+        model.log_len,
+        "step {}: log length",
+        step
+    );
     Ok(())
 }
 
@@ -345,7 +381,14 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                     "NotFound"
                 };
                 let result = core.rename_session(&id, &name);
-                prop_assert_eq!(verdict(&result), expected, "step {}: rename {} -> {}", step, id, name);
+                prop_assert_eq!(
+                    verdict(&result),
+                    expected,
+                    "step {}: rename {} -> {}",
+                    step,
+                    id,
+                    name
+                );
                 if let Ok(session) = result {
                     let rec = model.recs.get_mut(&id).unwrap();
                     if rec.name != name {
@@ -359,7 +402,11 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
             Op::SetTags { who, tags } => {
                 let id = model.id_for(*who);
                 let tags: Vec<String> = tags.iter().map(|t| TAGS[*t].to_owned()).collect();
-                let expected = if model.recs.contains_key(&id) { "Ok" } else { "NotFound" };
+                let expected = if model.recs.contains_key(&id) {
+                    "Ok"
+                } else {
+                    "NotFound"
+                };
                 let result = core.set_session_tags(&id, tags.clone());
                 prop_assert_eq!(verdict(&result), expected, "step {}: tags of {}", step, id);
                 if let Ok(session) = result {
@@ -380,8 +427,17 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 prop_assert_eq!(verdict(&result), expected, "step {}: stop {}", step, id);
                 if let Ok(session) = result {
                     let rec = model.recs.get_mut(&id).unwrap();
-                    let wanted = if rec.killed { Lifecycle::Exited } else { Lifecycle::Stopped };
-                    prop_assert_eq!(session.lifecycle, wanted, "step {}: stop of a killed session", step);
+                    let wanted = if rec.killed {
+                        Lifecycle::Exited
+                    } else {
+                        Lifecycle::Stopped
+                    };
+                    prop_assert_eq!(
+                        session.lifecycle,
+                        wanted,
+                        "step {}: stop of a killed session",
+                        step
+                    );
                     prop_assert!(session.ended_at.is_some());
                     rec.lifecycle = wanted;
                     rec.killed = false;
@@ -407,12 +463,24 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 let id = model.id_for(*who);
                 let result = core.refresh_session(&id);
                 match model.recs.get_mut(&id) {
-                    None => prop_assert_eq!(verdict(&result), "NotFound", "step {}: refresh ghost", step),
+                    None => prop_assert_eq!(
+                        verdict(&result),
+                        "NotFound",
+                        "step {}: refresh ghost",
+                        step
+                    ),
                     Some(rec) => {
                         let result = result.unwrap();
                         let exited = matches!(result, RefreshResult::Exited(_));
                         prop_assert_eq!(exited, rec.killed, "step {}: refresh {}", step, id);
-                        prop_assert_eq!(result.session().lifecycle, if rec.killed { Lifecycle::Exited } else { rec.lifecycle });
+                        prop_assert_eq!(
+                            result.session().lifecycle,
+                            if rec.killed {
+                                Lifecycle::Exited
+                            } else {
+                                rec.lifecycle
+                            }
+                        );
                         if rec.killed {
                             rec.lifecycle = Lifecycle::Exited;
                             rec.killed = false;
@@ -433,9 +501,18 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                     .map(|(id, _)| id.clone())
                     .collect();
                 expected.sort();
-                prop_assert_eq!(got, expected.clone(), "step {}: refresh_all changed set", step);
+                prop_assert_eq!(
+                    got,
+                    expected.clone(),
+                    "step {}: refresh_all changed set",
+                    step
+                );
                 let all_exited = changed.iter().all(|s| s.lifecycle == Lifecycle::Exited);
-                prop_assert!(all_exited, "step {}: refresh_all returned a non-Exited record", step);
+                prop_assert!(
+                    all_exited,
+                    "step {}: refresh_all returned a non-Exited record",
+                    step
+                );
                 for id in expected {
                     let rec = model.recs.get_mut(&id).unwrap();
                     rec.lifecycle = Lifecycle::Exited;
@@ -447,7 +524,11 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
             Op::Kill(name) => {
                 let name = NAMES[*name];
                 let _ = h.tmux(&["kill-session", "-t", &format!("={name}")]);
-                if let Some(rec) = model.recs.values_mut().find(|rec| rec.live() && rec.name == name) {
+                if let Some(rec) = model
+                    .recs
+                    .values_mut()
+                    .find(|rec| rec.live() && rec.name == name)
+                {
                     rec.killed = true;
                 } else {
                     model.orphans.remove(name);
@@ -465,7 +546,14 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                         Some(_) => "NotRunning",
                     }
                 };
-                let result = core.send_message(&to, &format!("m{step}"), match from { Some(from) => SendOptions::from_agent(from), None => SendOptions::default() });
+                let result = core.send_message(
+                    &to,
+                    &format!("m{step}"),
+                    match from {
+                        Some(from) => SendOptions::from_agent(from),
+                        None => SendOptions::default(),
+                    },
+                );
                 prop_assert_eq!(verdict(&result), expected, "step {}: send to {}", step, to);
                 if result.is_ok() {
                     model.log_len += 1;
@@ -478,7 +566,13 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 continue;
             }
             if let Some(now) = model.recs.contains_key(id).then(|| h.record_bytes(id)) {
-                prop_assert_eq!(&now, bytes, "step {}: untouched record {} was rewritten", step, id);
+                prop_assert_eq!(
+                    &now,
+                    bytes,
+                    "step {}: untouched record {} was rewritten",
+                    step,
+                    id
+                );
             }
         }
         check_model(h, core, &mut model, step)?;
@@ -512,25 +606,52 @@ fn scripted_corner_sequence_matches_the_model() {
     let h = Harness::new();
     let core = h.open();
     let ops = [
-        Op::Create { name: 0, tags: vec![0], parent: None },
-        Op::Create { name: 1, tags: vec![], parent: Some(0) },
+        Op::Create {
+            name: 0,
+            tags: vec![0],
+            parent: None,
+        },
+        Op::Create {
+            name: 1,
+            tags: vec![],
+            parent: Some(0),
+        },
         Op::Kill(0),
-        Op::Create { name: 0, tags: vec![], parent: None }, // NameTaken: killed but still Running
-        Op::Rename { who: 1, name: 0 },                     // NameTaken: record of alpha is Running
-        Op::Stop(0),                                        // Exited, not Stopped
-        Op::Create { name: 0, tags: vec![], parent: None }, // name free again
-        Op::Forget(2),                                      // forget a live one: orphan in tmux
-        Op::Create { name: 0, tags: vec![], parent: None }, // NameTaken by tmux
-        Op::Rename { who: 1, name: 0 },                     // live rename into an orphan: NameTaken
+        Op::Create {
+            name: 0,
+            tags: vec![],
+            parent: None,
+        }, // NameTaken: killed but still Running
+        Op::Rename { who: 1, name: 0 }, // NameTaken: record of alpha is Running
+        Op::Stop(0),                    // Exited, not Stopped
+        Op::Create {
+            name: 0,
+            tags: vec![],
+            parent: None,
+        }, // name free again
+        Op::Forget(2),                  // forget a live one: orphan in tmux
+        Op::Create {
+            name: 0,
+            tags: vec![],
+            parent: None,
+        }, // NameTaken by tmux
+        Op::Rename { who: 1, name: 0 }, // live rename into an orphan: NameTaken
         Op::Kill(1),
-        Op::Rename { who: 1, name: 0 },                     // killed record: record-only rename, Ok
+        Op::Rename { who: 1, name: 0 }, // killed record: record-only rename, Ok
         Op::RefreshAll,
         Op::Refresh(1),
-        Op::Stop(1),                                        // NotRunning
-        Op::Send { to: 1, from: None },                     // NotRunning
-        Op::Send { to: 0, from: Some(9) },                  // NotFound (sender)
-        Op::Kill(0),                                        // kills the orphan
-        Op::Create { name: 0, tags: vec![], parent: None }, // free: every "alpha" record is terminal
+        Op::Stop(1),                    // NotRunning
+        Op::Send { to: 1, from: None }, // NotRunning
+        Op::Send {
+            to: 0,
+            from: Some(9),
+        }, // NotFound (sender)
+        Op::Kill(0),                    // kills the orphan
+        Op::Create {
+            name: 0,
+            tags: vec![],
+            parent: None,
+        }, // free: every "alpha" record is terminal
     ];
     run_ops(&h, &core, &ops).unwrap();
 }
@@ -549,12 +670,20 @@ fn resolve_prefers_an_id_over_a_name_equal_to_it() {
     // A uuid is a valid name; a session *named* like another session's id.
     let b = core.create_session(process(a.as_str(), &cwd)).unwrap();
     assert_ne!(a, b);
-    assert_eq!(core.resolve(a.as_str()).unwrap(), a, "id wins over an equal name");
+    assert_eq!(
+        core.resolve(a.as_str()).unwrap(),
+        a,
+        "id wins over an equal name"
+    );
     assert_eq!(core.resolve(b.as_str()).unwrap(), b);
     assert_eq!(core.resolve("a").unwrap(), a);
     // Once the id record is gone, the name match surfaces.
     core.forget_session(&a).unwrap();
-    assert_eq!(core.resolve(a.as_str()).unwrap(), b, "forgotten id falls through to the name");
+    assert_eq!(
+        core.resolve(a.as_str()).unwrap(),
+        b,
+        "forgotten id falls through to the name"
+    );
     // Even when the named record is stopped, the id-looking name still resolves to it.
     core.stop_session(&b).unwrap();
     assert_eq!(core.resolve(a.as_str()).unwrap(), b);
@@ -576,8 +705,15 @@ fn resolve_three_records_one_name() {
     h.tmux_ok(&["kill-session", "-t", "=n"]);
     assert_eq!(core.resolve("n").unwrap(), third);
     core.stop_session(&third).unwrap();
-    assert_eq!(core.get_session(&third).unwrap().lifecycle, Lifecycle::Exited);
-    assert_eq!(core.resolve("n").unwrap(), third, "most recently created among terminals");
+    assert_eq!(
+        core.get_session(&third).unwrap().lifecycle,
+        Lifecycle::Exited
+    );
+    assert_eq!(
+        core.resolve("n").unwrap(),
+        third,
+        "most recently created among terminals"
+    );
     // Rename an older terminal record to the name: still the most recent *created* wins.
     core.rename_session(&first, "m").unwrap();
     core.rename_session(&first, "n").unwrap();
@@ -611,21 +747,35 @@ fn parent_is_never_validated_and_tags_are_verbatim() {
     ];
     let id = core.create_session(opts.clone()).unwrap();
     let session = core.get_session(&id).unwrap();
-    assert_eq!(session.parent, Some(ghost.clone()), "dangling parent accepted verbatim");
-    assert_eq!(session.tags, opts.tags, "tags kept verbatim: empty, duplicate, unicode, 10 kB");
-    let by_parent = core.list_sessions(&ListFilter::new().parent(ghost)).unwrap();
+    assert_eq!(
+        session.parent,
+        Some(ghost.clone()),
+        "dangling parent accepted verbatim"
+    );
+    assert_eq!(
+        session.tags, opts.tags,
+        "tags kept verbatim: empty, duplicate, unicode, 10 kB"
+    );
+    let by_parent = core
+        .list_sessions(&ListFilter::new().parent(ghost))
+        .unwrap();
     assert_eq!(by_parent, std::slice::from_ref(&id));
     for tag in ["", "dup", "ünïcödé 😀", "with\nnewline", big.as_str()] {
         let found = core.list_sessions(&ListFilter::new().tag(tag)).unwrap();
         assert_eq!(found, std::slice::from_ref(&id), "tag {tag:?}");
     }
     // A session may even claim itself as parent via set_tags? No API; but rename/tags keep parent.
-    let session = core.set_session_tags(&id, vec![big.clone(), big.clone()]).unwrap();
+    let session = core
+        .set_session_tags(&id, vec![big.clone(), big.clone()])
+        .unwrap();
     assert_eq!(session.tags, [big.clone(), big]);
     // The log line is bounded even though the tag text is not.
     let last = h.log_lines().pop().unwrap();
     assert_eq!(last["type"], "tagged");
-    assert!(last["msg"].as_str().unwrap().len() <= 600, "log msg is trimmed");
+    assert!(
+        last["msg"].as_str().unwrap().len() <= 600,
+        "log msg is trimmed"
+    );
     // Re-reading after the reopen path works with the huge record.
     let again = h.open();
     assert_eq!(again.get_session(&id).unwrap().tags.len(), 2);
@@ -640,7 +790,10 @@ fn env_values_with_equals_spaces_newline_and_8kb_reach_the_process() {
     require_tmux!();
     let h = Harness::new();
     let mut config = h.config();
-    config.env = vec![("FROM_PLAN".into(), "config".into()), ("CFG".into(), "config".into())];
+    config.env = vec![
+        ("FROM_PLAN".into(), "config".into()),
+        ("CFG".into(), "config".into()),
+    ];
     let mut core = TxCore::open(config).unwrap();
     core.register_engine(Box::new(common::ShellStub)).unwrap();
     let cwd = h.workdir("a");
@@ -660,17 +813,32 @@ fn env_values_with_equals_spaces_newline_and_8kb_reach_the_process() {
     let text = env_text(&cwd);
     assert!(text.contains("\nEQ=a=b=c\n"), "{text}");
     assert!(text.contains("\nSP=  two  words  \n"), "{text}");
-    assert!(text.contains("\nNL=line1\nline2\n"), "newline value: {text}");
+    assert!(
+        text.contains("\nNL=line1\nline2\n"),
+        "newline value: {text}"
+    );
     assert!(text.contains(&format!("\nBIG={big}\n")), "8 kB value");
     assert!(text.contains("\nEMPTY=\n"), "{text}");
     assert!(text.contains("\nUNI=żółć 😀\n"), "{text}");
-    assert!(text.contains("\nTX_SESSION_ID=override\n"), "opts.env overrides TX_SESSION_ID");
-    assert!(!text.contains(&format!("TX_SESSION_ID={id}")), "the real id is not in the env any more");
-    assert!(text.contains("\nFROM_PLAN=plan\n"), "plan env beats config env");
+    assert!(
+        text.contains("\nTX_SESSION_ID=override\n"),
+        "opts.env overrides TX_SESSION_ID"
+    );
+    assert!(
+        !text.contains(&format!("TX_SESSION_ID={id}")),
+        "the real id is not in the env any more"
+    );
+    assert!(
+        text.contains("\nFROM_PLAN=plan\n"),
+        "plan env beats config env"
+    );
     assert!(text.contains("\nCFG=opts\n"), "option env beats config env");
     // Core's bookkeeping does not depend on the env: @tx-id still links the session.
     assert!(core.get_execution_location(&id).is_ok());
-    assert!(matches!(core.refresh_session(&id).unwrap(), RefreshResult::Unchanged(_)));
+    assert!(matches!(
+        core.refresh_session(&id).unwrap(),
+        RefreshResult::Unchanged(_)
+    ));
 }
 
 #[test]
@@ -687,10 +855,17 @@ fn env_keys_rejected_before_any_state() {
     }
     let mut opts = process("k", &cwd);
     opts.env = vec![("A".into(), "x\0y".into())];
-    assert_eq!(kind(&core.create_session(opts).unwrap_err()), "InvalidEnvKey");
+    assert_eq!(
+        kind(&core.create_session(opts).unwrap_err()),
+        "InvalidEnvKey"
+    );
     assert!(h.live_names().is_empty());
     assert!(h.log_lines().is_empty());
-    assert!(core.list_sessions(&ListFilter::default()).unwrap().is_empty());
+    assert!(
+        core.list_sessions(&ListFilter::default())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -756,19 +931,47 @@ fn forget_of_a_live_session_keeps_its_name_taken_in_tmux() {
     let cwd = h.workdir("a");
     let id = core.create_session(agent("f", &cwd)).unwrap();
     assert!(core.forget_session(&id).unwrap());
-    let error = core.create_session(process("f", &h.workdir("b"))).unwrap_err();
+    let error = core
+        .create_session(process("f", &h.workdir("b")))
+        .unwrap_err();
     assert_eq!(kind(&error), "NameTaken", "tmux still holds the name");
-    assert!(core.list_sessions(&ListFilter::default()).unwrap().is_empty());
-    assert!(core.refresh_all().unwrap().is_empty(), "no record, nothing to refresh");
+    assert!(
+        core.list_sessions(&ListFilter::default())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        core.refresh_all().unwrap().is_empty(),
+        "no record, nothing to refresh"
+    );
     assert_eq!(kind(&core.refresh_session(&id).unwrap_err()), "NotFound");
-    assert_eq!(kind(&core.get_execution_location(&id).unwrap_err()), "NotFound");
-    assert_eq!(kind(&core.send_message(&id, "x", SendOptions::default()).unwrap_err()), "NotFound");
+    assert_eq!(
+        kind(&core.get_execution_location(&id).unwrap_err()),
+        "NotFound"
+    );
+    assert_eq!(
+        kind(
+            &core
+                .send_message(&id, "x", SendOptions::default())
+                .unwrap_err()
+        ),
+        "NotFound"
+    );
     assert_eq!(kind(&core.stop_session(&id).unwrap_err()), "NotFound");
-    assert_eq!(kind(&core.rename_session(&id, "g").unwrap_err()), "NotFound");
+    assert_eq!(
+        kind(&core.rename_session(&id, "g").unwrap_err()),
+        "NotFound"
+    );
     assert_eq!(h.live_names(), ["f"], "the orphan keeps running");
     assert_eq!(log_types(&h), ["created", "forgotten"]);
     // A failed create against the orphan name left nothing behind.
-    assert!(!h.state_dir().join("profiles").read_dir().unwrap().any(|_| true));
+    assert!(
+        !h.state_dir()
+            .join("profiles")
+            .read_dir()
+            .unwrap()
+            .any(|_| true)
+    );
     // Once the orphan is gone, the name is free again.
     h.tmux_ok(&["kill-session", "-t", "=f"]);
     let again = core.create_session(process("f", &h.workdir("b"))).unwrap();
@@ -788,16 +991,24 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     let cwd = h.workdir("a");
     let a = core.create_session(process("a", &cwd)).unwrap();
     let b = core.create_session(process("b", &h.workdir("b"))).unwrap();
-    assert!(wait_for(Duration::from_secs(5), || cwd.join("env.txt").exists()));
+    assert!(wait_for(Duration::from_secs(5), || cwd
+        .join("env.txt")
+        .exists()));
     let before = core.get_execution_location(&a).unwrap();
     h.tmux_ok(&["rename-session", "-t", "=a", "sneaky"]);
     let after = core.get_execution_location(&a).unwrap();
     assert_eq!(before, after, "targets are server-local ids, not names");
     // The record still says "a"; tmux says "sneaky". A new create named "a" succeeds in tmux
     // but the record of `a` is Running with that name: NameTaken by the record.
-    assert_eq!(kind(&core.create_session(process("a", &cwd)).unwrap_err()), "NameTaken");
+    assert_eq!(
+        kind(&core.create_session(process("a", &cwd)).unwrap_err()),
+        "NameTaken"
+    );
     // And "sneaky" is free by records but taken by tmux: NameTaken from tmux.
-    assert_eq!(kind(&core.create_session(process("sneaky", &cwd)).unwrap_err()), "NameTaken");
+    assert_eq!(
+        kind(&core.create_session(process("sneaky", &cwd)).unwrap_err()),
+        "NameTaken"
+    );
     core.send_message(&a, "hi", SendOptions::default()).unwrap();
     assert!(wait_for(Duration::from_secs(5), || typed(&cwd).contains("hi")));
 
@@ -805,9 +1016,26 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     let bytes_b = h.record_bytes(&b);
     let log_before = h.log_lines().len();
     h.tmux(&["kill-server"]);
-    assert_eq!(kind(&core.get_execution_location(&a).unwrap_err()), "NotRunning");
-    assert_eq!(kind(&core.send_message(&a, "x", SendOptions::default()).unwrap_err()), "NotRunning");
-    assert_eq!(kind(&core.send_message(&b, "x", SendOptions::from_agent(a.clone())).unwrap_err()), "NotRunning");
+    assert_eq!(
+        kind(&core.get_execution_location(&a).unwrap_err()),
+        "NotRunning"
+    );
+    assert_eq!(
+        kind(
+            &core
+                .send_message(&a, "x", SendOptions::default())
+                .unwrap_err()
+        ),
+        "NotRunning"
+    );
+    assert_eq!(
+        kind(
+            &core
+                .send_message(&b, "x", SendOptions::from_agent(a.clone()))
+                .unwrap_err()
+        ),
+        "NotRunning"
+    );
     assert!(h.live_names().is_empty(), "no op restarted the server");
     assert_eq!(h.record_bytes(&a), bytes_a);
     assert_eq!(h.record_bytes(&b), bytes_b);
@@ -823,10 +1051,24 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     let mut expected = vec![a.clone(), b.clone()];
     expected.sort();
     assert_eq!(ids, expected);
-    assert!(changed.iter().all(|s| s.lifecycle == Lifecycle::Exited && s.ended_at.is_some()));
-    assert!(h.live_names().is_empty(), "refresh did not restart the server");
+    assert!(
+        changed
+            .iter()
+            .all(|s| s.lifecycle == Lifecycle::Exited && s.ended_at.is_some())
+    );
+    assert!(
+        h.live_names().is_empty(),
+        "refresh did not restart the server"
+    );
     assert_eq!(kind(&core.stop_session(&a).unwrap_err()), "NotRunning");
-    assert_eq!(kind(&core.send_message(&b, "x", SendOptions::default()).unwrap_err()), "NotRunning");
+    assert_eq!(
+        kind(
+            &core
+                .send_message(&b, "x", SendOptions::default())
+                .unwrap_err()
+        ),
+        "NotRunning"
+    );
     assert!(core.refresh_all().unwrap().is_empty());
     // Creating again starts a fresh server; old records stay Exited.
     let c = core.create_session(process("renamed", &cwd)).unwrap();
@@ -843,7 +1085,11 @@ fn stop_after_server_death_reports_exited() {
     let id = core.create_session(process("s", &h.workdir("a"))).unwrap();
     h.tmux(&["kill-server"]);
     let session = core.stop_session(&id).unwrap();
-    assert_eq!(session.lifecycle, Lifecycle::Exited, "what happened, not what was asked");
+    assert_eq!(
+        session.lifecycle,
+        Lifecycle::Exited,
+        "what happened, not what was asked"
+    );
     assert!(session.ended_at.is_some());
     assert!(h.live_names().is_empty());
     assert_eq!(log_types(&h), ["created", "exited"]);
@@ -876,16 +1122,33 @@ fn terminal_records_never_revive() {
     h.tmux_ok(&["set-option", "-t", "=e:", "@tx-id", exited.as_str()]);
     assert!(core.refresh_all().unwrap().is_empty());
     for (id, at) in [&stopped, &exited].into_iter().zip(ended) {
-        assert!(matches!(core.refresh_session(id).unwrap(), RefreshResult::Unchanged(_)));
+        assert!(matches!(
+            core.refresh_session(id).unwrap(),
+            RefreshResult::Unchanged(_)
+        ));
         core.rename_session(id, "zz").unwrap();
         core.rename_session(id, "back").unwrap();
         core.set_session_tags(id, vec!["t".into()]).unwrap();
         let session = core.get_session(id).unwrap();
         assert!(session.lifecycle.is_terminal());
-        assert_eq!(session.ended_at, Some(at), "ended_at is never cleared or rewritten");
+        assert_eq!(
+            session.ended_at,
+            Some(at),
+            "ended_at is never cleared or rewritten"
+        );
         assert_eq!(kind(&core.stop_session(id).unwrap_err()), "NotRunning");
-        assert_eq!(kind(&core.send_message(id, "x", SendOptions::default()).unwrap_err()), "NotRunning");
+        assert_eq!(
+            kind(
+                &core
+                    .send_message(id, "x", SendOptions::default())
+                    .unwrap_err()
+            ),
+            "NotRunning"
+        );
     }
     // A terminal record has no execution location, even when a foreign session carries its id.
-    assert_eq!(kind(&core.get_execution_location(&stopped).unwrap_err()), "NotRunning");
+    assert_eq!(
+        kind(&core.get_execution_location(&stopped).unwrap_err()),
+        "NotRunning"
+    );
 }

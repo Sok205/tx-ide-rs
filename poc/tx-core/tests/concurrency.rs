@@ -43,7 +43,11 @@ fn concurrent_create_from_eight_processes_yields_one_session() {
                 .args(["--exact", "child_entry", "--nocapture", "--test-threads=1"])
                 .env(
                     CHILD_ENV,
-                    format!("create:{}:shared:{}", h.state_dir().display(), cwd.display()),
+                    format!(
+                        "create:{}:shared:{}",
+                        h.state_dir().display(),
+                        cwd.display()
+                    ),
                 )
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
@@ -83,7 +87,9 @@ fn concurrent_tag_and_rename_lose_no_update() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open();
-    let id = core.create_session(process("target", &h.workdir("w"))).unwrap();
+    let id = core
+        .create_session(process("target", &h.workdir("w")))
+        .unwrap();
     let barrier = Arc::new(Barrier::new(4));
     let handles: Vec<_> = (0..4)
         .map(|worker| {
@@ -95,7 +101,8 @@ fn concurrent_tag_and_rename_lose_no_update() {
                 barrier.wait();
                 for i in 0..25 {
                     if worker % 2 == 0 {
-                        core.set_session_tags(&id, vec![format!("w{worker}-{i}")]).unwrap();
+                        core.set_session_tags(&id, vec![format!("w{worker}-{i}")])
+                            .unwrap();
                     } else {
                         core.rename_session(&id, &format!("n{worker}-{i}")).unwrap();
                     }
@@ -107,8 +114,16 @@ fn concurrent_tag_and_rename_lose_no_update() {
         handle.join().unwrap();
     }
     let session = core.get_session(&id).unwrap();
-    assert!(session.name == "n1-24" || session.name == "n3-24", "{}", session.name);
-    assert!(session.tags == ["w0-24"] || session.tags == ["w2-24"], "{:?}", session.tags);
+    assert!(
+        session.name == "n1-24" || session.name == "n3-24",
+        "{}",
+        session.name
+    );
+    assert!(
+        session.tags == ["w0-24"] || session.tags == ["w2-24"],
+        "{:?}",
+        session.tags
+    );
     assert_eq!(h.live_names(), std::slice::from_ref(&session.name));
     let log = h.log_lines();
     let tagged = log.iter().filter(|l| l["type"] == "tagged").count();
@@ -116,7 +131,13 @@ fn concurrent_tag_and_rename_lose_no_update() {
     assert_eq!((tagged, renamed), (50, 50));
     let temp_files = std::fs::read_dir(h.state_dir().join("sessions"))
         .unwrap()
-        .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".tmp"))
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        })
         .count();
     assert_eq!(temp_files, 0);
 }
@@ -128,7 +149,9 @@ fn parallel_senders_never_interleave_inside_one_recipient() {
     let core = h.open();
     let cwd = h.workdir("w");
     let id = core.create_session(process("inbox", &cwd)).unwrap();
-    assert!(wait_for(Duration::from_secs(5), || cwd.join("env.txt").exists()));
+    assert!(wait_for(Duration::from_secs(5), || cwd
+        .join("env.txt")
+        .exists()));
     let senders = 6;
     let per_sender = 8;
     let barrier = Arc::new(Barrier::new(senders));
@@ -142,7 +165,8 @@ fn parallel_senders_never_interleave_inside_one_recipient() {
                 barrier.wait();
                 for i in 0..per_sender {
                     let body = format!("{worker}:{i}:{}", "x".repeat(150));
-                    core.send_message(&id, &body, SendOptions::default()).unwrap();
+                    core.send_message(&id, &body, SendOptions::default())
+                        .unwrap();
                 }
             })
         })
@@ -150,7 +174,10 @@ fn parallel_senders_never_interleave_inside_one_recipient() {
     for handle in handles {
         handle.join().unwrap();
     }
-    assert!(wait_for(Duration::from_secs(20), || typed(&cwd).lines().count() == senders * per_sender));
+    assert!(wait_for(Duration::from_secs(20), || typed(&cwd)
+        .lines()
+        .count()
+        == senders * per_sender));
     let mut seen = HashSet::new();
     for line in typed(&cwd).lines() {
         let inner = line
@@ -158,13 +185,23 @@ fn parallel_senders_never_interleave_inside_one_recipient() {
             .and_then(|l| l.strip_suffix("</from-user>"))
             .unwrap_or_else(|| panic!("torn line: {line:?}"));
         let mut parts = inner.splitn(3, ':');
-        let (w, i, pad) = (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
+        let (w, i, pad) = (
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+        );
         assert_eq!(pad, "x".repeat(150), "{line:?}");
-        assert!(seen.insert((w.to_owned(), i.to_owned())), "duplicate {line:?}");
+        assert!(
+            seen.insert((w.to_owned(), i.to_owned())),
+            "duplicate {line:?}"
+        );
     }
     assert_eq!(seen.len(), senders * per_sender);
     assert_eq!(
-        h.log_lines().iter().filter(|l| l["type"] == "message-sent").count(),
+        h.log_lines()
+            .iter()
+            .filter(|l| l["type"] == "message-sent")
+            .count(),
         senders * per_sender
     );
 }
@@ -192,13 +229,22 @@ fn refresh_all_never_marks_a_freshly_created_session_exited() {
     };
     let mut ids = Vec::new();
     for i in 0..24 {
-        ids.push(core.create_session(process(&format!("s{i}"), &cwd)).unwrap());
+        ids.push(
+            core.create_session(process(&format!("s{i}"), &cwd))
+                .unwrap(),
+        );
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     let wrongly_exited = refresher.join().unwrap();
-    assert!(wrongly_exited.is_empty(), "marked exited while live: {wrongly_exited:?}");
+    assert!(
+        wrongly_exited.is_empty(),
+        "marked exited while live: {wrongly_exited:?}"
+    );
     assert_eq!(h.live_names().len(), 24);
     for id in &ids {
-        assert_eq!(core.get_session(id).unwrap().lifecycle, tx_core::Lifecycle::Running);
+        assert_eq!(
+            core.get_session(id).unwrap().lifecycle,
+            tx_core::Lifecycle::Running
+        );
     }
 }
