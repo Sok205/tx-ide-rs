@@ -92,7 +92,7 @@ Each row is its own small task plan, landed in the phase of its first consumer.
 
 | addition | shape | consumers | phase |
 |---|---|---|---|
-| `Session.ext` read helper | `Session::ext<T: DeserializeOwned>(&self, plugin: &str) -> Result<Option<T>, serde_json::Error>` | views (picker reads `hooks` state), every later plugin | 1 |
+| `Session.ext` read helper | `Session::ext<T: DeserializeOwned>(&self, plugin: &str) -> Result<Option<T>, serde_json::Error>` | picker (reads `hooks` state), every later plugin | 1 |
 | launch slot | `trait LaunchDecorator: Send + Sync { fn id(&self) -> &str; fn decorate(&self, req: &LaunchRequest<'_>, plan: &mut LaunchPlan) -> Result<(), EngineError>; }`; `Registry::launch(Box<dyn LaunchDecorator>)`; core runs decorators in manifest order between `adapter.launch` and `apply_workspace` in `create_locked` (`poc/tx-core/src/core.rs:534-540`), on `LaunchOptions::Agent` only | spawn (read-only wrapper, skill symlinks), hooks (per-session hook injection), playground (companion env) | 2 |
 | plugin resources | `Registry::resource(name, bytes)`, `TxCore::resources(prefix)` — named static blobs listed by prefix; the core never reads them | every key plugin (its `keys/<id>.tmux`), ide (conf, scripts), later hooks (templates), antigravity (.agents files) | 1 (landed 2026-10-19) |
 | plugin data dir | `Registry::data_dir(&self) -> PathBuf` = `<state_dir>/plugins/<id>/`, created on first call, mode 0755 | chat/history, artifacts, timeline cache, tutor, sync | 3 |
@@ -152,7 +152,7 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     (written by phase 2; read here for the picker's role column); the group override is
     `ext["edit"] = {"group": …}`.
   - Core additions: `Session::ext` helper.
-  - Gate: with `tmux/tx-ide.tmux` sourced against the core socket, prefix+t lists running
+  - Gate: with `txc ui install` run against the core socket, prefix+t lists running
     sessions with hooks state and attaches on Enter; prefix+e renames and retags; prefix+X
     stops with the confirm prompt; prefix+s relabels `choose-tree`; `render` tables match
     main's fixtures byte-for-byte; a session with a malformed `ext["hooks"]` still lists.
@@ -164,7 +164,8 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     - `selfcheck` is not ported;
     - the TPM/resurrect/continuum block is dropped from the poc `tmux.conf`;
     - the fragment emits the prefix+T, /, f, n, a binds only when their verb exists in
-      `txc help`;
+      `txc help` (superseded the same day: a plugin's fragment is installed only while the plugin
+      is active; no `txc help` gating remains);
     - `ui attach` is the way into the server until phase 7's `start`;
     - `render_ls` and the `show` extras are not ported (txc's `ls` and `show` are core
       built-ins);
@@ -188,8 +189,9 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     `NAME.local.md` extend, `agents/skills/*`; wired through `CoreConfig::profile_dirs` and
     `skill_dirs` by `txc`.
   - State: `ext["spawn"] = {"worktree": path | null, "read_only": bool, "role": [..],
-    "archived_at": ts | null}`; `ext["spawn"]` also holds `{"kind": "nvim|view|playground", "attached_to", "nvim_socket"}` for nvim and view sessions. Worktrees live under
-    `<state_dir>/worktrees/` as main does.
+    "archived_at": ts | null}`; `ext["spawn"]` also holds
+    `{"kind": "nvim|view|playground", "attached_to", "nvim_socket"}` for nvim and view sessions.
+    Worktrees live under `<state_dir>/worktrees/` as main does.
   - Core additions: launch slot. Two decorators in this crate: `ReadOnly` wraps `plan.program`
     in `sandbox-exec` / `bwrap` when `TX_SPAWN_READ_ONLY=1` is in `CreateOptions::env`;
     `Skills` appends `WorkspaceAction::Symlink` for each granted skill into the engine's
@@ -259,12 +261,12 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     tests from main pass with the row source swapped; `_timeline-json` matches main's fixture.
 
 - [ ] **Phase 7 — `start`, `tutor`, `playground`** (no new keys)
-  - `start`: home base. Boots Views, warms the assistant, `--tutor [LANG]` lands in the
+  - `start`: home base. Boots the IDE (`ui attach`'s `home` view), warms the assistant, `--tutor [LANG]` lands in the
     walkthrough. Lives in a `start` plugin.
   - `tutor`: crate `poc/plugins/tutor`, plugin id `tutor`. From `tutor/` and `verbs/tutor.rs`;
     verbs `tutor start|check|next|prev|goto|status|hint|reset`; progress under
     `data_dir()/<lang>.json`; packs stay in `tutor/<lang>/`. ~1.8k lines.
-  - `playground`: `playground.rs` as a `LaunchDecorator` in `tx-ui` plus the companion
+  - `playground`: `playground.rs` as a `LaunchDecorator` registered by a `playground` plugin (using `tx-ui`) plus the companion
     verb. ~0.4k lines.
   - Gate: `tx start --tutor python` opens the tutor view and lesson 1 checks pass against a
     spawned worker; a worker's Bash commands replay in its playground pane.
