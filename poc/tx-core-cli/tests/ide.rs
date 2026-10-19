@@ -342,6 +342,11 @@ fn legacy_hint_when_no_installed_file() {
     let fresh = cli.ok(&["ui", "install"]);
     assert!(!fresh.contains("legacy"), "{fresh:?}");
     std::fs::remove_file(cli.state().join("keys/.installed")).unwrap();
+    assert!(
+        cli.tmux(&["set-option", "-g", "@tx-bin", exe().to_str().unwrap()])
+            .status
+            .success()
+    );
     let out = cli.ok(&["ui", "install"]);
     assert_eq!(
         out,
@@ -351,6 +356,56 @@ fn legacy_hint_when_no_installed_file() {
         )
     );
     assert!(cli.state().join("keys/.installed").is_file());
+}
+
+#[test]
+fn no_legacy_hint_when_the_server_never_loaded_an_install_conf() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    start_server(&cli);
+    std::fs::remove_file(cli.state().join("keys/.installed")).unwrap();
+    assert!(
+        cli.tmux(&["set-option", "-gu", "@tx-bin"]).status.success(),
+        "unset @tx-bin"
+    );
+    let out = cli.ok(&["ui", "install"]);
+    assert_eq!(out, format!("{}\nreloaded\n", cli.conf().display()));
+    assert!(cli.state().join("keys/.installed").is_file());
+}
+
+#[test]
+fn reload_unbinds_a_key_a_fragment_stopped_declaring() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    start_server(&cli);
+    assert!(
+        cli.tmux(&["bind-key", "F12", "display-message", "bogus"])
+            .status
+            .success()
+    );
+    assert!(
+        cli.tmux_out(&["list-keys", "-T", "prefix", "F12"])
+            .contains("bogus")
+    );
+    let path = cli.state().join("keys/.installed");
+    let text = installed(&cli);
+    assert!(text.contains("kill\tkeys=X\t"), "{text:?}");
+    std::fs::write(&path, text.replace("kill\tkeys=X\t", "kill\tkeys=X F12\t")).unwrap();
+    let out = cli.ok(&["ui", "install"]);
+    assert!(out.contains("reloaded"), "{out:?}");
+    let f12 = cli.tmux_out(&["list-keys", "-T", "prefix", "F12"]);
+    assert!(f12.is_empty(), "{f12:?}");
+    assert!(
+        installed(&cli).contains("kill\tkeys=X\t"),
+        "{:?}",
+        installed(&cli)
+    );
+    assert!(cli.wait_for(5, || {
+        cli.tmux_out(&["list-keys", "-T", "prefix", "X"])
+            .contains("tmux-kill-tx-session")
+    }));
 }
 
 #[test]

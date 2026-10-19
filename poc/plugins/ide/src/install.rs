@@ -118,6 +118,15 @@ fn tmux_env_socket(env: Option<&str>) -> Option<&str> {
         .filter(|socket| !socket.is_empty())
 }
 
+/// The words of `before` that `now` no longer lists; all of them when the fragment is gone.
+fn dropped(before: &[String], now: Option<&[String]>) -> Vec<String> {
+    before
+        .iter()
+        .filter(|word| !now.is_some_and(|now| now.contains(word)))
+        .cloned()
+        .collect()
+}
+
 fn fail(io: &mut VerbIo<'_>, message: &str) -> Result<i32, VerbError> {
     let _ = writeln!(io.stderr, "{message}");
     Ok(1)
@@ -290,26 +299,27 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let mut out = format!("{}\n", conf.display());
     let ui = Ui::from_core(core);
     if ui.quiet(&["list-sessions"]).0 {
-        let gone = previous
-            .iter()
-            .flatten()
-            .filter(|(id, _)| !fragments.iter().any(|(now, _)| now == id));
-        for (_, declared) in gone {
-            for key in &declared.keys {
-                ui.quiet(&["unbind", key]);
+        let legacy_conf_loaded = previous.is_none() && {
+            let (ok, value) = ui.quiet(&["show-option", "-gv", "@tx-bin"]);
+            ok && !value.trim().is_empty()
+        };
+        for (id, before) in previous.iter().flatten() {
+            let now = fragments.iter().find(|(now, _)| now == id).map(|(_, d)| d);
+            for key in dropped(&before.keys, now.map(|d| d.keys.as_slice())) {
+                ui.quiet(&["unbind", &key]);
             }
-            for option in &declared.unset {
-                ui.quiet(&["set", "-gu", option]);
+            for option in dropped(&before.unset, now.map(|d| d.unset.as_slice())) {
+                ui.quiet(&["set", "-gu", &option]);
             }
-            for hook in &declared.unhook {
-                ui.quiet(&["set-hook", "-gu", hook]);
+            for hook in dropped(&before.unhook, now.map(|d| d.unhook.as_slice())) {
+                ui.quiet(&["set-hook", "-gu", &hook]);
             }
         }
         ui.run(&["source-file", &conf.to_string_lossy()])
             .map_err(|e| VerbError::Failed(e.to_string()))?;
         write_installed()?;
         out.push_str("reloaded\n");
-        if previous.is_none() {
+        if previous.is_none() && legacy_conf_loaded {
             out.push_str(LEGACY_HINT);
             out.push('\n');
         }
