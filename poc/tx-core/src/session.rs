@@ -1,5 +1,6 @@
 //! The session record: what core stores on disk for every managed session.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -197,6 +198,10 @@ pub struct Session {
     pub ended_at: Option<f64>,
     pub lifecycle: Lifecycle,
     pub launch: Launch,
+    /// Plugin-owned data keyed by plugin id; written through `TxCore::update_ext`. Core never
+    /// reads it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ext: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -304,6 +309,7 @@ mod tests {
                 effort: Some(Effort::XHigh),
                 resume: Some("chat-1".into()),
             },
+            ext: std::collections::BTreeMap::new(),
         }
     }
 
@@ -321,6 +327,7 @@ mod tests {
                 program: "sh".into(),
                 args: vec!["-c".into(), "sleep 1".into()],
             },
+            ext: std::collections::BTreeMap::new(),
         }
     }
 

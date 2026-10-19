@@ -21,8 +21,9 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | crate | role | depends on |
 |---|---|---|
 | `tx-core` | the library: `TxCore` and the public operations | serde, serde_json, thiserror, uuid, tempfile |
-| `tx-engine-claude` | `EngineAdapter` for Claude Code | tx-core |
-| `tx-engine-codex` | `EngineAdapter` for Codex | tx-core |
+| `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `EngineAdapter` for Claude Code | tx-core |
+| `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `EngineAdapter` for Codex | tx-core |
+| `plugins/hooks` (`tx-hooks`) | plugin: `txc hook …`, the agent's hooks → a per-session working / waiting / idle state | tx-core |
 | `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled engines | the three above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
@@ -162,6 +163,30 @@ Every session carries `TX_SESSION_ID`, `TX_TMUX_SOCKET` and `TX_CORE_HOME`, so a
 run `txc send <name> …` and the message arrives as `<from-agent session="…">`. `txc` treats the
 caller as an agent only when `$TMUX` names tx's own socket; anywhere else the sender is the user.
 
+## Plugins
+
+Everything but the core is a plugin: a crate under `plugins/<id>/` implementing `tx_core::Plugin`,
+which fills any of three slots — engines, event sinks, verbs (`tx-core/src/plugin.rs`). `txc`
+links them through `tx-core-cli/src/plugins.rs::MANIFEST` and switches them in
+`<state_dir>/plugins.yaml` (`--plugins FILE` overrides):
+
+```yaml
+plugins:
+  engine-codex: { enabled: false }
+  hooks:
+    settings: { stuck_after_seconds: 600 }
+```
+
+Missing file = everything on; an unknown id or a malformed file is a usage error. `txc plugins`
+lists ids and status; `txc help` lists plugin verbs. Plugins keep per-session data in the
+record's `ext.<id>` object via `TxCore::update_ext`. Design:
+`../docs/superpowers/specs/2026-10-16-poc-plugins-design.md`.
+
+| plugin | contributes |
+|---|---|
+| `engine-claude`, `engine-codex` | one engine each |
+| `hooks` | `txc hook <event>` (run by the agent's own hooks; `txc hook install` registers them in `~/.claude/settings.json` / `~/.codex/hooks.json` behind a sidecar, `uninstall` reverses it), `txc hook status`, an `idle` seed on create |
+
 ### Recommended next extension points
 
 These came out of an architecture review and are deliberately not built yet. They are cheap to
@@ -173,16 +198,16 @@ add now and breaking to add later.
 | Engine envelope | default method `EngineAdapter::envelope(&self, sender, text) -> String` | pure; core still types it |
 | Chat ops (resume, fork, transcripts) | separate crate with a second registry keyed by engine id, `trait EngineChatOps` | one future `resume` field on `LaunchRequest` |
 | Workspace preparers (worktrees) | a function run by the caller before `create_session`; cleanup via an `EventSink` on `Stopped`/`Exited` | not a core concern (spec non-goal) |
-| Declarative engines | one adapter `Declared { id, program, args }` with `{profile_file}`/`{model}`/`{prompt}` substitution, registered N times from config by the CLI | ids validated by the registry |
-| Engine binaries at runtime | one adapter that execs `tx-engine-<id>` with a JSON request on stdin and reads a `LaunchPlan` on stdout | one extra fork per create, cheaper than tmux |
+| Declarative engines | one plugin `Declared { id, program, args }` with `{profile_file}`/`{model}`/`{prompt}` substitution, registered N times from `plugins.yaml` settings | ids validated by the registry |
+| Launch decorators | a fourth registry slot letting a plugin edit a `LaunchPlan` (per-session hook injection without touching `~/.claude`) | pure, ordered by manifest |
 
 Before freezing the API: add `Send + Sync` to `EngineAdapter`, put a session id in every log
 line, mark `CoreError`, `EventType`, `WorkspaceAction`, `LaunchRequest`, `LaunchPlan`,
 `CreateOptions`, `Session` and `CoreConfig` `#[non_exhaustive]` with builder constructors, and
 re-export only the types a plugin author needs.
 
-What not to add: a plugin host inside the library, generics over the store, async traits, dylib
-or WASM engines, hooks that can veto. Dynamic dispatch costs nothing next to a tmux spawn
+What not to add: generics over the store, async traits, dylib or WASM engines, hooks that can
+veto, runtime (re)loading of plugins. Dynamic dispatch costs nothing next to a tmux spawn
 (about 3 ms); scans of the record directory, not plugins, are what would slow a large swarm.
 
 ## Performance envelope (macOS, tmux 3.6a, release build)

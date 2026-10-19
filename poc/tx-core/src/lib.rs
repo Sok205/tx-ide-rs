@@ -12,6 +12,7 @@ pub mod locks;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod messaging;
+pub mod plugin;
 pub mod profile;
 pub mod session;
 /// Internal; no stability promise for plugin authors.
@@ -39,6 +40,9 @@ pub use locks::{LockGuard, Locks};
 pub use messaging::DELIVERY_PAUSE;
 /// The default envelope; an `EngineAdapter::envelope` override may wrap it.
 pub use messaging::build_envelope;
+pub use plugin::{
+    Plugin, PluginConfig, PluginError, PluginStatus, Registry, Verb, VerbError, VerbIo,
+};
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
 pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
 #[doc(hidden)]

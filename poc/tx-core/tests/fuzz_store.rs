@@ -34,6 +34,7 @@ fn session(id: &str, created_at: f64) -> Session {
             program: "sh".into(),
             args: vec![],
         },
+        ext: std::collections::BTreeMap::new(),
     }
 }
 
@@ -129,6 +130,7 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Sessi
                 ended_at,
                 lifecycle,
                 launch,
+                ext: std::collections::BTreeMap::new(),
             },
         )
 }

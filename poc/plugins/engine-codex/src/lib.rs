@@ -75,6 +75,21 @@ pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAct
         .collect()
 }
 
+/// The plugin wrapper: registers [`Codex`] under the plugin id `engine-codex`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CodexPlugin;
+
+impl tx_core::Plugin for CodexPlugin {
+    fn id(&self) -> &'static str {
+        "engine-codex"
+    }
+
+    fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
+        r.engine(Box::new(Codex));
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +213,19 @@ mod tests {
             .unwrap();
         assert_eq!(plan.args[1], "gpt-5.6-sol");
         assert_eq!(plan.args.len(), 6);
+    }
+
+    #[test]
+    fn plugin_registers_the_engine() {
+        use tx_core::{CoreConfig, Plugin, PluginConfig, TxCore};
+        let dir = tempfile::Builder::new()
+            .prefix("txc")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let mut core = TxCore::open(CoreConfig::new(dir.path().join("state"))).unwrap();
+        assert_eq!(CodexPlugin.id(), "engine-codex");
+        core.plug(vec![Box::new(CodexPlugin)], &PluginConfig::default())
+            .unwrap();
+        assert_eq!(core.engine_ids(), vec!["codex"]);
     }
 }

@@ -1,0 +1,18 @@
+[package]
+name = "tx-hooks"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "tx-core plugin: engine hooks drive a per-session working / waiting / idle state."
+
+[dependencies]
+tx-core.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

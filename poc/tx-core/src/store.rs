@@ -227,6 +227,7 @@ mod tests {
                 program: "sh".into(),
                 args: vec![],
             },
+            ext: std::collections::BTreeMap::new(),
         }
     }
 

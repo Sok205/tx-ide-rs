@@ -102,9 +102,10 @@ fn arb_session_with(
         ended_at,
         arb_lifecycle(),
         arb_launch(),
+        prop::collection::btree_map(arb_text(), arb_json(), 0..3),
     )
         .prop_map(
-            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch)| Session {
+            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch, ext)| Session {
                 id,
                 name,
                 parent,
@@ -114,6 +115,7 @@ fn arb_session_with(
                 ended_at,
                 lifecycle,
                 launch,
+                ext,
             },
         )
 }
@@ -148,7 +150,7 @@ fn session_value(session: &Session) -> Map<String, Value> {
     }
 }
 
-const TOP_KEYS: [&str; 10] = [
+const TOP_KEYS: [&str; 11] = [
     "version",
     "id",
     "name",
@@ -159,6 +161,7 @@ const TOP_KEYS: [&str; 10] = [
     "ended_at",
     "lifecycle",
     "launch",
+    "ext",
 ];
 const LAUNCH_KEYS: [&str; 7] = [
     "kind", "engine", "profile", "model", "effort", "program", "args",
@@ -275,6 +278,7 @@ fn sample() -> Session {
             program: "sh".into(),
             args: vec![],
         },
+        ext: std::collections::BTreeMap::new(),
     }
 }
 
@@ -615,6 +619,7 @@ fn from_json_requires_all_mandatory_fields() {
             // A missing Option field reads as None, same as an explicit null.
             "parent" => assert_eq!(result.unwrap().parent, None),
             "ended_at" => assert_eq!(result.unwrap().ended_at, None),
+            "ext" => assert!(result.unwrap().ext.is_empty()),
             _ => assert!(
                 matches!(result, Err(RecordError::Json(_))),
                 "{key}: {result:?}"

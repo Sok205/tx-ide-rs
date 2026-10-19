@@ -69,6 +69,21 @@ pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAct
         .collect()
 }
 
+/// The plugin wrapper: registers [`Claude`] under the plugin id `engine-claude`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ClaudePlugin;
+
+impl tx_core::Plugin for ClaudePlugin {
+    fn id(&self) -> &'static str {
+        "engine-claude"
+    }
+
+    fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
+        r.engine(Box::new(Claude));
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +232,19 @@ mod tests {
         assert!(skill_links(".x", &[PathBuf::from("/")]).is_empty());
         assert_eq!(skill_links(".x", &[PathBuf::from("/a/b/")]).len(), 1);
         let _ = Path::new("");
+    }
+
+    #[test]
+    fn plugin_registers_the_engine() {
+        use tx_core::{CoreConfig, Plugin, PluginConfig, TxCore};
+        let dir = tempfile::Builder::new()
+            .prefix("txc")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let mut core = TxCore::open(CoreConfig::new(dir.path().join("state"))).unwrap();
+        assert_eq!(ClaudePlugin.id(), "engine-claude");
+        core.plug(vec![Box::new(ClaudePlugin)], &PluginConfig::default())
+            .unwrap();
+        assert_eq!(core.engine_ids(), vec!["claude"]);
     }
 }

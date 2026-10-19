@@ -2,16 +2,18 @@
 //! stderr), 2 on misuse (the usage line on stderr). `attach` replaces the process with tmux.
 
 mod args;
+mod plugins;
 
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
+use std::sync::Arc;
 
 use args::{Invocation, LaunchSpec, Verb};
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, LaunchOptions, ListFilter, RefreshResult, SendOptions,
-    SessionId, TxCore,
+    CoreConfig, CoreError, CreateOptions, LaunchOptions, ListFilter, PluginConfig, RefreshResult,
+    SendOptions, SessionId, TxCore,
 };
 
 const HOME_ENV: &str = "TX_CORE_HOME";
@@ -33,10 +35,40 @@ fn main() -> ExitCode {
         }
     };
     match run(invocation) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
+        Err(Failure::Usage(error)) => {
+            eprintln!("txc: {error}\n{}", args::USAGE);
+            ExitCode::from(2)
+        }
         Err(error) => {
             eprintln!("txc: {error}");
             ExitCode::from(1)
+        }
+    }
+}
+
+/// Why `run` stopped: usage is exit 2 with the usage text, everything else exit 1.
+#[derive(Debug)]
+enum Failure {
+    Usage(args::UsageError),
+    Core(CoreError),
+    Plugin(tx_core::PluginError),
+    Verb(tx_core::VerbError),
+}
+
+impl From<CoreError> for Failure {
+    fn from(error: CoreError) -> Self {
+        Failure::Core(error)
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::Usage(error) => error.fmt(f),
+            Failure::Core(error) => error.fmt(f),
+            Failure::Plugin(error) => error.fmt(f),
+            Failure::Verb(error) => error.fmt(f),
         }
     }
 }
@@ -68,7 +100,8 @@ fn absolute(path: PathBuf) -> PathBuf {
         .unwrap_or(path)
 }
 
-fn open(invocation: &Invocation) -> Result<TxCore, CoreError> {
+/// The core config from the globals; pure, touches no disk.
+fn core_config(invocation: &Invocation) -> CoreConfig {
     let global = &invocation.global;
     let mut config = CoreConfig::new(state_dir(global.state_dir.clone()))
         .profile_dirs(global.profile_dirs.clone())
@@ -89,9 +122,34 @@ fn open(invocation: &Invocation) -> Result<TxCore, CoreError> {
     if let Some(socket) = socket {
         config = config.tmux_socket(socket);
     }
+    config
+}
+
+/// `--plugins`, else `<state_dir>/plugins.yaml`; reads the file, creates nothing.
+fn plugin_config(invocation: &Invocation, config: &CoreConfig) -> Result<PluginConfig, Failure> {
+    let yaml = invocation
+        .global
+        .plugins
+        .clone()
+        .map(absolute)
+        .unwrap_or_else(|| config.state_dir.join(plugins::FILE_NAME));
+    plugins::load(&yaml, &plugins::known_ids(), plugins::RESERVED).map_err(Failure::Usage)
+}
+
+/// The plugin verbs this invocation would see, without opening the core (so `help` and an
+/// unknown verb never create the state dir).
+fn preview_verbs(invocation: &Invocation) -> Result<Vec<Arc<dyn tx_core::Verb>>, Failure> {
+    let config = core_config(invocation);
+    let cfg = plugin_config(invocation, &config)?;
+    tx_core::plugin::preview_verbs(&plugins::manifest(), &cfg, &config).map_err(Failure::Plugin)
+}
+
+fn open(invocation: &Invocation) -> Result<TxCore, Failure> {
+    let config = core_config(invocation);
+    let cfg = plugin_config(invocation, &config)?;
     let mut core = TxCore::open(config)?;
-    core.register_engine(Box::new(tx_engine_claude::Claude))?;
-    core.register_engine(Box::new(tx_engine_codex::Codex))?;
+    core.plug(plugins::manifest(), &cfg)
+        .map_err(Failure::Plugin)?;
     Ok(core)
 }
 
@@ -107,10 +165,28 @@ fn sender_from_env(core: &TxCore) -> Option<SessionId> {
     std::env::var("TX_SESSION_ID").ok()?.parse().ok()
 }
 
-fn run(invocation: Invocation) -> Result<(), CoreError> {
+fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     if invocation.verb == Verb::Help {
         print!("{}", args::USAGE);
-        return Ok(());
+        // A broken plugins.yaml still gets the built-in usage.
+        if let Ok(verbs) = preview_verbs(&invocation)
+            && !verbs.is_empty()
+        {
+            println!("\nplugin verbs:");
+            for verb in verbs {
+                println!("  {}", verb.usage());
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Verb::Plugin { name, .. } = &invocation.verb
+        && !preview_verbs(&invocation)?
+            .iter()
+            .any(|verb| verb.name() == name)
+    {
+        return Err(Failure::Usage(args::UsageError(format!(
+            "unknown verb {name:?}"
+        ))));
     }
     let core = open(&invocation)?;
     let mut out = std::io::stdout().lock();
@@ -120,6 +196,27 @@ fn run(invocation: Invocation) -> Result<(), CoreError> {
             for id in core.engine_ids() {
                 writeln!(out, "{id}").ok();
             }
+        }
+        Verb::Plugins => {
+            for (id, status) in core.plugin_status() {
+                writeln!(out, "{id}\t{}", status.as_str()).ok();
+            }
+        }
+        Verb::Plugin { name, argv } => {
+            let verb = core.verb(&name).expect("checked by preview_verbs");
+            drop(out);
+            let (mut stdin, mut stdout, mut stderr) = (
+                std::io::stdin().lock(),
+                std::io::stdout().lock(),
+                std::io::stderr().lock(),
+            );
+            let mut io = tx_core::VerbIo {
+                stdin: &mut stdin,
+                stdout: &mut stdout,
+                stderr: &mut stderr,
+            };
+            let code = verb.run(&core, &mut io, &argv).map_err(Failure::Verb)?;
+            return Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)));
         }
         Verb::Create {
             name,
@@ -266,10 +363,10 @@ fn run(invocation: Invocation) -> Result<(), CoreError> {
                 .args(["attach-session", "-t", &location.session_target])
                 .env_remove("TMUX")
                 .exec();
-            return Err(CoreError::Tmux(tx_core::TmuxError::Spawn {
+            return Err(Failure::Core(CoreError::Tmux(tx_core::TmuxError::Spawn {
                 binary: "tmux".into(),
                 source: error,
-            }));
+            })));
         }
         Verb::Stop { target } => {
             let session = core.stop_session(&core.resolve(&target)?)?;
@@ -287,5 +384,5 @@ fn run(invocation: Invocation) -> Result<(), CoreError> {
             .ok();
         }
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

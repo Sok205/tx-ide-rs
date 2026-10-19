@@ -260,6 +260,7 @@ pub struct TxCore {
     profiles: Profiles,
     locks: Locks,
     sinks: Vec<Box<dyn EventSink>>,
+    pub(crate) host: crate::plugin::Host,
 }
 
 /// `env` keys are shell-style names (`-e KEY=VALUE` cannot carry `=` or NUL; an empty key is
@@ -355,6 +356,7 @@ impl TxCore {
             profiles: Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone()),
             locks: Locks::new(state.join(LOCKS_DIR)),
             sinks: Vec::new(),
+            host: Default::default(),
             config,
         })
     }
@@ -603,6 +605,7 @@ impl TxCore {
                 Lifecycle::Running
             },
             launch,
+            ext: std::collections::BTreeMap::new(),
         };
         if let Err(error) = self.store.save(&session) {
             return Err(undo(CoreError::Store(error)));
@@ -673,6 +676,36 @@ impl TxCore {
             format!("{old} -> {name}"),
         );
         Ok((session, vec![renamed]))
+    }
+
+    /// Runs `f` on `ext[plugin]` (`Null` when absent) under the session lock and saves the
+    /// record if the value changed; leaving it `Null` removes the key. Returns whether a write
+    /// happened. `f` must not call back into the core (the lock is held).
+    pub fn update_ext(
+        &self,
+        id: &SessionId,
+        plugin: &str,
+        f: impl FnOnce(&mut serde_json::Value),
+    ) -> Result<bool, CoreError> {
+        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+        let mut session = self.get_session(id)?;
+        let before = session
+            .ext
+            .get(plugin)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let mut value = before.clone();
+        f(&mut value);
+        if value == before {
+            return Ok(false);
+        }
+        if value.is_null() {
+            session.ext.remove(plugin);
+        } else {
+            session.ext.insert(plugin.to_owned(), value);
+        }
+        self.store.save(&session)?;
+        Ok(true)
     }
 
     pub fn set_session_tags(
@@ -1093,6 +1126,7 @@ mod tests {
                 program: "x".into(),
                 args: vec![],
             },
+            ext: std::collections::BTreeMap::new(),
         };
         let filter = ListFilter::new()
             .parent("p".parse().unwrap())

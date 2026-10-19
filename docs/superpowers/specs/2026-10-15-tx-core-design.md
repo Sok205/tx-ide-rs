@@ -14,13 +14,11 @@ Adding a new coding-agent engine must be easy: one small trait, one registration
 
 ## Non-goals
 
-- Cordis or any plugin host inside the library. The library is plain structs; the outer `tx`
-  binary may keep its own feature wiring, outside this spec.
+- (Superseded 2026-10-16 by `2026-10-16-poc-plugins-design.md`: the library hosts plugins —
+  `plugin.rs` — and engine activity is the `hooks` plugin's.)
 - Swarm scheduling, task assignment, retries, review workflows, the tx-assistant coordinator.
 - Worktree creation and sandboxing: core accepts a prepared working directory.
 - Dashboards, Neovim, tmux layouts/themes, views, artifacts, transcripts and chat history.
-- Engine activity (working / waiting / idle). A live tmux session does not mean an agent is
-  working or ready for input.
 - A durable mailbox, delivery retries, or proof that an agent read a message.
 - Declarative engines from config files (possible later as one more adapter).
 

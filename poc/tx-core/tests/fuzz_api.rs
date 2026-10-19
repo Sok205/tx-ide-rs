@@ -125,6 +125,7 @@ fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecyc
             program: "sh".into(),
             args: vec![],
         },
+        ext: std::collections::BTreeMap::new(),
     }
 }
 

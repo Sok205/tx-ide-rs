@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use tx_core::{Effort, Lifecycle};
 
 pub const USAGE: &str = "\
-usage: txc [--state-dir DIR] [--socket PATH] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
+usage: txc [--state-dir DIR] [--socket PATH] [--plugins FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
 
 verbs:
   create NAME --cwd DIR (--engine ID [--role R]... [--model M] [--effort E] [--prompt T] [--resume ID] | --exec PROG [ARG]...)
@@ -22,8 +22,10 @@ verbs:
   stop TARGET
   forget TARGET                                                     drop the record; leave tmux alone
   engines                                                           registered engine ids
+  plugins                                                           id and active|disabled per plugin
 
 TARGET is a session id or name. State lives in $TX_CORE_HOME, else ~/.tx-core.
+Plugins are switched in <state-dir>/plugins.yaml (see --plugins).
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -42,6 +44,7 @@ pub struct Global {
     pub profile_dirs: Vec<PathBuf>,
     pub skill_dirs: Vec<PathBuf>,
     pub env: Vec<(String, String)>,
+    pub plugins: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,6 +109,12 @@ pub enum Verb {
         target: String,
     },
     Engines,
+    Plugins,
+    /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
+    Plugin {
+        name: String,
+        argv: Vec<String>,
+    },
     Help,
 }
 
@@ -182,6 +191,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 cursor.next();
                 global.env.push(env_pair(cursor.value("--env")?)?);
             }
+            Some("--plugins") => {
+                cursor.next();
+                global.plugins = Some(cursor.value("--plugins")?.into());
+            }
             _ => break,
         }
     }
@@ -189,6 +202,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         None => return Err(usage("missing verb")),
         Some("help" | "--help" | "-h") => Verb::Help,
         Some("engines") => Verb::Engines,
+        Some("plugins") => Verb::Plugins,
         Some("create") => parse_create(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
         Some("show") => Verb::Show {
@@ -238,7 +252,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("forget") => Verb::Forget {
             target: target(&mut cursor, "forget")?,
         },
-        Some(other) => return Err(usage(format!("unknown verb {other:?}"))),
+        Some(other) => Verb::Plugin {
+            name: other.to_owned(),
+            argv: cursor.rest(),
+        },
     };
     if let Some(extra) = cursor.peek() {
         return Err(usage(format!("unexpected argument {extra:?}")));
@@ -370,6 +387,23 @@ mod tests {
                 .map(str::to_owned)
                 .collect::<Vec<_>>(),
         )
+    }
+
+    #[test]
+    fn plugins_flag_and_unknown_verbs_go_to_plugins() {
+        let invocation = parse_str("--plugins p.yaml frob a b").unwrap();
+        assert_eq!(
+            invocation.global.plugins,
+            Some(Path::new("p.yaml").to_owned())
+        );
+        assert_eq!(
+            invocation.verb,
+            Verb::Plugin {
+                name: "frob".into(),
+                argv: vec!["a".into(), "b".into()]
+            }
+        );
+        assert_eq!(parse_str("plugins").unwrap().verb, Verb::Plugins);
     }
 
     #[test]
@@ -554,7 +588,10 @@ mod tests {
         assert_eq!(parse_str("help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("--help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("").unwrap_err().0, "missing verb");
-        assert!(parse_str("bogus").unwrap_err().0.contains("bogus"));
+        // Unknown verbs parse as plugin candidates; dispatch rejects them (exit 2).
+        assert!(
+            matches!(parse_str("bogus").unwrap().verb, Verb::Plugin { ref name, .. } if name == "bogus")
+        );
         assert!(parse_str("show").unwrap_err().0.contains("show"));
         assert!(parse_str("show a b").unwrap_err().0.contains("b"));
         assert!(parse_str("send x").unwrap_err().0.contains("text"));
