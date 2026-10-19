@@ -260,6 +260,19 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
   - Gate: prefix+a in an agent pane lists the artifacts it touched and attaches, focuses or
     pops the chosen one; main's artifact fixtures round-trip; `doctor --repair` removes only
     the orphan rev; two concurrent `modify` calls produce two contiguous revs.
+  - Landed 2026-10-19 with no core change (`poc/plugins/artifacts`):
+    - `data_dir()` is a plugin-local `<state_dir>/plugins/artifacts/` (the core slot is still
+      phase 3's); the mutation log is the plugin's own `.log.jsonl` there, not core's
+      `log.jsonl` (core's `EventType` is closed);
+    - concurrent writes to one artifact are serialised by a flock on `.locks/<id>.lock`, so a
+      racing `modify` waits instead of failing with main's conflict; the conflict remains for a
+      slot held by a crash orphan;
+    - `group <session>` writes `ext.artifacts.group`; resolution reads `ext.edit.group`
+      (prefix+e) first, then that; parents are ids, so main's by-name parent lookup is gone;
+    - views are process sessions running the `editor` setting (default `nvim`) named after the
+      sanitized title; the menu tells views by `ext.artifacts.bound` and companions by a
+      `Process` launch with a parent, since `ext.spawn.kind` is not written yet;
+    - the tx-artifacts skill still ships with `spawn` and still says `tx artifact`.
 
 - [ ] **Phase 6 — `timeline`** (prefix+T)
   - Crate `poc/plugins/timeline` (`tx-timeline`), plugin id `timeline`. The only ratatui user.

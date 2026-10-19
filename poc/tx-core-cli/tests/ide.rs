@@ -115,7 +115,15 @@ fn ui_install_materialises_resources() {
         assert!(path.is_file(), "{path:?}");
         assert!(is_executable(&path), "{path:?}");
     }
-    for id in ["ide", "picker", "edit", "kill", "labels", "spawn", "artifacts"] {
+    for id in [
+        "ide",
+        "picker",
+        "edit",
+        "kill",
+        "labels",
+        "spawn",
+        "artifacts",
+    ] {
         let path = state.join(format!("keys/{id}.tmux"));
         assert!(path.is_file(), "{path:?}");
         assert!(is_executable(&path), "{path:?}");
@@ -280,7 +288,15 @@ fn fragments_do_nothing_outside_an_installed_server() {
             .status
             .success()
     );
-    for id in ["ide", "labels", "kill", "picker", "edit", "spawn", "artifacts"] {
+    for id in [
+        "ide",
+        "labels",
+        "kill",
+        "picker",
+        "edit",
+        "spawn",
+        "artifacts",
+    ] {
         let output = Command::new(cli.state().join(format!("keys/{id}.tmux")))
             .env("TMUX", format!("{},1,0", other.display()))
             .output()
