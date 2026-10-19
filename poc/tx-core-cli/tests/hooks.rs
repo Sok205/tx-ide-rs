@@ -1,111 +1,18 @@
 //! The hooks plugin through the binary: `txc hook <event>` inside a session, `hook status`.
 
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+mod common;
 
-fn tmux_available() -> bool {
-    Command::new("tmux").arg("-V").output().is_ok()
-}
+use std::process::{Command, Output};
 
-struct Cli {
-    dir: tempfile::TempDir,
-}
+use common::Cli;
 
 impl Cli {
-    fn new() -> Self {
-        Self {
-            dir: tempfile::Builder::new()
-                .prefix("txc")
-                .tempdir_in("/tmp")
-                .unwrap(),
-        }
-    }
-    fn state(&self) -> PathBuf {
-        self.dir.path().join("state")
-    }
-    fn write_yaml(&self, text: &str) {
-        std::fs::create_dir_all(self.state()).unwrap();
-        std::fs::write(self.state().join("plugins.yaml"), text).unwrap();
-    }
-    fn command(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
-        command
-            .arg("--state-dir")
-            .arg(self.state())
-            .args(args)
-            .env_remove("TMUX")
-            .env_remove("TX_SESSION_ID");
-        for (key, value) in env {
-            command.env(key, value);
-        }
-        command
-    }
-    fn run(&self, args: &[&str], env: &[(&str, &str)], stdin: &str) -> Output {
-        let mut child = self
-            .command(args, env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(stdin.as_bytes())
-            .unwrap();
-        child.wait_with_output().unwrap()
-    }
-    fn ok(&self, args: &[&str]) -> String {
-        let output = self.run(args, &[], "");
-        assert!(
-            output.status.success(),
-            "txc {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).into_owned()
-    }
-    fn create(&self, name: &str) -> String {
-        let cwd = self.dir.path().join(name);
-        std::fs::create_dir_all(&cwd).unwrap();
-        self.ok(&[
-            "create",
-            name,
-            "--cwd",
-            cwd.to_str().unwrap(),
-            "--exec",
-            "sleep",
-            "60",
-        ])
-        .trim()
-        .to_owned()
-    }
     fn show(&self, name: &str) -> serde_json::Value {
         serde_json::from_str(&self.ok(&["show", name])).unwrap()
     }
     fn hook(&self, event: &str, id: &str, stdin: &str) -> Output {
         self.run(&["hook", event], &[("TX_SESSION_ID", id)], stdin)
     }
-}
-
-impl Drop for Cli {
-    fn drop(&mut self) {
-        let _ = Command::new("tmux")
-            .arg("-S")
-            .arg(self.state().join("tmux.sock"))
-            .arg("kill-server")
-            .output();
-    }
-}
-
-macro_rules! require_tmux {
-    () => {
-        if !tmux_available() {
-            eprintln!("tmux not available; skipping");
-            return;
-        }
-    };
 }
 
 #[test]

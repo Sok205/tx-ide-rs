@@ -1,14 +1,40 @@
-//! Session verbs: `kill`, `whoami`, and the internal feeds tmux and fzf call (`_pane-info`,
-//! `_tmux-name`, `_relabel`, `_pane-label`).
+//! tx-core plugin `labels`: what a session is called, seen from tmux. `whoami` and the internal
+//! feeds tmux and fzf call (`_pane-info`, `_tmux-name`, `_relabel`, `_pane-label`), plus the
+//! `keys/labels.tmux` fragment: prefix+s session tree, pane-border labels.
 
-use tx_core::{CoreError, Lifecycle, ListFilter, SessionId, TxCore, Verb, VerbError, VerbIo};
+use std::sync::Arc;
+
+use tx_core::{
+    CoreError, Lifecycle, ListFilter, Plugin, PluginError, Registry, SessionId, TxCore, Verb,
+    VerbError, VerbIo,
+};
 
 use tx_ui::render::tag_hex;
 use tx_ui::tmux::Ui;
 
+pub const PLUGIN_ID: &str = "labels";
+
 const NAME_OPTION: &str = "@tx-name";
 const REMOTE_OPTION: &str = "@remote-session";
 const NOT_NESTED: &str = "#[fg=colour240,nobold]\u{2014}#[default]";
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LabelsPlugin;
+
+impl Plugin for LabelsPlugin {
+    fn id(&self) -> &'static str {
+        PLUGIN_ID
+    }
+
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        r.verb(Arc::new(PaneInfo));
+        r.verb(Arc::new(TmuxName));
+        r.verb(Arc::new(Relabel));
+        r.verb(Arc::new(Whoami));
+        r.verb(Arc::new(PaneLabel));
+        r.resource("keys/labels.tmux", include_bytes!("../tmux/keys.tmux"))
+    }
+}
 
 fn write_out(io: &mut VerbIo<'_>, text: &str) -> Result<(), VerbError> {
     io.stdout
@@ -22,38 +48,6 @@ fn resolve_or_not_found(core: &TxCore, token: &str) -> Result<Option<SessionId>,
         Ok(id) => Ok(Some(id)),
         Err(CoreError::NotFound(_)) => Ok(None),
         Err(error) => Err(error.into()),
-    }
-}
-
-pub struct Kill;
-
-impl Verb for Kill {
-    fn name(&self) -> &'static str {
-        "kill"
-    }
-
-    fn usage(&self) -> &'static str {
-        "kill <name>   stop a session (prefix+X)"
-    }
-
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let [token] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc kill <name>");
-            return Ok(2);
-        };
-        let ui = Ui::from_core(core);
-        let name = match resolve_or_not_found(core, token)? {
-            Some(id) => core.stop_session(&id)?.name,
-            None if ui.has_session(token) && ui.is_view(token) && ui.kill_session(token) => {
-                token.clone()
-            }
-            None => {
-                let _ = writeln!(io.stderr, "session '{token}' not found");
-                return Ok(1);
-            }
-        };
-        write_out(io, &format!("Killed '{name}'\n"))?;
-        Ok(0)
     }
 }
 

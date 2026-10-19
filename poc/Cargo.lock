@@ -538,6 +538,8 @@ dependencies = [
  "tx-engine-claude",
  "tx-engine-codex",
  "tx-hooks",
+ "tx-kill",
+ "tx-labels",
  "tx-views",
 ]
 
@@ -565,6 +567,24 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tx-core",
+]
+
+[[package]]
+name = "tx-kill"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "tx-core",
+ "tx-ui",
+]
+
+[[package]]
+name = "tx-labels"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "tx-core",
+ "tx-ui",
 ]
 
 [[package]]

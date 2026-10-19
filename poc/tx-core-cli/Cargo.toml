@@ -16,6 +16,8 @@ tx-engine-claude = { path = "../plugins/engine-claude" }
 tx-engine-codex = { path = "../plugins/engine-codex" }
 tx-hooks = { path = "../plugins/hooks" }
 tx-views = { path = "../plugins/views" }
+tx-labels = { path = "../plugins/labels" }
+tx-kill = { path = "../plugins/kill" }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway = "0.9"
