@@ -4,7 +4,7 @@ mod common;
 
 use std::process::Command;
 
-use common::{Cli, pane_id_of};
+use common::{Cli, lists_verb, pane_id_of};
 
 #[test]
 fn pane_info_two_lines() {
@@ -157,5 +157,5 @@ fn disabled_labels_hides_its_verbs_but_not_kill() {
         cli.fails(&[verb], 2);
     }
     let help = cli.ok(&["help"]);
-    assert!(help.contains("kill"), "{help}");
+    assert!(lists_verb(&help, "kill"), "{help}");
 }

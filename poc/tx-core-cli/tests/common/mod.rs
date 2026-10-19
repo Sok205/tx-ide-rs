@@ -6,6 +6,15 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
+/// Whether `txc help` lists `verb` on a line of its own: after the indent, the line is the verb
+/// or starts with the verb and a space. A bare substring would match flags and prose.
+pub fn lists_verb(help: &str, verb: &str) -> bool {
+    help.lines().any(|line| {
+        let line = line.trim_start();
+        line == verb || line.starts_with(&format!("{verb} "))
+    })
+}
+
 pub fn tmux_available() -> bool {
     Command::new("tmux").arg("-V").output().is_ok()
 }

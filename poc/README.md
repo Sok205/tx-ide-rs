@@ -265,8 +265,10 @@ A key is a plugin. Create a crate under `poc/plugins/<id>` that implements `Plug
 
 Then wire the crate in with three edits: a `plugins/<id>` entry in `members` in `poc/Cargo.toml`, a
 `tx-<id> = { path = "../plugins/<id>" }` dependency in `poc/tx-core-cli/Cargo.toml`, and one line in
-`tx-core-cli/src/plugins.rs::MANIFEST`. Nothing else needs editing: `ui install` finds the fragment
-by its resource name, and `<id>: { enabled: false }` in `plugins.yaml` turns the key off.
+`tx-core-cli/src/plugins.rs::MANIFEST`. Nothing else in the source needs editing: `ui install`
+finds the fragment by its resource name, and `<id>: { enabled: false }` in `plugins.yaml` turns the
+key off. Adding a key also means extending the expected conf in `poc/tx-core-cli/tests/ide.rs`
+(`expected_conf`) with the new `run-shell` line.
 
 Run `ui attach` from a bare terminal. Inside another tmux whose socket is not the core's it
 nests, and the outer tmux's prefix wins: press the prefix twice to reach the IDE's keys. Inside

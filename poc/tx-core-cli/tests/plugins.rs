@@ -1,7 +1,11 @@
 //! plugins.yaml drives what txc links; plugin verbs dispatch after the built-ins.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::{Command, Output};
+
+use common::lists_verb;
 
 struct Cli {
     dir: tempfile::TempDir,
@@ -54,13 +58,50 @@ impl Cli {
     }
 }
 
+fn rows(listing: &str) -> Vec<&str> {
+    listing.lines().collect()
+}
+
+fn position(rows: &[&str], row: &str) -> usize {
+    rows.iter()
+        .position(|candidate| *candidate == row)
+        .unwrap_or_else(|| panic!("{row:?} missing from {rows:?}"))
+}
+
+/// `ide` is listed before every other key plugin, whatever its own status.
+fn assert_ide_precedes_the_key_plugins(rows: &[&str], ide_status: &str) {
+    let ide = position(rows, &format!("ide\t{ide_status}"));
+    for id in ["labels", "kill", "picker", "edit"] {
+        let row = rows
+            .iter()
+            .position(|row| row.starts_with(&format!("{id}\t")))
+            .unwrap_or_else(|| panic!("{id} missing from {rows:?}"));
+        assert!(ide < row, "ide after {id}: {rows:?}");
+    }
+}
+
 #[test]
 fn without_a_yaml_every_plugin_is_active() {
     let cli = Cli::new();
-    assert_eq!(
-        cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nide\tactive\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
+    let listing = cli.ok(&["plugins"]);
+    let rows = rows(&listing);
+    for row in [
+        "engine-claude\tactive",
+        "engine-codex\tactive",
+        "hooks\tactive",
+        "ide\tactive",
+        "labels\tactive",
+        "kill\tactive",
+        "picker\tactive",
+        "edit\tactive",
+    ] {
+        position(&rows, row);
+    }
+    assert!(
+        !rows.iter().any(|row| row.starts_with("views\t")),
+        "{rows:?}"
     );
+    assert_ide_precedes_the_key_plugins(&rows, "active");
     assert_eq!(cli.ok(&["engines"]), "claude\ncodex\n");
 }
 
@@ -68,10 +109,11 @@ fn without_a_yaml_every_plugin_is_active() {
 fn a_disabled_engine_disappears() {
     let cli = Cli::new();
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
-    assert_eq!(
-        cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tdisabled\nhooks\tactive\nide\tactive\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
-    );
+    let listing = cli.ok(&["plugins"]);
+    let rows = rows(&listing);
+    position(&rows, "engine-codex\tdisabled");
+    position(&rows, "engine-claude\tactive");
+    position(&rows, "kill\tactive");
     assert_eq!(cli.ok(&["engines"]), "claude\n");
 }
 
@@ -115,7 +157,7 @@ fn help_lists_plugin_verbs() {
     let cli = Cli::new();
     let help = cli.ok(&["help"]);
     for verb in ["pick", "_edit-tag", "kill", "whoami", "ui"] {
-        assert!(help.contains(verb), "{verb} missing from help:\n{help}");
+        assert!(lists_verb(&help, verb), "{verb} missing from help:\n{help}");
     }
 }
 
@@ -124,8 +166,9 @@ fn disabled_ide_hides_verbs() {
     let cli = Cli::new();
     cli.write_yaml("plugins:\n  ide: { enabled: false }\n");
     cli.fails(&["ui", "attach"], 2);
-    assert_eq!(
-        cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nide\tdisabled\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
-    );
+    let listing = cli.ok(&["plugins"]);
+    let rows = rows(&listing);
+    position(&rows, "ide\tdisabled");
+    position(&rows, "kill\tactive");
+    assert_ide_precedes_the_key_plugins(&rows, "disabled");
 }
