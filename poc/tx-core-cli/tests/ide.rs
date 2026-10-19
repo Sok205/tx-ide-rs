@@ -577,8 +577,19 @@ fn ui_attach_starts_the_assistant_and_nests_home_into_it() {
     require_tmux!();
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
-    let path = cli.fake_claude_path();
-    cli.in_outer_pane(&format!("PATH='{path}' {}", attach_command(&cli)));
+    // The outer pane's tty drops a typed line over 1024 bytes, which a full PATH is: type a
+    // short script path instead.
+    let script = cli.dir.path().join("attach.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "export PATH='{}'\nexec {}\n",
+            cli.fake_claude_path(),
+            attach_command(&cli)
+        ),
+    )
+    .unwrap();
+    cli.in_outer_pane(&format!("sh {}", script.display()));
     let clients = || {
         let mut clients: Vec<String> = cli
             .tmux_out(&["list-clients", "-F", "#{client_session}"])
@@ -626,5 +637,48 @@ fn ui_attach_without_the_roles_installed_opens_a_plain_home() {
     assert_eq!(
         cli.run(&["show", "tx-assistant"], &[], "").status.code(),
         Some(1)
+    );
+}
+
+#[test]
+fn ui_attach_warms_the_assistant_when_home_already_exists() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    assert!(
+        cli.tmux(&["new-session", "-d", "-s", "home", "sleep", "60"])
+            .status
+            .success()
+    );
+    cli.create("other");
+    cli.in_outer_pane(&format!(
+        "TMUX= tmux -S {} attach -t =other",
+        cli.sock().display()
+    ));
+    assert!(cli.wait_for(5, || cli.tmux_out(&[
+        "list-clients",
+        "-F",
+        "#{client_session}"
+    ]) == "other"));
+    let inside = format!("{},1,0", cli.sock().display());
+    let path = cli.fake_claude_path();
+    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside), ("PATH", &path)], "");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(common::lifecycle_of(&cli, "tx-assistant"), "running");
+    // The existing home is kept as it is: its pane still runs what it ran.
+    assert_eq!(
+        cli.tmux_out(&[
+            "display-message",
+            "-p",
+            "-t",
+            "=home:",
+            "#{pane_current_command}"
+        ]),
+        "sleep"
     );
 }

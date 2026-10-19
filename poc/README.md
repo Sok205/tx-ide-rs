@@ -247,11 +247,12 @@ options and hooks it declared, and prints `reloaded`. When it finds no previous
 `legacy bindings may remain; restart the server to drop them`.
 
 `ui attach` creates `home` on first use as a view (status bar and pane-border labels on) and
-attaches to it. When the `assistant` plugin is active it first runs `assistant warm` and starts
-`home`'s pane nest-attached to `tx-assistant`, so the IDE opens on the assistant; a failed warm
-(no `claude`, roles not installed) is printed to stderr and `home` opens as a plain view. An
-existing `home` is left as it is. To try the IDE, press prefix+n in it, or start a session by
-hand and press the picker key:
+attaches to it. When the `assistant` plugin is active it first runs `assistant warm`, every
+time, so the assistant is up whenever the IDE is; a new `home` starts with its pane
+nest-attached to `tx-assistant`, so the IDE opens on the assistant. An existing `home` is left
+as it is (reach the assistant with prefix+t). A failed warm (no `claude`, roles not installed)
+is printed to stderr and `home` opens as a plain view. To try the IDE, press prefix+n in it, or
+start a session by hand and press the picker key:
 
 ```
 txc create demo --cwd ~/code/project --exec zsh

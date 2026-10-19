@@ -364,13 +364,13 @@ fn warm_assistant(core: &TxCore, io: &mut VerbIo<'_>) -> Option<String> {
 }
 
 /// Creates the `home` view on the core's server unless it is already there. A new home's pane
-/// nest-attaches the assistant when `assistant warm` brought it up.
-fn ensure_home(core: &TxCore, ui: &Ui, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
+/// nest-attaches `assistant` (a live session name) when there is one.
+fn ensure_home(ui: &Ui, assistant: Option<&str>) -> Result<(), VerbError> {
     if ui.has_session(HOME_SESSION) {
         return Ok(());
     }
-    let nest = warm_assistant(core, io)
-        .and_then(|name| ui.live_targets().get(&name).cloned())
+    let nest = assistant
+        .and_then(|name| ui.live_targets().get(name).cloned())
         .map(|target| ui.nest_attach_command(&target));
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_owned());
     let target = format!("={HOME_SESSION}:");
@@ -398,7 +398,9 @@ fn ensure_home(core: &TxCore, ui: &Ui, io: &mut VerbIo<'_>) -> Result<(), VerbEr
 
 fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let ui = Ui::from_core(core);
-    ensure_home(core, &ui, io)?;
+    // Always: the assistant is part of the IDE being up, whether or not `home` is new.
+    let assistant = warm_assistant(core, io);
+    ensure_home(&ui, assistant.as_deref())?;
     let env = std::env::var("TMUX").ok();
     match tmux_env_socket(env.as_deref()) {
         Some(socket) if Path::new(socket) == core.socket_path() => {
