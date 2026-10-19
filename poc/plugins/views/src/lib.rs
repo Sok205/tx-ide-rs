@@ -4,6 +4,7 @@
 
 pub mod picker;
 pub mod render;
+pub mod session_verbs;
 pub mod tmux;
 
 use std::sync::Arc;
@@ -24,6 +25,12 @@ impl Plugin for ViewsPlugin {
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(picker::List));
         r.verb(Arc::new(picker::Pick));
+        r.verb(Arc::new(session_verbs::Kill));
+        r.verb(Arc::new(session_verbs::PaneInfo));
+        r.verb(Arc::new(session_verbs::TmuxName));
+        r.verb(Arc::new(session_verbs::Relabel));
+        r.verb(Arc::new(session_verbs::Whoami));
+        r.verb(Arc::new(session_verbs::PaneLabel));
         Ok(())
     }
 }
