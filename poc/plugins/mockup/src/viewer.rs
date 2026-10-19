@@ -38,7 +38,11 @@ struct Source {
 
 impl Source {
     fn name(&self) -> String {
-        self.path.file_name().unwrap().to_string_lossy().into_owned()
+        self.path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -77,14 +81,20 @@ impl Viewer {
         if self.current.as_ref() == Some(&newest) {
             return false;
         }
-        let new_path = self.current.as_ref().is_none_or(|current| current.path != newest.path);
+        let new_path = self
+            .current
+            .as_ref()
+            .is_none_or(|current| current.path != newest.path);
         if new_path {
             self.state = ViewState {
                 layout: self.state.layout,
                 ..ViewState::default()
             };
             self.started = Instant::now();
-            let _ = fs::write(&self.events_path, "");
+            // A (re)started viewer keeps events the agent has not read yet.
+            if self.current.is_some() {
+                let _ = fs::write(&self.events_path, "");
+            }
         }
         let name = newest.name();
         self.current = Some(newest);
@@ -121,7 +131,11 @@ impl Viewer {
                     length: metadata.len(),
                 })
             })
-            .max_by(|a, b| a.modified.cmp(&b.modified).then_with(|| a.path.cmp(&b.path)))
+            .max_by(|a, b| {
+                a.modified
+                    .cmp(&b.modified)
+                    .then_with(|| a.path.cmp(&b.path))
+            })
     }
 
     pub fn key(&mut self, code: KeyCode) -> Action {
@@ -184,11 +198,15 @@ impl Viewer {
 
     /// The current screen's frame rate, for the draw cadence.
     pub fn fps(&self) -> u32 {
-        self.screen.as_ref().map_or(DEFAULT_FPS, |screen| screen.fps)
+        self.screen
+            .as_ref()
+            .map_or(DEFAULT_FPS, |screen| screen.fps)
     }
 
     fn option_count(&self) -> usize {
-        self.screen.as_ref().map_or(0, |screen| screen.options.len())
+        self.screen
+            .as_ref()
+            .map_or(0, |screen| screen.options.len())
     }
 
     fn move_focus(&mut self, delta: isize) {
@@ -333,7 +351,11 @@ mod tests {
         let (dir, mut viewer) = setup();
         write(dir.path(), "a.json", FIRST);
         viewer.poll();
-        write(dir.path(), "b.json", r#"{"title":"Broken","body":{"text":1}}"#);
+        write(
+            dir.path(),
+            "b.json",
+            r#"{"title":"Broken","body":{"text":1}}"#,
+        );
         viewer.poll();
         let error = viewer.state.error.as_deref().unwrap();
         assert!(error.starts_with("b.json: "), "{error}");
@@ -455,6 +477,17 @@ mod tests {
         assert!(events(dir.path()).is_empty());
         assert_eq!(viewer.state.selected, None);
         assert_eq!(viewer.state.focus, 0);
+    }
+
+    #[test]
+    fn restarted_viewer_keeps_unread_events() {
+        let (dir, mut viewer) = setup();
+        write(dir.path(), "a.json", THREE_OPTIONS);
+        viewer.poll();
+        viewer.key(KeyCode::Char('1'));
+        let mut restarted = Viewer::new(dir.path());
+        restarted.poll();
+        assert_eq!(events(dir.path()).len(), 1);
     }
 
     #[test]

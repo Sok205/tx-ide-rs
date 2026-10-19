@@ -175,3 +175,55 @@ fn disabled_plugin_hides_verb() {
     let help = cli.ok(&["help"]);
     assert!(!lists_verb(&help, "mockup"), "{help}");
 }
+
+fn client_sessions(cli: &Cli) -> Vec<String> {
+    let mut sessions: Vec<String> = cli
+        .tmux_out(&["list-clients", "-F", "#{client_session}"])
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    sessions.sort();
+    sessions
+}
+
+/// The operator's usual setup: an outer terminal on `home`, whose pane nest-attaches `a`.
+/// A second `show` must not move the hidden nested client; `stop` returns the outer one.
+#[test]
+fn show_twice_under_nesting_keeps_the_operator_and_stop_returns_them() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create("a");
+    start(&cli);
+    let sock = cli.sock().display().to_string();
+    // Like `Ui::nest_attach_command`: job control on, or the nested attach exits at once.
+    let nest = format!("bash -c 'set -m; TMUX= tmux -S {sock} attach -t =a; exec sh'");
+    assert!(
+        cli.tmux(&[
+            "new-session",
+            "-d",
+            "-s",
+            "home",
+            "-x",
+            "120",
+            "-y",
+            "40",
+            &nest
+        ])
+        .status
+        .success()
+    );
+    cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =home"));
+    let settled = |want: &[&str]| cli.wait_for(5, || client_sessions(&cli) == want);
+    assert!(settled(&["a", "home"]), "{:?}", client_sessions(&cli));
+    cli.ok(&["mockup", "show", "--for", "a"]);
+    assert!(settled(&["a", "mockup-a"]), "{:?}", client_sessions(&cli));
+    cli.ok(&["mockup", "show", "--for", "a"]);
+    assert_eq!(client_sessions(&cli), ["a", "mockup-a"]);
+    assert_eq!(
+        cli.tmux_out(&["show-options", "-vt", "=mockup-a:", "@tx-mockup-return"]),
+        "home"
+    );
+    cli.ok(&["mockup", "stop", "--for", "a"]);
+    assert!(settled(&["a", "home"]), "{:?}", client_sessions(&cli));
+    assert!(!has_view(&cli));
+}

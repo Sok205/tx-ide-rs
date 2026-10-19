@@ -29,7 +29,6 @@ pub const SESSION_DIRS: &str = ".superpowers/mockup";
 const VIEW_OPTION: &str = "@tx-view";
 const DIR_OPTION: &str = "@tx-mockup-dir";
 const RETURN_OPTION: &str = "@tx-mockup-return";
-const CLIENT_OPTION: &str = "@tx-mockup-client";
 
 const USAGE: &str = "usage: txc mockup start --project DIR [--for S] | show [--for S] | wait [--for S] | stop [--for S]";
 
@@ -158,12 +157,27 @@ fn viewer_command(core: &TxCore, dir: &Path, view: &str) -> Result<String, VerbE
 
 /// Creates the view running the viewer unless it is already there, then marks it.
 fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), VerbError> {
+    let command = viewer_command(core, dir, view)?;
     if !ui.has_session(view) {
-        let command = viewer_command(core, dir, view)?;
         let project = project_of(dir).to_string_lossy().into_owned();
         ui.run(&["new-session", "-d", "-s", view, "-c", &project, &command])
             .map_err(failed)?;
+    } else if ui
+        .display_message("#{pane_dead}", Some(&format!("={view}:")))
+        .as_deref()
+        == Some("1")
+    {
+        ui.respawn_pane(&format!("={view}:"), &command)
+            .map_err(failed)?;
     }
+    ui.run(&[
+        "set-window-option",
+        "-t",
+        &format!("={view}:"),
+        "remain-on-exit",
+        "on",
+    ])
+    .map_err(failed)?;
     let dir = dir.to_string_lossy();
     for (option, value) in [
         (VIEW_OPTION, "1"),
@@ -264,6 +278,9 @@ fn show(
         return Ok(1);
     };
     ensure_view(core, ui, view, &dir)?;
+    if !clients_on(ui, view).is_empty() {
+        return Ok(0);
+    }
     let hosts = hosts_of(ui, &session.name);
     let (_, clients) = ui.quiet(&[
         "list-clients",
@@ -275,8 +292,6 @@ fn show(
         return Ok(0);
     };
     ui.set_session_option(view, RETURN_OPTION, &return_to)
-        .map_err(failed)?;
-    ui.set_session_option(view, CLIENT_OPTION, &client)
         .map_err(failed)?;
     ui.run(&["switch-client", "-c", &client, "-t", &format!("={view}")])
         .map_err(failed)?;
@@ -327,6 +342,7 @@ impl Verb for MockupVerb {
             Sub::Show => show(core, &ui, io, &session, &view),
             Sub::Wait => wait(io, &session),
             Sub::Stop => {
+                switch_back(&ui, &view);
                 ui.kill_session(&view);
                 Ok(0)
             }
@@ -334,21 +350,38 @@ impl Verb for MockupVerb {
     }
 }
 
-/// Switches the client `show` recorded back to where it came from, best effort.
+/// The clients currently showing `view`.
+fn clients_on(ui: &Ui, view: &str) -> Vec<String> {
+    let (_, out) = ui.quiet(&[
+        "list-clients",
+        "-t",
+        &format!("={view}"),
+        "-F",
+        "#{client_name}",
+    ]);
+    out.lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Switches every client on `view` back to where `show` came from, best effort.
 fn switch_back(ui: &Ui, view: &str) {
-    let Some(client) = ui.session_option(view, CLIENT_OPTION) else {
-        return;
-    };
     let Some(return_to) = ui.session_option(view, RETURN_OPTION) else {
         return;
     };
-    ui.quiet(&[
-        "switch-client",
-        "-c",
-        &client,
-        "-t",
-        &format!("={return_to}"),
-    ]);
+    if !ui.has_session(&return_to) {
+        return;
+    }
+    for client in clients_on(ui, view) {
+        ui.quiet(&[
+            "switch-client",
+            "-c",
+            &client,
+            "-t",
+            &format!("={return_to}"),
+        ]);
+    }
 }
 
 /// `txc _mockup-view <session_dir> <view>`: the viewer process the view runs.
@@ -369,8 +402,14 @@ impl Verb for ViewVerb {
             return Ok(2);
         };
         let ui = Ui::from_core(core);
-        viewer::run(Path::new(dir), || switch_back(&ui, view))
-            .map_err(|error| VerbError::Failed(format!("viewer: {error}")))?;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            viewer::run(Path::new(dir), || switch_back(&ui, view))
+        }));
+        switch_back(&ui, view);
+        match outcome {
+            Ok(result) => result.map_err(|error| VerbError::Failed(format!("viewer: {error}")))?,
+            Err(_) => return Err(VerbError::Failed("viewer panicked".to_owned())),
+        }
         Ok(0)
     }
 }
