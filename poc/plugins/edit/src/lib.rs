@@ -1,15 +1,45 @@
-//! The edit verbs: `_edit-session` (prefix+e, the modal form) and `_edit-tag` (the picker's
-//! Ctrl-T popup, an fzf query prompt).
+//! tx-core plugin `edit`: `_edit-session` (prefix+e, the modal form) and `_edit-tag` (the
+//! picker's Ctrl-T popup, an fzf query prompt). `ext["edit"]` records the group a session
+//! belongs to. Publishes `keys/edit.tmux` and its helper script.
 
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
-use tx_core::{CoreError, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
+use serde::{Deserialize, Serialize};
+use tx_core::{
+    CoreError, Plugin, PluginError, Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
+};
 
-use crate::Ext;
-use crate::PLUGIN_ID;
 use tx_ui::editor::edit_session;
 use tx_ui::render::{ACCENT_ANSI, BOLD, RESET};
 use tx_ui::tmux::Ui;
+
+pub const PLUGIN_ID: &str = "edit";
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EditPlugin;
+
+impl Plugin for EditPlugin {
+    fn id(&self) -> &'static str {
+        PLUGIN_ID
+    }
+
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        r.verb(Arc::new(EditSession));
+        r.verb(Arc::new(EditTag));
+        r.resource("keys/edit.tmux", include_bytes!("../tmux/keys.tmux"))?;
+        r.resource(
+            "bin/tmux-edit-tx-session",
+            include_bytes!("../bin/tmux-edit-tx-session"),
+        )
+    }
+}
+
+/// The `ext["edit"]` shape on a session record.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ext {
+    pub group: Option<String>,
+}
 
 const NO_SESSION: &str = "prefix+e: no tx session in this pane (view homes cannot be edited)";
 const NOT_MANAGED: &str = "prefix+e: the session in this pane is not tx-managed";

@@ -535,12 +535,25 @@ dependencies = [
  "serde_norway",
  "tempfile",
  "tx-core",
+ "tx-edit",
  "tx-engine-claude",
  "tx-engine-codex",
  "tx-hooks",
  "tx-kill",
  "tx-labels",
+ "tx-picker",
  "tx-views",
+]
+
+[[package]]
+name = "tx-edit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tx-core",
+ "tx-ui",
 ]
 
 [[package]]
@@ -588,6 +601,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-picker"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tempfile",
+ "tx-core",
+ "tx-ui",
+]
+
+[[package]]
 name = "tx-ui"
 version = "0.1.0"
 dependencies = [
@@ -602,10 +625,6 @@ dependencies = [
 name = "tx-views"
 version = "0.1.0"
 dependencies = [
- "libc",
- "serde",
- "serde_json",
- "tempfile",
  "tx-core",
  "tx-ui",
 ]

@@ -59,7 +59,7 @@ fn without_a_yaml_every_plugin_is_active() {
     let cli = Cli::new();
     assert_eq!(
         cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nviews\tactive\nlabels\tactive\nkill\tactive\n"
+        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nviews\tactive\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
     );
     assert_eq!(cli.ok(&["engines"]), "claude\ncodex\n");
 }
@@ -70,7 +70,7 @@ fn a_disabled_engine_disappears() {
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
     assert_eq!(
         cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tdisabled\nhooks\tactive\nviews\tactive\nlabels\tactive\nkill\tactive\n"
+        "engine-claude\tactive\nengine-codex\tdisabled\nhooks\tactive\nviews\tactive\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
     );
     assert_eq!(cli.ok(&["engines"]), "claude\n");
 }
@@ -111,10 +111,10 @@ fn unknown_verb_still_exits_2() {
 }
 
 #[test]
-fn help_lists_views_verbs() {
+fn help_lists_plugin_verbs() {
     let cli = Cli::new();
     let help = cli.ok(&["help"]);
-    for verb in ["pick", "kill", "whoami"] {
+    for verb in ["pick", "_edit-tag", "kill", "whoami", "ui"] {
         assert!(help.contains(verb), "{verb} missing from help:\n{help}");
     }
 }
@@ -123,10 +123,9 @@ fn help_lists_views_verbs() {
 fn disabled_views_hides_verbs() {
     let cli = Cli::new();
     cli.write_yaml("plugins:\n  views: { enabled: false }\n");
-    cli.fails(&["pick"], 2);
-    cli.fails(&["_list"], 2);
+    cli.fails(&["ui", "attach"], 2);
     assert_eq!(
         cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nviews\tdisabled\nlabels\tactive\nkill\tactive\n"
+        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nviews\tdisabled\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
     );
 }

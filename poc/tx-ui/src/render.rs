@@ -134,18 +134,18 @@ struct Kind {
     kind: Option<String>,
 }
 
-fn views_kind(session: &Session) -> Option<String> {
+fn spawn_kind(session: &Session) -> Option<String> {
     session
-        .ext::<Kind>("views")
+        .ext::<Kind>("spawn")
         .ok()
         .flatten()
-        .and_then(|views| views.kind)
+        .and_then(|spawn| spawn.kind)
 }
 
 pub fn role_of(session: &Session) -> &'static str {
     match session.launch {
         Launch::Agent { .. } => "llm",
-        Launch::Process { .. } => match views_kind(session).as_deref() {
+        Launch::Process { .. } => match spawn_kind(session).as_deref() {
             Some("nvim") => "nvim",
             Some("view") => "view",
             _ => "shell",
@@ -462,11 +462,11 @@ mod tests {
     fn roles_and_idle_cells() {
         let mut view = process("v", NOW - 100.0);
         assert_eq!(role_of(&view), "shell");
-        view.ext.insert("views".into(), json!({"kind": "nvim"}));
+        view.ext.insert("spawn".into(), json!({"kind": "nvim"}));
         assert_eq!(role_of(&view), "nvim");
-        view.ext.insert("views".into(), json!({"kind": "view"}));
+        view.ext.insert("spawn".into(), json!({"kind": "view"}));
         assert_eq!(role_of(&view), "view");
-        view.ext.insert("views".into(), json!({"kind": "other"}));
+        view.ext.insert("spawn".into(), json!({"kind": "other"}));
         assert_eq!(role_of(&view), "shell");
         assert_eq!(role_of(&agent("a", 1.0)), "llm");
         assert_eq!(idle_cell(&view, NOW), "—");
@@ -478,7 +478,7 @@ mod tests {
         for bad in [json!("oops"), json!(7), json!([1]), json!({"since": "x"})] {
             let mut session = agent("w", NOW - 90.0);
             session.ext.insert("hooks".into(), bad);
-            session.ext.insert("views".into(), json!("junk"));
+            session.ext.insert("spawn".into(), json!("junk"));
             assert_eq!(activity_at(&session), NOW - 90.0);
             assert_eq!(idle_cell(&session, NOW), "-");
             assert_eq!(role_of(&session), "llm");
@@ -491,7 +491,7 @@ mod tests {
             assert!(out.contains("1m"), "{out:?}");
         }
         let mut process = process("p", 5.0);
-        process.ext.insert("views".into(), json!(42));
+        process.ext.insert("spawn".into(), json!(42));
         assert_eq!(role_of(&process), "shell");
     }
 }

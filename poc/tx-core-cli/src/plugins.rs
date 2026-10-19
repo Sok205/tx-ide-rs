@@ -26,6 +26,8 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_views::ViewsPlugin),
     || Box::new(tx_labels::LabelsPlugin),
     || Box::new(tx_kill::KillPlugin),
+    || Box::new(tx_picker::PickerPlugin),
+    || Box::new(tx_edit::EditPlugin),
 ];
 
 /// The built-in verbs; a plugin may not register one of these.

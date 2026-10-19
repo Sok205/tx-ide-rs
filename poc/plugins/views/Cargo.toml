@@ -9,10 +9,6 @@ description = "tx-core plugin: views, the nested-tmux workspace layer of tx-ide.
 [dependencies]
 tx-core.workspace = true
 tx-ui.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-libc = "0.2"
-tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -1,21 +1,42 @@
-//! The fzf session picker: `_list` is its feed (fzf re-runs it to reload) and `pick` is the
-//! interactive loop. Port of main's `tx attach` without `--host`/`--all`.
+//! tx-core plugin `picker`: the fzf session picker (prefix+t). `_list` is its feed (fzf re-runs
+//! it to reload) and `pick` is the interactive loop. Port of main's `tx attach` without
+//! `--host`/`--all`. Publishes `keys/picker.tmux`.
 
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tx_core::events::now;
-use tx_core::{Lifecycle, ListFilter, Session, TxCore, Verb, VerbError, VerbIo};
+use tx_core::{
+    Lifecycle, ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
+};
 
 use tx_ui::render::{
     ACCENT_ANSI, BOLD, FG_ANSI, LOCATION_W, RESET, ROLE_W, Row, WARN_ANSI, picker_namew,
     picker_rows,
 };
 use tx_ui::tmux::Ui;
+
+pub const PLUGIN_ID: &str = "picker";
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PickerPlugin;
+
+impl Plugin for PickerPlugin {
+    fn id(&self) -> &'static str {
+        PLUGIN_ID
+    }
+
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        r.verb(Arc::new(List));
+        r.verb(Arc::new(Pick));
+        r.resource("keys/picker.tmux", include_bytes!("../tmux/keys.tmux"))
+    }
+}
 
 const DEFAULT_NAMEW: i64 = 18;
 const DEFAULT_COLS: i64 = 80;
@@ -55,6 +76,23 @@ fn tty_columns() -> Option<i64> {
     (status == 0 && size.ws_col > 0).then_some(i64::from(size.ws_col))
 }
 
+/// Which binds of other plugins' verbs the picker offers: ctrl-t needs `_edit-tag`, ctrl-d and
+/// `y` need `kill`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Binds {
+    pub edit_tag: bool,
+    pub kill: bool,
+}
+
+impl Binds {
+    fn of(core: &TxCore) -> Self {
+        Self {
+            edit_tag: core.verb("_edit-tag").is_some(),
+            kill: core.verb("kill").is_some(),
+        }
+    }
+}
+
 /// The fzf argv. `{1}`, `{2}`, `$TX_ARM_FILE` and `$FZF_PORT` stay literal for fzf and the
 /// shells it spawns; the arm file reaches them through the child's environment.
 pub fn fzf_args(
@@ -64,6 +102,7 @@ pub fn fzf_args(
     namew: i64,
     query: &str,
     _arm_file: &Path,
+    binds: Binds,
 ) -> Vec<String> {
     let namew = namew.max(0) as usize;
     let bin = bin.display();
@@ -81,7 +120,7 @@ pub fn fzf_args(
     let arm_cmd = format!(
         "printf '{WARN_ANSI}{BOLD} ⚠  Kill \"%s\"? [y/N]{RESET}\\n%s' {{1}} '{header_cols}'"
     );
-    [
+    let mut args: Vec<String> = [
         "fzf".to_owned(),
         "--exact".to_owned(),
         "--ansi".to_owned(),
@@ -102,20 +141,25 @@ pub fn fzf_args(
         format!(
             "--bind=focus:transform-header({focus_cmd})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"
         ),
-        format!(
-            "--bind=ctrl-t:execute(tmux -S {socket} display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}"
-        ),
-        format!(
-            "--bind=ctrl-d:execute-silent(printf '%s' {{1}} >\"$TX_ARM_FILE\")+transform-header({arm_cmd})+rebind(y,n)"
-        ),
-        format!(
-            "--bind=y:execute-silent({bin} --state-dir {state_dir} kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"
-        ),
-        format!(
-            "--bind=n:transform-header({focus_cmd})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"
-        ),
     ]
-    .into()
+    .into();
+    if binds.edit_tag {
+        args.push(format!(
+            "--bind=ctrl-t:execute(tmux -S {socket} display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}"
+        ));
+    }
+    if binds.kill {
+        args.push(format!(
+            "--bind=ctrl-d:execute-silent(printf '%s' {{1}} >\"$TX_ARM_FILE\")+transform-header({arm_cmd})+rebind(y,n)"
+        ));
+        args.push(format!(
+            "--bind=y:execute-silent({bin} --state-dir {state_dir} kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"
+        ));
+    }
+    args.push(format!(
+        "--bind=n:transform-header({focus_cmd})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"
+    ));
+    args
 }
 
 /// Reconcile with tmux, then the running sessions.
@@ -229,6 +273,7 @@ impl Verb for Pick {
             namew,
             &options.query,
             &arm_file,
+            Binds::of(core),
         );
         loop {
             let text = feed(&ui, &running(core)?, namew);
@@ -383,6 +428,30 @@ mod tests {
 
     const HEADER: &str = "NAME           LOCATION                  STARTED IDLE   ROLE  TAGS";
 
+    const ALL: Binds = Binds {
+        edit_tag: true,
+        kill: true,
+    };
+
+    fn args(binds: Binds) -> Vec<String> {
+        fzf_args(
+            Path::new("/x/txc"),
+            Path::new("/k/tmux.sock"),
+            Path::new("/s"),
+            12,
+            "",
+            Path::new("/t/arm"),
+            binds,
+        )
+    }
+
+    fn has_bind(args: &[String], key: &str) -> bool {
+        args.iter().any(|arg| {
+            arg.strip_prefix("--bind=")
+                .is_some_and(|bind| bind.starts_with(key))
+        })
+    }
+
     #[test]
     fn namew_env_parsing() {
         assert_eq!(namew_from(Some("7")), 7);
@@ -422,15 +491,36 @@ mod tests {
             format!("--bind=y:execute-silent(/x/txc --state-dir /s kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"),
             format!("--bind=n:transform-header({focus})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"),
         ];
-        let actual = fzf_args(
-            Path::new("/x/txc"),
-            Path::new("/k/tmux.sock"),
-            Path::new("/s"),
-            12,
-            "",
-            Path::new("/t/arm"),
-        );
-        assert_eq!(actual, expected);
+        assert_eq!(args(ALL), expected);
+    }
+
+    #[test]
+    fn fzf_args_without_edit_tag_has_no_ctrl_t() {
+        let actual = args(Binds {
+            edit_tag: false,
+            kill: true,
+        });
+        assert!(!has_bind(&actual, "ctrl-t:"), "{actual:?}");
+        assert!(!actual.iter().any(|arg| arg.contains("_edit-tag")));
+        assert_eq!(actual.len(), args(ALL).len() - 1);
+        for key in ["ctrl-d:", "y:", "n:", "ctrl-r:"] {
+            assert!(has_bind(&actual, key), "{key}");
+        }
+    }
+
+    #[test]
+    fn fzf_args_without_kill_has_no_kill_binds() {
+        let actual = args(Binds {
+            edit_tag: true,
+            kill: false,
+        });
+        assert!(!has_bind(&actual, "ctrl-d:"), "{actual:?}");
+        assert!(!has_bind(&actual, "y:"), "{actual:?}");
+        assert!(!actual.iter().any(|arg| arg.contains(" kill ")));
+        assert_eq!(actual.len(), args(ALL).len() - 2);
+        for key in ["ctrl-t:", "n:", "ctrl-r:"] {
+            assert!(has_bind(&actual, key), "{key}");
+        }
     }
 
     #[test]
