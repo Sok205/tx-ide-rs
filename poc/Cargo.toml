@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["tx-core", "plugins/engine-claude", "plugins/engine-codex", "plugins/hooks", "plugins/ide", "plugins/labels", "plugins/kill", "plugins/picker", "plugins/edit", "tx-ui", "tx-core-cli"]
+members = ["tx-core", "plugins/engine-claude", "plugins/engine-codex", "plugins/hooks", "plugins/ide", "plugins/labels", "plugins/kill", "plugins/picker", "plugins/edit", "plugins/spawn", "plugins/assistant", "tx-ui", "tx-core-cli"]
 
 [workspace.package]
 edition = "2024"

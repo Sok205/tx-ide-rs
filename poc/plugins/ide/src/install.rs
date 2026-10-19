@@ -16,6 +16,10 @@ const HOME_SESSION: &str = "home";
 const INSTALLED: &str = "keys/.installed";
 const IDE_FRAGMENT: &str = "ide";
 const LEGACY_HINT: &str = "legacy bindings may remain; restart the server to drop them";
+/// The resource kinds `ui install` materialises under the state dir.
+const KINDS: [&str; 4] = ["bin", "keys", "conf", "agents"];
+/// The verb that starts the assistant session; `home` nests into it when the plugin is active.
+const ASSISTANT_VERB: &str = "assistant";
 
 fn conf_text(exe: &Path, state: &Path, others: &[&str]) -> String {
     let state = state.display();
@@ -191,9 +195,9 @@ fn io_failed(path: &Path) -> impl FnOnce(io::Error) -> VerbError {
     move |e| VerbError::Failed(format!("{}: {e}", path.display()))
 }
 
-/// Writes every `bin/`, `keys/` and `conf/` resource under `state` and deletes files in those
-/// directories that no resource accounts for. `bin/` and `keys/` files are executable: scripts,
-/// and fragments that `run-shell` executes.
+/// Writes every `bin/`, `keys/`, `conf/` and `agents/` resource under `state` and deletes files
+/// in those directories that no resource accounts for. `bin/` and `keys/` files are executable:
+/// scripts, and fragments that `run-shell` executes.
 fn materialise(state: &Path, resources: &[Resource]) -> Result<(), VerbError> {
     let mut keep: HashSet<PathBuf> = HashSet::from([state.join(INSTALLED)]);
     for resource in resources {
@@ -205,16 +209,13 @@ fn materialise(state: &Path, resources: &[Resource]) -> Result<(), VerbError> {
             std::fs::remove_file(&path).map_err(io_failed(&path))?;
         }
         std::fs::write(&path, resource.bytes).map_err(io_failed(&path))?;
-        let mode = if resource.name.starts_with("conf/") {
-            0o644
-        } else {
-            0o755
-        };
+        let executable = resource.name.starts_with("bin/") || resource.name.starts_with("keys/");
+        let mode = if executable { 0o755 } else { 0o644 };
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
             .map_err(io_failed(&path))?;
         keep.insert(path);
     }
-    for kind in ["bin", "keys", "conf"] {
+    for kind in KINDS {
         prune(&state.join(kind), &keep).map_err(io_failed(&state.join(kind)))?;
     }
     Ok(())
@@ -256,7 +257,7 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
             ),
         );
     }
-    for kind in ["bin", "keys", "conf"] {
+    for kind in KINDS {
         let dir = state.join(kind);
         if dir.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
             return fail(
@@ -271,9 +272,9 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let previous = std::fs::read_to_string(state.join(INSTALLED))
         .ok()
         .map(|text| parse_installed(&text));
-    let resources: Vec<Resource> = ["bin/", "keys/", "conf/"]
+    let resources: Vec<Resource> = KINDS
         .into_iter()
-        .flat_map(|prefix| core.resources(prefix))
+        .flat_map(|kind| core.resources(&format!("{kind}/")))
         .collect();
     materialise(state, &resources)?;
 
@@ -332,15 +333,53 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     Ok(0)
 }
 
-/// Creates the `home` view on the core's server unless it is already there.
-fn ensure_home(ui: &Ui) -> Result<(), VerbError> {
+/// The assistant's name from `assistant warm` when the plugin is active and the session came
+/// up; its stderr is passed through, a failure is reported, and `None` means a plain home.
+fn warm_assistant(core: &TxCore, io: &mut VerbIo<'_>) -> Option<String> {
+    let verb = core.verb(ASSISTANT_VERB)?;
+    let mut stdin = io::empty();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = verb.run(
+        core,
+        &mut VerbIo {
+            stdin: &mut stdin,
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+        },
+        &["warm".to_owned()],
+    );
+    let _ = io.stderr.write_all(&stderr);
+    match result {
+        Ok(0) => String::from_utf8(stdout)
+            .ok()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty()),
+        Ok(_) => None,
+        Err(error) => {
+            let _ = writeln!(io.stderr, "txc ui attach: assistant: {error}");
+            None
+        }
+    }
+}
+
+/// Creates the `home` view on the core's server unless it is already there. A new home's pane
+/// nest-attaches the assistant when `assistant warm` brought it up.
+fn ensure_home(core: &TxCore, ui: &Ui, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
     if ui.has_session(HOME_SESSION) {
         return Ok(());
     }
+    let nest = warm_assistant(core, io)
+        .and_then(|name| ui.live_targets().get(&name).cloned())
+        .map(|target| ui.nest_attach_command(&target));
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_owned());
     let target = format!("={HOME_SESSION}:");
+    let mut create = vec!["new-session", "-d", "-s", HOME_SESSION, "-c", &home];
+    if let Some(command) = &nest {
+        create.push(command);
+    }
     let steps: [&[&str]; 4] = [
-        &["new-session", "-d", "-s", HOME_SESSION, "-c", &home],
+        &create,
         &["set-option", "-t", &target, "@tx-view", "1"],
         &["set-option", "-t", &target, "status", "on"],
         &[
@@ -359,7 +398,7 @@ fn ensure_home(ui: &Ui) -> Result<(), VerbError> {
 
 fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let ui = Ui::from_core(core);
-    ensure_home(&ui)?;
+    ensure_home(core, &ui, io)?;
     let env = std::env::var("TMUX").ok();
     match tmux_env_socket(env.as_deref()) {
         Some(socket) if Path::new(socket) == core.socket_path() => {

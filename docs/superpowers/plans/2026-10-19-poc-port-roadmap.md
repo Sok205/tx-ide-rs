@@ -199,6 +199,12 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
   - Gate: prefix+n opens the form and spawns a worker in a fresh worktree whose record carries
     the path; `kill --remove` removes both; a read-only worker cannot write inside the repo but
     can outside; `spawn-nvim` and `spawn-view` land in `ext["spawn"]` and show in the picker.
+  - First slice landed 2026-10-19 (`poc/plugins/spawn`): prefix+n → `bin/tmux-new-agent` →
+    `_new-agent`, main's nvim form embedded in the crate, the session created inline through
+    `create_session` (no worktree, no read-only wrapper, no `ext["spawn"]` yet); the roles ship as
+    `agents/` resources that `ui install` materialises, and `txc` defaults its profile and skill
+    dirs to `<state>/agents` and `<state>/user-agents`. Worktrees, `kill --remove`, the launch
+    slot and the spawn verb family remain.
 
 - [ ] **Phase 3 — `chat`** (prefix+f; proves `ExtUpdated`, sweep and the data dir)
   - Crate `poc/plugins/chat` (`tx-chat`), plugin ids `chat` and `history` (one crate, two
@@ -235,6 +241,10 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
   - State: none beyond the session's own record and `ext["spawn"]`.
   - Gate: prefix+/ with the assistant down creates it, primes it, and delivers the line; with
     it up, delivers the line with the envelope naming the focused pane's session.
+  - First slice landed 2026-10-19 (`poc/plugins/assistant`): `assistant warm` creates or reuses
+    the session (COMMON + TX-ASSISTANT on claude, `tx-system`, cwd = the state dir), and
+    `ui attach` nests a new `home` into it. No priming message (the profile travels as
+    `--append-system-prompt`), no prefix+/, no focus envelope yet.
 
 - [ ] **Phase 5 — `artifacts`** (prefix+a)
   - Crate `poc/plugins/artifacts` (`tx-artifacts`), plugin id `artifacts`.

@@ -44,7 +44,8 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/labels.tmux\"\n\
          run-shell \"{state}/keys/kill.tmux\"\n\
          run-shell \"{state}/keys/picker.tmux\"\n\
-         run-shell \"{state}/keys/edit.tmux\"\n",
+         run-shell \"{state}/keys/edit.tmux\"\n\
+         run-shell \"{state}/keys/spawn.tmux\"\n",
         exe().display(),
     )
 }
@@ -78,6 +79,9 @@ fn start_server(cli: &Cli) {
                     .tmux_out(&["list-keys", "-T", "prefix", "s"])
                     .contains("_relabel")
                 && cli
+                    .tmux_out(&["list-keys", "-T", "prefix", "n"])
+                    .contains("tmux-new-agent")
+                && cli
                     .tmux_out(&["show-option", "-gv", "pane-border-format"])
                     .contains("_pane-label")
         }),
@@ -100,17 +104,28 @@ fn ui_install_materialises_resources() {
         "tmux-edit-tx-session",
         "tmux-nav",
         "tmux-system-resources",
+        "tmux-new-agent",
     ] {
         let path = state.join("bin").join(script);
         assert!(path.is_file(), "{path:?}");
         assert!(is_executable(&path), "{path:?}");
     }
-    for id in ["ide", "picker", "edit", "kill", "labels"] {
+    for id in ["ide", "picker", "edit", "kill", "labels", "spawn"] {
         let path = state.join(format!("keys/{id}.tmux"));
         assert!(path.is_file(), "{path:?}");
         assert!(is_executable(&path), "{path:?}");
     }
     assert!(state.join("conf/tmux.conf").is_file());
+    for role in [
+        "agents/COMMON.md",
+        "agents/DEVELOPER.md",
+        "agents/TX-ASSISTANT.md",
+        "agents/skills/tx-sessions/SKILL.md",
+    ] {
+        let path = state.join(role);
+        assert!(path.is_file(), "{path:?}");
+        assert!(!is_executable(&path), "{path:?}");
+    }
     assert_eq!(
         std::fs::read_to_string(cli.conf()).unwrap(),
         expected_conf(&cli)
@@ -121,6 +136,7 @@ fn ui_install_materialises_resources() {
         ("kill", "keys=X"),
         ("picker", "keys=t"),
         ("edit", "keys=e"),
+        ("spawn", "keys=n"),
     ] {
         assert!(
             installed
@@ -140,6 +156,7 @@ fn ui_install_deletes_files_no_plugin_provides() {
         cli.state().join("bin/old-script"),
         cli.state().join("keys/old.tmux"),
         cli.state().join("conf/old.conf"),
+        cli.state().join("agents/OLD.md"),
     ];
     for path in &stale {
         std::fs::write(path, "x").unwrap();
@@ -231,8 +248,7 @@ fn ui_install_fragment_loads() {
         cli.tmux_out(&["show-option", "-gv", "@tx-state"]),
         cli.state().to_str().unwrap()
     );
-    let new_agent = cli.tmux_out(&["list-keys", "-T", "prefix", "n"]);
-    assert!(!new_agent.contains("_new-agent"), "{new_agent:?}");
+    assert!(bound("prefix", "n").contains("tmux-new-agent"));
     cli.tmux(&["kill-server"]);
 }
 
@@ -257,7 +273,7 @@ fn fragments_do_nothing_outside_an_installed_server() {
             .status
             .success()
     );
-    for id in ["ide", "labels", "kill", "picker", "edit"] {
+    for id in ["ide", "labels", "kill", "picker", "edit", "spawn"] {
         let output = Command::new(cli.state().join(format!("keys/{id}.tmux")))
             .env("TMUX", format!("{},1,0", other.display()))
             .output()
@@ -479,6 +495,7 @@ fn attach_command(cli: &Cli) -> String {
 fn ui_attach_lands_in_a_view_home() {
     require_tmux!();
     let cli = Cli::new();
+    cli.write_yaml(&plugins_yaml_disabling("assistant"));
     cli.create("a");
     cli.in_outer_pane(&attach_command(&cli));
     assert!(
@@ -502,6 +519,7 @@ fn ui_attach_lands_in_a_view_home() {
 fn ui_attach_inside_another_tmux_says_its_prefix_wins() {
     require_tmux!();
     let cli = Cli::new();
+    cli.write_yaml(&plugins_yaml_disabling("assistant"));
     let output = cli.run(
         &["ui", "attach"],
         &[("TMUX", "/tmp/not-the-core.sock,1,0")],
@@ -521,6 +539,7 @@ fn ui_attach_inside_another_tmux_says_its_prefix_wins() {
 fn ui_attach_inside_the_core_switches_the_client() {
     require_tmux!();
     let cli = Cli::new();
+    cli.write_yaml(&plugins_yaml_disabling("assistant"));
     cli.create("other");
     cli.in_outer_pane(&format!(
         "TMUX= tmux -S {} attach -t =other",
@@ -550,5 +569,62 @@ fn ui_attach_inside_the_core_switches_the_client() {
     assert_eq!(
         cli.tmux_out(&["show-options", "-vt", "=home:", "@tx-view"]),
         "1"
+    );
+}
+
+#[test]
+fn ui_attach_starts_the_assistant_and_nests_home_into_it() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    let path = cli.fake_claude_path();
+    cli.in_outer_pane(&format!("PATH='{path}' {}", attach_command(&cli)));
+    let clients = || {
+        let mut clients: Vec<String> = cli
+            .tmux_out(&["list-clients", "-F", "#{client_session}"])
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        clients.sort();
+        clients
+    };
+    assert!(
+        cli.wait_for(10, || clients() == ["home", "tx-assistant"]),
+        "clients: {:?}",
+        clients()
+    );
+    let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "tx-assistant"])).unwrap();
+    assert_eq!(json["lifecycle"], "running");
+    assert_eq!(json["tags"], serde_json::json!(["tx-system"]));
+    assert_eq!(
+        json["cwd"],
+        cli.state().canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(
+        json["launch"]["profile"],
+        serde_json::json!(["COMMON", "TX-ASSISTANT"])
+    );
+    assert_eq!(
+        cli.tmux_out(&["show-options", "-vt", "=home:", "@tx-view"]),
+        "1"
+    );
+}
+
+#[test]
+fn ui_attach_without_the_roles_installed_opens_a_plain_home() {
+    require_tmux!();
+    let cli = Cli::new();
+    let path = cli.fake_claude_path();
+    let output = cli.run(
+        &["ui", "attach"],
+        &[("PATH", &path), ("TMUX", "/tmp/not-the-core.sock,1,0")],
+        "",
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("COMMON"), "{stderr:?}");
+    assert!(cli.tmux(&["has-session", "-t", "=home"]).status.success());
+    assert_eq!(
+        cli.run(&["show", "tx-assistant"], &[], "").status.code(),
+        Some(1)
     );
 }

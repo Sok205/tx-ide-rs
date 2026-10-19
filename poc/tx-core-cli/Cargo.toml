@@ -20,6 +20,8 @@ tx-labels = { path = "../plugins/labels" }
 tx-kill = { path = "../plugins/kill" }
 tx-picker = { path = "../plugins/picker" }
 tx-edit = { path = "../plugins/edit" }
+tx-spawn = { path = "../plugins/spawn" }
+tx-assistant = { path = "../plugins/assistant" }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway = "0.9"

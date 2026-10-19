@@ -151,6 +151,27 @@ impl Cli {
             .trim()
             .to_owned()
     }
+    /// A directory of stand-in executables (`exec sleep 60` unless `body` says otherwise),
+    /// returned as a PATH value that puts it first.
+    pub fn shim_path(&self, shims: &[(&str, &str)]) -> String {
+        let dir = self.dir.path().join("shim");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, body) in shims {
+            let path = dir.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .unwrap();
+        }
+        format!(
+            "{}:{}",
+            dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    }
+    /// A `claude` that just stays alive, so agent sessions can be created without the engine.
+    pub fn fake_claude_path(&self) -> String {
+        self.shim_path(&[("claude", "exec sleep 60")])
+    }
     pub fn create(&self, name: &str) -> String {
         let cwd = self.dir.path().join(name);
         std::fs::create_dir_all(&cwd).unwrap();

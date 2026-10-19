@@ -29,11 +29,15 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-ui |
 | `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-ui |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-ui |
+| `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n; ships the COMMON and DEVELOPER roles and their skills | tx-core, tx-ui |
+| `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm`, the `tx-assistant` session `ui attach` lands in; ships the TX-ASSISTANT role | tx-core, tx-ui |
 | `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`) and the modal editor (`editor`) shared by the key plugins | tx-core |
 | `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
-carries everything; only `txc` touches `std::env`.
+carries everything; only `txc` touches `std::env`. Without `--profile-dir` / `--skill-dir`,
+`txc` resolves roles from `<state_dir>/agents` (the roles plugins ship, written by `ui install`)
+and `<state_dir>/user-agents` (yours, never pruned), with skills under each one's `skills/`.
 
 ## Architecture
 
@@ -189,7 +193,7 @@ record's `ext.<id>` object via `TxCore::update_ext`. Design:
 `../docs/superpowers/specs/2026-10-16-poc-plugins-design.md`.
 
 A resource is a named static blob a plugin publishes with `Registry::resource(name, bytes)`
-(`keys/<id>.tmux`, `bin/<file>`, `conf/<file>`); the core stores it and lists it with
+(`keys/<id>.tmux`, `bin/<file>`, `conf/<file>`, `agents/<file>`); the core stores it and lists it with
 `TxCore::resources(prefix)` but never reads one, and a disabled plugin's resources are absent just
 like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-design.md`).
 
@@ -202,9 +206,22 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
+| `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_session`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
+| `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name); resource `agents/TX-ASSISTANT.md` |
 
 The picker's role column reads `ext.spawn.kind`, which a later plugin writes; until then every
 process session shows `shell`.
+
+`_new-agent` runs main's nvim form (`plugins/spawn/nvim/tx-new-agent.lua`, embedded and written
+to a temp dir at run time): name, tags, project (the firing pane's directory), prompt, engine
+(`core.engine_ids()`), model, effort (`low` to `max`) and role (every `<NAME>.md` in the profile
+dirs but COMMON, which every agent gets; `none` first, DEVELOPER preselected). Needs `nvim`.
+The session is created in the popup; the outcome lands on the client's status line.
+
+`assistant warm` creates `tx-assistant` with the engine `claude`, roles COMMON + TX-ASSISTANT,
+model `opus`, effort `medium`, tag `tx-system`, in the state dir (so the engine's skill links
+land under `<state_dir>/.claude/skills`). A `Running` record whose tmux session is gone is
+refreshed to `Exited` and the assistant started again.
 
 ## Running the IDE
 
@@ -230,7 +247,11 @@ options and hooks it declared, and prints `reloaded`. When it finds no previous
 `legacy bindings may remain; restart the server to drop them`.
 
 `ui attach` creates `home` on first use as a view (status bar and pane-border labels on) and
-attaches to it. To try the IDE, start a session and press the picker key:
+attaches to it. When the `assistant` plugin is active it first runs `assistant warm` and starts
+`home`'s pane nest-attached to `tx-assistant`, so the IDE opens on the assistant; a failed warm
+(no `claude`, roles not installed) is printed to stderr and `home` opens as a plain view. An
+existing `home` is left as it is. To try the IDE, press prefix+n in it, or start a session by
+hand and press the picker key:
 
 ```
 txc create demo --cwd ~/code/project --exec zsh
@@ -242,6 +263,7 @@ The prefix is `C-a`.
 | keys | does |
 |---|---|
 | prefix+t | session picker; Enter nests into the session |
+| prefix+n | new agent: the form, then the session in the pane's directory |
 | prefix+e | edit the session's name, tags and group |
 | prefix+X | kill the session, with a confirm prompt |
 | prefix+s | refresh labels, then `choose-tree` |
@@ -249,11 +271,27 @@ The prefix is `C-a`.
 | C-u / C-d | page the agent's scrollback |
 
 The pane border shows the nested session's name and tags. Later plugins bring their own keys
-(prefix+T, /, f, n, a) in their own `keys/<id>.tmux`.
+(prefix+T, /, f, a) in their own `keys/<id>.tmux`.
+
+### Adding a plugin
+
+A plugin is a crate under `poc/plugins/<id>` (package `tx-<id>`, depending on `tx-core` and, for
+anything that talks to tmux, `tx-ui`) whose `Plugin` impl registers verbs, engines, sinks and
+resources. Wire it in with three edits: a `plugins/<id>` entry in `members` in `poc/Cargo.toml`,
+a `tx-<id> = { path = "../plugins/<id>" }` dependency in `poc/tx-core-cli/Cargo.toml`, and one
+line in `tx-core-cli/src/plugins.rs::MANIFEST`; a verb may not take a name in
+`plugins.rs::RESERVED`. Give it a `tests/resources.rs` (what it publishes, and nothing when
+disabled; `kill`'s is the template) and a `poc/tx-core-cli/tests/<id>.rs` through the binary
+(the `tests/common` harness has the state dir, a private server, and `shim_path` for stand-in
+executables such as a `claude` that sleeps).
+
+Resources land under the state dir when `ui install` runs: `bin/` and `keys/` executable,
+`conf/` and `agents/` plain; files there that no active plugin provides are deleted, so a plugin
+that publishes any of these must also be listed in `tests/ide.rs::ui_install_materialises_resources`.
 
 ### Adding a key
 
-A key is a plugin. Create a crate under `poc/plugins/<id>` that implements `Plugin`, with:
+A key is a plugin, with:
 
 - its verb(s), registered with `Registry::verb`;
 - a `tmux/keys.tmux` registered as resource `keys/<id>.tmux`, which binds the key. A comment
@@ -263,12 +301,11 @@ A key is a plugin. Create a crate under `poc/plugins/<id>` that implements `Plug
 - optionally helper scripts, registered as `bin/<file>` resources (they land in `<state_dir>/bin`,
   mode 0755).
 
-Then wire the crate in with three edits: a `plugins/<id>` entry in `members` in `poc/Cargo.toml`, a
-`tx-<id> = { path = "../plugins/<id>" }` dependency in `poc/tx-core-cli/Cargo.toml`, and one line in
-`tx-core-cli/src/plugins.rs::MANIFEST`. Nothing else in the source needs editing: `ui install`
-finds the fragment by its resource name, and `<id>: { enabled: false }` in `plugins.yaml` turns the
-key off. Adding a key also means extending the expected conf in `poc/tx-core-cli/tests/ide.rs`
-(`expected_conf`) with the new `run-shell` line.
+Nothing else in the source needs editing: `ui install` finds the fragment by its resource name,
+and `<id>: { enabled: false }` in `plugins.yaml` turns the key off. Adding a key also means
+extending `poc/tx-core-cli/tests/ide.rs`: the expected conf (`expected_conf`) with the new
+`run-shell` line, `start_server`'s probe and `ui_install_fragment_loads` with the new bind, and
+`fragments_do_nothing_outside_an_installed_server` with the id.
 
 Run `ui attach` from a bare terminal. Inside another tmux whose socket is not the core's it
 nests, and the outer tmux's prefix wins: press the prefix twice to reach the IDE's keys. Inside

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# prefix+n: create a new agent in the firing pane's directory, asking name / tags / prompt /
+# project / engine / model / effort / role in a popup on the firing client.
+set -eu
+
+TX="$(tmux show-option -gv @tx-bin) --state-dir $(tmux show-option -gv @tx-state)"
+pane_id="$1"
+client_name="$2"
+
+# run-shell expands pane/client formats before the popup starts. display-popup's
+# shell-command does not expand them, so pass the captured pane and client as literal arguments.
+# Centred on the client screen; the nvim form (the spawn plugin's tx-new-agent.lua) needs 92
+# columns and 21 rows. The popup closes when the form exits; the outcome is on the status line.
+printf -v new_agent_command '%s _new-agent %q %q' "$TX" "$pane_id" "$client_name"
+exec tmux display-popup -c "$client_name" -E -w 94 -h 23 -x C -y C -b heavy \
+  -S "fg=yellow,bold" \
+  -T ' New agent ' "$new_agent_command"

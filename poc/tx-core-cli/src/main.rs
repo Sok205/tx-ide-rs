@@ -6,7 +6,7 @@ mod plugins;
 
 use std::io::Write;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::sync::Arc;
 
@@ -18,6 +18,10 @@ use tx_core::{
 
 const HOME_ENV: &str = "TX_CORE_HOME";
 const DEFAULT_HOME: &str = ".tx-core";
+/// Under the state dir: the roles plugins ship (written by `ui install`) and the user's own.
+const AGENTS_DIR: &str = "agents";
+const USER_AGENTS_DIR: &str = "user-agents";
+const SKILLS_DIR: &str = "skills";
 
 fn main() -> ExitCode {
     let args: Result<Vec<String>, args::UsageError> = std::env::args_os()
@@ -100,12 +104,36 @@ fn absolute(path: PathBuf) -> PathBuf {
         .unwrap_or(path)
 }
 
+/// Without `--profile-dir`: the roles `ui install` materialises, then the user's own.
+fn default_profile_dirs(state: &Path) -> Vec<PathBuf> {
+    vec![state.join(AGENTS_DIR), state.join(USER_AGENTS_DIR)]
+}
+
+/// Without `--skill-dir`: `skills/` under each default profile dir.
+fn default_skill_dirs(state: &Path) -> Vec<PathBuf> {
+    default_profile_dirs(state)
+        .into_iter()
+        .map(|dir| dir.join(SKILLS_DIR))
+        .collect()
+}
+
 /// The core config from the globals; pure, touches no disk.
 fn core_config(invocation: &Invocation) -> CoreConfig {
     let global = &invocation.global;
-    let mut config = CoreConfig::new(state_dir(global.state_dir.clone()))
-        .profile_dirs(global.profile_dirs.clone())
-        .skill_dirs(global.skill_dirs.clone());
+    let state = state_dir(global.state_dir.clone());
+    let profile_dirs = if global.profile_dirs.is_empty() {
+        default_profile_dirs(&state)
+    } else {
+        global.profile_dirs.clone()
+    };
+    let skill_dirs = if global.skill_dirs.is_empty() {
+        default_skill_dirs(&state)
+    } else {
+        global.skill_dirs.clone()
+    };
+    let mut config = CoreConfig::new(state)
+        .profile_dirs(profile_dirs)
+        .skill_dirs(skill_dirs);
     for (key, value) in &global.env {
         config = config.env(key, value);
     }

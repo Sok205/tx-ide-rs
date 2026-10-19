@@ -25,6 +25,8 @@ verbs:
   plugins                                                           id and active|disabled per plugin
 
 TARGET is a session id or name. State lives in $TX_CORE_HOME, else ~/.tx-core.
+Roles resolve from --profile-dir, else <state-dir>/agents (written by `ui install`) and
+<state-dir>/user-agents; skills from --skill-dir, else skills/ under those two.
 Plugins are switched in <state-dir>/plugins.yaml (see --plugins).
 ";
 
