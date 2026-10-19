@@ -44,8 +44,7 @@ impl Verb for Kill {
         let ui = Ui::from_core(core);
         let name = match resolve_or_not_found(core, token)? {
             Some(id) => core.stop_session(&id)?.name,
-            None if ui.has_session(token) && ui.is_view(token) => {
-                ui.kill_session(token);
+            None if ui.has_session(token) && ui.is_view(token) && ui.kill_session(token) => {
                 token.clone()
             }
             None => {

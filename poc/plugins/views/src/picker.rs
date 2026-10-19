@@ -247,6 +247,7 @@ impl Verb for Pick {
                 }
                 eprintln!("txc: could not jump to or switch to session {name}");
             } else {
+                drop(arm_file);
                 open(&ui, target, name)?;
                 return Ok(0);
             }

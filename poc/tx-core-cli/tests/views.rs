@@ -65,6 +65,53 @@ impl Cli {
     fn sock(&self) -> PathBuf {
         self.state().join("tmux.sock")
     }
+    /// A second tmux server standing in for "the user's own tmux".
+    fn outer_sock(&self) -> PathBuf {
+        self.dir.path().join("outer.sock")
+    }
+    /// Run `command` in a pane of the outer server (its `$TMUX` names the outer socket).
+    fn in_outer_pane(&self, command: &str) {
+        let outer = |args: &[&str]| {
+            Command::new("tmux")
+                .arg("-S")
+                .arg(self.outer_sock())
+                .args(["-f", "/dev/null"])
+                .args(args)
+                .env_remove("TMUX")
+                .output()
+                .unwrap()
+        };
+        assert!(
+            outer(&[
+                "new-session",
+                "-d",
+                "-s",
+                "outer",
+                "-x",
+                "120",
+                "-y",
+                "40",
+                "sh"
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            outer(&["send-keys", "-t", "=outer:", command, "Enter"])
+                .status
+                .success()
+        );
+    }
+    /// Poll `probe` for up to `seconds`.
+    fn wait_for(&self, seconds: u64, mut probe: impl FnMut() -> bool) -> bool {
+        for _ in 0..seconds * 10 {
+            if probe() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        probe()
+    }
     fn tmux(&self, args: &[&str]) -> Output {
         Command::new("tmux")
             .arg("-S")
@@ -98,11 +145,13 @@ impl Cli {
 
 impl Drop for Cli {
     fn drop(&mut self) {
-        let _ = Command::new("tmux")
-            .arg("-S")
-            .arg(self.state().join("tmux.sock"))
-            .arg("kill-server")
-            .output();
+        for sock in [self.state().join("tmux.sock"), self.outer_sock()] {
+            let _ = Command::new("tmux")
+                .arg("-S")
+                .arg(sock)
+                .arg("kill-server")
+                .output();
+        }
     }
 }
 
@@ -411,6 +460,7 @@ fn ui_install_writes_conf_and_fragment_loads() {
             "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
              set -s exit-empty on\n\
              set -g history-limit 50000\n\
+             set -g detach-on-destroy off\n\
              set -g @tx-bin \"{}\"\n\
              set -g @tx-state \"{}\"\n\
              source-file \"{poc}/tmux/tmux.conf\"\n\
@@ -468,4 +518,152 @@ fn ui_install_without_fragment_fails_and_writes_nothing() {
     );
     let conf = std::fs::read_to_string(cli.conf()).unwrap_or_default();
     assert!(!conf.contains("@tx-bin"), "{conf:?}");
+}
+
+#[test]
+fn ui_install_refuses_unsafe_paths() {
+    let cli = Cli::new();
+    let poc = cli.dir.path().join("with space");
+    std::fs::create_dir_all(poc.join("tmux")).unwrap();
+    std::fs::write(poc.join("tmux/tx-ide.tmux"), "").unwrap();
+    let output = cli.run(&["ui", "install", "--poc", poc.to_str().unwrap()], &[], "");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        format!(
+            "txc ui install: path contains unsafe characters: {}\n",
+            std::fs::canonicalize(&poc).unwrap().display()
+        )
+    );
+    let conf = std::fs::read_to_string(cli.conf()).unwrap_or_default();
+    assert!(!conf.contains("@tx-bin"), "{conf:?}");
+}
+
+#[test]
+fn kill_view_home_reports_a_failed_kill() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create("a");
+    assert!(
+        cli.tmux(&["new-session", "-d", "-s", "Views"])
+            .status
+            .success()
+    );
+    assert!(
+        cli.tmux(&["set-option", "-t", "=Views:", "@tx-view", "1"])
+            .status
+            .success()
+    );
+    let real =
+        String::from_utf8(Command::new("which").arg("tmux").output().unwrap().stdout).unwrap();
+    let shim_dir = cli.dir.path().join("shim");
+    std::fs::create_dir_all(&shim_dir).unwrap();
+    let shim = shim_dir.join("tmux");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = kill-session ] && exit 1; done\nexec {} \"$@\"\n",
+            real.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shim, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        shim_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = cli.run(&["kill", "Views"], &[("PATH", &path)], "");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty(), "{:?}", output.stdout);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "session 'Views' not found\n"
+    );
+}
+
+fn attach_command(cli: &Cli) -> String {
+    format!(
+        "{} --state-dir {} ui attach",
+        env!("CARGO_BIN_EXE_txc"),
+        cli.state().display()
+    )
+}
+
+#[test]
+fn ui_attach_lands_in_a_view_home() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create("a");
+    cli.in_outer_pane(&attach_command(&cli));
+    assert!(
+        cli.wait_for(5, || cli.tmux_out(&[
+            "list-clients",
+            "-F",
+            "#{client_session}"
+        ]) == "home"),
+        "no client attached to home"
+    );
+    let option = |name: &str| cli.tmux_out(&["show-options", "-vt", "=home:", name]);
+    assert_eq!(option("@tx-view"), "1");
+    assert_eq!(option("status"), "on");
+    assert_eq!(
+        cli.tmux_out(&["show-window-options", "-vt", "=home:", "pane-border-status"]),
+        "top"
+    );
+}
+
+#[test]
+fn ui_attach_inside_another_tmux_says_its_prefix_wins() {
+    require_tmux!();
+    let cli = Cli::new();
+    let output = cli.run(
+        &["ui", "attach"],
+        &[("TMUX", "/tmp/not-the-core.sock,1,0")],
+        "",
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.starts_with(
+            "txc ui attach: nesting inside another tmux (socket /tmp/not-the-core.sock); its prefix wins \u{2014} press the prefix twice to reach the IDE's keys\n"
+        ),
+        "{stderr:?}"
+    );
+    assert!(cli.tmux(&["has-session", "-t", "=home"]).status.success());
+}
+
+#[test]
+fn ui_attach_inside_the_core_switches_the_client() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create("other");
+    cli.in_outer_pane(&format!(
+        "TMUX= tmux -S {} attach -t =other",
+        cli.sock().display()
+    ));
+    assert!(
+        cli.wait_for(5, || cli.tmux_out(&[
+            "list-clients",
+            "-F",
+            "#{client_session}"
+        ]) == "other"),
+        "client never attached"
+    );
+    let inside = format!("{},1,0", cli.sock().display());
+    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside)], "");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        cli.tmux_out(&["list-clients", "-F", "#{client_session}"]),
+        "home"
+    );
+    assert_eq!(
+        cli.tmux_out(&["show-options", "-vt", "=home:", "@tx-view"]),
+        "1"
+    );
 }
