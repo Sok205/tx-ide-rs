@@ -5,8 +5,10 @@
 pub mod detach;
 pub mod engines;
 pub mod ext;
+pub mod history_verbs;
 pub mod install;
 pub mod messages;
+pub mod mirror;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -110,7 +112,10 @@ impl Plugin for HistoryPlugin {
         HISTORY_ID
     }
 
-    fn register(&self, _r: &mut Registry) -> Result<(), PluginError> {
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        for verb in history_verbs::verbs(data_dir(&r.config().state_dir, HISTORY_ID)) {
+            r.verb(verb);
+        }
         Ok(())
     }
 }

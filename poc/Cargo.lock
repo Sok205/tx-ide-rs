@@ -1742,6 +1742,7 @@ dependencies = [
  "serde_norway",
  "tempfile",
  "tx-assistant",
+ "tx-chat",
  "tx-core",
  "tx-edit",
  "tx-engine-claude",
