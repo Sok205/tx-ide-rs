@@ -36,6 +36,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/mockup` (`tx-mockup`) | plugin: `txc mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-ui, ratatui |
 | `plugins/tutor` (`tx-tutor`) | plugin: `txc tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships the repo's `tutor/` lesson packs | tx-core, tx-ui, toml, libc |
 | `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|doctor` (durable versioned deliverables in `<state_dir>/plugins/artifacts/`), `txc group` (effort groups), prefix+a | tx-core, tx-ui |
+| `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-ui, tx-chat (message parser), ratatui |
 | `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins | tx-core |
 | `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins | tx-core and every plugin above |
 
@@ -219,6 +220,7 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<state_dir>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<state_dir>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read `ext.hooks.state`; `chat_origin` matches nothing until a chat plugin exists |
 
 | `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"bound": artifact id, "group": …}`) and the store `<state_dir>/plugins/artifacts/` (`<id>.json`, `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl` and `.locks/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
+| `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads `ext.chat` / `ext.history` (transcripts), `ext.hooks` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
 
 The picker's role column reads `ext.spawn.kind`, which a later plugin writes; until then every
 process session shows `shell`.
@@ -300,11 +302,12 @@ The prefix is `C-a`.
 | prefix+f | fork the session in the pane: a popup asks for the new name (blank: `<name>-fork`) |
 | prefix+s | refresh labels, then `choose-tree` |
 | prefix+a | in an agent: the artifacts it touched, its parent and children; Enter re-hosts the pane on the pick, f focuses the pane showing it, p pops it up. In an artifact's view: back to the agent |
+| prefix+T | the resident timeline in a popup; q detaches, Enter jumps to the lane's session |
 | C-h / C-j / C-k / C-l | move between panes; the move bubbles out of nested sessions |
 | C-u / C-d | page the agent's scrollback |
 
 The pane border shows the nested session's name and tags. Later plugins bring their own keys
-(prefix+T, /) in their own `keys/<id>.tmux`.
+(/) in their own `keys/<id>.tmux`.
 
 ### Adding a plugin
 

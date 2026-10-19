@@ -1,0 +1,403 @@
+{
+  "epoch_ms": 1791590400000,
+  "t1": 2131.0,
+  "days": [
+    {
+      "o": 0.0,
+      "label": "Sat Oct 10",
+      "wk": 1
+    },
+    {
+      "o": 1440.0,
+      "label": "Sun Oct 11",
+      "wk": 1
+    }
+  ],
+  "groups": [
+    {
+      "k": "scratch",
+      "color": "#00afaf"
+    },
+    {
+      "k": "beta",
+      "color": "#5fd7d7"
+    },
+    {
+      "k": "infra",
+      "color": "#ff8787"
+    },
+    {
+      "k": "tx-system",
+      "color": "#af87d7"
+    },
+    {
+      "k": "alpha",
+      "color": "#ffaf5f"
+    }
+  ],
+  "sessions": [
+    {
+      "sid": "d0000000-0000-4000-8000-0000000000d1",
+      "id": "scratch@Oct10",
+      "g": "scratch",
+      "meta": "? \u00b7 killed \u00b7 0 msgs",
+      "blurb": "(no user messages recorded)",
+      "state": "killed",
+      "sys": 0,
+      "live": 0,
+      "kill": 600.0,
+      "a": 540.0,
+      "b": 600.0,
+      "segs": [
+        [
+          540.0,
+          600.0
+        ]
+      ],
+      "fsegs": [
+        [
+          540.0,
+          541.0
+        ],
+        [
+          600.0,
+          601.0
+        ]
+      ],
+      "ev": []
+    },
+    {
+      "sid": "d0000000-0000-4000-8000-0000000000d2",
+      "id": "scratch@Oct10",
+      "g": "scratch",
+      "meta": "claude \u00b7 killed \u00b7 2 msgs",
+      "blurb": "try something",
+      "state": "killed",
+      "sys": 0,
+      "live": 0,
+      "kill": 960.0,
+      "a": 900.17,
+      "b": 901.0,
+      "segs": [
+        [
+          900.17,
+          901.17
+        ]
+      ],
+      "fsegs": [
+        [
+          900.17,
+          901.17
+        ]
+      ],
+      "ev": [
+        [
+          900.17,
+          "u",
+          "try something"
+        ]
+      ]
+    },
+    {
+      "sid": "c0000000-0000-4000-8000-0000000000c2",
+      "id": "reviewer",
+      "g": "beta",
+      "meta": "claude \u00b7 idle \u00b7 11 msgs",
+      "blurb": "review the PR",
+      "state": "idle",
+      "sys": 0,
+      "live": 1,
+      "kill": null,
+      "a": 1200.17,
+      "b": 1941.0,
+      "segs": [
+        [
+          1200.17,
+          1205.0
+        ],
+        [
+          1920.5,
+          1941.0
+        ]
+      ],
+      "fsegs": [
+        [
+          1200.17,
+          1205.0
+        ],
+        [
+          1920.5,
+          1921.5
+        ],
+        [
+          1940.0,
+          1941.0
+        ]
+      ],
+      "ev": [
+        [
+          1200.17,
+          "u",
+          "review the PR"
+        ],
+        [
+          1200.33,
+          "u",
+          "r1"
+        ],
+        [
+          1200.5,
+          "u",
+          "r2"
+        ],
+        [
+          1200.67,
+          "u",
+          "r3"
+        ],
+        [
+          1200.83,
+          "u",
+          "(burst: more messages this minute \u2014 open chat)"
+        ],
+        [
+          1920.5,
+          "u",
+          "[cmd] /resume"
+        ],
+        [
+          1940.0,
+          "u",
+          "look at this\n[screenshot]"
+        ]
+      ]
+    },
+    {
+      "sid": "f0000000-0000-4000-8000-0000000000f1",
+      "id": "infra",
+      "g": "infra",
+      "meta": "claude \u00b7 killed \u00b7 2 msgs",
+      "blurb": "deploy",
+      "state": "killed",
+      "sys": 0,
+      "live": 0,
+      "kill": 1830.0,
+      "a": 1800.17,
+      "b": 1810.0,
+      "segs": [
+        [
+          1800.17,
+          1810.0
+        ]
+      ],
+      "fsegs": [
+        [
+          1800.17,
+          1810.0
+        ]
+      ],
+      "ev": [
+        [
+          1800.17,
+          "u",
+          "deploy"
+        ]
+      ]
+    },
+    {
+      "sid": "f0000000-0000-4000-8000-0000000000f2",
+      "id": "infra-child",
+      "g": "infra",
+      "meta": "? \u00b7 killed \u00b7 0 msgs",
+      "blurb": "(no user messages recorded)",
+      "state": "killed",
+      "sys": 0,
+      "live": 0,
+      "kill": 1825.0,
+      "a": 1805.0,
+      "b": 1825.0,
+      "segs": [
+        [
+          1805.0,
+          1825.0
+        ]
+      ],
+      "fsegs": [
+        [
+          1805.0,
+          1806.0
+        ],
+        [
+          1825.0,
+          1826.0
+        ]
+      ],
+      "ev": []
+    },
+    {
+      "sid": "e0000000-0000-4000-8000-00000000000e",
+      "id": "tx-assistant",
+      "g": "tx-system",
+      "meta": "claude \u00b7 idle \u00b7 2 msgs",
+      "blurb": "status?",
+      "state": "idle",
+      "sys": 1,
+      "live": 1,
+      "kill": null,
+      "a": 1860.17,
+      "b": 1861.0,
+      "segs": [
+        [
+          1860.17,
+          1861.17
+        ]
+      ],
+      "fsegs": [
+        [
+          1860.17,
+          1861.17
+        ]
+      ],
+      "ev": [
+        [
+          1860.17,
+          "u",
+          "status?"
+        ]
+      ]
+    },
+    {
+      "sid": "a0000000-0000-4000-8000-00000000000a",
+      "id": "lead",
+      "g": "alpha",
+      "meta": "claude \u00b7 working \u00b7 4 msgs",
+      "blurb": "plan the work",
+      "state": "working",
+      "sys": 0,
+      "live": 1,
+      "kill": null,
+      "a": 2040.08,
+      "b": 2131.0,
+      "segs": [
+        [
+          2040.08,
+          2131.0
+        ]
+      ],
+      "fsegs": [
+        [
+          2040.08,
+          2042.0
+        ],
+        [
+          2130.0,
+          2131.0
+        ]
+      ],
+      "ev": [
+        [
+          2040.08,
+          "u",
+          "plan the work"
+        ],
+        [
+          2040.5,
+          "m",
+          "artifact created: tx artifact create --title Plan"
+        ],
+        [
+          2131.0,
+          "m",
+          "PR merge/ready: gh pr merge 12"
+        ]
+      ]
+    },
+    {
+      "sid": "b0000000-0000-4000-8000-00000000000b",
+      "id": "worker",
+      "g": "alpha",
+      "meta": "codex \u00b7 waiting \u00b7 4 msgs",
+      "blurb": "continue",
+      "state": "waiting",
+      "sys": 0,
+      "live": 1,
+      "kill": null,
+      "a": 2050.17,
+      "b": 2129.0,
+      "segs": [
+        [
+          2050.17,
+          2129.0
+        ]
+      ],
+      "fsegs": [
+        [
+          2050.17,
+          2051.17
+        ],
+        [
+          2080.0,
+          2081.0
+        ],
+        [
+          2120.0,
+          2129.0
+        ]
+      ],
+      "ev": [
+        [
+          2051.0,
+          "m",
+          "PR merge/ready: gh pr ready 12"
+        ],
+        [
+          2120.0,
+          "u",
+          "continue"
+        ]
+      ]
+    }
+  ],
+  "edges": [
+    [
+      1805.0,
+      3,
+      4,
+      "infra",
+      "",
+      "spawn"
+    ],
+    [
+      1920.0,
+      2,
+      2,
+      "reviewer",
+      "",
+      "resume"
+    ],
+    [
+      2050.0,
+      6,
+      7,
+      "lead",
+      "",
+      "spawn"
+    ],
+    [
+      2050.17,
+      6,
+      7,
+      "lead",
+      "start step 1",
+      "msg"
+    ],
+    [
+      2130.0,
+      7,
+      6,
+      "worker",
+      "done step 1",
+      "msg"
+    ]
+  ]
+}

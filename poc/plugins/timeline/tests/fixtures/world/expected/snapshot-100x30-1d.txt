@@ -1,0 +1,30 @@
+                                                                                         now 12:00┃
+                            -1d     -21h     -18h     -15h     -12h     -9h      -6h      -3h     ┃
+                            ┬───────┬────────┬────────┬────────┳────────┬────────┬────────┬───────┃
+SCRATCH (1)                                                    ┊                                  ┃
+× scratch@Oct10 claude              ━╌╌×                       ┊                                  ┃
+BETA (1)                                                       ┊                                  ┃
+○ reviewer claude                                  ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌━━╌╌╌╌╌╌╌╌╌┃
+INFRA (2)                                                      ┊                                  ┃
+× infra claude                                                 ┊                 ━×               ┃
+× infra-child ?                                                ┊                 ━×               ┃
+TX-SYSTEM (1)                                                  ┊                                  ┃
+○ tx-assistant claude                                          ┊                    ━╌╌╌╌╌╌╌╌╌╌╌╌╌┃
+ALPHA (2)                                                      ┊                                  ┃
+● lead claude                                                  ┊                             •━━━▴┃▸
+○ worker codex                                                 ┊                             ▾━━━•┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+                                                                                                  ┃
+claude-haiku-4 · effort — · ctx — · scratch@Oct10 · claude · killed · 2 msgs · 0 messages
+h/l pan  [ ] zoom  j/k lane  enter go  tab/shift-tab message  / search  s sys  i idle  n now  q   20

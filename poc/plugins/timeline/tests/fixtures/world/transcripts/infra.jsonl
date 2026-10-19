@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-11T06:00:10Z","uuid":"i1","message":{"role":"user","content":"deploy"}}
+{"type":"assistant","timestamp":"2026-10-11T06:10:00Z","uuid":"i2","message":{"role":"assistant","model":"claude-opus-4","stop_reason":"end_turn","content":[{"type":"text","text":"deployed"}]}}

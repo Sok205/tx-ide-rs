@@ -47,7 +47,8 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/picker.tmux\"\n\
          run-shell \"{state}/keys/edit.tmux\"\n\
          run-shell \"{state}/keys/spawn.tmux\"\n\
-         run-shell \"{state}/keys/artifacts.tmux\"\n",
+         run-shell \"{state}/keys/artifacts.tmux\"\n\
+         run-shell \"{state}/keys/timeline.tmux\"\n",
         exe().display(),
     )
 }
@@ -87,6 +88,9 @@ fn start_server(cli: &Cli) {
                     .tmux_out(&["list-keys", "-T", "prefix", "a"])
                     .contains("tmux-artifact-menu")
                 && cli
+                    .tmux_out(&["list-keys", "-T", "prefix", "T"])
+                    .contains("_timeline-attach")
+                && cli
                     .tmux_out(&["show-option", "-gv", "pane-border-format"])
                     .contains("_pane-label")
         }),
@@ -124,6 +128,7 @@ fn ui_install_materialises_resources() {
         "labels",
         "spawn",
         "artifacts",
+        "timeline",
     ] {
         let path = state.join(format!("keys/{id}.tmux"));
         assert!(path.is_file(), "{path:?}");
@@ -152,6 +157,7 @@ fn ui_install_materialises_resources() {
         ("edit", "keys=e"),
         ("spawn", "keys=n"),
         ("artifacts", "keys=a"),
+        ("timeline", "keys=T"),
     ] {
         assert!(
             installed
@@ -265,6 +271,7 @@ fn ui_install_fragment_loads() {
     );
     assert!(bound("prefix", "n").contains("tmux-new-agent"));
     assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
+    assert!(bound("prefix", "T").contains("_timeline-attach"));
     cli.tmux(&["kill-server"]);
 }
 
@@ -297,6 +304,7 @@ fn fragments_do_nothing_outside_an_installed_server() {
         "edit",
         "spawn",
         "artifacts",
+        "timeline",
     ] {
         let output = Command::new(cli.state().join(format!("keys/{id}.tmux")))
             .env("TMUX", format!("{},1,0", other.display()))
