@@ -24,8 +24,13 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `EngineAdapter` for Claude Code | tx-core |
 | `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `EngineAdapter` for Codex | tx-core |
 | `plugins/hooks` (`tx-hooks`) | plugin: `txc hook …`, the agent's hooks → a per-session working / waiting / idle state | tx-core |
-| `plugins/views` (`tx-views`) | plugin: the fzf session picker, the tmux session keys and `txc ui install\|attach` | tx-core |
-| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins | the four above |
+| `plugins/ide` (`tx-ide`) | plugin: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core, tx-ui |
+| `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-ui |
+| `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-ui |
+| `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-ui |
+| `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-ui |
+| `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`) and the modal editor (`editor`) shared by the key plugins | tx-core |
+| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
 carries everything; only `txc` touches `std::env`.
@@ -167,7 +172,7 @@ caller as an agent only when `$TMUX` names tx's own socket; anywhere else the se
 ## Plugins
 
 Everything but the core is a plugin: a crate under `plugins/<id>/` implementing `tx_core::Plugin`,
-which fills any of three slots — engines, event sinks, verbs (`tx-core/src/plugin.rs`). `txc`
+which fills any of four slots — engines, event sinks, verbs, resources (`tx-core/src/plugin.rs`). `txc`
 links them through `tx-core-cli/src/plugins.rs::MANIFEST` and switches them in
 `<state_dir>/plugins.yaml` (`--plugins FILE` overrides):
 
@@ -183,26 +188,46 @@ lists ids and status; `txc help` lists plugin verbs. Plugins keep per-session da
 record's `ext.<id>` object via `TxCore::update_ext`. Design:
 `../docs/superpowers/specs/2026-10-16-poc-plugins-design.md`.
 
+A resource is a named static blob a plugin publishes with `Registry::resource(name, bytes)`
+(`keys/<id>.tmux`, `bin/<file>`, `conf/<file>`); the core stores it and lists it with
+`TxCore::resources(prefix)` but never reads one, and a disabled plugin's resources are absent just
+like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-design.md`).
+
 | plugin | contributes |
 |---|---|
 | `engine-claude`, `engine-codex` | one engine each |
 | `hooks` | `txc hook <event>` (run by the agent's own hooks; `txc hook install` registers them in `~/.claude/settings.json` / `~/.codex/hooks.json` behind a sidecar, `uninstall` reverses it), `txc hook status`, an `idle` seed on create |
-| `views` | the fzf session picker (`txc pick`), the session keys (`kill`, `whoami`, the editor behind prefix+e, pane-border labels, `_relabel`), and `txc ui install\|attach` for running the IDE |
+| `ide` | `txc ui install\|attach` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, status line, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
+| `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label, the after-new-window hook) |
+| `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
+| `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
+| `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
+
+The picker's role column reads `ext.spawn.kind`, which a later plugin writes; until then every
+process session shows `shell`.
 
 ## Running the IDE
 
 Needs tmux, `fzf` and `curl` (the picker reloads itself through fzf's `--listen` port).
 
 ```
-txc ui install    # writes <state_dir>/tmux.conf, which sources poc/tmux/tx-ide.tmux
+txc ui install    # writes <state_dir>/{bin,keys,conf}/* and <state_dir>/tmux.conf
 txc ui attach     # attaches this terminal to the core server's `home` session
 ```
 
-Re-run `ui install` after rebuilding `txc`: it records the binary path in the server options
-`@tx-bin` and `@tx-state`, which the key bindings and `poc/bin/*` use to find it. `ui install`
-finds `poc/` from the running binary; for a `txc` installed elsewhere pass `--poc DIR`. It
-refuses a binary, state or poc path containing whitespace, a backslash, a backtick or any of
-`"'$#;`, since the paths are spliced into tmux config lines.
+`ui install` materialises each active plugin's resources under `<state_dir>/{bin,keys,conf}` and
+writes `<state_dir>/tmux.conf`, which sets `@tx-bin` and `@tx-state` and runs `keys/ide.tmux`
+and then every other active plugin's `keys/<id>.tmux`. The key bindings and `bin/*` find `txc`
+through those two server options, so re-run `ui install` after rebuilding `txc`. Files in those
+directories that no active plugin provides are deleted, so `txc` needs nothing from the source
+tree at run time. It refuses a binary or state path containing whitespace, a backslash, a
+backtick or any of `"'$#;`, since the paths are spliced into tmux config lines.
+
+Disabling a plugin in `plugins.yaml` and re-running `ui install` removes that plugin's keys, even
+on a running server: `ui install` unbinds the keys the plugin's fragment declared, clears the
+options and hooks it declared, and prints `reloaded`. When it finds no previous
+`keys/.installed` on a running server (a server set up by an older `ui install`), it also prints
+`legacy bindings may remain; restart the server to drop them`.
 
 `ui attach` creates `home` on first use as a view (status bar and pane-border labels on) and
 attaches to it. To try the IDE, start a session and press the picker key:
@@ -223,8 +248,24 @@ The prefix is `C-a`.
 | C-h / C-j / C-k / C-l | move between panes; the move bubbles out of nested sessions |
 | C-u / C-d | page the agent's scrollback |
 
-The pane border shows the nested session's name and tags. prefix+T, /, f, n and a appear
-automatically once the plugins that own those verbs exist.
+The pane border shows the nested session's name and tags. Later plugins bring their own keys
+(prefix+T, /, f, n, a) in their own `keys/<id>.tmux`.
+
+### Adding a key
+
+A key is a plugin. Create a crate under `poc/plugins/<id>` that implements `Plugin`, with:
+
+- its verb(s), registered with `Registry::verb`;
+- a `tmux/keys.tmux` registered as resource `keys/<id>.tmux`, which binds the key. A comment
+  line near its top declares the prefix keys it binds: `# keys: <key>` (`none` for root-table binds only). If it
+  sets global state, it also declares `# unset: <option> …` and `# unhook: <hook> …`, so that
+  `ui install` can undo them when the plugin is disabled;
+- optionally helper scripts, registered as `bin/<file>` resources (they land in `<state_dir>/bin`,
+  mode 0755).
+
+Then add one line to `tx-core-cli/src/plugins.rs::MANIFEST`. Nothing else needs editing: `ui
+install` finds the fragment by its resource name, and `<id>: { enabled: false }` in `plugins.yaml`
+turns the key off.
 
 Run `ui attach` from a bare terminal. Inside another tmux whose socket is not the core's it
 nests, and the outer tmux's prefix wins: press the prefix twice to reach the IDE's keys. Inside

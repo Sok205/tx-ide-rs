@@ -78,7 +78,7 @@ Failure modes the specs imply that no single phase's tests own; each owning phas
   two methods instead of growing the optional `EngineChatOps` surface main has.
 - **D5. UI seams do their own tmux.** Core's `Tmux` keeps new / kill / rename / send-keys /
   list-sessions. A plugin that needs popups, splits, `switch-client` or status messages runs
-  tmux itself against `core.socket_path()`; that helper is a module of the `views` crate, shared
+  tmux itself against `core.socket_path()`; that helper lives in the `tx-ui` library crate, shared
   by crate dependency with every later UI plugin.
 - **D6. Prefix bindings drive the order.** Phases are sequenced so that each one turns on a
   set of `prefix+<key>` bindings end to end; a phase that enables no key comes after every
@@ -94,6 +94,7 @@ Each row is its own small task plan, landed in the phase of its first consumer.
 |---|---|---|---|
 | `Session.ext` read helper | `Session::ext<T: DeserializeOwned>(&self, plugin: &str) -> Result<Option<T>, serde_json::Error>` | views (picker reads `hooks` state), every later plugin | 1 |
 | launch slot | `trait LaunchDecorator: Send + Sync { fn id(&self) -> &str; fn decorate(&self, req: &LaunchRequest<'_>, plan: &mut LaunchPlan) -> Result<(), EngineError>; }`; `Registry::launch(Box<dyn LaunchDecorator>)`; core runs decorators in manifest order between `adapter.launch` and `apply_workspace` in `create_locked` (`poc/tx-core/src/core.rs:534-540`), on `LaunchOptions::Agent` only | spawn (read-only wrapper, skill symlinks), hooks (per-session hook injection), playground (companion env) | 2 |
+| plugin resources | `Registry::resource(name, bytes)`, `TxCore::resources(prefix)` — named static blobs listed by prefix; the core never reads them | every key plugin (its `keys/<id>.tmux`), ide (conf, scripts), later hooks (templates), antigravity (.agents files) | 1 (landed 2026-10-19) |
 | plugin data dir | `Registry::data_dir(&self) -> PathBuf` = `<state_dir>/plugins/<id>/`, created on first call, mode 0755 | chat/history, artifacts, timeline cache, tutor, sync | 3 |
 | `ExtUpdated` event | `EventType::ExtUpdated`; `Event.msg` = `{"plugin": id}`; emitted by `update_ext` only when the value changed, after the lock is released; logged to `log.jsonl` like every event | hooks → history ingest, hooks → timeline, chat ops → timeline | 3 |
 | sweep slot | `trait Sweeper: Send + Sync { fn id(&self) -> &str; fn sweep(&self, core: &TxCore, running: &[Session]) -> Result<(), SweepError>; }`; `Registry::sweeper(...)`; `refresh_all` runs sweepers after its own pass; a sweeper's error is logged to stderr by `txc`, never fails the refresh | hooks (stuck `working` demotion), chat (watchdog for unfinished chat ops), history (pending mirrors) | 3 |
@@ -101,7 +102,7 @@ Each row is its own small task plan, landed in the phase of its first consumer.
 Not added, and why:
 
 - `ls` columns for plugin state. `txc show` prints `ext`; plugins ship their own `<verb> status`
-  (as `hook status` does), and the picker feed in `views` reads `ext` directly.
+  (as `hook status` does), and the picker feed in `picker` reads `ext` directly.
 - A capability or service registry between plugins (D3).
 - `EngineAdapter` methods for transcripts, fork or seed (D4).
 - New `Session` fields. Main's `group`, `attached_to`, `chats`, `artifact_id`, `nvim_socket`,
@@ -132,8 +133,10 @@ From `tmux/tx-ide.tmux`. "Behind it" names the main verb or script the key runs 
 
 Sizes are main's line counts for the code being ported, a budget signal, not a target.
 
-- [ ] **Phase 1 — `views`, the picker and the session keys** (prefix+t, e, X, s, nav)
-  - Crate `poc/plugins/views` (`tx-views`), plugin id `views`. Owns the extended tmux helper
+- [ ] **Phase 1 — the key plugins `ide`, `labels`, `kill`, `picker`, `edit`** (prefix+t, e, X, s, nav)
+  - Five plugin crates under `poc/plugins/`, one id each: `ide` (`tx-ide`), `labels`
+    (`tx-labels`), `kill` (`tx-kill`), `picker` (`tx-picker`), `edit` (`tx-edit`); and the
+    library crate `poc/tx-ui` (`tx-ui`, not a plugin), which owns the extended tmux helper
     (D5): popups, `switch-client`, `display-message`, `-F` queries, the client ↔ pane join
     that `tmux-nav` and `tmux-pane-session-name` mirror.
   - From main: `render.rs` (the `ls` and picker tables), `verbs/listing.rs` (`attach`,
@@ -145,8 +148,9 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
   - `txc ui install` writes the server options `@tx-bin` and `@tx-state`; `bin/*`, the tmux
     fragment and `nvim/lua/*` find the binary through them. Verb names ported from main keep
     main's spelling.
-  - State: `ext["views"] = {"kind": "nvim|view|playground", "attached_to": id, "nvim_socket": path}`
-    (filled from phase 2 on; read here for the picker rows).
+  - State: `ext["spawn"] = {"kind": "nvim|view|playground", "attached_to": id, "nvim_socket": path}`
+    (written by phase 2; read here for the picker's role column); the group override is
+    `ext["edit"] = {"group": …}`.
   - Core additions: `Session::ext` helper.
   - Gate: with `tmux/tx-ide.tmux` sourced against the core socket, prefix+t lists running
     sessions with hooks state and attaches on Enter; prefix+e renames and retags; prefix+X
@@ -156,7 +160,7 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     - the picker verb is `pick` (`attach` is a txc built-in);
     - no `tx` shim: scripts and the fragment find the binary through the server options
       `@tx-bin` and `@tx-state` written by `txc ui install`;
-    - the group override lives in `ext.views.group` (phase 5's grouping reads it from there);
+    - the group override lives in `ext.edit.group` (phase 5's grouping reads it from there);
     - `selfcheck` is not ported;
     - the TPM/resurrect/continuum block is dropped from the poc `tmux.conf`;
     - the fragment emits the prefix+T, /, f, n, a binds only when their verb exists in
@@ -166,7 +170,11 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
       built-ins);
     - `--host` and `--all` are not ported;
     - `ui attach` creates the `home` view (`@tx-view`, status on, pane-border labels) when it is
-      missing, so the picker's nest path applies from the first attach.
+      missing, so the picker's nest path applies from the first attach;
+    - restructured the same day into five plugins per `2026-10-19-poc-key-plugins-design.md`
+      (D8–D12): one plugin per key, each carrying its `keys/<id>.tmux` resource; `ide` composes
+      the server config from resources; `--poc` gone; the `@tx-ide-*` toggles replaced by plugin
+      enablement.
 
 - [ ] **Phase 2 — `spawn`** (prefix+n; proves the launch slot)
   - Crate `poc/plugins/spawn` (`tx-spawn`), plugin id `spawn`.
@@ -180,7 +188,7 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     `NAME.local.md` extend, `agents/skills/*`; wired through `CoreConfig::profile_dirs` and
     `skill_dirs` by `txc`.
   - State: `ext["spawn"] = {"worktree": path | null, "read_only": bool, "role": [..],
-    "archived_at": ts | null}`; `ext["views"]` for nvim and view sessions. Worktrees live under
+    "archived_at": ts | null}`; `ext["spawn"]` also holds `{"kind": "nvim|view|playground", "attached_to", "nvim_socket"}` for nvim and view sessions. Worktrees live under
     `<state_dir>/worktrees/` as main does.
   - Core additions: launch slot. Two decorators in this crate: `ReadOnly` wraps `plan.program`
     in `sandbox-exec` / `bwrap` when `TX_SPAWN_READ_ONLY=1` is in `CreateOptions::env`;
@@ -188,7 +196,7 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     discovery dir.
   - Gate: prefix+n opens the form and spawns a worker in a fresh worktree whose record carries
     the path; `kill --remove` removes both; a read-only worker cannot write inside the repo but
-    can outside; `spawn-nvim` and `spawn-view` land in `ext["views"]` and show in the picker.
+    can outside; `spawn-nvim` and `spawn-view` land in `ext["spawn"]` and show in the picker.
 
 - [ ] **Phase 3 — `chat`** (prefix+f; proves `ExtUpdated`, sweep and the data dir)
   - Crate `poc/plugins/chat` (`tx-chat`), plugin ids `chat` and `history` (one crate, two
@@ -235,7 +243,7 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     session's id comes from `TX_SESSION_ID`; `ext["artifacts"] = {"bound": id, "group": name}`;
     `grouping::resolved` reads parent chain + bound artifact exactly as main does.
   - Verbs: `artifact create|modify|group|ls|show|diff|open|doctor`, `group`, `_artifact-menu`,
-    `_artifact-pick`, `_artifact-go`. `artifact open` uses `tx-views` as a library for the
+    `_artifact-pick`, `_artifact-go`. `artifact open` uses `tx-ui` as a library for the
     nvim view.
   - Gate: prefix+a in an agent pane lists the artifacts it touched and attaches, focuses or
     pops the chosen one; main's artifact fixtures round-trip; `doctor --repair` removes only
@@ -252,11 +260,11 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
 
 - [ ] **Phase 7 — `start`, `tutor`, `playground`** (no new keys)
   - `start`: home base. Boots Views, warms the assistant, `--tutor [LANG]` lands in the
-    walkthrough. Lives in `tx-views`.
+    walkthrough. Lives in a `start` plugin.
   - `tutor`: crate `poc/plugins/tutor`, plugin id `tutor`. From `tutor/` and `verbs/tutor.rs`;
     verbs `tutor start|check|next|prev|goto|status|hint|reset`; progress under
     `data_dir()/<lang>.json`; packs stay in `tutor/<lang>/`. ~1.8k lines.
-  - `playground`: `playground.rs` as a `LaunchDecorator` in `tx-views` plus the companion
+  - `playground`: `playground.rs` as a `LaunchDecorator` in `tx-ui` plus the companion
     verb. ~0.4k lines.
   - Gate: `tx start --tutor python` opens the tutor view and lesson 1 checks pass against a
     spawned worker; a worker's Bash commands replay in its playground pane.
