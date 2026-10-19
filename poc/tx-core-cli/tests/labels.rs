@@ -103,15 +103,11 @@ fn pane_label_shows_nested_session() {
             .status
             .success()
     );
-    let mut attached = false;
-    for _ in 0..30 {
-        if !cli.tmux_out(&["list-clients"]).is_empty() {
-            attached = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    assert!(attached, "nested client never attached");
+    // A shell typing into a fresh pane can take seconds under load.
+    assert!(
+        cli.wait_for(15, || !cli.tmux_out(&["list-clients"]).is_empty()),
+        "nested client never attached"
+    );
     let label = cli.ok(&["_pane-label", &pane]);
     assert!(label.contains("#[bold]inner#[default]"), "{label:?}");
     assert!(label.contains("[t1]"), "{label:?}");
