@@ -41,6 +41,7 @@ fn expected_conf(cli: &Cli) -> String {
          set -g @tx-state \"{state}\"\n\
          source-file \"{state}/conf/tmux.conf\"\n\
          run-shell \"{state}/keys/ide.tmux\"\n\
+         run-shell \"{state}/keys/chat.tmux\"\n\
          run-shell \"{state}/keys/labels.tmux\"\n\
          run-shell \"{state}/keys/kill.tmux\"\n\
          run-shell \"{state}/keys/picker.tmux\"\n\

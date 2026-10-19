@@ -233,6 +233,11 @@ impl Ui {
             .map(drop)
     }
 
+    /// `run-shell -b <command>`: tmux runs `command` in the background.
+    pub fn run_shell_background(&self, command: &str) -> Result<(), UiError> {
+        self.run(&["run-shell", "-b", command]).map(drop)
+    }
+
     pub fn kill_session(&self, name: &str) -> bool {
         self.quiet(&["kill-session", "-t", &format!("={name}")]).0
     }

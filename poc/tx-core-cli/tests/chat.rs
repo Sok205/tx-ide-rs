@@ -482,7 +482,7 @@ fn rollover_respawns_the_same_pane_with_a_seed() {
     let cli = Cli::new();
     let id = cli.create_agent("a");
     cli.capture(&id, "c1");
-    let pane = common::pane_id_of(&cli, "a");
+    let pane = common::pane_id_of(&cli, "a").trim().to_owned();
     let out = cli.op_ok(&["rollover", "a", "--self-catch-up"], &[]);
     assert_eq!(
         out,
@@ -600,5 +600,110 @@ fn fork_without_a_chat_exits_1() {
     assert!(
         String::from_utf8_lossy(&rollover.stderr)
             .contains("rollover: 'a' has no active chat to roll over")
+    );
+}
+
+#[test]
+fn fork_pane_background_half_forks_the_pane_session_and_reports() {
+    require_tmux!();
+    let cli = Cli::new();
+    let id = cli.create_agent("a");
+    cli.capture(&id, "c1");
+    let pane = common::pane_id_of(&cli, "a").trim().to_owned();
+    let output = cli.op(&["_fork-pane", &pane, "nosuchclient", "a-f"], &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("forked a → a-f"),
+        "{output:?}"
+    );
+    let fork = cli.show("a-f");
+    assert_eq!(fork["parent"], id.as_str());
+}
+
+#[test]
+fn fork_pane_on_an_untracked_session_reports_and_exits_1() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create_agent("a");
+    assert!(
+        cli.tmux(&["new-session", "-d", "-s", "plain"])
+            .status
+            .success()
+    );
+    let pane = cli
+        .tmux_out(&["display-message", "-p", "-t", "=plain:", "#{pane_id}"])
+        .trim()
+        .to_owned();
+    let output = cli.op(&["_fork-pane", &pane, "nosuchclient", "x"], &[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("prefix+f: no tx session in this pane"),
+        "{output:?}"
+    );
+    assert!(cli.records_named("x").is_empty());
+}
+
+#[test]
+fn fork_pane_usage_exits_2() {
+    let cli = Cli::new();
+    for args in [
+        &["_fork-pane"][..],
+        &["_fork-pane", "%0"],
+        &["_fork-pane", "%0", "c", "n", "extra"],
+    ] {
+        let output = cli.run(args, &[], "");
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "usage: txc _fork-pane PANE CLIENT [NAME]\n"
+        );
+    }
+}
+
+#[test]
+fn ui_install_binds_prefix_f() {
+    require_tmux!();
+    use std::os::unix::fs::PermissionsExt;
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    let state = cli.state();
+    let script = state.join("bin/tmux-fork-tx-session");
+    assert_eq!(
+        std::fs::metadata(&script).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    let fragment = std::fs::read_to_string(state.join("keys/chat.tmux")).unwrap();
+    assert_eq!(fragment.lines().nth(1), Some("# keys: f"));
+    let conf = state.join("tmux.conf");
+    let server = |args: &[&str]| {
+        std::process::Command::new("tmux")
+            .arg("-S")
+            .arg(cli.sock())
+            .arg("-f")
+            .arg(&conf)
+            .args(args)
+            .env_remove("TMUX")
+            .output()
+            .unwrap()
+    };
+    assert!(
+        server(&["new-session", "-d", "-s", "probe", "sleep", "60"])
+            .status
+            .success()
+    );
+    assert!(
+        cli.wait_for(5, || {
+            cli.tmux_out(&["list-keys", "-T", "prefix", "f"])
+                .contains("tmux-fork-tx-session")
+        }),
+        "prefix+f never bound"
+    );
+    cli.write_yaml("plugins:\n  chat: { enabled: false }\n");
+    cli.ok(&["ui", "install"]);
+    assert!(!state.join("keys/chat.tmux").exists());
+    assert!(!state.join("bin/tmux-fork-tx-session").exists());
+    assert!(
+        !cli.tmux_out(&["list-keys", "-T", "prefix", "f"])
+            .contains("tmux-fork-tx-session")
     );
 }

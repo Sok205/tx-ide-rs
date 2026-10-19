@@ -6,6 +6,7 @@ pub mod capture;
 pub mod detach;
 pub mod engines;
 pub mod ext;
+pub mod fork_pane;
 pub mod history_verbs;
 pub mod install;
 pub mod messages;
@@ -135,10 +136,18 @@ impl Plugin for ChatPlugin {
     }
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
-        for verb in capture::verbs().into_iter().chain(ops::verbs()) {
+        for verb in capture::verbs()
+            .into_iter()
+            .chain(ops::verbs())
+            .chain(fork_pane::verbs())
+        {
             r.verb(verb);
         }
-        Ok(())
+        r.resource("keys/chat.tmux", include_bytes!("../tmux/keys.tmux"))?;
+        r.resource(
+            "bin/tmux-fork-tx-session",
+            include_bytes!("../bin/tmux-fork-tx-session"),
+        )
     }
 }
 

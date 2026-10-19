@@ -28,11 +28,13 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-ui |
 | `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-ui |
 | `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-ui |
+| `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `fork`, `handover`, `rollover`, `resume`, `chat ls\|hooks`, prefix+f; captures chat ids through its own agent hooks | tx-core, tx-ui, tx-engine-claude, tx-engine-codex |
+| `plugins/chat` (`tx-chat`, plugin `history`) | plugin: the transcript mirror under `plugins/history/`, `history`, `history-hooks`; same crate as `chat` | tx-core, tx-ui |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-ui |
 | `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n; ships the COMMON and DEVELOPER roles and their skills | tx-core, tx-ui |
 | `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm`, the `tx-assistant` session `ui attach` lands in; ships the TX-ASSISTANT role | tx-core, tx-ui |
 | `plugins/mockup` (`tx-mockup`) | plugin: `txc mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-ui, ratatui |
-| `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`) and the modal editor (`editor`) shared by the key plugins | tx-core |
+| `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins | tx-core |
 | `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
@@ -208,6 +210,8 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
 | `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_session`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
+| `chat` | `fork`, `handover`, `rollover`, `resume`, `chat ls <session>`, `chat hooks install\|uninstall`, and the internal `_fork-pane`, `_chat-hook`, `_chat-op-finish`, `_chat-op-watch`; resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session`; owns `ext.chat` |
+| `history` | `history` (the mirrored chats), `history-hooks install\|uninstall`, the internal `_history-ingest`; owns `ext.history` and `<state_dir>/plugins/history/` |
 | `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name); resource `agents/TX-ASSISTANT.md` |
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
 
@@ -224,6 +228,25 @@ The session is created in the popup; the outcome lands on the client's status li
 model `opus`, effort `medium`, tag `tx-system`, in the state dir (so the engine's skill links
 land under `<state_dir>/.claude/skills`). A `Running` record whose tmux session is gone is
 refreshed to `Exited` and the assistant started again.
+
+### Chat and history
+
+Both plugins install their own agent hooks, next to the `hooks` plugin's and in their own
+sidecars; none of them needs another. Run each once per machine:
+
+```
+txc chat hooks install      # captures the agent's chat id into ext.chat (fork, resume, handover)
+txc history-hooks install   # mirrors transcripts byte for byte on every Stop
+```
+
+`uninstall` reverses either, and `--dry-run` prints the change. Without the history hooks `chat`
+still works but has no mirrored bundle to hand over; without the chat hooks nothing records the
+chat id, so `fork` and `resume` report `has no chat`.
+
+Data lives under the state dir: `plugins/history/<session>/<chat>/` (the mirrored transcript and
+its sidecar files), `plugins/chat/ops/<op>/` (in-flight handover and rollover ops, finished
+lazily by the next chat verb). Per-session state is `ext.chat` and `ext.history`. prefix+f forks
+the session in the active pane through `_fork-pane`; the outcome is on the status line.
 
 ## Running the IDE
 
@@ -269,12 +292,13 @@ The prefix is `C-a`.
 | prefix+n | new agent: the form, then the session in the pane's directory |
 | prefix+e | edit the session's name, tags and group |
 | prefix+X | kill the session, with a confirm prompt |
+| prefix+f | fork the session in the pane: a popup asks for the new name (blank: `<name>-fork`) |
 | prefix+s | refresh labels, then `choose-tree` |
 | C-h / C-j / C-k / C-l | move between panes; the move bubbles out of nested sessions |
 | C-u / C-d | page the agent's scrollback |
 
 The pane border shows the nested session's name and tags. Later plugins bring their own keys
-(prefix+T, /, f, a) in their own `keys/<id>.tmux`.
+(prefix+T, /, a) in their own `keys/<id>.tmux`.
 
 ### Adding a plugin
 

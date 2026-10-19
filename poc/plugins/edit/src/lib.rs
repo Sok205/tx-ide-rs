@@ -2,7 +2,6 @@
 //! picker's Ctrl-T popup, an fzf query prompt). `ext["edit"]` records the group a session
 //! belongs to. Publishes `keys/edit.tmux` and its helper script.
 
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +10,7 @@ use tx_core::{
 };
 
 use tx_ui::editor::edit_session;
+use tx_ui::prompt::prompt_with_default;
 use tx_ui::render::{ACCENT_ANSI, BOLD, RESET};
 use tx_ui::tmux::Ui;
 
@@ -155,44 +155,14 @@ impl Verb for EditTag {
         };
         let session = core.get_session(&id)?;
         let header = format!("Tags for {ACCENT_ANSI}{BOLD}{}{RESET}", session.name);
-        let Some(answer) = prompt_with_default(&header, &session.tags.join(","))? else {
+        let Some(answer) = prompt_with_default(&header, &session.tags.join(","))
+            .map_err(|e| VerbError::Failed(format!("could not run fzf: {e}")))?
+        else {
             return Ok(1);
         };
         core.set_session_tags(&id, split_tags(&answer))?;
         Ok(0)
     }
-}
-
-/// fzf's query editor prefilled with `default`; `None` when cancelled.
-fn prompt_with_default(header: &str, default: &str) -> Result<Option<String>, VerbError> {
-    let output = Command::new("fzf")
-        .args([
-            "--disabled",
-            "--query",
-            default,
-            "--ansi",
-            "--prompt",
-            "  ❯ ",
-            "--header",
-            header,
-            "--header-first",
-            "--reverse",
-            "--no-info",
-            "--no-separator",
-            "--bind",
-            "enter:accept-or-print-query",
-            "--color",
-            "fg:#a9b1d6,header:#a9b1d6,prompt:#a9b1d6,query:#c0caf5",
-        ])
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|e| VerbError::Failed(format!("could not run fzf: {e}")))?;
-    if !output.status.success() || output.stdout.is_empty() {
-        return Ok(None);
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    Ok(Some(text.strip_suffix('\n').unwrap_or(&text).to_owned()))
 }
 
 #[cfg(test)]

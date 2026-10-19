@@ -1060,7 +1060,7 @@ fn try_lock(path: &Path) -> Result<Option<File>, ChatError> {
 
 // ----- verbs -------------------------------------------------------------------------------
 
-fn ops(core: &TxCore) -> Result<Ops<'_>, VerbError> {
+pub(crate) fn ops(core: &TxCore) -> Result<Ops<'_>, VerbError> {
     let exe =
         std::env::current_exe().map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
     Ok(Ops::new(core, exe, WatchTimings::from_env()))
