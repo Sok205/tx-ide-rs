@@ -6,3 +6,4 @@
 //! State and keys: [`model`]; drawing: [`ui`].
 
 pub mod model;
+pub mod ui;
