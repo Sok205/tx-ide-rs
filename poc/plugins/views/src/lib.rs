@@ -2,8 +2,11 @@
 //! core's private server whose panes nest-attach to agent sessions; `ext["views"]` records
 //! which kind of view a session is and which group it belongs to.
 
+pub mod picker;
 pub mod render;
 pub mod tmux;
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tx_core::{Plugin, PluginError, Registry};
@@ -18,7 +21,9 @@ impl Plugin for ViewsPlugin {
         PLUGIN_ID
     }
 
-    fn register(&self, _registry: &mut Registry) -> Result<(), PluginError> {
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        r.verb(Arc::new(picker::List));
+        r.verb(Arc::new(picker::Pick));
         Ok(())
     }
 }

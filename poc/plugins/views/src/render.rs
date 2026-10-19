@@ -10,7 +10,7 @@ use crate::tmux::Location;
 pub const WARN_ANSI: &str = "\x1b[38;2;224;175;104m";
 pub const RESET_FG: &str = "\x1b[39m";
 pub const ACCENT_ANSI: &str = "\x1b[38;2;122;162;247m";
-pub const FG_ANSI: &str = "\x1b[38;2;169;177;214m";
+pub const FG_ANSI: &str = "\x1b[38;2;192;202;245m";
 pub const BOLD: &str = "\x1b[1m";
 pub const RESET: &str = "\x1b[0m";
 
