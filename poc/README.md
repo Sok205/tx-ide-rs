@@ -186,6 +186,29 @@ record's `ext.<id>` object via `TxCore::update_ext`. Design:
 |---|---|
 | `engine-claude`, `engine-codex` | one engine each |
 | `hooks` | `txc hook <event>` (run by the agent's own hooks; `txc hook install` registers them in `~/.claude/settings.json` / `~/.codex/hooks.json` behind a sidecar, `uninstall` reverses it), `txc hook status`, an `idle` seed on create |
+| `views` | the fzf session picker (`txc pick`), the session keys (`kill`, `whoami`, the editor behind prefix+e, pane-border labels, `_relabel`), and `txc ui install\|attach` for running the IDE |
+
+## Running the IDE
+
+```
+txc ui install    # writes <state_dir>/tmux.conf, which sources poc/tmux/tx-ide.tmux
+txc ui attach     # attaches this terminal to the core server's `home` session
+```
+
+Re-run `ui install` after rebuilding `txc`: it records the binary path in the server options
+`@tx-bin` and `@tx-state`, which the key bindings and `poc/bin/*` use to find it.
+
+| keys | does |
+|---|---|
+| prefix+t | session picker; Enter nests into the session |
+| prefix+e | edit the session's name, tags and group |
+| prefix+X | kill the session, with a confirm prompt |
+| prefix+s | refresh labels, then `choose-tree` |
+| C-h / C-j / C-k / C-l | move between panes; the move bubbles out of nested sessions |
+| C-u / C-d | page the agent's scrollback |
+
+The pane border shows the nested session's name and tags. prefix+T, /, f, n and a appear
+automatically once the plugins that own those verbs exist.
 
 ### Recommended next extension points
 

@@ -109,3 +109,23 @@ fn unknown_verb_still_exits_2() {
     let stderr = cli.fails(&["frobnicate"], 2);
     assert!(stderr.contains("unknown verb \"frobnicate\""), "{stderr}");
 }
+
+#[test]
+fn help_lists_views_verbs() {
+    let cli = Cli::new();
+    let help = cli.ok(&["help"]);
+    for verb in ["pick", "kill", "whoami"] {
+        assert!(help.contains(verb), "{verb} missing from help:\n{help}");
+    }
+}
+
+#[test]
+fn disabled_views_hides_verbs() {
+    let cli = Cli::new();
+    cli.write_yaml("plugins:\n  views: { enabled: false }\n");
+    cli.fails(&["kill", "x"], 2);
+    assert_eq!(
+        cli.ok(&["plugins"]),
+        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nviews\tdisabled\n"
+    );
+}

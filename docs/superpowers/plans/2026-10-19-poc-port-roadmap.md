@@ -142,9 +142,9 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     `verbs/sessions.rs`, `service.rs::kill`. ~4.3k lines.
   - `kill` here is `stop_session` plus the confirm prompt; worktree removal arrives with
     phase 2's `kill --remove`.
-  - A `tx` shim: `poc/tx-core-cli` installs a `tx` symlink to `txc` so `bin/*`, the tmux
-    fragment and `nvim/lua/*` keep calling `tx`; verb names ported from main keep main's
-    spelling.
+  - `txc ui install` writes the server options `@tx-bin` and `@tx-state`; `bin/*`, the tmux
+    fragment and `nvim/lua/*` find the binary through them. Verb names ported from main keep
+    main's spelling.
   - State: `ext["views"] = {"kind": "nvim|view|playground", "attached_to": id, "nvim_socket": path}`
     (filled from phase 2 on; read here for the picker rows).
   - Core additions: `Session::ext` helper.
@@ -152,6 +152,16 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     sessions with hooks state and attaches on Enter; prefix+e renames and retags; prefix+X
     stops with the confirm prompt; prefix+s relabels `choose-tree`; `render` tables match
     main's fixtures byte-for-byte; a session with a malformed `ext["hooks"]` still lists.
+  - Landed 2026-10-19 with these deviations:
+    - the picker verb is `pick` (`attach` is a txc built-in);
+    - no `tx` shim: scripts and the fragment find the binary through the server options
+      `@tx-bin` and `@tx-state` written by `txc ui install`;
+    - the group override lives in `ext.views.group` (phase 5's grouping reads it from there);
+    - `selfcheck` is not ported;
+    - the TPM/resurrect/continuum block is dropped from the poc `tmux.conf`;
+    - the fragment emits the prefix+T, /, f, n, a binds only when their verb exists in
+      `txc help`;
+    - `ui attach` is the way into the server until phase 7's `start`.
 
 - [ ] **Phase 2 — `spawn`** (prefix+n; proves the launch slot)
   - Crate `poc/plugins/spawn` (`tx-spawn`), plugin id `spawn`.
