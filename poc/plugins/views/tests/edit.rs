@@ -96,7 +96,7 @@ fn apply_edit_keeps_other_ext_fields() {
     let core = harness.core();
     let id = harness.create(&core, "a");
     core.update_ext(&id, "views", |v| {
-        *v = serde_json::json!({"kind": "nvim", "group": "old"});
+        *v = serde_json::json!({"kind": "nvim", "group": "old", "attached_to": "x"});
     })
     .unwrap();
     let before = core.get_session(&id).unwrap();
@@ -109,6 +109,24 @@ fn apply_edit_keeps_other_ext_fields() {
         .unwrap();
     assert_eq!(ext.kind.as_deref(), Some("nvim"));
     assert_eq!(ext.group.as_deref(), Some("new"));
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.record(&id)).unwrap()).unwrap();
+    assert_eq!(json["ext"]["views"]["attached_to"], "x");
+}
+
+#[test]
+fn apply_edit_replaces_a_non_object_ext() {
+    require_tmux!();
+    let harness = Harness::new();
+    let core = harness.core();
+    let id = harness.create(&core, "a");
+    core.update_ext(&id, "views", |v| *v = serde_json::json!(5))
+        .unwrap();
+    let before = core.get_session(&id).unwrap();
+    apply_edit(&core, &id, &before, edited("a", "", "g")).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.record(&id)).unwrap()).unwrap();
+    assert_eq!(json["ext"]["views"], serde_json::json!({"group": "g"}));
 }
 
 #[test]

@@ -40,12 +40,12 @@ pub fn apply_edit(
     }
     let group = Some(group.trim().to_owned()).filter(|group| !group.is_empty());
     if group != current_group(before) {
-        core.update_ext(id, PLUGIN_ID, |value| {
-            let mut ext: Ext = serde_json::from_value(value.clone()).unwrap_or_default();
-            ext.group = group;
-            if let Ok(updated) = serde_json::to_value(ext) {
-                *value = updated;
+        let group = group.map_or(serde_json::Value::Null, serde_json::Value::String);
+        core.update_ext(id, PLUGIN_ID, |value| match value.as_object_mut() {
+            Some(object) => {
+                object.insert("group".to_owned(), group);
             }
+            None => *value = serde_json::json!({ "group": group }),
         })?;
     }
     Ok(())
