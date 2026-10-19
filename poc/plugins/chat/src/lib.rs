@@ -2,6 +2,7 @@
 //! capture, chat ops, prefix+f). Neither uses a core slot beyond verbs and resources; each
 //! keeps bulk state under `<state_dir>/plugins/<id>/`.
 
+pub mod capture;
 pub mod detach;
 pub mod engines;
 pub mod ext;
@@ -128,7 +129,10 @@ impl Plugin for ChatPlugin {
         CHAT_ID
     }
 
-    fn register(&self, _r: &mut Registry) -> Result<(), PluginError> {
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        for verb in capture::verbs() {
+            r.verb(verb);
+        }
         Ok(())
     }
 }

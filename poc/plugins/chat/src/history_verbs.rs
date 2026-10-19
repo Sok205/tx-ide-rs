@@ -19,7 +19,7 @@ use crate::ext::{HistoryChat, HistoryExt, chat_ext, owned_elsewhere};
 use crate::install::{install, uninstall};
 use crate::mirror::{HISTORY_ENTRIES, IngestMode, ingest_session};
 
-const SESSION_ID_ENV: &str = "TX_SESSION_ID";
+pub(crate) const SESSION_ID_ENV: &str = "TX_SESSION_ID";
 
 const INGEST_USAGE: &str = "usage: txc _history-ingest [--wait] [<session>]\n";
 const HISTORY_USAGE: &str = "\
@@ -38,13 +38,13 @@ pub fn verbs(history_dir: PathBuf) -> Vec<Arc<dyn Verb>> {
     ]
 }
 
-fn say(out: &mut dyn Write, text: &str) -> Result<(), VerbError> {
+pub(crate) fn say(out: &mut dyn Write, text: &str) -> Result<(), VerbError> {
     out.write_all(text.as_bytes())
         .map_err(|e| VerbError::Failed(format!("write: {e}")))
 }
 
 /// The hook payload, tolerantly: `{}` for none / unreadable / bad JSON / non-object.
-fn read_payload(stdin: &mut dyn Read) -> Value {
+pub(crate) fn read_payload(stdin: &mut dyn Read) -> Value {
     let mut text = String::new();
     if stdin.read_to_string(&mut text).is_err() {
         return Value::Object(Map::new());
@@ -55,14 +55,14 @@ fn read_payload(stdin: &mut dyn Read) -> Value {
     }
 }
 
-fn home_dir() -> Result<PathBuf, VerbError> {
+pub(crate) fn home_dir() -> Result<PathBuf, VerbError> {
     std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from)
         .ok_or_else(|| VerbError::Failed("HOME is not set".into()))
 }
 
-fn resolve(core: &TxCore, token: &str) -> Result<Option<SessionId>, VerbError> {
+pub(crate) fn resolve(core: &TxCore, token: &str) -> Result<Option<SessionId>, VerbError> {
     match core.resolve(token) {
         Ok(id) => Ok(Some(id)),
         Err(CoreError::NotFound(_)) => Ok(None),
