@@ -1706,6 +1706,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-chat"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tx-core",
+ "tx-engine-claude",
+ "tx-engine-codex",
+ "tx-ui",
+ "uuid",
+]
+
+[[package]]
 name = "tx-core"
 version = "0.1.0"
 dependencies = [
