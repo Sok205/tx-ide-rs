@@ -13,7 +13,7 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::Rect;
 
-use crate::model::{DEFAULT_FPS, Screen, parse};
+use crate::model::{DEFAULT_FPS, Kind, Node, Screen, parse};
 use crate::render::{Layout, ViewState, draw};
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -57,19 +57,19 @@ pub struct Viewer {
 
 impl Viewer {
     /// `content/` and `state/` live under `session_dir`; both are created.
-    pub fn new(session_dir: &Path) -> Self {
+    pub fn new(session_dir: &Path) -> io::Result<Self> {
         let content_dir = session_dir.join("content");
         let state_dir = session_dir.join("state");
-        fs::create_dir_all(&content_dir).expect("create content dir");
-        fs::create_dir_all(&state_dir).expect("create state dir");
-        Viewer {
+        fs::create_dir_all(&content_dir)?;
+        fs::create_dir_all(&state_dir)?;
+        Ok(Viewer {
             content_dir,
             events_path: state_dir.join("events"),
             current: None,
             screen: None,
             state: ViewState::default(),
             started: Instant::now(),
-        }
+        })
     }
 
     /// Re-reads the newest `*.json` when its path, mtime or length changed.
@@ -125,17 +125,25 @@ impl Viewer {
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
             .filter_map(|entry| {
                 let metadata = entry.metadata().ok()?;
-                Some(Source {
-                    path: entry.path(),
-                    modified: metadata.modified().ok()?,
-                    length: metadata.len(),
-                })
+                let modified = metadata.modified().ok()?;
+                let created = metadata.created().unwrap_or(modified);
+                Some((
+                    created,
+                    Source {
+                        path: entry.path(),
+                        modified,
+                        length: metadata.len(),
+                    },
+                ))
             })
-            .max_by(|a, b| {
+            // Equal mtimes (coarse filesystems): the later-created file wins, then the path.
+            .max_by(|(a_created, a), (b_created, b)| {
                 a.modified
                     .cmp(&b.modified)
+                    .then_with(|| a_created.cmp(b_created))
                     .then_with(|| a.path.cmp(&b.path))
             })
+            .map(|(_, source)| source)
     }
 
     pub fn key(&mut self, code: KeyCode) -> Action {
@@ -197,10 +205,17 @@ impl Viewer {
     }
 
     /// The current screen's frame rate, for the draw cadence.
+    /// The redraw rate: the fastest of the screen fps and every `frames` node's own fps.
     pub fn fps(&self) -> u32 {
-        self.screen
-            .as_ref()
-            .map_or(DEFAULT_FPS, |screen| screen.fps)
+        self.screen.as_ref().map_or(DEFAULT_FPS, |screen| {
+            screen
+                .options
+                .iter()
+                .map(|choice| &choice.body)
+                .chain(&screen.body)
+                .map(max_node_fps)
+                .fold(screen.fps, u32::max)
+        })
     }
 
     fn option_count(&self) -> usize {
@@ -241,11 +256,22 @@ impl Viewer {
     }
 }
 
+fn max_node_fps(node: &Node) -> u32 {
+    match &node.kind {
+        Kind::Frames { fps, .. } => fps.unwrap_or(0),
+        Kind::Row(children) | Kind::Col(children) => {
+            children.iter().map(max_node_fps).max().unwrap_or(0)
+        }
+        Kind::Block { body, .. } => max_node_fps(body),
+        Kind::Text(_) | Kind::List { .. } | Kind::Table { .. } => 0,
+    }
+}
+
 /// Terminal loop: poll every [`POLL_INTERVAL`], draw at the screen's fps (clamped to
 /// [`MIN_FPS`]..=[`MAX_FPS`]), feed key presses to the viewer, and call `on_back` on
 /// [`Action::Back`]. Never returns on its own; the verb decides when to stop it.
 pub fn run(session_dir: &Path, mut on_back: impl FnMut()) -> io::Result<()> {
-    let mut viewer = Viewer::new(session_dir);
+    let mut viewer = Viewer::new(session_dir)?;
     let mut terminal = ratatui::init();
     let result = event_loop(&mut viewer, &mut terminal, &mut on_back);
     ratatui::restore();
@@ -296,7 +322,7 @@ mod tests {
 
     fn setup() -> (TempDir, Viewer) {
         let dir = tempdir().unwrap();
-        let viewer = Viewer::new(dir.path());
+        let viewer = Viewer::new(dir.path()).unwrap();
         (dir, viewer)
     }
 
@@ -485,7 +511,7 @@ mod tests {
         write(dir.path(), "a.json", THREE_OPTIONS);
         viewer.poll();
         viewer.key(KeyCode::Char('1'));
-        let mut restarted = Viewer::new(dir.path());
+        let mut restarted = Viewer::new(dir.path()).unwrap();
         restarted.poll();
         assert_eq!(events(dir.path()).len(), 1);
     }
@@ -545,6 +571,18 @@ mod tests {
             .map(|x| buf.cell((x, 5)).unwrap().symbol().to_string())
             .collect();
         assert!(last.contains("a.json: "), "{last}");
+    }
+
+    #[test]
+    fn fps_is_the_fastest_frames_node() {
+        let (dir, mut viewer) = setup();
+        write(
+            dir.path(),
+            "a.json",
+            r#"{"fps":4,"body":{"col":[{"text":"x"},{"block":"b","body":{"frames":["a","b"],"fps":20}}]}}"#,
+        );
+        viewer.poll();
+        assert_eq!(viewer.fps(), 20);
     }
 
     #[test]

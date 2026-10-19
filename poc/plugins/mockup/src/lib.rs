@@ -129,10 +129,13 @@ fn session_dir(session: &Session) -> Option<PathBuf> {
 }
 
 /// The project a session dir lives under (`<project>/.superpowers/mockup/<id>`).
-fn project_of(dir: &Path) -> &Path {
-    dir.ancestors()
-        .nth(3)
-        .expect("a session dir is <project>/.superpowers/mockup/<id>")
+fn project_of(dir: &Path) -> Result<&Path, VerbError> {
+    dir.ancestors().nth(3).ok_or_else(|| {
+        VerbError::Failed(format!(
+            "ext.mockup.dir {} is not <project>/.superpowers/mockup/<id>",
+            dir.display()
+        ))
+    })
 }
 
 /// `<txc> --state-dir <state> [--socket <socket>] _mockup-view <dir> <view>`, shell-quoted.
@@ -159,7 +162,8 @@ fn viewer_command(core: &TxCore, dir: &Path, view: &str) -> Result<String, VerbE
 fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), VerbError> {
     let command = viewer_command(core, dir, view)?;
     if !ui.has_session(view) {
-        let project = project_of(dir).to_string_lossy().into_owned();
+        // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
+        let project = project_of(dir)?.to_string_lossy().replace('#', "##");
         ui.run(&["new-session", "-d", "-s", view, "-c", &project, &command])
             .map_err(failed)?;
     } else if ui

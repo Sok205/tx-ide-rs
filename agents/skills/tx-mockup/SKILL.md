@@ -33,7 +33,7 @@ question. "Which of these start menu layouts?" is a mockup.
    what is on screen and end your turn.
 3. **Read** on your next turn: `<state_dir>/events` (JSON lines; `select`, `confirm`,
    `dismiss`) together with what the operator typed. The typed reply is primary; the events are
-   the structured pick. No events file means they never pressed a key.
+   the structured pick. An empty or missing events file means they never pressed a key.
 4. **Iterate or advance**: feedback on the current screen goes into a new file
    (`layout-v2.json`). Only move on once the current question is settled.
 5. **Wait** when the conversation returns to text: `txc mockup wait` puts up a
