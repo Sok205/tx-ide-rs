@@ -448,3 +448,24 @@ fn ui_install_writes_conf_and_fragment_loads() {
     assert!(!new_agent.contains("_new-agent"), "{new_agent:?}");
     cli.tmux(&["kill-server"]);
 }
+
+#[test]
+fn ui_install_without_fragment_fails_and_writes_nothing() {
+    let cli = Cli::new();
+    let empty = tempfile::tempdir().unwrap();
+    let output = cli.run(
+        &["ui", "install", "--poc", empty.path().to_str().unwrap()],
+        &[],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        format!(
+            "txc ui install: no tmux/tx-ide.tmux under {}\n",
+            empty.path().display()
+        )
+    );
+    let conf = std::fs::read_to_string(cli.conf()).unwrap_or_default();
+    assert!(!conf.contains("@tx-bin"), "{conf:?}");
+}

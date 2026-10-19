@@ -76,6 +76,16 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>, args: &[String]) -> Result<i32, V
             "txc ui install: cannot find the poc directory (pass --poc DIR)",
         );
     };
+    let Some(dir) = dir
+        .canonicalize()
+        .ok()
+        .filter(|dir| dir.join(FRAGMENT).is_file())
+    else {
+        return fail(
+            io,
+            &format!("txc ui install: no {FRAGMENT} under {}", dir.display()),
+        );
+    };
     let exe = std::env::current_exe()
         .and_then(|exe| exe.canonicalize())
         .map_err(|e| VerbError::Failed(format!("cannot resolve the txc binary: {e}")))?;
