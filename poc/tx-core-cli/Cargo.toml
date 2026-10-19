@@ -23,6 +23,7 @@ tx-edit = { path = "../plugins/edit" }
 tx-spawn = { path = "../plugins/spawn" }
 tx-assistant = { path = "../plugins/assistant" }
 tx-mockup = { path = "../plugins/mockup" }
+tx-artifacts = { path = "../plugins/artifacts" }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway = "0.9"

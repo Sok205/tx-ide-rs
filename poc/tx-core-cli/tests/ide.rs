@@ -45,7 +45,8 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/kill.tmux\"\n\
          run-shell \"{state}/keys/picker.tmux\"\n\
          run-shell \"{state}/keys/edit.tmux\"\n\
-         run-shell \"{state}/keys/spawn.tmux\"\n",
+         run-shell \"{state}/keys/spawn.tmux\"\n\
+         run-shell \"{state}/keys/artifacts.tmux\"\n",
         exe().display(),
     )
 }
@@ -82,6 +83,9 @@ fn start_server(cli: &Cli) {
                     .tmux_out(&["list-keys", "-T", "prefix", "n"])
                     .contains("tmux-new-agent")
                 && cli
+                    .tmux_out(&["list-keys", "-T", "prefix", "a"])
+                    .contains("tmux-artifact-menu")
+                && cli
                     .tmux_out(&["show-option", "-gv", "pane-border-format"])
                     .contains("_pane-label")
         }),
@@ -105,12 +109,13 @@ fn ui_install_materialises_resources() {
         "tmux-nav",
         "tmux-system-resources",
         "tmux-new-agent",
+        "tmux-artifact-menu",
     ] {
         let path = state.join("bin").join(script);
         assert!(path.is_file(), "{path:?}");
         assert!(is_executable(&path), "{path:?}");
     }
-    for id in ["ide", "picker", "edit", "kill", "labels", "spawn"] {
+    for id in ["ide", "picker", "edit", "kill", "labels", "spawn", "artifacts"] {
         let path = state.join(format!("keys/{id}.tmux"));
         assert!(path.is_file(), "{path:?}");
         assert!(is_executable(&path), "{path:?}");
@@ -137,6 +142,7 @@ fn ui_install_materialises_resources() {
         ("picker", "keys=t"),
         ("edit", "keys=e"),
         ("spawn", "keys=n"),
+        ("artifacts", "keys=a"),
     ] {
         assert!(
             installed
@@ -249,6 +255,7 @@ fn ui_install_fragment_loads() {
         cli.state().to_str().unwrap()
     );
     assert!(bound("prefix", "n").contains("tmux-new-agent"));
+    assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
     cli.tmux(&["kill-server"]);
 }
 
@@ -273,7 +280,7 @@ fn fragments_do_nothing_outside_an_installed_server() {
             .status
             .success()
     );
-    for id in ["ide", "labels", "kill", "picker", "edit", "spawn"] {
+    for id in ["ide", "labels", "kill", "picker", "edit", "spawn", "artifacts"] {
         let output = Command::new(cli.state().join(format!("keys/{id}.tmux")))
             .env("TMUX", format!("{},1,0", other.display()))
             .output()

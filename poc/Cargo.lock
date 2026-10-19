@@ -1697,6 +1697,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-artifacts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tx-core",
+ "tx-ui",
+ "uuid",
+]
+
+[[package]]
 name = "tx-assistant"
 version = "0.1.0"
 dependencies = [
@@ -1725,6 +1738,7 @@ dependencies = [
  "serde_json",
  "serde_norway",
  "tempfile",
+ "tx-artifacts",
  "tx-assistant",
  "tx-core",
  "tx-edit",
