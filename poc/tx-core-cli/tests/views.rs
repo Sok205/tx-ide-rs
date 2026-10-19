@@ -667,3 +667,59 @@ fn ui_attach_inside_the_core_switches_the_client() {
         "1"
     );
 }
+
+#[test]
+fn pick_nests_into_a_view_pane() {
+    require_tmux!();
+    if Command::new("fzf").arg("--version").output().is_err() {
+        eprintln!("fzf not available; skipping");
+        return;
+    }
+    let cli = Cli::new();
+    let shell = if Command::new("zsh").arg("-c").arg(":").output().is_ok() {
+        "zsh"
+    } else {
+        "sh"
+    };
+    let cwd = cli.dir.path().join("inner");
+    std::fs::create_dir_all(&cwd).unwrap();
+    cli.ok(&[
+        "create",
+        "inner",
+        "--cwd",
+        cwd.to_str().unwrap(),
+        "--exec",
+        "sleep",
+        "300",
+    ]);
+    assert!(
+        cli.tmux(&["new-session", "-d", "-s", "Views", "-c", "/tmp", shell])
+            .status
+            .success()
+    );
+    let set = cli.tmux(&["set-option", "-t", "=Views:", "@tx-view", "1"]);
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+    let pane = pane_id_of(&cli, "Views");
+    // `run-shell` stands in for the prefix+t popup: like the popup it runs `pick` with `$TMUX`
+    // set while the pane's foreground process is still the shell.
+    let pick = format!(
+        "FZF_DEFAULT_OPTS='--filter=inner' {} --state-dir {} pick",
+        env!("CARGO_BIN_EXE_txc"),
+        cli.state().display()
+    );
+    assert!(
+        cli.tmux(&["run-shell", "-b", "-t", &pane, &pick])
+            .status
+            .success()
+    );
+    let mut label = String::new();
+    let nested = cli.wait_for(5, || {
+        label = cli.ok(&["_pane-label", &pane]);
+        label.contains("#[bold]inner#[default]")
+    });
+    assert!(nested, "pane never showed the nested session: {label:?}");
+}

@@ -59,6 +59,7 @@ fn tty_columns() -> Option<i64> {
 /// shells it spawns; the arm file reaches them through the child's environment.
 pub fn fzf_args(
     bin: &Path,
+    socket: &Path,
     state_dir: &Path,
     namew: i64,
     query: &str,
@@ -66,6 +67,7 @@ pub fn fzf_args(
 ) -> Vec<String> {
     let namew = namew.max(0) as usize;
     let bin = bin.display();
+    let socket = socket.display();
     let state_dir = state_dir.display();
     let reload = format!("reload-sync({bin} --state-dir {state_dir} _list)");
     let edit_tag = format!("{bin} --state-dir {state_dir} _edit-tag {{1}}");
@@ -101,7 +103,7 @@ pub fn fzf_args(
             "--bind=focus:transform-header({focus_cmd})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"
         ),
         format!(
-            "--bind=ctrl-t:execute(tmux display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}"
+            "--bind=ctrl-t:execute(tmux -S {socket} display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}"
         ),
         format!(
             "--bind=ctrl-d:execute-silent(printf '%s' {{1}} >\"$TX_ARM_FILE\")+transform-header({arm_cmd})+rebind(y,n)"
@@ -222,6 +224,7 @@ impl Verb for Pick {
             .into_temp_path();
         let args = fzf_args(
             &bin,
+            core.socket_path(),
             &core.config().state_dir,
             namew,
             &options.query,
@@ -295,18 +298,57 @@ fn ui_failed(error: impl std::fmt::Display) -> VerbError {
     VerbError::Failed(error.to_string())
 }
 
+/// How Enter on a picker row opens the session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenMode {
+    /// Respawn the launching view's shell pane into a nested attach.
+    Nest,
+    /// Switch the client that launched the picker.
+    Switch,
+    /// Attach this terminal.
+    Attach,
+}
+
+fn open_mode(inside: bool, current_is_view: bool, pane_command: Option<&str>) -> OpenMode {
+    if !inside {
+        return OpenMode::Attach;
+    }
+    if current_is_view && pane_command.is_some_and(|command| HOSTING_COMMANDS.contains(&command)) {
+        OpenMode::Nest
+    } else {
+        OpenMode::Switch
+    }
+}
+
+/// The open mode for the caller's surroundings, with the pane to nest into.
+fn open_mode_here(ui: &Ui) -> (OpenMode, Option<String>) {
+    let inside = ui.inside();
+    let pane = inside.then(|| ui.current_pane_id()).flatten();
+    let current_is_view = pane.is_some()
+        && ui
+            .current_session_name()
+            .is_some_and(|session| ui.is_view(&session));
+    let command = pane
+        .as_deref()
+        .and_then(|pane| ui.display_message("#{pane_current_command}", Some(pane)));
+    let mode = open_mode(inside, current_is_view, command.as_deref());
+    (mode, pane)
+}
+
 /// Default path: nest into the launching view's shell pane, else switch the client, else
 /// attach this terminal.
 fn open(ui: &Ui, target: &str, name: &str) -> Result<(), VerbError> {
-    if respawn_into_view_pane(ui, target)? {
-        return Ok(());
+    match open_mode_here(ui) {
+        (OpenMode::Nest, Some(pane)) => nest(ui, &pane, target)?,
+        (OpenMode::Attach, _) => {
+            let _ = std::io::stdout().flush();
+            return Err(ui_failed(ui.attach_exec(target)));
+        }
+        _ => {
+            let _ = ui.switch_client(name);
+        }
     }
-    if ui.inside() {
-        let _ = ui.switch_client(name);
-        return Ok(());
-    }
-    let _ = std::io::stdout().flush();
-    Err(ui_failed(ui.attach_exec(target)))
+    Ok(())
 }
 
 /// `--jump`: focus the pane already hosting the session, else nest, else switch. False when
@@ -321,36 +363,16 @@ fn jump(ui: &Ui, name: &str, target: &str) -> Result<bool, VerbError> {
     {
         return Ok(ui.select_window(&pane) && ui.select_pane(&pane));
     }
-    if respawn_into_view_pane(ui, target)? {
+    if let (OpenMode::Nest, Some(pane)) = open_mode_here(ui) {
+        nest(ui, &pane, target)?;
         return Ok(true);
     }
     Ok(ui.switch_client(name).is_ok())
 }
 
-/// From a shell pane of a view, nest-attach `target` into that pane. False when the caller is
-/// not in such a pane.
-fn respawn_into_view_pane(ui: &Ui, target: &str) -> Result<bool, VerbError> {
-    if !ui.inside() {
-        return Ok(false);
-    }
-    let Some(pane) = ui.current_pane_id() else {
-        return Ok(false);
-    };
-    let Some(session) = ui.current_session_name() else {
-        return Ok(false);
-    };
-    if !ui.is_view(&session) {
-        return Ok(false);
-    }
-    let hosts = ui
-        .display_message("#{pane_current_command}", Some(&pane))
-        .is_some_and(|command| HOSTING_COMMANDS.contains(&command.as_str()));
-    if !hosts {
-        return Ok(false);
-    }
-    ui.respawn_pane(&pane, &ui.nest_attach_command(target))
-        .map_err(ui_failed)?;
-    Ok(true)
+fn nest(ui: &Ui, pane: &str, target: &str) -> Result<(), VerbError> {
+    ui.respawn_pane(pane, &ui.nest_attach_command(target))
+        .map_err(ui_failed)
 }
 
 #[cfg(test)]
@@ -395,18 +417,39 @@ mod tests {
             format!("--bind=start:execute-silent(( while sleep 1; do curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || exit 0; done ) &)+unbind(y,n)"),
             format!("--bind=ctrl-r:{reload}"),
             format!("--bind=focus:transform-header({focus})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"),
-            format!("--bind=ctrl-t:execute(tmux display-popup -E -h 4 -w 60% \"/x/txc --state-dir /s _edit-tag {{1}}\")+{reload}"),
+            format!("--bind=ctrl-t:execute(tmux -S /k/tmux.sock display-popup -E -h 4 -w 60% \"/x/txc --state-dir /s _edit-tag {{1}}\")+{reload}"),
             format!("--bind=ctrl-d:execute-silent(printf '%s' {{1}} >\"$TX_ARM_FILE\")+transform-header({arm})+rebind(y,n)"),
             format!("--bind=y:execute-silent(/x/txc --state-dir /s kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"),
             format!("--bind=n:transform-header({focus})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"),
         ];
         let actual = fzf_args(
             Path::new("/x/txc"),
+            Path::new("/k/tmux.sock"),
             Path::new("/s"),
             12,
             "",
             Path::new("/t/arm"),
         );
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn open_mode_by_surroundings() {
+        for command in [Some("zsh"), Some("txc"), None] {
+            assert_eq!(open_mode(false, true, command), OpenMode::Attach);
+            assert_eq!(open_mode(false, false, command), OpenMode::Attach);
+        }
+        for shell in HOSTING_COMMANDS {
+            assert_eq!(
+                open_mode(true, true, Some(shell)),
+                OpenMode::Nest,
+                "{shell}"
+            );
+        }
+        assert_eq!(open_mode(true, false, Some("zsh")), OpenMode::Switch);
+        assert_eq!(open_mode(true, true, Some("nvim")), OpenMode::Switch);
+        assert_eq!(open_mode(true, true, Some("txc")), OpenMode::Switch);
+        assert_eq!(open_mode(true, true, None), OpenMode::Switch);
+        assert_eq!(open_mode(true, false, None), OpenMode::Switch);
     }
 }
