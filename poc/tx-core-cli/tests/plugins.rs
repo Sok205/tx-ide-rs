@@ -59,7 +59,7 @@ fn without_a_yaml_every_plugin_is_active() {
     let cli = Cli::new();
     assert_eq!(
         cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\n"
+        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nviews\tactive\n"
     );
     assert_eq!(cli.ok(&["engines"]), "claude\ncodex\n");
 }
@@ -70,7 +70,7 @@ fn a_disabled_engine_disappears() {
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
     assert_eq!(
         cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tdisabled\nhooks\tactive\n"
+        "engine-claude\tactive\nengine-codex\tdisabled\nhooks\tactive\nviews\tactive\n"
     );
     assert_eq!(cli.ok(&["engines"]), "claude\n");
 }

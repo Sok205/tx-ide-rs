@@ -23,6 +23,7 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_engine_claude::ClaudePlugin),
     || Box::new(tx_engine_codex::CodexPlugin),
     || Box::new(tx_hooks::HooksPlugin),
+    || Box::new(tx_views::ViewsPlugin),
 ];
 
 /// The built-in verbs; a plugin may not register one of these.

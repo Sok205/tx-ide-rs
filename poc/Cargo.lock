@@ -538,6 +538,7 @@ dependencies = [
  "tx-engine-claude",
  "tx-engine-codex",
  "tx-hooks",
+ "tx-views",
 ]
 
 [[package]]
@@ -560,6 +561,18 @@ dependencies = [
 name = "tx-hooks"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tx-core",
+]
+
+[[package]]
+name = "tx-views"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",
