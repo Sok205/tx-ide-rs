@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# prefix+a: the artifacts menu of the tx session the key fired in (see keys/artifacts.tmux). The
+# bind runs INSIDE the nested session, so $1 is its name and $2 the nested client.
+set -eu
+
+TXC=$(tmux show-option -gv @tx-bin)
+STATE=$(tmux show-option -gv @tx-state)
+exec "$TXC" --state-dir "$STATE" _artifact-menu "$1" "$2"

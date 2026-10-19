@@ -1,0 +1,19 @@
+[package]
+name = "tx-artifacts"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "tx-core plugin: durable versioned artifacts, effort groups, and the prefix+a menu."
+
+[dependencies]
+tx-core.workspace = true
+tx-ui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
