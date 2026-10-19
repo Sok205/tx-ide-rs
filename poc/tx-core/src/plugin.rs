@@ -1,6 +1,7 @@
-//! The plugin host. One trait, [`Plugin`]; a [`Registry`] with three slots (engines, event
-//! sinks, verbs); a [`PluginConfig`] the front end fills from its own config format. Core never
-//! parses arguments or reads the environment: a [`Verb`] receives argv already split.
+//! The plugin host. One trait, [`Plugin`]; a [`Registry`] with four slots (engines, event
+//! sinks, verbs, resources); a [`PluginConfig`] the front end fills from its own config format.
+//! Core never parses arguments or reads the environment: a [`Verb`] receives argv already split.
+//! A resource is a named static blob the core stores and lists but never reads.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
@@ -26,6 +27,7 @@ pub struct Registry {
     engines: Vec<Box<dyn EngineAdapter>>,
     sinks: Vec<Box<dyn EventSink>>,
     verbs: Vec<Arc<dyn Verb>>,
+    resources: BTreeMap<&'static str, &'static [u8]>,
     settings: Value,
     config: CoreConfig,
 }
@@ -43,6 +45,21 @@ impl Registry {
         self.verbs.push(verb);
     }
 
+    /// Publishes a named static blob; the core stores and lists it, never reads it. `name` is
+    /// `[A-Za-z0-9_./-]+`, no leading `/`, no `..` segment, unique across plugins. Convention:
+    /// `<kind>/<file>`, e.g. `keys/kill.tmux`.
+    pub fn resource(
+        &mut self,
+        name: &'static str,
+        bytes: &'static [u8],
+    ) -> Result<(), PluginError> {
+        validate_resource_name(name)?;
+        if self.resources.insert(name, bytes).is_some() {
+            return Err(PluginError::DuplicateResource(name.to_owned()));
+        }
+        Ok(())
+    }
+
     /// This plugin's settings block; `Null` when the config has none.
     pub fn settings(&self) -> &Value {
         &self.settings
@@ -52,6 +69,14 @@ impl Registry {
     pub fn config(&self) -> &CoreConfig {
         &self.config
     }
+}
+
+/// A named static blob published by a plugin, listed by [`TxCore::resources`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Resource {
+    pub plugin: String,
+    pub name: String,
+    pub bytes: &'static [u8],
 }
 
 /// A command a front end can dispatch to. `argv` is everything after the verb name.
@@ -119,6 +144,12 @@ pub enum PluginError {
     },
     #[error("plugin {plugin:?} registers verb {verb:?}, which the front end owns")]
     ReservedVerb { verb: String, plugin: String },
+    #[error("resource {0:?} is published twice")]
+    DuplicateResource(String),
+    #[error(
+        "invalid resource name {0:?} (allowed: [A-Za-z0-9_./-]+, no leading '/', no '..' segment)"
+    )]
+    InvalidResourceName(String),
     #[error("plugin {plugin:?}: {source}")]
     Engine { plugin: String, source: CoreError },
     #[error("plugin {plugin:?}: {reason}")]
@@ -137,11 +168,27 @@ fn validate_id(id: &str) -> Result<(), PluginError> {
     }
 }
 
+fn validate_resource_name(name: &str) -> Result<(), PluginError> {
+    let ok = !name.is_empty()
+        && !name.starts_with('/')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'/' | b'-'))
+        && name.split('/').all(|segment| segment != "..");
+    if ok {
+        Ok(())
+    } else {
+        Err(PluginError::InvalidResourceName(name.to_owned()))
+    }
+}
+
 /// The host side, kept in `TxCore`.
 #[derive(Default)]
 pub(crate) struct Host {
     /// name → (plugin id, verb)
     verbs: BTreeMap<String, (String, Arc<dyn Verb>)>,
+    /// Manifest order, then name order within a plugin.
+    resources: Vec<Resource>,
     status: Vec<(String, PluginStatus)>,
 }
 
@@ -183,6 +230,7 @@ fn load(
             engines: Vec::new(),
             sinks: Vec::new(),
             verbs: Vec::new(),
+            resources: BTreeMap::new(),
             settings: cfg.settings.get(id).cloned().unwrap_or(Value::Null),
             config: config.clone(),
         };
@@ -266,6 +314,16 @@ impl TxCore {
             for verb in registry.verbs {
                 insert_verb(&mut self.host.verbs, cfg, &loaded.id, verb)?;
             }
+            for (name, bytes) in registry.resources {
+                if self.host.resources.iter().any(|r| r.name == name) {
+                    return Err(PluginError::DuplicateResource(name.to_owned()));
+                }
+                self.host.resources.push(Resource {
+                    plugin: loaded.id.clone(),
+                    name: name.to_owned(),
+                    bytes,
+                });
+            }
             self.host.status.push((loaded.id, PluginStatus::Active));
         }
         Ok(())
@@ -281,6 +339,17 @@ impl TxCore {
             .verbs
             .values()
             .map(|(_, verb)| Arc::clone(verb))
+            .collect()
+    }
+
+    /// Resources of active plugins whose name starts with `prefix`, in manifest order then name
+    /// order.
+    pub fn resources(&self, prefix: &str) -> Vec<Resource> {
+        self.host
+            .resources
+            .iter()
+            .filter(|r| r.name.starts_with(prefix))
+            .cloned()
             .collect()
     }
 

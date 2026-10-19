@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use common::{Harness, STUB_ID, ShellStub, process};
 use serde_json::json;
 use tx_core::{
-    Event, EventSink, Plugin, PluginConfig, PluginError, PluginStatus, Registry, TxCore, Verb,
-    VerbError, VerbIo,
+    Event, EventSink, Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, TxCore,
+    Verb, VerbError, VerbIo,
 };
 
 struct Echo;
@@ -331,4 +331,166 @@ fn preview_lists_verbs_without_opening_a_core() {
     .err()
     .expect("reserved verb is refused");
     assert!(matches!(error, PluginError::ReservedVerb { .. }));
+}
+
+/// (plugin id, resources it publishes in this order)
+struct Publisher(&'static str, &'static [(&'static str, &'static [u8])]);
+impl Plugin for Publisher {
+    fn id(&self) -> &'static str {
+        self.0
+    }
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        for (name, bytes) in self.1 {
+            r.resource(name, bytes)?;
+        }
+        Ok(())
+    }
+}
+
+fn pairs(found: &[Resource]) -> Vec<(&str, &str)> {
+    found
+        .iter()
+        .map(|r| (r.plugin.as_str(), r.name.as_str()))
+        .collect()
+}
+
+#[test]
+fn resources_are_listed_by_prefix_in_name_order() {
+    let h = Harness::new();
+    let mut core = h.open();
+    core.plug(
+        vec![Box::new(Publisher(
+            "a",
+            &[("keys/a.tmux", b"# a"), ("bin/a", b"#!/bin/sh")],
+        ))],
+        &PluginConfig::default(),
+    )
+    .unwrap();
+    let keys = core.resources("keys/");
+    assert_eq!(pairs(&keys), [("a", "keys/a.tmux")]);
+    assert_eq!(keys[0].bytes, b"# a");
+    assert_eq!(
+        pairs(&core.resources("")),
+        [("a", "bin/a"), ("a", "keys/a.tmux")]
+    );
+    assert!(core.resources("conf/").is_empty());
+}
+
+#[test]
+fn resources_follow_manifest_order_then_name_order() {
+    let h = Harness::new();
+    let mut core = h.open();
+    core.plug(
+        vec![
+            Box::new(Publisher("z", &[("keys/z", b"z"), ("keys/b", b"b")])),
+            Box::new(Publisher("a", &[("keys/a", b"a")])),
+        ],
+        &PluginConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        pairs(&core.resources("keys/")),
+        [("z", "keys/b"), ("z", "keys/z"), ("a", "keys/a")]
+    );
+}
+
+#[test]
+fn duplicate_resource_across_plugins_fails_plug() {
+    let h = Harness::new();
+    let mut core = h.open();
+    let error = core
+        .plug(
+            vec![
+                Box::new(Publisher("a", &[("keys/x", b"1")])),
+                Box::new(Publisher("b", &[("keys/x", b"2")])),
+            ],
+            &PluginConfig::default(),
+        )
+        .unwrap_err();
+    match error {
+        PluginError::DuplicateResource(name) => assert_eq!(name, "keys/x"),
+        other => panic!("{other}"),
+    }
+}
+
+#[test]
+fn duplicate_resource_inside_one_plugin_is_refused() {
+    let h = Harness::new();
+    let mut core = h.open();
+    let error = core
+        .plug(
+            vec![Box::new(Publisher(
+                "a",
+                &[("keys/x", b"1"), ("keys/x", b"2")],
+            ))],
+            &PluginConfig::default(),
+        )
+        .unwrap_err();
+    assert!(matches!(error, PluginError::DuplicateResource(n) if n == "keys/x"));
+}
+
+/// Probes `Registry::resource` directly: bad names are refused, good ones accepted.
+struct NameProbe;
+impl Plugin for NameProbe {
+    fn id(&self) -> &'static str {
+        "probe"
+    }
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        for bad in [
+            "../x", "/x", "", "a/../b", "a/..", "..", "a b", "a\\b", "é", "a\n",
+        ] {
+            match r.resource(bad, b"") {
+                Err(PluginError::InvalidResourceName(name)) => assert_eq!(name, bad),
+                other => panic!("{bad:?} accepted: {other:?}"),
+            }
+        }
+        for good in ["x", "keys/kill.tmux", "a_b-c.d/e", "..x", "x..", "a/.b"] {
+            r.resource(good, b"").unwrap();
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn invalid_resource_names_are_refused() {
+    let h = Harness::new();
+    let mut core = h.open();
+    core.plug(vec![Box::new(NameProbe)], &PluginConfig::default())
+        .unwrap();
+    assert_eq!(core.resources("").len(), 6, "only the valid names landed");
+}
+
+#[test]
+fn invalid_resource_name_fails_plug_through_the_plugin() {
+    let h = Harness::new();
+    let mut core = h.open();
+    let error = core
+        .plug(
+            vec![Box::new(Publisher("a", &[("../x", b"")]))],
+            &PluginConfig::default(),
+        )
+        .unwrap_err();
+    assert!(matches!(error, PluginError::InvalidResourceName(n) if n == "../x"));
+}
+
+#[test]
+fn disabled_plugin_publishes_no_resources() {
+    let h = Harness::new();
+    let mut core = h.open();
+    let cfg = PluginConfig {
+        disabled: BTreeSet::from(["a".to_owned()]),
+        ..Default::default()
+    };
+    core.plug(
+        vec![
+            Box::new(Publisher("a", &[("keys/x", b"1")])),
+            Box::new(Publisher("b", &[("keys/x", b"2"), ("keys/y", b"3")])),
+        ],
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(
+        pairs(&core.resources("")),
+        [("b", "keys/x"), ("b", "keys/y")]
+    );
 }

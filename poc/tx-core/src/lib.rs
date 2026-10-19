@@ -41,7 +41,7 @@ pub use messaging::DELIVERY_PAUSE;
 /// The default envelope; an `EngineAdapter::envelope` override may wrap it.
 pub use messaging::build_envelope;
 pub use plugin::{
-    Plugin, PluginConfig, PluginError, PluginStatus, Registry, Verb, VerbError, VerbIo,
+    Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
 pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
