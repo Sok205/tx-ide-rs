@@ -16,7 +16,14 @@ impl Plugin for MockupPlugin {
         PLUGIN_ID
     }
 
-    fn register(&self, _r: &mut Registry) -> Result<(), PluginError> {
-        Ok(())
+    fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
+        r.resource(
+            "agents/COMMON.local.md",
+            include_bytes!("../../../../agents/COMMON.mockup.local.md"),
+        )?;
+        r.resource(
+            "agents/skills/tx-mockup/SKILL.md",
+            include_bytes!("../../../../agents/skills/tx-mockup/SKILL.md"),
+        )
     }
 }
