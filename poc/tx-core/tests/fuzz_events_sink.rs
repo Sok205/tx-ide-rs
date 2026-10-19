@@ -682,7 +682,15 @@ fn a_failure_after_the_lock_is_taken_emits_nothing_and_leaves_the_record() {
     );
     let seen: Vec<Line> = recorder.events().iter().map(Line::from_event).collect();
     assert_eq!(seen, log(&h));
-    assert_eq!(types(&recorder.events()), [EventType::Created; 3]);
+    assert_eq!(
+        types(&recorder.events()),
+        [
+            EventType::Created,
+            EventType::Created,
+            EventType::Stopped,
+            EventType::Created
+        ]
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
