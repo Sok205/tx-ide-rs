@@ -83,7 +83,19 @@ fn ui_install_binds_prefix_m_and_the_first_attach_hook() {
         std::fs::read_to_string(cli.state().join("keys/.installed"))
             .unwrap()
             .lines()
-            .any(|line| line == "menu\tkeys=m\tunset=\tunhook=client-attached")
+            .any(|line| line == "menu\tkeys=m\tunset=\tunhook=client-attached[90]")
+    );
+    assert!(hook.starts_with("client-attached[90] "), "{hook}");
+    // Someone else's hook on another index survives the menu's unhook.
+    assert!(
+        cli.tmux(&[
+            "set-hook",
+            "-g",
+            "client-attached[0]",
+            "display-message mine"
+        ])
+        .status
+        .success()
     );
 
     cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  menu: { enabled: false }\n");
@@ -94,6 +106,57 @@ fn ui_install_binds_prefix_m_and_the_first_attach_hook() {
     );
     let hook = cli.tmux_out(&["show-hooks", "-g", "client-attached"]);
     assert!(!hook.contains("_menu-first"), "{hook}");
+    assert!(hook.contains("display-message mine"), "{hook}");
+}
+
+/// `ui install` turning the menu on in a live IDE: the operator's attach already happened, so
+/// it must not pop up on the next reattach.
+#[test]
+fn enabling_the_menu_on_a_live_server_counts_the_attached_client_as_first() {
+    require_tmux!();
+    let cli = Cli::new();
+    installed_server(&cli, NO_ASSISTANT);
+    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  menu: { enabled: false }\n");
+    cli.ok(&["ui", "install"]);
+    let sock = cli.sock().display().to_string();
+    cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =probe"));
+    assert!(
+        cli.wait_for(5, || clients(&cli) == ["probe"]),
+        "{:?}",
+        clients(&cli)
+    );
+    assert_eq!(cli.tmux_out(&["show-option", "-gqv", "@tx-menu-shown"]), "");
+
+    cli.write_yaml(NO_ASSISTANT);
+    cli.ok(&["ui", "install"]);
+    assert!(
+        cli.wait_for(5, || cli.tmux_out(&[
+            "show-option",
+            "-gqv",
+            "@tx-menu-shown"
+        ]) == "1"),
+        "the live client was not counted"
+    );
+    assert!(cli.tmux(&["detach-client", "-s", "probe"]).status.success());
+    assert!(
+        cli.wait_for(5, || clients(&cli).is_empty()),
+        "{:?}",
+        clients(&cli)
+    );
+    press(
+        &cli,
+        &[&format!("TMUX= tmux -S {sock} attach -t =probe"), "Enter"],
+    );
+    assert!(
+        cli.wait_for(5, || clients(&cli) == ["probe"]),
+        "{:?}",
+        clients(&cli)
+    );
+    assert!(
+        !cli.wait_for(2, || menu_shown(&cli)),
+        "the reattach showed the menu:\n{}",
+        screen(&cli)
+    );
 }
 
 /// The operator's first attach: home's pane nests an agent (that nested client attaches first

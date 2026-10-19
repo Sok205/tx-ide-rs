@@ -24,7 +24,8 @@ fn the_key_fragment_declares_prefix_m_and_the_attach_hook() {
     assert!(text.starts_with("#!"), "{text}");
     assert!(text.lines().any(|line| line == "# keys: m"), "{text}");
     assert!(
-        text.lines().any(|line| line == "# unhook: client-attached"),
+        text.lines()
+            .any(|line| line == "# unhook: client-attached[90]"),
         "{text}"
     );
     assert!(text.contains("bind m run-shell -b"), "{text}");
@@ -32,7 +33,7 @@ fn the_key_fragment_declares_prefix_m_and_the_attach_hook() {
         text.contains("_menu-open '#{pane_id}' '#{client_name}'"),
         "{text}"
     );
-    assert!(text.contains("set-hook -g client-attached"), "{text}");
+    assert!(text.contains("set-hook -g client-attached[90] {"), "{text}");
     assert!(text.contains("#{@tx-menu-shown}"), "{text}");
     assert!(
         text.contains("_menu-first '#{pane_id}' '#{client_name}'"),
