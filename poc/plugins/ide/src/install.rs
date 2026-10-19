@@ -192,6 +192,9 @@ fn materialise(state: &Path, resources: &[Resource]) -> Result<(), VerbError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(io_failed(parent))?;
         }
+        if path.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
+            std::fs::remove_file(&path).map_err(io_failed(&path))?;
+        }
         std::fs::write(&path, resource.bytes).map_err(io_failed(&path))?;
         let mode = if resource.name.starts_with("conf/") {
             0o644
@@ -215,8 +218,10 @@ fn prune(dir: &Path, keep: &HashSet<PathBuf>) -> io::Result<()> {
         Err(e) => return Err(e),
     };
     for entry in entries {
-        let path = entry?.path();
-        if path.is_dir() {
+        let entry = entry?;
+        let path = entry.path();
+        // `file_type` does not follow symlinks: a link is removed itself, never entered.
+        if entry.file_type()?.is_dir() {
             prune(&path, keep)?;
         } else if !keep.contains(&path) {
             std::fs::remove_file(&path)?;
@@ -241,6 +246,18 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
                 path.display()
             ),
         );
+    }
+    for kind in ["bin", "keys", "conf"] {
+        let dir = state.join(kind);
+        if dir.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
+            return fail(
+                io,
+                &format!(
+                    "txc ui install: {} is a symlink; refusing to prune",
+                    dir.display()
+                ),
+            );
+        }
     }
     let previous = std::fs::read_to_string(state.join(INSTALLED))
         .ok()
@@ -267,7 +284,8 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let conf = core.config().tmux_conf_path();
     std::fs::write(&conf, conf_text(&exe, state, &others)).map_err(io_failed(&conf))?;
     let installed = state.join(INSTALLED);
-    std::fs::write(&installed, render_installed(&fragments)).map_err(io_failed(&installed))?;
+    let write_installed =
+        || std::fs::write(&installed, render_installed(&fragments)).map_err(io_failed(&installed));
 
     let mut out = format!("{}\n", conf.display());
     let ui = Ui::from_core(core);
@@ -289,11 +307,14 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
         }
         ui.run(&["source-file", &conf.to_string_lossy()])
             .map_err(|e| VerbError::Failed(e.to_string()))?;
+        write_installed()?;
         out.push_str("reloaded\n");
         if previous.is_none() {
             out.push_str(LEGACY_HINT);
             out.push('\n');
         }
+    } else {
+        write_installed()?;
     }
     io.stdout
         .write_all(out.as_bytes())

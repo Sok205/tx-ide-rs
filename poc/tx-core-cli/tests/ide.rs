@@ -152,6 +152,42 @@ fn ui_install_deletes_files_no_plugin_provides() {
 }
 
 #[test]
+fn prune_removes_a_symlink_but_never_follows_it() {
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    let victim = cli.dir.path().join("victim-dir");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join("precious"), "x").unwrap();
+    let link = cli.state().join("bin/link");
+    std::os::unix::fs::symlink(&victim, &link).unwrap();
+    cli.ok(&["ui", "install"]);
+    assert!(victim.join("precious").is_file());
+    assert!(link.symlink_metadata().is_err(), "link is gone");
+}
+
+#[test]
+fn a_symlinked_kind_directory_is_refused() {
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    let victim = cli.dir.path().join("victim-dir");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join("precious"), "x").unwrap();
+    let keys = cli.state().join("keys");
+    std::fs::remove_dir_all(&keys).unwrap();
+    std::os::unix::fs::symlink(&victim, &keys).unwrap();
+    let stderr = cli.fails(&["ui", "install"], 1);
+    assert_eq!(
+        stderr,
+        format!(
+            "txc ui install: {} is a symlink; refusing to prune\n",
+            keys.display()
+        )
+    );
+    assert!(victim.join("precious").is_file());
+    assert_eq!(std::fs::read_dir(&victim).unwrap().count(), 1);
+}
+
+#[test]
 fn ui_install_takes_no_arguments() {
     let cli = Cli::new();
     for args in [
