@@ -6,7 +6,8 @@
 > superpowers:executing-plans. Phases are checkboxes; a phase is done when its gate holds.
 
 **Goal:** Every feature `crates/tx` ships lands in `poc/` as a plugin over `tx-core`, until
-`txc` can replace `tx` for the daily swarm workflow.
+`txc` can replace `tx` for the daily swarm workflow. The tmux prefix bindings come first: a
+user at the keyboard must lose nothing while the rest of the port proceeds.
 
 **Architecture:** `tx-core` stays the plain core from `2026-10-15-tx-core-design.md`; features
 are compiled-in plugin crates under `poc/plugins/<id>/` filling the `Registry` slots from
@@ -35,24 +36,26 @@ decisions taken on 2026-10-19 that those specs left open.
 - Record writes stay temp-file + fsync + rename; plugin stores follow the same discipline.
 - Python-parity shims (`argparse.rs`, `pyjson.rs`, `shlex.rs`, `palette.rs`) are not ported;
   `txc` output is its own contract.
+- Every `prefix+<key>` in `tmux/tx-ide.tmux` keeps its key and its visible behaviour; only the
+  command behind it changes from `tx` to `txc`.
 
 ## Review Focus
 
 Failure modes the specs imply that no single phase's tests own; each owning phase adds the test.
 
-1. A plugin store under `<state_dir>/plugins/<id>/` written by two `txc` processes at once must
-   not lose a write (phase 1 pins it with the tutor progress file; phase 5 with artifacts).
+1. A record whose `ext["<plugin>"]` is malformed for that plugin (hand edit, older plugin
+   version) must be reported by that plugin's verb and never make `txc ls`, `txc show` or the
+   prefix+t picker fail (phase 1 pins it in the picker feed; every later phase for its own key).
 2. A `LaunchDecorator` that fails after an earlier decorator wrote into the workspace must leave
    no orphan: core's cleanup path covers the profile file and the tmux session, decorators cover
    their own writes (phase 2, read-only wrapper and skill symlinks).
 3. An `ExtUpdated` sink that reopens the core on the same state dir must not deadlock on the
    session lock the writer still holds: the event is emitted after the lock is released
    (phase 3).
-4. A record whose `ext["<plugin>"]` is malformed for that plugin (hand edit, older plugin
-   version) must be reported by that plugin's verb and never make `txc ls` or `txc show` fail
-   (every phase; first pinned in phase 1).
-5. A chat transcript owned by another session must never be bound to this one (phase 3, the
+4. A chat transcript owned by another session must never be bound to this one (phase 3, the
    cross-bind refusal from `hooks.rs::capture_chat_ref`).
+5. A plugin store under `<state_dir>/plugins/<id>/` written by two `txc` processes at once must
+   not lose a write (phase 3 pins it with the history mirror flock; phase 5 with artifact revs).
 
 ---
 
@@ -75,8 +78,13 @@ Failure modes the specs imply that no single phase's tests own; each owning phas
   two methods instead of growing the optional `EngineChatOps` surface main has.
 - **D5. UI seams do their own tmux.** Core's `Tmux` keeps new / kill / rename / send-keys /
   list-sessions. A plugin that needs popups, splits, `switch-client` or status messages runs
-  tmux itself against `core.socket_path()`; that helper is a module of the plugin crate, shared
-  by crate dependency if a second UI plugin needs it.
+  tmux itself against `core.socket_path()`; that helper is a module of the `views` crate, shared
+  by crate dependency with every later UI plugin.
+- **D6. Prefix bindings drive the order.** Phases are sequenced so that each one turns on a
+  set of `prefix+<key>` bindings end to end; a phase that enables no key comes after every
+  phase that does.
+- **D7. Antigravity is deferred.** No `engine-antigravity` plugin in this roadmap; its launch
+  half and its chat half are listed under "Deferred" with what they would need.
 
 ## Generic core additions
 
@@ -84,142 +92,189 @@ Each row is its own small task plan, landed in the phase of its first consumer.
 
 | addition | shape | consumers | phase |
 |---|---|---|---|
-| plugin data dir | `Registry::data_dir(&self) -> PathBuf` = `<state_dir>/plugins/<id>/`, created on first call, mode 0755 | tutor, artifacts, chat/history, timeline cache, sync | 1 |
-| `ExtUpdated` event | `EventType::ExtUpdated`; `Event.msg` = `{"plugin": id}`; emitted by `update_ext` only when the value changed, after the lock is released; logged to `log.jsonl` like every event | hooks → history ingest, hooks → timeline, chat ops → timeline | 3 |
+| `Session.ext` read helper | `Session::ext<T: DeserializeOwned>(&self, plugin: &str) -> Result<Option<T>, serde_json::Error>` | views (picker reads `hooks` state), every later plugin | 1 |
 | launch slot | `trait LaunchDecorator: Send + Sync { fn id(&self) -> &str; fn decorate(&self, req: &LaunchRequest<'_>, plan: &mut LaunchPlan) -> Result<(), EngineError>; }`; `Registry::launch(Box<dyn LaunchDecorator>)`; core runs decorators in manifest order between `adapter.launch` and `apply_workspace` in `create_locked` (`poc/tx-core/src/core.rs:534-540`), on `LaunchOptions::Agent` only | spawn (read-only wrapper, skill symlinks), hooks (per-session hook injection), playground (companion env) | 2 |
+| plugin data dir | `Registry::data_dir(&self) -> PathBuf` = `<state_dir>/plugins/<id>/`, created on first call, mode 0755 | chat/history, artifacts, timeline cache, tutor, sync | 3 |
+| `ExtUpdated` event | `EventType::ExtUpdated`; `Event.msg` = `{"plugin": id}`; emitted by `update_ext` only when the value changed, after the lock is released; logged to `log.jsonl` like every event | hooks → history ingest, hooks → timeline, chat ops → timeline | 3 |
 | sweep slot | `trait Sweeper: Send + Sync { fn id(&self) -> &str; fn sweep(&self, core: &TxCore, running: &[Session]) -> Result<(), SweepError>; }`; `Registry::sweeper(...)`; `refresh_all` runs sweepers after its own pass; a sweeper's error is logged to stderr by `txc`, never fails the refresh | hooks (stuck `working` demotion), chat (watchdog for unfinished chat ops), history (pending mirrors) | 3 |
-| `Session.ext` read helper | `Session::ext<T: DeserializeOwned>(&self, plugin: &str) -> Result<Option<T>, serde_json::Error>` | every plugin with `ext` state | 1 |
 
 Not added, and why:
 
 - `ls` columns for plugin state. `txc show` prints `ext`; plugins ship their own `<verb> status`
-  (as `hook status` does). A column slot would make the CLI's table the integration point.
+  (as `hook status` does), and the picker feed in `views` reads `ext` directly.
 - A capability or service registry between plugins (D3).
 - `EngineAdapter` methods for transcripts, fork or seed (D4).
 - New `Session` fields. Main's `group`, `attached_to`, `chats`, `artifact_id`, `nvim_socket`,
   `pid`, `state` all become `ext` entries of the plugin that owns them.
 
+## Prefix bindings and the phase that turns each on
+
+From `tmux/tx-ide.tmux`. "Behind it" names the main verb or script the key runs today.
+
+| key | behind it | phase |
+|---|---|---|
+| prefix+t | `tx attach` (fzf picker popup) | 1 |
+| prefix+e | `bin/tmux-edit-tx-session` → `tx _edit-session` | 1 |
+| prefix+X | `bin/tmux-kill-tx-session` → `tx kill` | 1 |
+| prefix+s | `tx _relabel` then `choose-tree` | 1 |
+| nav keys | `bin/tmux-nav` (nested-session edge hop) | 1 |
+| C-u / C-d | passthrough `if -F` on `pane_current_command` | 1 (tmux-only, re-pointed) |
+| pane border | `bin/tmux-pane-session-name` | 1 |
+| status line | `bin/tmux-system-resources` | 1 (no `tx` call; installed as is) |
+| prefix+n | `bin/tmux-new-agent` → `tx _new-agent` → `spawn` | 2 |
+| prefix+f | `bin/tmux-fork-tx-session` → `tx _fork-pane` → `fork` | 3 |
+| prefix+/ | `bin/tx-assistant` → `send-user-message`, `focus-envelope` | 4 |
+| prefix+a | `bin/tmux-artifact-menu` → `tx _artifact-menu` | 5 |
+| prefix+T | `tx _timeline-attach` | 6 |
+| focus hooks | `bin/tx-graph-focus-poke` (sessions-graph dashboard, not in this repo) | deferred |
+
 ## Phases
 
-Order follows dependency and value: the swarm verbs first, then the features that make a
-running swarm legible, then UI, then the long tail. Sizes are main's line counts for the code
-being ported, as a budget signal, not a target.
+Sizes are main's line counts for the code being ported, a budget signal, not a target.
 
-- [ ] **Phase 1 — `tutor`** (independent; proves D1)
-  - Crate `poc/plugins/tutor` (`tx-tutor`), plugin id `tutor`.
-  - From main: `tutor/` (pack, lessons, progress, project, checks, http, tx_check) and
-    `verbs/tutor.rs`. ~1.8k lines.
-  - State: `data_dir()/<lang>.json` for progress (replaces `$TX_IDE_HOME/tutor/`); no `ext`.
-  - Core additions: plugin data dir, `Session::ext` helper (used by `tx_check` to read other
-    plugins' state by name).
-  - Verbs: `tutor start <lang>`, `tutor check`, `tutor next`, `tutor prev`, `tutor status`.
-    The `tx` check predicate reads `txc`'s records through `core.list_sessions`.
-  - Gate: a pack scaffolds into a temp dir, a lesson check passes against a `--exec sleep`
-    session, progress survives two concurrent `tutor check` runs.
+- [ ] **Phase 1 — `views`, the picker and the session keys** (prefix+t, e, X, s, nav)
+  - Crate `poc/plugins/views` (`tx-views`), plugin id `views`. Owns the extended tmux helper
+    (D5): popups, `switch-client`, `display-message`, `-F` queries, the client ↔ pane join
+    that `tmux-nav` and `tmux-pane-session-name` mirror.
+  - From main: `render.rs` (the `ls` and picker tables), `verbs/listing.rs` (`attach`,
+    `_list`, `_edit-session`, `_edit-tag`, `show` extras), `session_editor.rs`, the `kill`,
+    `_relabel`, `_pane-info`, `_tmux-name`, `whoami`, `selfcheck` verbs of
+    `verbs/sessions.rs`, `service.rs::kill`. ~4.3k lines.
+  - `kill` here is `stop_session` plus the confirm prompt; worktree removal arrives with
+    phase 2's `kill --remove`.
+  - A `tx` shim: `poc/tx-core-cli` installs a `tx` symlink to `txc` so `bin/*`, the tmux
+    fragment and `nvim/lua/*` keep calling `tx`; verb names ported from main keep main's
+    spelling.
+  - State: `ext["views"] = {"kind": "nvim|view|playground", "attached_to": id, "nvim_socket": path}`
+    (filled from phase 2 on; read here for the picker rows).
+  - Core additions: `Session::ext` helper.
+  - Gate: with `tmux/tx-ide.tmux` sourced against the core socket, prefix+t lists running
+    sessions with hooks state and attaches on Enter; prefix+e renames and retags; prefix+X
+    stops with the confirm prompt; prefix+s relabels `choose-tree`; `render` tables match
+    main's fixtures byte-for-byte; a session with a malformed `ext["hooks"]` still lists.
 
-- [ ] **Phase 2 — `spawn`** (the swarm; proves the launch slot)
+- [ ] **Phase 2 — `spawn`** (prefix+n; proves the launch slot)
   - Crate `poc/plugins/spawn` (`tx-spawn`), plugin id `spawn`.
   - From main: `spawn.rs`, `worktree.rs`, `skills.rs` (materialisation; resolution is already
     `tx-core::profile`), `read_only.rs`, the spawn family of `verbs/sessions.rs` (`spawn`,
-    `worker`, `kill`, `archive`, `revive`, `remove`), `service.rs::spawn_worker_with`,
-    `worker_launch_command`, `next_worker_name`, `remove_worker_worktree`. ~2.5k lines.
-  - State: `ext["spawn"] = {"worktree": path | null, "read_only": bool, "role": [..]}`.
-    Worktrees live where main puts them (beside the repo), not under `data_dir()`.
+    `spawn-nvim`, `spawn-view`, `kill --remove`, `archive`, `revive`, `rm`, `parent`),
+    `service.rs::spawn_worker_with`, `worker_launch_command`, `next_worker_name`,
+    `remove_worker_worktree`, `spawn_nvim`, `spawn_view`, `verbs/new_agent.rs` and its
+    `nvim/lua/tx-new-agent.lua` form. ~3.5k lines.
+  - Role data: `agents/COMMON.md`, `DEVELOPER.md`, `user-agents/NAME.md` override and
+    `NAME.local.md` extend, `agents/skills/*`; wired through `CoreConfig::profile_dirs` and
+    `skill_dirs` by `txc`.
+  - State: `ext["spawn"] = {"worktree": path | null, "read_only": bool, "role": [..],
+    "archived_at": ts | null}`; `ext["views"]` for nvim and view sessions. Worktrees live under
+    `<state_dir>/worktrees/` as main does.
   - Core additions: launch slot. Two decorators in this crate: `ReadOnly` wraps `plan.program`
-    in `sandbox-exec` / `bwrap` when `ext["spawn"].read_only` is requested through
-    `CreateOptions::env` (`TX_SPAWN_READ_ONLY=1`, the decorator's own key); `Skills` appends
-    `WorkspaceAction::Symlink` for each granted skill into the engine's discovery dir.
-  - Verbs: `spawn`, `worker`, `kill` (stop + optional worktree removal), `archive` / `revive`
-    (lifecycle stays core's; archive = stop + `ext["spawn"].archived_at`, revive = new session
-    with `resume` from `ext["chat"]` once phase 3 lands, else from scratch).
-  - Gate: `txc worker --repo <git dir> --prompt p` creates a worktree, a session whose `cwd` is
-    that worktree and whose record carries the path; `kill --remove` removes both; a read-only
-    worker cannot write inside the repo (`touch` fails) but can outside.
+    in `sandbox-exec` / `bwrap` when `TX_SPAWN_READ_ONLY=1` is in `CreateOptions::env`;
+    `Skills` appends `WorkspaceAction::Symlink` for each granted skill into the engine's
+    discovery dir.
+  - Gate: prefix+n opens the form and spawns a worker in a fresh worktree whose record carries
+    the path; `kill --remove` removes both; a read-only worker cannot write inside the repo but
+    can outside; `spawn-nvim` and `spawn-view` land in `ext["views"]` and show in the picker.
 
-- [ ] **Phase 3 — `chat`** (transcripts, history, chat ops, messages; proves `ExtUpdated` and sweep)
+- [ ] **Phase 3 — `chat`** (prefix+f; proves `ExtUpdated`, sweep and the data dir)
   - Crate `poc/plugins/chat` (`tx-chat`), plugin ids `chat` and `history` (one crate, two
     plugins, so `plugins.yaml` can disable chat ops while keeping ingest).
-  - From main: `history.rs`, `chat.rs`, `messages.rs`, `verbs/chat.rs`, the `history` and
-    `chat ls` verbs of `verbs/listing.rs`, the transcript / rollout / bundle code of
-    `engines/claude.rs`, `engines/codex.rs`, `engines/codex_rollout.rs`, the chat-ref capture
-    of `hooks.rs::capture_chat_ref`. ~5k lines.
+  - From main: `history.rs`, `chat.rs`, `messages.rs`, `verbs/chat.rs`, `verbs/fork_pane.rs`,
+    the `history` and `chat ls` verbs of `verbs/listing.rs`, the transcript / rollout / bundle
+    code of `engines/claude.rs`, `engines/codex.rs`, `engines/codex_rollout.rs`, the chat-ref
+    capture of `hooks.rs::capture_chat_ref`. ~5k lines.
   - State: `ext["chat"] = {"chats": [{"id", "role": "primary|fork|handover|rollover", "since"}]}`;
     `data_dir()/<session-id>/<chat-id>/` for mirrored bundles (main's `history/`); one flock
     per (session, chat) as today.
-  - Core additions: `ExtUpdated`, sweep slot.
+  - Core additions: plugin data dir, `ExtUpdated`, sweep slot.
   - Hooks plugin change (same phase): `hook <event>` also stores the payload's chat id and
     transcript path in `ext["hooks"].chat`; the `history` sink reacts to
     `ExtUpdated{plugin:"hooks"}` on a transition into `waiting` / `idle` and runs the ingest
     detached (`current_exe()` + hidden verb `_history-ingest <id>`). The `chat` sweeper
     finishes abandoned `handover` / `rollover` ops; the `hooks` sweeper demotes a `working`
     session older than `stuck_after_seconds` to `waiting`.
-  - Verbs: `fork`, `handover`, `rollover`, `resume`, `history [<session>]`, `chat ls`, hidden
-    `_chat-op-finish`, `_chat-op-watch`, `_history-ingest`.
-  - Gate: a Claude session's transcript is mirrored byte-for-byte after `txc hook stop`;
-    `fork` yields a session whose `ext["chat"]` holds a fork ref filled by the next hook;
-    the cross-bind refusal test from main passes; `messages` parses main's fixture transcripts.
+  - Verbs: `fork`, `handover`, `rollover`, `resume`, `history [<session>]`, `chat ls`,
+    `_fork-pane`, hidden `_chat-op-finish`, `_chat-op-watch`, `_history-ingest`.
+  - Gate: prefix+f forks the session in the firing pane and reports on the status line; a
+    Claude session's transcript is mirrored byte-for-byte after `txc hook stop`; the fork's
+    `ext["chat"]` ref is filled by the next hook; the cross-bind refusal test passes; `messages`
+    parses main's fixture transcripts; `revive` resumes from `ext["chat"]`.
 
-- [ ] **Phase 4 — `engine-antigravity`**
-  - Crate `poc/plugins/engine-antigravity`, plugin id `engine-antigravity`.
-  - From main: the launch half of `engines/antigravity.rs` (Go `flag` grammar, `.agents/`
-    files, settings trust). The sqlite conversation-db fork surgery and brain-transcript reader
-    go to `tx-chat` as its third engine. ~1.3k lines total, split roughly half and half.
-  - Gate: `txc create --engine antigravity` launches with the right argv in a fake-`agy` test;
-    `fork` on an antigravity session round-trips through the sqlite surgery on a fixture db.
+- [ ] **Phase 4 — `assistant`** (prefix+/)
+  - Crate `poc/plugins/assistant` (`tx-assistant`), plugin id `assistant`.
+  - From main: `bin/tx-assistant` (`--from-buffer`, `--warm`), `agents/TX-ASSISTANT.md`,
+    `service.rs::focus_envelope` and `transportable_command`, the `focus-envelope` verb, the
+    `start` verb's `--warm` call. ~0.6k lines of Rust plus the script and role.
+  - Depends on phases 2 and 3: the assistant is a spawned agent with the `tx-assistant` role,
+    tagged `tx-system`, that receives `send-user-message` lines wrapped in the focus envelope
+    and spawns workers, nvim companions and shells on request.
+  - State: none beyond the session's own record and `ext["spawn"]`.
+  - Gate: prefix+/ with the assistant down creates it, primes it, and delivers the line; with
+    it up, delivers the line with the envelope naming the focused pane's session.
 
-- [ ] **Phase 5 — `artifacts`** (second store owner)
+- [ ] **Phase 5 — `artifacts`** (prefix+a)
   - Crate `poc/plugins/artifacts` (`tx-artifacts`), plugin id `artifacts`.
   - From main: `artifact.rs`, `artifact_store.rs`, `artifact_service.rs`, `difflib.rs`,
-    `grouping.rs`, `verbs/artifacts.rs` (not `sync`). ~2.9k lines.
+    `grouping.rs`, `verbs/artifacts.rs` (not `sync`), `verbs/artifact_menu.rs`,
+    `artifact_picker.rs`, the `group` verb. ~4k lines.
   - State: `data_dir()/<id>.json` + `data_dir()/<id>/current<ext>` + `revs/`; the touching
-    session's id comes from `TX_SESSION_ID` as today; `ext["artifacts"] = {"bound": id}` for a
-    view bound by `artifact open`; `ext["artifacts"].group` carries main's `group` override,
-    and `grouping::resolved` reads parent chain + bound artifact exactly as main does.
-  - Verbs: `artifact create|modify|group|ls|show|diff|doctor`. `artifact open` waits for
-    phase 6 (it spawns an nvim view).
-  - Gate: main's artifact fixtures round-trip; `doctor --repair` on a store with an orphan rev
-    removes only it; two concurrent `modify` calls produce two contiguous revs.
+    session's id comes from `TX_SESSION_ID`; `ext["artifacts"] = {"bound": id, "group": name}`;
+    `grouping::resolved` reads parent chain + bound artifact exactly as main does.
+  - Verbs: `artifact create|modify|group|ls|show|diff|open|doctor`, `group`, `_artifact-menu`,
+    `_artifact-pick`, `_artifact-go`. `artifact open` uses `tx-views` as a library for the
+    nvim view.
+  - Gate: prefix+a in an agent pane lists the artifacts it touched and attaches, focuses or
+    pops the chosen one; main's artifact fixtures round-trip; `doctor --repair` removes only
+    the orphan rev; two concurrent `modify` calls produce two contiguous revs.
 
-- [ ] **Phase 6 — `views`** (nvim and tmux seams)
-  - Crate `poc/plugins/views` (`tx-views`), plugin id `views`. Owns the extended tmux helper
-    (D5): popups, splits, `switch-client`, `display-message`, `-F` queries.
-  - From main: `service.rs::spawn_nvim`, `spawn_view`, `focus_envelope`,
-    `transportable_command`, `verbs/new_agent.rs`, `verbs/fork_pane.rs`,
-    `verbs/artifact_menu.rs`, `artifact_picker.rs`, `session_editor.rs`, `_edit-session` /
-    `_edit-tag` / `attach` picker / `start` from `verbs/listing.rs`, `render.rs` (the `ls`
-    and picker tables), `playground.rs`, the hidden seams `_tmux-name`, `_pane-info`,
-    `focus-envelope`, `_relabel`. The `nvim/` Lua stays where it is and calls `txc`. ~6k lines.
-  - State: `ext["views"] = {"kind": "nvim|view|playground", "attached_to": id, "nvim_socket": path}`.
-  - Core additions: none. The playground decorator (launch slot) adds the companion's env.
-  - Verbs: `nvim`, `view`, `attach`, `start`, `_new-agent`, `_fork-pane`, `_artifact-menu`,
-    `_artifact-pick`, `_artifact-go`, `_edit-session`, `_edit-tag`, `_pane-info`, `_tmux-name`,
-    `focus-envelope`, `_relabel`, `artifact open` (registered here, delegating to `tx-artifacts`
-    as a library).
-  - Gate: the existing tmux key bindings (`bin/tmux-*`) work against `txc` with the socket
-    swapped; `render` tables match main's fixtures byte-for-byte.
-
-- [ ] **Phase 7 — `timeline`**
+- [ ] **Phase 6 — `timeline`** (prefix+T)
   - Crate `poc/plugins/timeline` (`tx-timeline`), plugin id `timeline`. The only ratatui user.
   - From main: `plugins/timeline/*` (~3.7k lines). Rows come from `log.jsonl` (`Created`,
     `Exited`, `Stopped`, `MessageSent`, `ExtUpdated{hooks}` for working / idle spans) and from
     `tx-chat`'s message parser for arrows. The sqlite cache moves to `data_dir()/cache.sqlite`.
-  - Verbs: `timeline`, `_timeline-resident`, `health`.
-  - Gate: `TestBackend` snapshot tests from main pass with the row source swapped.
+  - Verbs: `timeline`, `_timeline-attach`, `_timeline-resident`, `_timeline-json`, `health`.
+  - Gate: prefix+T opens the resident timeline popup and q detaches it; `TestBackend` snapshot
+    tests from main pass with the row source swapped; `_timeline-json` matches main's fixture.
 
-- [ ] **Phase 8 — `sync`, `migrate`, `install`** (the long tail)
-  - `sync`: crate `poc/plugins/sync`, from `sync.rs`, `storage.rs` (the `Storage` boundary and
-    S3). Mirrors `sessions/`, `log.jsonl`, `plugins.yaml` and every `plugins/<id>/` that opts
-    in through a settings list. ~1.1k lines.
+- [ ] **Phase 7 — `start`, `tutor`, `playground`** (no new keys)
+  - `start`: home base. Boots Views, warms the assistant, `--tutor [LANG]` lands in the
+    walkthrough. Lives in `tx-views`.
+  - `tutor`: crate `poc/plugins/tutor`, plugin id `tutor`. From `tutor/` and `verbs/tutor.rs`;
+    verbs `tutor start|check|next|prev|goto|status|hint|reset`; progress under
+    `data_dir()/<lang>.json`; packs stay in `tutor/<lang>/`. ~1.8k lines.
+  - `playground`: `playground.rs` as a `LaunchDecorator` in `tx-views` plus the companion
+    verb. ~0.4k lines.
+  - Gate: `tx start --tutor python` opens the tutor view and lesson 1 checks pass against a
+    spawned worker; a worker's Bash commands replay in its playground pane.
+
+- [ ] **Phase 8 — `install`, `sync`, `migrate`** (the long tail)
+  - `install`: `install` and `uninstall` scripts, `verbs/install.rs` (`_engines`,
+    `_statusline`), `verbs/home.rs` (`_init-home`), `claude/statusline.sh`,
+    `setup/engines/install.sh`, `claude.sh`, `codex.sh`, the hook shims under
+    `<state_dir>/hooks`, the `~/.tx-ide/tmux.conf` shim and `~/.tmux.conf` block,
+    `setup/iterm.sh`, `setup/nvim.sh`, `engines/codex_update.rs` (`_codex-update`). All as
+    hidden verbs of a crate `poc/plugins/install`; `_claude-settings` and `_codex-hooks` are
+    already `hook install`. ~2.5k lines.
+  - `sync`: crate `poc/plugins/sync`, from `sync.rs` and `storage.rs` (the `Storage` boundary
+    and S3). Mirrors `sessions/`, `log.jsonl`, `plugins.yaml` and every `plugins/<id>/` that
+    opts in through a settings list. Verbs `sync push|pull|status`. ~1.1k lines.
   - `migrate`: crate `poc/plugins/migrate`, from `migrations.rs`. One-shot import of a
     `$TX_IDE_HOME` v6 tree into `<state_dir>`: records to core fields plus `ext` entries per
-    the mapping in phases 2 to 6, `history/` to `plugins/chat/`, `artifacts/` to
-    `plugins/artifacts/`, `tutor/` to `plugins/tutor/`. ~1k lines.
-  - `install`: `verbs/install.rs`, `verbs/home.rs`, `engines/codex_update.rs` become `txc`
-    hidden verbs in a crate `poc/plugins/install` so `install.sh` and `setup/engines/*.sh`
-    drive `txc`; `_claude-settings` / `_codex-hooks` are already `hook install`. ~2.2k lines.
-  - Gate: `install.sh` against a temp `HOME` and `TX_CORE_HOME` yields a working `txc` with
-    hooks registered; `migrate` of a fixture `$TX_IDE_HOME` produces records `txc show` prints
-    and `history` lists.
+    the mapping in phases 1 to 5, `history/` to `plugins/chat/`, `artifacts/` to
+    `plugins/artifacts/`, `tutor/` to `plugins/tutor/`; `config.json`'s reconcile threshold,
+    `sync` section and `plugins` section to `plugins.yaml` settings. ~1k lines.
+  - Gate: `install` against a temp `HOME` and `TX_CORE_HOME` yields a working `txc` with hooks,
+    statusline and the tmux fragment registered; `migrate` of a fixture `$TX_IDE_HOME`
+    produces records `txc show` prints and `history` lists.
+
+## Deferred
+
+- **Antigravity** (D7): the launch half of `engines/antigravity.rs` (Go `flag` grammar,
+  `.agents/` files, settings trust, `_agy-template`, `setup/engines/antigravity.sh`) would be a
+  plugin `engine-antigravity`; the sqlite conversation-db fork surgery and brain-transcript
+  reader would be `tx-chat`'s third engine. ~1.3k lines. Needs nothing from core.
+- **sessions-graph focus poke**: `bin/tx-graph-focus-poke` rings a dashboard server that is
+  not in this repo. Port the script when the server has a home; the tmux focus hooks stay
+  commented out until then.
 
 ## Not ported
 
