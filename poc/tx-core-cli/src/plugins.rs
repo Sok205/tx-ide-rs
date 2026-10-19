@@ -30,6 +30,7 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_edit::EditPlugin),
     || Box::new(tx_spawn::SpawnPlugin),
     || Box::new(tx_assistant::AssistantPlugin),
+    || Box::new(tx_mockup::MockupPlugin),
 ];
 
 /// The built-in verbs; a plugin may not register one of these.
