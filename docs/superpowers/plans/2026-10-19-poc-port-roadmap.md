@@ -49,9 +49,7 @@ Failure modes the specs imply that no single phase's tests own; each owning phas
 2. A `LaunchDecorator` that fails after an earlier decorator wrote into the workspace must leave
    no orphan: core's cleanup path covers the profile file and the tmux session, decorators cover
    their own writes (phase 2, read-only wrapper and skill symlinks).
-3. An `ExtUpdated` sink that reopens the core on the same state dir must not deadlock on the
-   session lock the writer still holds: the event is emitted after the lock is released
-   (phase 3).
+3. Obsolete: there is no `ExtUpdated` event (phase 3 added no core event).
 4. A chat transcript owned by another session must never be bound to this one (phase 3, the
    cross-bind refusal from `hooks.rs::capture_chat_ref`).
 5. A plugin store under `<state_dir>/plugins/<id>/` written by two `txc` processes at once must
@@ -71,7 +69,8 @@ Failure modes the specs imply that no single phase's tests own; each owning phas
   one consumer waits until the second arrives.
 - **D3. Plugins do not call each other.** Crates may depend on each other for library code
   (the timeline reuses the chat crate's message parser), but at run time a plugin learns about
-  another only through `Session.ext` (read) and events (`ExtUpdated`). No capability registry.
+  another only through `Session.ext` (read) and the core's existing events. No capability
+  registry.
 - **D4. Engine knowledge may live in a feature plugin.** `hooks` already knows the Claude and
   Codex hook-file layouts. Likewise the chat plugin owns the transcript, fork and history-bundle
   layouts of every engine; engine plugins stay launch-only. This keeps `EngineAdapter` at its
@@ -95,12 +94,16 @@ Each row is its own small task plan, landed in the phase of its first consumer.
 | `Session.ext` read helper | `Session::ext<T: DeserializeOwned>(&self, plugin: &str) -> Result<Option<T>, serde_json::Error>` | picker (reads `hooks` state), every later plugin | 1 |
 | launch slot | `trait LaunchDecorator: Send + Sync { fn id(&self) -> &str; fn decorate(&self, req: &LaunchRequest<'_>, plan: &mut LaunchPlan) -> Result<(), EngineError>; }`; `Registry::launch(Box<dyn LaunchDecorator>)`; core runs decorators in manifest order between `adapter.launch` and `apply_workspace` in `create_locked` (`poc/tx-core/src/core.rs:534-540`), on `LaunchOptions::Agent` only | spawn (read-only wrapper, skill symlinks), hooks (per-session hook injection), playground (companion env) | 2 |
 | plugin resources | `Registry::resource(name, bytes)`, `TxCore::resources(prefix)` — named static blobs listed by prefix; the core never reads them | every key plugin (its `keys/<id>.tmux`), ide (conf, scripts), later hooks (templates), antigravity (.agents files) | 1 (landed 2026-10-19) |
-| plugin data dir | `Registry::data_dir(&self) -> PathBuf` = `<state_dir>/plugins/<id>/`, created on first call, mode 0755 | chat/history, artifacts, timeline cache, tutor, sync | 3 |
-| `ExtUpdated` event | `EventType::ExtUpdated`; `Event.msg` = `{"plugin": id}`; emitted by `update_ext` only when the value changed, after the lock is released; logged to `log.jsonl` like every event | hooks → history ingest, hooks → timeline, chat ops → timeline | 3 |
-| sweep slot | `trait Sweeper: Send + Sync { fn id(&self) -> &str; fn sweep(&self, core: &TxCore, running: &[Session]) -> Result<(), SweepError>; }`; `Registry::sweeper(...)`; `refresh_all` runs sweepers after its own pass; a sweeper's error is logged to stderr by `txc`, never fails the refresh | hooks (stuck `working` demotion), chat (watchdog for unfinished chat ops), history (pending mirrors) | 3 |
+| plugin data dir | `Registry::data_dir(&self) -> PathBuf` = `<state_dir>/plugins/<id>/`, created on first call, mode 0755 | chat/history, artifacts, timeline cache, tutor, sync | not added (phase 3 proved them unnecessary, see Phase 3) |
+| `ExtUpdated` event | `EventType::ExtUpdated`; `Event.msg` = `{"plugin": id}`; emitted by `update_ext` only when the value changed, after the lock is released; logged to `log.jsonl` like every event | hooks → history ingest, hooks → timeline, chat ops → timeline | not added (phase 3 proved them unnecessary, see Phase 3) |
+| sweep slot | `trait Sweeper: Send + Sync { fn id(&self) -> &str; fn sweep(&self, core: &TxCore, running: &[Session]) -> Result<(), SweepError>; }`; `Registry::sweeper(...)`; `refresh_all` runs sweepers after its own pass; a sweeper's error is logged to stderr by `txc`, never fails the refresh | hooks (stuck `working` demotion), chat (watchdog for unfinished chat ops), history (pending mirrors) | not added (phase 3 proved them unnecessary, see Phase 3) |
 
 Not added, and why:
 
+- Plugin data dir: the plugin derives `<state_dir>/plugins/<id>/` from `core.config()`.
+- `ExtUpdated` event: each plugin installs its own agent hooks.
+- Sweep slot: chat finishes abandoned ops lazily at the start of every chat verb; the
+  stuck-`working` demotion stays open.
 - `ls` columns for plugin state. `txc show` prints `ext`; plugins ship their own `<verb> status`
   (as `hook status` does), and the picker feed in `picker` reads `ext` directly.
 - A capability or service registry between plugins (D3).
@@ -206,29 +209,38 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     dirs to `<state>/agents` and `<state>/user-agents`. Worktrees, `kill --remove`, the launch
     slot and the spawn verb family remain.
 
-- [ ] **Phase 3 — `chat`** (prefix+f; proves `ExtUpdated`, sweep and the data dir)
+- [ ] **Phase 3 — `chat`** (prefix+f; landed with zero core changes)
   - Crate `poc/plugins/chat` (`tx-chat`), plugin ids `chat` and `history` (one crate, two
     plugins, so `plugins.yaml` can disable chat ops while keeping ingest).
   - From main: `history.rs`, `chat.rs`, `messages.rs`, `verbs/chat.rs`, `verbs/fork_pane.rs`,
     the `history` and `chat ls` verbs of `verbs/listing.rs`, the transcript / rollout / bundle
     code of `engines/claude.rs`, `engines/codex.rs`, `engines/codex_rollout.rs`, the chat-ref
     capture of `hooks.rs::capture_chat_ref`. ~5k lines.
-  - State: `ext["chat"] = {"chats": [{"id", "role": "primary|fork|handover|rollover", "since"}]}`;
-    `data_dir()/<session-id>/<chat-id>/` for mirrored bundles (main's `history/`); one flock
-    per (session, chat) as today.
-  - Core additions: plugin data dir, `ExtUpdated`, sweep slot.
-  - Hooks plugin change (same phase): `hook <event>` also stores the payload's chat id and
-    transcript path in `ext["hooks"].chat`; the `history` sink reacts to
-    `ExtUpdated{plugin:"hooks"}` on a transition into `waiting` / `idle` and runs the ingest
-    detached (`current_exe()` + hidden verb `_history-ingest <id>`). The `chat` sweeper
-    finishes abandoned `handover` / `rollover` ops; the `hooks` sweeper demotes a `working`
-    session older than `stuck_after_seconds` to `waiting`.
+  - Landed with zero changes to `tx-core` and zero to `hooks`. `chat hooks install` and
+    `history-hooks install` each register the plugin's own agent hooks next to the `hooks`
+    plugin's (own sidecar, own code); the hidden verbs `_chat-hook` and `_history-ingest` run
+    from them.
+  - State: `ext["chat"] = {engine, launch, chats: [{id, role: primary|fork|handover|rollover,
+    how, since, ended_at, origin, transcript}]}` and `ext["history"] = {chats: {<chat-id>:
+    {transcript, bundle, at}}}`, the shapes of Task 1 (`ChatExt`, `HistoryExt`). Mirrored
+    bundles live under `<state_dir>/plugins/history/<session-id>/<chat-id>/` (main's
+    `history/`), one flock per (session, chat); ops state under `plugins/chat/`.
+  - Forks are `Process` records: the engine crates' pure `launch` builds the argv, then
+    `--fork-session` (claude) or `fork` (codex) is spliced in; the real agent launch is kept in
+    `ext["chat"].launch`. Rollover is a `respawn-pane` of the source's pane.
+  - Core gap found: fork wants a `fork` flag on `LaunchOptions::Agent` / `LaunchRequest`,
+    honoured by `EngineAdapter::launch` and recorded in `Launch::Agent`. A fork could then be a
+    normal Agent record and `ext["chat"].launch` would go away. Until then the picker shows
+    forks as `shell`.
+  - Same result for the plugins merged on branch `poc`: `artifacts` (its own `.log.jsonl`, since
+    the core event types are closed; a flock per artifact) and `tutor` landed with zero core
+    changes too.
   - Verbs: `fork`, `handover`, `rollover`, `resume`, `history [<session>]`, `chat ls`,
     `_fork-pane`, hidden `_chat-op-finish`, `_chat-op-watch`, `_history-ingest`.
   - Gate: prefix+f forks the session in the firing pane and reports on the status line; a
-    Claude session's transcript is mirrored byte-for-byte after `txc hook stop`; the fork's
+    Claude session's transcript is mirrored byte-for-byte after the installed Stop hooks; the fork's
     `ext["chat"]` ref is filled by the next hook; the cross-bind refusal test passes; `messages`
-    parses main's fixture transcripts; `revive` resumes from `ext["chat"]`.
+    parses main's fixture transcripts; `resume` relaunches from `ext["chat"]`.
 
 - [ ] **Phase 4 — `assistant`** (prefix+/)
   - Crate `poc/plugins/assistant` (`tx-assistant`), plugin id `assistant`.
@@ -277,7 +289,8 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
 - [ ] **Phase 6 — `timeline`** (prefix+T)
   - Crate `poc/plugins/timeline` (`tx-timeline`), plugin id `timeline`. The only ratatui user.
   - From main: `plugins/timeline/*` (~3.7k lines). Rows come from `log.jsonl` (`Created`,
-    `Exited`, `Stopped`, `MessageSent`, `ExtUpdated{hooks}` for working / idle spans) and from
+    `Exited`, `Stopped`, `MessageSent`; working / idle spans come from `ext["hooks"]`
+    `{state, since}`, since there is no `ExtUpdated` event) and from
     `tx-chat`'s message parser for arrows. The sqlite cache moves to `data_dir()/cache.sqlite`.
   - Verbs: `timeline`, `_timeline-attach`, `_timeline-resident`, `_timeline-json`, `health`.
   - Gate: prefix+T opens the resident timeline popup and q detaches it; `TestBackend` snapshot
@@ -307,7 +320,7 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     opts in through a settings list. Verbs `sync push|pull|status`. ~1.1k lines.
   - `migrate`: crate `poc/plugins/migrate`, from `migrations.rs`. One-shot import of a
     `$TX_IDE_HOME` v6 tree into `<state_dir>`: records to core fields plus `ext` entries per
-    the mapping in phases 1 to 5, `history/` to `plugins/chat/`, `artifacts/` to
+    the mapping in phases 1 to 5, `history/` to `plugins/chat/` → `plugins/history/`, `artifacts/` to
     `plugins/artifacts/`, `tutor/` to `plugins/tutor/`; `config.json`'s reconcile threshold,
     `sync` section and `plugins` section to `plugins.yaml` settings. ~1k lines.
   - Gate: `install` against a temp `HOME` and `TX_CORE_HOME` yields a working `txc` with hooks,

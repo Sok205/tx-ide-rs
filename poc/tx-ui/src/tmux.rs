@@ -233,6 +233,13 @@ impl Ui {
             .map(drop)
     }
 
+    /// `run-shell -b`, with `#` doubled so tmux runs `command` verbatim rather than
+    /// expanding it as a format.
+    pub fn run_shell_background(&self, command: &str) -> Result<(), UiError> {
+        self.run(&["run-shell", "-b", &command.replace('#', "##")])
+            .map(drop)
+    }
+
     pub fn kill_session(&self, name: &str) -> bool {
         self.quiet(&["kill-session", "-t", &format!("={name}")]).0
     }
@@ -460,6 +467,42 @@ mod tests {
         assert!(!ui.inside_with(Some("/other/tmux.sock,123,0")));
         assert!(!ui.inside_with(Some("")));
         assert!(!ui.inside_with(None));
+    }
+
+    #[test]
+    fn run_shell_background_runs_the_command_verbatim() {
+        let dir = tempfile::Builder::new()
+            .prefix("txui")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let conf = dir.path().join("tmux.conf");
+        std::fs::write(&conf, "").unwrap();
+        let ui = Ui {
+            socket: dir.path().join("tmux.sock"),
+            conf,
+        };
+        if ui.run(&["new-session", "-d", "-s", "t"]).is_err() {
+            eprintln!("tmux not available; skipping");
+            return;
+        }
+        let out = dir.path().join("out");
+        let command = format!(
+            "printf %s {} > {}",
+            shell_quote("a#S#{pane_id}##b"),
+            out.display()
+        );
+        let result = ui.run_shell_background(&command);
+        let mut text = String::new();
+        for _ in 0..50 {
+            text = std::fs::read_to_string(&out).unwrap_or_default();
+            if !text.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        ui.quiet(&["kill-server"]);
+        result.unwrap();
+        assert_eq!(text, "a#S#{pane_id}##b");
     }
 
     #[test]
