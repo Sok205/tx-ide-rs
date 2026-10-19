@@ -270,6 +270,15 @@ impl Session {
         let _ = record.version;
         Ok(record.session)
     }
+
+    /// A plugin's own `ext` record, typed. `Ok(None)` when the plugin never wrote one; `Err`
+    /// when the stored value is not a `T`.
+    pub fn ext<T: serde::de::DeserializeOwned>(
+        &self,
+        plugin: &str,
+    ) -> Result<Option<T>, serde_json::Error> {
+        self.ext.get(plugin).map(T::deserialize).transpose()
+    }
 }
 
 /// `[A-Za-z0-9_-]+`, at most `MAX_NAME_BYTES`. The grammar keeps names safe as exact tmux targets
@@ -592,5 +601,37 @@ mod tests {
                 "{name:?}"
             );
         }
+    }
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct Kind {
+        kind: String,
+    }
+
+    #[test]
+    fn ext_absent_is_none() {
+        let session = process();
+        assert_eq!(session.ext::<serde_json::Value>("views").unwrap(), None);
+    }
+
+    #[test]
+    fn ext_present_deserializes() {
+        let mut session = process();
+        session
+            .ext
+            .insert("views".into(), serde_json::json!({"kind": "nvim"}));
+        assert_eq!(
+            session.ext::<Kind>("views").unwrap(),
+            Some(Kind {
+                kind: "nvim".into()
+            })
+        );
+    }
+
+    #[test]
+    fn ext_wrong_shape_is_err() {
+        let mut session = process();
+        session.ext.insert("views".into(), serde_json::json!(5));
+        assert!(session.ext::<Kind>("views").is_err());
     }
 }
