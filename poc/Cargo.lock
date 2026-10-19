@@ -1879,6 +1879,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-menu"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "tx-core",
+ "tx-ui",
+]
+
+[[package]]
 name = "tx-mockup"
 version = "0.1.0"
 dependencies = [
