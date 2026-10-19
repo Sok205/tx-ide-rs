@@ -3,7 +3,6 @@
 mod common;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use common::{Harness, STUB_ID, ShellStub, process};

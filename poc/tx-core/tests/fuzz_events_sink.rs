@@ -559,7 +559,7 @@ struct Panicky(usize);
 
 impl EventSink for Panicky {
     fn on_event(&self, event: &Event) {
-        if self.0 % 2 == 0 {
+        if self.0.is_multiple_of(2) {
             panic!("sink {} bug on {:?}", self.0, event.type_);
         }
         std::panic::panic_any(self.0);

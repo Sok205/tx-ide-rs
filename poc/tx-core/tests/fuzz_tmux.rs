@@ -280,7 +280,7 @@ fn probe_name(server: &Server, name: &str) -> NameOutcome {
     // what name did tmux actually store? (list every session, newest id wins)
     let out = server.raw(&["list-sessions", "-F", "#{session_name}"]);
     let names = String::from_utf8_lossy(&out.stdout);
-    let stored = names.lines().find(|n| *n == name).is_some();
+    let stored = names.lines().any(|n| n == name);
     if set.is_err() {
         // clean up by whichever name exists so later probes start clean
         let _ = server.raw(&["kill-server"]);
