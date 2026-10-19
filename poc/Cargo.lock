@@ -568,6 +568,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-ui"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tx-core",
+]
+
+[[package]]
 name = "tx-views"
 version = "0.1.0"
 dependencies = [
@@ -575,8 +586,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tx-core",
+ "tx-ui",
 ]
 
 [[package]]

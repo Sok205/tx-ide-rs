@@ -11,11 +11,11 @@ use std::time::Duration;
 use tx_core::events::now;
 use tx_core::{Lifecycle, ListFilter, Session, TxCore, Verb, VerbError, VerbIo};
 
-use crate::render::{
+use tx_ui::render::{
     ACCENT_ANSI, BOLD, FG_ANSI, LOCATION_W, RESET, ROLE_W, Row, WARN_ANSI, picker_namew,
     picker_rows,
 };
-use crate::tmux::Ui;
+use tx_ui::tmux::Ui;
 
 const DEFAULT_NAMEW: i64 = 18;
 const DEFAULT_COLS: i64 = 80;

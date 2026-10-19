@@ -3,8 +3,8 @@
 
 use tx_core::{CoreError, Lifecycle, ListFilter, SessionId, TxCore, Verb, VerbError, VerbIo};
 
-use crate::render::tag_hex;
-use crate::tmux::Ui;
+use tx_ui::render::tag_hex;
+use tx_ui::tmux::Ui;
 
 const NAME_OPTION: &str = "@tx-name";
 const REMOTE_OPTION: &str = "@remote-session";

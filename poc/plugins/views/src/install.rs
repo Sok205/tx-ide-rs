@@ -6,7 +6,7 @@ use std::process::Stdio;
 
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
-use crate::tmux::Ui;
+use tx_ui::tmux::Ui;
 
 const FRAGMENT: &str = "tmux/tx-ide.tmux";
 const HOME_SESSION: &str = "home";

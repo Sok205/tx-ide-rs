@@ -7,9 +7,9 @@ use tx_core::{CoreError, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
 
 use crate::Ext;
 use crate::PLUGIN_ID;
-use crate::editor::edit_session;
-use crate::render::{ACCENT_ANSI, BOLD, RESET};
-use crate::tmux::Ui;
+use tx_ui::editor::edit_session;
+use tx_ui::render::{ACCENT_ANSI, BOLD, RESET};
+use tx_ui::tmux::Ui;
 
 const NO_SESSION: &str = "prefix+e: no tx session in this pane (view homes cannot be edited)";
 const NOT_MANAGED: &str = "prefix+e: the session in this pane is not tx-managed";

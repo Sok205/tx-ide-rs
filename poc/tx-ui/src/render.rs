@@ -1,10 +1,10 @@
 //! Picker row rendering: port of main's `render.rs` picker feed and `palette.rs` tag colours.
 //! Pure formatting; every function takes the records and `now`, nothing reads the clock.
 
+use serde::Deserialize;
 use serde_json::{Map, Value};
 use tx_core::{Launch, Session};
 
-use crate::Ext;
 use crate::tmux::Location;
 
 pub const WARN_ANSI: &str = "\x1b[38;2;224;175;104m";
@@ -13,6 +13,12 @@ pub const ACCENT_ANSI: &str = "\x1b[38;2;122;162;247m";
 pub const FG_ANSI: &str = "\x1b[38;2;192;202;245m";
 pub const BOLD: &str = "\x1b[1m";
 pub const RESET: &str = "\x1b[0m";
+
+// Inlined from main's `crates/tx/src/palette.rs` (tx-ui has no palette module).
+pub const DIM_FG_ANSI: &str = "\x1b[38;2;169;177;214m";
+pub const INFO_ANSI: &str = "\x1b[38;2;125;207;255m";
+pub const ITALIC: &str = "\x1b[3m";
+pub const SELECTION_BG: &str = "236";
 
 /// LOCATION column width, shared with the picker header.
 pub const LOCATION_W: usize = 25;
@@ -123,9 +129,14 @@ fn hooks_since(session: &Session) -> Option<f64> {
         .and_then(|hooks| hooks.get("since")?.as_f64())
 }
 
+#[derive(Deserialize)]
+struct Kind {
+    kind: Option<String>,
+}
+
 fn views_kind(session: &Session) -> Option<String> {
     session
-        .ext::<Ext>("views")
+        .ext::<Kind>("views")
         .ok()
         .flatten()
         .and_then(|views| views.kind)

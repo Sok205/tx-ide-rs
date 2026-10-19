@@ -3,12 +3,9 @@
 //! which kind of view a session is and which group it belongs to.
 
 pub mod edit;
-pub mod editor;
 pub mod install;
 pub mod picker;
-pub mod render;
 pub mod session_verbs;
-pub mod tmux;
 
 use std::sync::Arc;
 
