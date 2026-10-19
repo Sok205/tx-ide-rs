@@ -139,6 +139,12 @@ pub(crate) fn is_no_server(stderr: &str) -> bool {
             && stderr.ends_with("(No such file or directory)"))
 }
 
+/// The server quit while answering (`exit-empty` after the last session ended): it has no
+/// sessions, same as no server.
+pub(crate) fn server_quit(stderr: &str) -> bool {
+    stderr.trim_end() == "server exited unexpectedly"
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tmux {
     binary: OsString,
@@ -316,7 +322,7 @@ impl Tmux {
             .map(drop)
     }
 
-    /// The only liveness signal. No server → an empty table; any other failure →
+    /// The only liveness signal. No server (or one quitting) → an empty table; any other failure →
     /// `InspectionFailed`, never an empty table.
     pub fn list_live(&self) -> Result<LiveTable, TmuxError> {
         let output = self.output(&["list-sessions".into(), "-F".into(), LIST_FORMAT.into()])?;
@@ -324,7 +330,7 @@ impl Tmux {
             return LiveTable::parse(&String::from_utf8_lossy(&output.stdout));
         }
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        if is_no_server(&stderr) {
+        if is_no_server(&stderr) || server_quit(&stderr) {
             return Ok(LiveTable::default());
         }
         Err(TmuxError::InspectionFailed { stderr })
@@ -435,6 +441,23 @@ mod tests {
         assert_eq!(exact("-w"), "=-w");
         assert_eq!(exact("3"), "=3");
         assert_eq!(exact_for_pane_target("3"), "=3:");
+    }
+
+    /// `exit-empty` races the next client: killing the last session can leave a `list-sessions`
+    /// connected to a server that quits before answering. No server, so no live sessions.
+    #[test]
+    fn list_live_reads_a_server_that_quits_while_answering_as_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("tmux");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\necho 'server exited unexpectedly' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let tmux = Tmux::new(&fake, dir.path().join("s"), dir.path().join("c"));
+        assert_eq!(tmux.list_live().unwrap(), LiveTable::default());
     }
 
     #[test]
