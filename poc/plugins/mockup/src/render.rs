@@ -5,9 +5,10 @@ use std::time::Duration;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, List, ListState, Paragraph, Row, StatefulWidget, Table, Widget};
 
+use crate::markup::lines;
 use crate::model::{Choice, Kind, Node, Screen, Size};
 
 /// `tx_ui::render::ACCENT_ANSI`.
@@ -214,13 +215,6 @@ fn constraint(size: Size) -> Constraint {
         Size::Pct(n) => Constraint::Percentage(n),
         Size::Fill => Constraint::Fill(1),
     }
-}
-
-// TEMPORARY shim until Task 2's `markup::lines` is merged; swap for `crate::markup::lines`.
-fn lines(text: &str) -> Vec<Line<'static>> {
-    text.split('\n')
-        .map(|part| Line::from(Span::raw(part.to_string())))
-        .collect()
 }
 
 #[cfg(test)]
