@@ -4,6 +4,7 @@
 
 use tx_core::{Plugin, PluginError, Registry};
 
+pub mod markup;
 pub mod model;
 
 pub const PLUGIN_ID: &str = "mockup";
