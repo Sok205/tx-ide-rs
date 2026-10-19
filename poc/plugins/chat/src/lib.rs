@@ -10,6 +10,7 @@ pub mod history_verbs;
 pub mod install;
 pub mod messages;
 pub mod mirror;
+pub mod ops;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -64,7 +65,7 @@ pub enum ChatError {
     },
     #[error("{op}: session '{token}' not found")]
     NotFound { op: String, token: String },
-    #[error("{op}: session '{name}' has no {missing}")]
+    #[error("{op}: '{name}' has no {missing}")]
     NoChat {
         op: String,
         name: String,
@@ -88,6 +89,10 @@ pub enum ChatError {
         name: String,
         reason: String,
     },
+    #[error("resume: a live session named '{0}' already exists — pass --as <new-name>")]
+    LiveName(String),
+    #[error("resume: cwd '{cwd}' does not exist — {remedy} (C8)")]
+    CwdMissing { cwd: String, remedy: String },
     #[error("no pane for {0}")]
     NoPane(String),
     #[error("not inside tmux (TMUX_PANE is unset)")]
@@ -130,7 +135,7 @@ impl Plugin for ChatPlugin {
     }
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
-        for verb in capture::verbs() {
+        for verb in capture::verbs().into_iter().chain(ops::verbs()) {
             r.verb(verb);
         }
         Ok(())

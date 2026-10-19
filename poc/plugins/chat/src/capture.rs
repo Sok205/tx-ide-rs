@@ -241,6 +241,7 @@ fn hooks_install(io: &mut VerbIo<'_>, dry_run: bool) -> Result<i32, VerbError> {
 }
 
 fn ls(core: &TxCore, io: &mut VerbIo<'_>, token: &str) -> Result<i32, VerbError> {
+    crate::ops::sweep_abandoned(core, io.stderr);
     let Some(id) = resolve(core, token)? else {
         say(
             io.stderr,

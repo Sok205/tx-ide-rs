@@ -1,4 +1,5 @@
-//! The chat plugin's capture through the binary: `_chat-hook`, `chat ls`, `chat hooks`.
+//! The chat plugin through the binary: capture (`_chat-hook`, `chat ls`, `chat hooks`) and the
+//! chat ops (`fork`, `handover`, `rollover`, `resume`, `_chat-op-finish`, `_chat-op-watch`).
 
 mod common;
 
@@ -17,7 +18,7 @@ impl Cli {
     fn create_agent(&self, name: &str) -> String {
         let cwd = self.dir.path().join(name);
         std::fs::create_dir_all(&cwd).unwrap();
-        let path = self.fake_claude_path();
+        let path = self.argv_path();
         let output = self.run(
             &[
                 "create",
@@ -36,6 +37,83 @@ impl Cli {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+    /// A `claude` that writes its argv one per line to `argv/<pid>`, then stays alive.
+    fn argv_path(&self) -> String {
+        let dir = self.dir.path().join("argv");
+        std::fs::create_dir_all(&dir).unwrap();
+        self.shim_path(&[(
+            "claude",
+            &format!(
+                "printf '%s\\n' \"$@\" > '{}/'$$\nexec sleep 60",
+                dir.display()
+            ),
+        )])
+    }
+    /// Every recorded `claude` argv.
+    fn argvs(&self) -> Vec<Vec<String>> {
+        let Ok(entries) = std::fs::read_dir(self.dir.path().join("argv")) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .map(|e| {
+                std::fs::read_to_string(e.path())
+                    .unwrap_or_default()
+                    .lines()
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .collect()
+    }
+    fn wait_argv(&self, mut probe: impl FnMut(&[String]) -> bool) -> Vec<String> {
+        let mut found = None;
+        let ok = self.wait_for(10, || {
+            found = self.argvs().into_iter().find(|argv| probe(argv));
+            found.is_some()
+        });
+        assert!(ok, "no matching argv in {:?}", self.argvs());
+        found.unwrap()
+    }
+    /// `txc` with the recording shim on PATH and the engines' homes inside the test dir.
+    fn op(&self, args: &[&str], extra: &[(&str, &str)]) -> std::process::Output {
+        let path = self.argv_path();
+        let home = self.dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let home = home.to_str().unwrap().to_owned();
+        let mut env = vec![
+            ("PATH", path.as_str()),
+            ("HOME", home.as_str()),
+            ("CLAUDE_CONFIG_DIR", home.as_str()),
+            ("CODEX_HOME", home.as_str()),
+            ("TMUX_PANE", ""),
+        ];
+        env.extend_from_slice(extra);
+        self.run(args, &env, "")
+    }
+    fn op_ok(&self, args: &[&str], extra: &[(&str, &str)]) -> String {
+        let output = self.op(args, extra);
+        assert!(
+            output.status.success(),
+            "txc {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+    fn records_named(&self, name: &str) -> Vec<Value> {
+        std::fs::read_dir(self.state().join("sessions"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|e| serde_json::from_slice::<Value>(&std::fs::read(e.path()).ok()?).ok())
+            .filter(|record| record["name"] == name)
+            .collect()
+    }
+    fn capture(&self, id: &str, chat: &str) {
+        let body = payload(chat, &self.dir.path().join(format!("{chat}.jsonl")));
+        assert!(self.hook("session-start", id, &body).status.success());
+    }
+    fn ops_dir(&self) -> std::path::PathBuf {
+        self.state().join("plugins/chat/ops")
     }
     fn hook(&self, event: &str, id: &str, payload: &str) -> std::process::Output {
         self.run(&["_chat-hook", event], &[("TX_SESSION_ID", id)], payload)
@@ -219,4 +297,308 @@ fn chat_hooks_install_coexists_with_hook_install() {
     );
     assert!(commands.iter().any(|c| c.contains("_history-ingest")));
     assert!(commands.iter().any(|c| c.contains(" hook stop")));
+}
+
+fn has_run(argv: &[String], run: &[&str]) -> bool {
+    argv.windows(run.len())
+        .any(|w| w.iter().zip(run).all(|(a, b)| a == b))
+}
+
+#[test]
+fn fork_resumes_the_source_chat_with_fork_session() {
+    require_tmux!();
+    let cli = Cli::new();
+    let id = cli.create_agent("a");
+    cli.capture(&id, "c1");
+    let out = cli.op_ok(&["fork", "a"], &[]);
+    let fork = cli.show("a-fork");
+    let cwd = fork["cwd"].as_str().unwrap();
+    assert_eq!(
+        out,
+        format!("Forked 'a' → 'a-fork' (chat pending, cwd={cwd})\n")
+    );
+    assert_eq!(fork["parent"], id.as_str());
+    assert_eq!(fork["launch"]["kind"], "process");
+    assert_eq!(fork["launch"]["program"], "claude");
+    cli.wait_argv(|argv| has_run(argv, &["--resume", "c1", "--fork-session"]));
+    let chat = &fork["ext"]["chat"];
+    assert_eq!(chat["engine"], "claude");
+    assert_eq!(chat["launch"]["engine"], "claude");
+    assert_eq!(chat["chats"][0]["role"], "fork");
+    assert_eq!(chat["chats"][0]["how"], "fork");
+    assert_eq!(chat["chats"][0]["id"], Value::Null);
+    assert_eq!(chat["chats"][0]["origin"]["session"], id.as_str());
+    assert_eq!(chat["chats"][0]["origin"]["chat"], "c1");
+    assert!(cli.op_ok(&["fork", "a"], &[]).contains("'a' → 'a-fork-2'"));
+}
+
+#[test]
+fn the_forks_pending_ref_is_filled_by_the_next_chat_hook() {
+    require_tmux!();
+    let cli = Cli::new();
+    let id = cli.create_agent("a");
+    cli.capture(&id, "c1");
+    cli.op_ok(&["fork", "a"], &[]);
+    let fork = cli.show("a-fork")["id"].as_str().unwrap().to_owned();
+    cli.capture(&fork, "c1");
+    assert_eq!(
+        cli.show("a-fork")["ext"]["chat"]["chats"][0]["id"],
+        Value::Null,
+        "a lazy fork still reports its source chat"
+    );
+    let body = payload("c2", &cli.dir.path().join("c2.jsonl"));
+    assert!(cli.hook("prompt-submit", &fork, &body).status.success());
+    let chats = &cli.show("a-fork")["ext"]["chat"]["chats"];
+    assert_eq!(chats[0]["id"], "c2");
+    assert_eq!(chats.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn resume_relaunches_the_active_chat_from_ext() {
+    require_tmux!();
+    let cli = Cli::new();
+    let old = cli.create_agent("a");
+    cli.capture(&old, "c1");
+    cli.ok(&["stop", "a"]);
+    let output = cli.op(&["resume", "a"], &[]);
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("resume: warning — transcript for chat c1 not found under "),
+        "{stderr}"
+    );
+    let new = cli.show("a");
+    assert_eq!(new["lifecycle"], "running");
+    assert_ne!(new["id"], old.as_str());
+    assert_eq!(new["parent"], old.as_str());
+    assert_eq!(new["launch"]["kind"], "agent");
+    assert_eq!(new["launch"]["resume"], "c1");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!(
+            "Resumed 'a' as 'a' (chat c1, cwd={})\n",
+            new["cwd"].as_str().unwrap()
+        )
+    );
+    cli.wait_argv(|argv| has_run(argv, &["--resume", "c1"]));
+    let first = &new["ext"]["chat"]["chats"][0];
+    assert_eq!(first["id"], "c1");
+    assert_eq!(first["role"], "primary");
+    assert_eq!(first["how"], "resume");
+    assert_eq!(first["origin"]["session"], old.as_str());
+    assert_eq!(first["origin"]["chat"], "c1");
+    assert_eq!(new["ext"]["chat"]["chats"].as_array().unwrap().len(), 1);
+
+    let again = cli.op(&["resume", "a"], &[]);
+    assert_eq!(again.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&again.stderr)
+            .contains("resume: a live session named 'a' already exists — pass --as <new-name>")
+    );
+    let gone = cli.dir.path().join("gone");
+    let missing = cli.op(
+        &["resume", "a", "--as", "b", "--cwd", gone.to_str().unwrap()],
+        &[],
+    );
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains(&format!(
+        "resume: cwd '{}' does not exist — '{}' is not a directory (C8)",
+        gone.display(),
+        gone.display()
+    )));
+    assert_eq!(cli.op(&["resume"], &[]).status.code(), Some(2));
+}
+
+#[test]
+fn handover_self_catch_up_spawns_the_worker() {
+    require_tmux!();
+    let cli = Cli::new();
+    let id = cli.create_agent("a");
+    cli.capture(&id, "c1");
+    let out = cli.op_ok(&["handover", "a", "task", "--self-catch-up"], &[]);
+    assert_eq!(
+        out,
+        "Handover 'a' → worker 'a-handover' (self-catch-up; launches when ready)\n"
+    );
+    let worker = cli.show("a-handover");
+    assert_eq!(worker["parent"], id.as_str());
+    assert_eq!(worker["launch"]["kind"], "agent");
+    let pending = &worker["ext"]["chat"]["chats"][0];
+    assert_eq!(pending["role"], "handover");
+    assert_eq!(pending["how"], "handover");
+    assert_eq!(pending["id"], Value::Null);
+    assert_eq!(pending["origin"]["chat"], "c1");
+    cli.wait_argv(|argv| {
+        argv.last()
+            .is_some_and(|last| last.starts_with("You are taking over work via tx handover."))
+    });
+    assert_eq!(std::fs::read_dir(cli.ops_dir()).unwrap().count(), 0);
+}
+
+#[test]
+fn handover_distiller_then_watchdog_finishes() {
+    require_tmux!();
+    let cli = Cli::new();
+    let id = cli.create_agent("a");
+    cli.capture(&id, "c1");
+    let timings = [
+        ("TX_CHAT_OP_TIMEOUT_S", "0"),
+        ("TX_CHAT_OP_GRACE_S", "0"),
+        ("TX_CHAT_OP_POLL_S", "0.1"),
+    ];
+    let out = cli.op_ok(&["handover", "a", "fix it"], &timings);
+    assert_eq!(
+        out,
+        "Handover 'a' → worker 'a-handover' (distilling brief; launches when ready)\n"
+    );
+    let distiller = cli.show("a-handover-distill");
+    assert_eq!(distiller["tags"], json!(["temporary", "handover"]));
+    assert!(cli.wait_for(10, || {
+        !cli.records_named("a-handover").is_empty()
+            && cli.show("a-handover-distill")["lifecycle"] == "stopped"
+    }));
+    let seed = cli.wait_argv(|argv| {
+        argv.last()
+            .is_some_and(|l| l.starts_with("You are a tx-ide handover distiller"))
+    });
+    let seed = seed.last().unwrap();
+    assert!(seed.contains("/handover-fix-it.md"), "{seed}");
+    let op = seed
+        .rsplit("_chat-op-finish '")
+        .next()
+        .unwrap()
+        .trim_end_matches('\'');
+    for _ in 0..2 {
+        cli.op(&["_chat-op-finish", op], &timings);
+    }
+    assert_eq!(cli.records_named("a-handover").len(), 1);
+    assert_eq!(cli.show("a-handover")["parent"], id.as_str());
+    assert!(!cli.ops_dir().join(op).exists());
+}
+
+#[test]
+fn rollover_respawns_the_same_pane_with_a_seed() {
+    require_tmux!();
+    let cli = Cli::new();
+    let id = cli.create_agent("a");
+    cli.capture(&id, "c1");
+    let pane = common::pane_id_of(&cli, "a");
+    let out = cli.op_ok(&["rollover", "a", "--self-catch-up"], &[]);
+    assert_eq!(
+        out,
+        "Rollover scheduled (self-catch-up); the same session rotates onto a fresh chat when \
+         ready\n"
+    );
+    cli.wait_argv(|argv| {
+        argv.last().is_some_and(|last| {
+            last.starts_with("Continuing prior work in a fresh chat (rollover).")
+        })
+    });
+    assert!(cli.wait_for(10, || {
+        cli.show("a")["ext"]["chat"]["chats"]
+            .as_array()
+            .is_some_and(|chats| chats.len() == 2)
+    }));
+    let record = cli.show("a");
+    assert_eq!(record["id"], id.as_str());
+    assert_eq!(record["lifecycle"], "running");
+    assert_eq!(common::pane_id_of(&cli, "a"), pane);
+    let chats = &record["ext"]["chat"]["chats"];
+    assert_eq!(chats[0]["id"], "c1");
+    assert!(chats[0]["ended_at"].is_number());
+    assert_eq!(chats[1]["id"], Value::Null);
+    assert_eq!(chats[1]["role"], "rollover");
+    assert_eq!(chats[1]["how"], "rollover");
+    assert_eq!(chats[1]["origin"]["session"], id.as_str());
+    assert_eq!(chats[1]["origin"]["chat"], "c1");
+    let tx_id = cli.tmux_out(&["show-options", "-t", "=a:", "-v", "@tx-id"]);
+    assert_eq!(tx_id, id);
+}
+
+fn write_stale_spec(cli: &Cli, op: &str, source: &str, cwd: &str, worker: &str) {
+    let dir = cli.ops_dir().join(op);
+    std::fs::create_dir_all(&dir).unwrap();
+    let spec = dir.join("spec.json");
+    let body = json!({
+        "op_id": op, "kind": "handover", "source": source, "source_chat": "c1",
+        "cwd": cwd, "artifact_path": "", "self_catch_up": false,
+        "worker_name": worker, "pane": "", "distiller_name": "",
+    });
+    std::fs::write(&spec, body.to_string()).unwrap();
+    let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&spec)
+        .unwrap()
+        .set_modified(hour_ago)
+        .unwrap();
+}
+
+#[test]
+fn an_abandoned_op_is_finished_once_by_the_next_chat_verb() {
+    require_tmux!();
+    let cli = Cli::new();
+    let id = cli.create_agent("a");
+    cli.capture(&id, "c1");
+    let cwd = cli.show("a")["cwd"].as_str().unwrap().to_owned();
+    write_stale_spec(&cli, "dead", &id, &cwd, "a-worker");
+    write_stale_spec(&cli, "live", &id, &cwd, "b-worker");
+    let lock = std::fs::File::create(cli.ops_dir().join("live/watch.lock")).unwrap();
+    lock.lock().unwrap();
+
+    let output = cli.op(&["chat", "ls", "a"], &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let worker = cli.records_named("a-worker");
+    assert_eq!(worker.len(), 1);
+    assert_eq!(worker[0]["parent"], id.as_str());
+    assert!(!cli.ops_dir().join("dead").exists());
+    assert!(cli.ops_dir().join("live/spec.json").exists());
+    assert!(cli.records_named("b-worker").is_empty());
+
+    cli.op_ok(&["chat", "ls", "a"], &[]);
+    assert_eq!(cli.records_named("a-worker").len(), 1);
+    assert!(cli.records_named("b-worker").is_empty());
+
+    drop(lock);
+    write_stale_spec(&cli, "broken", "not-a-session", &cwd, "c-worker");
+    let output = cli.op(&["chat", "ls", "a"], &[]);
+    assert!(
+        output.status.success(),
+        "a sweep failure keeps the exit code"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("chat: abandoned op broken: "), "{stderr}");
+    assert_eq!(
+        cli.records_named("b-worker").len(),
+        1,
+        "the lock was released"
+    );
+}
+
+#[test]
+fn fork_without_a_chat_exits_1() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create_agent("a");
+    let output = cli.op(&["fork", "a"], &[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "fork: 'a' has no chat to fork\n"
+    );
+    assert!(cli.records_named("a-fork").is_empty());
+    let missing = cli.op(&["fork", "nope"], &[]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("fork: session 'nope' not found"));
+    assert_eq!(cli.op(&["fork"], &[]).status.code(), Some(2));
+    let rollover = cli.op(&["rollover", "a"], &[]);
+    assert_eq!(rollover.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&rollover.stderr)
+            .contains("rollover: 'a' has no active chat to roll over")
+    );
 }
