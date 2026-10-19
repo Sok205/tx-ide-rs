@@ -2,6 +2,7 @@
 //! core's private server whose panes nest-attach to agent sessions; `ext["views"]` records
 //! which kind of view a session is and which group it belongs to.
 
+pub mod render;
 pub mod tmux;
 
 use serde::{Deserialize, Serialize};
