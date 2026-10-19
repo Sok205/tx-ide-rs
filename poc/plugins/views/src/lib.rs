@@ -2,6 +2,7 @@
 //! core's private server whose panes nest-attach to agent sessions; `ext["views"]` records
 //! which kind of view a session is and which group it belongs to.
 
+pub mod editor;
 pub mod picker;
 pub mod render;
 pub mod session_verbs;
