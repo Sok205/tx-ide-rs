@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# keys: none
+# keys: C-h C-j C-k C-l
 # tx key plugin `ide`: the IDE's root-table keys and global look. Run by `run-shell` from the
 # server's tmux.conf, which `txc ui install` writes (first, before the other plugins' fragments).
 #
@@ -19,7 +19,8 @@ set -u
 
 # The state directory, handed over by the server's own options (written by `txc ui install`);
 # the helper scripts live in <state>/bin.
-STATE=$(tmux show-option -gv @tx-state)
+STATE=$(tmux show-option -gv @tx-state 2>/dev/null)
+[ -n "$STATE" ] || exit 0
 DIR="$STATE/bin"
 # Navigator for the nav-keys edge path.
 NAV="$DIR/tmux-nav"

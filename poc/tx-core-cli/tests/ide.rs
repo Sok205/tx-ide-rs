@@ -237,6 +237,41 @@ fn ui_install_fragment_loads() {
 }
 
 #[test]
+fn fragments_do_nothing_outside_an_installed_server() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    let other = cli.outer_sock();
+    let on_other = |args: &[&str]| {
+        Command::new("tmux")
+            .arg("-S")
+            .arg(&other)
+            .args(["-f", "/dev/null"])
+            .args(args)
+            .env_remove("TMUX")
+            .output()
+            .unwrap()
+    };
+    assert!(
+        on_other(&["new-session", "-d", "-s", "other", "sleep", "60"])
+            .status
+            .success()
+    );
+    for id in ["ide", "labels", "kill", "picker", "edit"] {
+        let output = Command::new(cli.state().join(format!("keys/{id}.tmux")))
+            .env("TMUX", format!("{},1,0", other.display()))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{id}: {output:?}");
+    }
+    let bound = on_other(&["list-keys", "-T", "prefix", "X"]);
+    let root = on_other(&["list-keys", "-T", "root", "C-h"]);
+    on_other(&["kill-server"]);
+    assert!(bound.stdout.is_empty(), "{bound:?}");
+    assert!(root.stdout.is_empty(), "{root:?}");
+}
+
+#[test]
 fn disabling_kill_removes_its_key_on_reload() {
     require_tmux!();
     let cli = Cli::new();

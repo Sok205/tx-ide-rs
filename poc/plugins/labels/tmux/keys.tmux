@@ -12,8 +12,10 @@
 # last-write-wins.
 set -u
 
-TXC=$(tmux show-option -gv @tx-bin)
-STATE=$(tmux show-option -gv @tx-state)
+TXC=$(tmux show-option -gv @tx-bin 2>/dev/null)
+STATE=$(tmux show-option -gv @tx-state 2>/dev/null)
+[ -n "$STATE" ] || exit 0
+[ -n "$TXC" ] || exit 0
 TX="$TXC --state-dir $STATE"
 
 CONF=$(mktemp -t tx-labels-keys.XXXXXX)

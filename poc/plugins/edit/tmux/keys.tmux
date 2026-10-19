@@ -8,7 +8,8 @@
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.
 set -u
 
-STATE=$(tmux show-option -gv @tx-state)
+STATE=$(tmux show-option -gv @tx-state 2>/dev/null)
+[ -n "$STATE" ] || exit 0
 
 CONF=$(mktemp -t tx-edit-keys.XXXXXX)
 trap 'rm -f "$CONF"' EXIT

@@ -12,8 +12,10 @@
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.
 set -u
 
-TXC=$(tmux show-option -gv @tx-bin)
-STATE=$(tmux show-option -gv @tx-state)
+TXC=$(tmux show-option -gv @tx-bin 2>/dev/null)
+STATE=$(tmux show-option -gv @tx-state 2>/dev/null)
+[ -n "$STATE" ] || exit 0
+[ -n "$TXC" ] || exit 0
 TX="$TXC --state-dir $STATE"
 
 CONF=$(mktemp -t tx-picker-keys.XXXXXX)
