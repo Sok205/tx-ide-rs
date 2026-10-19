@@ -27,6 +27,7 @@ tx-mockup = { path = "../plugins/mockup" }
 tx-tutor = { path = "../plugins/tutor" }
 tx-artifacts = { path = "../plugins/artifacts" }
 tx-timeline = { path = "../plugins/timeline" }
+tx-menu = { path = "../plugins/menu" }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway = "0.9"

@@ -1808,6 +1808,7 @@ dependencies = [
  "tx-ide",
  "tx-kill",
  "tx-labels",
+ "tx-menu",
  "tx-mockup",
  "tx-picker",
  "tx-spawn",
