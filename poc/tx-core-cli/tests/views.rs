@@ -376,3 +376,75 @@ fn edit_session_on_view_home_exits_1() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+impl Cli {
+    fn conf(&self) -> PathBuf {
+        self.state().join("tmux.conf")
+    }
+    fn tmux_with_conf(&self, args: &[&str]) -> Output {
+        Command::new("tmux")
+            .arg("-S")
+            .arg(self.sock())
+            .arg("-f")
+            .arg(self.conf())
+            .args(args)
+            .env_remove("TMUX")
+            .output()
+            .unwrap()
+    }
+}
+
+#[test]
+fn ui_install_writes_conf_and_fragment_loads() {
+    require_tmux!();
+    let cli = Cli::new();
+    let poc = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let exe = std::fs::canonicalize(env!("CARGO_BIN_EXE_txc")).unwrap();
+    let out = cli.ok(&["ui", "install", "--poc", poc.to_str().unwrap()]);
+    assert_eq!(out, format!("{}\n", cli.conf().display()));
+    let poc = poc.display();
+    assert_eq!(
+        std::fs::read_to_string(cli.conf()).unwrap(),
+        format!(
+            "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
+             set -s exit-empty on\n\
+             set -g history-limit 50000\n\
+             set -g @tx-bin \"{}\"\n\
+             set -g @tx-state \"{}\"\n\
+             source-file \"{poc}/tmux/tmux.conf\"\n\
+             run-shell \"{poc}/tmux/tx-ide.tmux\"\n",
+            exe.display(),
+            cli.state().display()
+        )
+    );
+    assert!(
+        cli.tmux_with_conf(&["new-session", "-d", "-s", "probe", "sleep", "60"])
+            .status
+            .success()
+    );
+    let mut bound = String::new();
+    for _ in 0..30 {
+        bound = String::from_utf8_lossy(
+            &cli.tmux_with_conf(&["list-keys", "-T", "prefix", "t"])
+                .stdout,
+        )
+        .into_owned();
+        if bound.contains("pick") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(bound.contains("pick"), "{bound:?}");
+    let kill =
+        String::from_utf8_lossy(&cli.tmux(&["list-keys", "-T", "prefix", "X"]).stdout).into_owned();
+    assert!(kill.contains("tmux-kill-tx-session"), "{kill:?}");
+    assert_eq!(
+        cli.tmux_out(&["show-option", "-gv", "@tx-bin"]),
+        exe.to_str().unwrap()
+    );
+    let new_agent = cli.tmux_out(&["list-keys", "-T", "prefix", "n"]);
+    assert!(!new_agent.contains("_new-agent"), "{new_agent:?}");
+    cli.tmux(&["kill-server"]);
+}

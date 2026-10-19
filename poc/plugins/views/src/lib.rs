@@ -4,6 +4,7 @@
 
 pub mod edit;
 pub mod editor;
+pub mod install;
 pub mod picker;
 pub mod render;
 pub mod session_verbs;
@@ -35,6 +36,7 @@ impl Plugin for ViewsPlugin {
         r.verb(Arc::new(session_verbs::PaneLabel));
         r.verb(Arc::new(edit::EditSession));
         r.verb(Arc::new(edit::EditTag));
+        r.verb(Arc::new(install::UiVerb));
         Ok(())
     }
 }
