@@ -208,7 +208,8 @@ struct IngestLock {
 }
 
 impl IngestLock {
-    /// `None` when not acquired: held under `Coalesce`, or any lock error.
+    /// `None` when not acquired under `Coalesce` (held, or any lock error); a `Wait` lock
+    /// error is an error.
     fn acquire(path: &Path, mode: IngestMode) -> Result<Option<Self>, ChatError> {
         let file = OpenOptions::new()
             .write(true)
@@ -218,7 +219,10 @@ impl IngestLock {
             .open(path)
             .map_err(io_err(path))?;
         let acquired = match mode {
-            IngestMode::Wait => file.lock().is_ok(),
+            IngestMode::Wait => {
+                file.lock().map_err(io_err(path))?;
+                true
+            }
             IngestMode::Coalesce => match file.try_lock() {
                 Ok(()) => true,
                 Err(TryLockError::WouldBlock | TryLockError::Error(_)) => false,

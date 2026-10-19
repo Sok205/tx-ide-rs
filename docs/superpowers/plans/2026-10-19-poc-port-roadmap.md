@@ -69,7 +69,8 @@ Failure modes the specs imply that no single phase's tests own; each owning phas
   one consumer waits until the second arrives.
 - **D3. Plugins do not call each other.** Crates may depend on each other for library code
   (the timeline reuses the chat crate's message parser), but at run time a plugin learns about
-  another only through `Session.ext` (read) and events (`ExtUpdated`). No capability registry.
+  another only through `Session.ext` (read) and the core's existing events. No capability
+  registry.
 - **D4. Engine knowledge may live in a feature plugin.** `hooks` already knows the Claude and
   Codex hook-file layouts. Likewise the chat plugin owns the transcript, fork and history-bundle
   layouts of every engine; engine plugins stay launch-only. This keeps `EngineAdapter` at its
@@ -275,7 +276,8 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
 - [ ] **Phase 6 — `timeline`** (prefix+T)
   - Crate `poc/plugins/timeline` (`tx-timeline`), plugin id `timeline`. The only ratatui user.
   - From main: `plugins/timeline/*` (~3.7k lines). Rows come from `log.jsonl` (`Created`,
-    `Exited`, `Stopped`, `MessageSent`, `ExtUpdated{hooks}` for working / idle spans) and from
+    `Exited`, `Stopped`, `MessageSent`; working / idle spans come from `ext["hooks"]`
+    `{state, since}`, since there is no `ExtUpdated` event) and from
     `tx-chat`'s message parser for arrows. The sqlite cache moves to `data_dir()/cache.sqlite`.
   - Verbs: `timeline`, `_timeline-attach`, `_timeline-resident`, `_timeline-json`, `health`.
   - Gate: prefix+T opens the resident timeline popup and q detaches it; `TestBackend` snapshot

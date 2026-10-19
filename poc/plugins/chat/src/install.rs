@@ -97,12 +97,24 @@ fn write_json(path: &Path, value: &Value) -> Result<(), InstallError> {
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let mut text = serde_json::to_string_pretty(value).expect("JSON value");
     text.push('\n');
-    let tmp = target.with_extension("tmp");
-    std::fs::write(&tmp, text).map_err(io(&tmp))?;
-    if let Ok(meta) = std::fs::metadata(&target) {
-        std::fs::set_permissions(&tmp, meta.permissions()).map_err(io(&tmp))?;
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = target.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    let result = (|| {
+        let mut file = std::fs::File::create(&tmp).map_err(io(&tmp))?;
+        file.write_all(text.as_bytes()).map_err(io(&tmp))?;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            file.set_permissions(meta.permissions()).map_err(io(&tmp))?;
+        }
+        file.sync_all().map_err(io(&tmp))?;
+        std::fs::rename(&tmp, &target).map_err(io(&target))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
-    std::fs::rename(&tmp, &target).map_err(io(&target))
+    result
 }
 
 fn backup(path: &Path) -> Result<Option<PathBuf>, InstallError> {
@@ -429,6 +441,39 @@ mod tests {
             !home.path().join(".codex").exists(),
             "codex untouched when absent"
         );
+    }
+
+    #[test]
+    fn write_json_uses_its_own_temp_and_keeps_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = home();
+        let claude = home.path().join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        let settings = claude.join("settings.json");
+        std::fs::write(&settings, "{}").unwrap();
+        std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let foreign = claude.join("settings.tmp");
+        std::fs::write(&foreign, "hooks plugin in flight").unwrap();
+        install(
+            home.path(),
+            Path::new("/opt/txc"),
+            &CHAT,
+            false,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&foreign).unwrap(),
+            "hooks plugin in flight"
+        );
+        let mode = std::fs::metadata(&settings).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let strays: Vec<_> = std::fs::read_dir(&claude)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".settings.json."))
+            .collect();
+        assert!(strays.is_empty(), "{strays:?}");
     }
 
     #[test]

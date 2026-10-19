@@ -15,7 +15,7 @@ use tx_ui::render::{chips, reltime};
 use crate::HISTORY_ID;
 use crate::detach::detach;
 use crate::engines::BUNDLE_TRANSCRIPT_NAME;
-use crate::ext::{HistoryChat, HistoryExt, chat_ext, owned_elsewhere};
+use crate::ext::{HistoryChat, HistoryExt, chat_ext, history_ext, owned_elsewhere};
 use crate::install::{install, uninstall};
 use crate::mirror::{HISTORY_ENTRIES, IngestMode, ingest_session};
 
@@ -114,7 +114,7 @@ impl Ingest {
         if let (Some(chat_id), Some(transcript)) = (
             payload.get("session_id").and_then(Value::as_str),
             payload.get("transcript_path").and_then(Value::as_str),
-        ) && !owned_elsewhere(core, &id, chat_id)?
+        ) && (listed_here(core, &id, chat_id) || !owned_elsewhere(core, &id, chat_id)?)
         {
             match record(core, &id, chat_id, transcript) {
                 Ok(()) => {}
@@ -134,6 +134,14 @@ impl Ingest {
         }
         Ok(0)
     }
+}
+
+/// The session's own `ext.history` already lists the chat: ownership was settled then.
+fn listed_here(core: &TxCore, id: &SessionId, chat_id: &str) -> bool {
+    core.get_session(id)
+        .ok()
+        .and_then(|session| history_ext(&session).ok())
+        .is_some_and(|ext| ext.chats.contains_key(chat_id))
 }
 
 /// New entry or changed transcript: write `{transcript, bundle: <kept>, at: now}`. A malformed

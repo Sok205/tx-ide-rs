@@ -73,7 +73,15 @@ pub fn pending_index(ext: &ChatExt, captured_id: &str) -> Option<usize> {
 /// ownership check precedes the locked update, because the update must not call the core.
 pub fn capture(core: &TxCore, id: &SessionId, c: &Captured) -> Result<bool, ChatError> {
     let session = core.get_session(id)?;
-    if chat_ext(&session).is_err() || owned_elsewhere(core, id, &c.chat_id)? {
+    let Ok(own) = chat_ext(&session) else {
+        return Ok(false);
+    };
+    if own
+        .chats
+        .iter()
+        .any(|chat| chat.id.as_deref() == Some(c.chat_id.as_str()))
+        || owned_elsewhere(core, id, &c.chat_id)?
+    {
         return Ok(false);
     }
     let launch_engine = match &session.launch {
