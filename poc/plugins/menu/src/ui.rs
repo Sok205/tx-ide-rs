@@ -95,7 +95,10 @@ fn put(buf: &mut Buffer, area: Rect, x: u16, y: u16, line: &Line<'_>, width: u16
 
 fn truncate(text: &str, width: usize) -> String {
     if text.chars().count() > width {
-        text.chars().take(width.saturating_sub(1)).collect::<String>() + "…"
+        text.chars()
+            .take(width.saturating_sub(1))
+            .collect::<String>()
+            + "…"
     } else {
         text.to_owned()
     }
@@ -200,7 +203,14 @@ fn draw_main(menu: &Menu, frame: usize, area: Rect, buf: &mut Buffer) {
         let inner = block.inner(block_area);
         block.render(block_area, buf);
         for (offset, line) in lines.iter().enumerate() {
-            put(buf, inner, inner.x, inner.y + offset as u16, line, inner.width);
+            put(
+                buf,
+                inner,
+                inner.x,
+                inner.y + offset as u16,
+                line,
+                inner.width,
+            );
         }
         y += recent_rows;
     }
@@ -216,16 +226,25 @@ fn draw_main(menu: &Menu, frame: usize, area: Rect, buf: &mut Buffer) {
 
 /// A bordered full-area list with an optional header row, a selected (reversed) or merely
 /// scrolled-to row, and a hint at the bottom.
-fn draw_list(
-    title: &str,
+struct List<'a> {
+    title: &'a str,
     header: Option<Line<'static>>,
-    rows: &[Line<'static>],
+    rows: Vec<Line<'static>>,
     row: usize,
     highlight: bool,
-    hint: &str,
-    area: Rect,
-    buf: &mut Buffer,
-) {
+    hint: &'a str,
+}
+
+fn draw_list(list: &List<'_>, area: Rect, buf: &mut Buffer) {
+    let List {
+        title,
+        header,
+        rows,
+        row,
+        highlight,
+        hint,
+    } = list;
+    let (row, highlight) = (*row, *highlight);
     let block = Block::bordered()
         .title(format!(" {title} "))
         .border_style(Style::new().fg(ACCENT));
@@ -241,9 +260,20 @@ fn draw_list(
     }
     let body = inner.bottom().saturating_sub(y + 1) as usize;
     if rows.is_empty() {
-        put(buf, inner, inner.x, y, &Line::styled("(none)", dim()), inner.width);
+        put(
+            buf,
+            inner,
+            inner.x,
+            y,
+            &Line::styled("(none)", dim()),
+            inner.width,
+        );
     }
-    let first = if body == 0 { row } else { row.saturating_sub(body - 1) };
+    let first = if body == 0 {
+        row
+    } else {
+        row.saturating_sub(body - 1)
+    };
     for (index, line) in rows.iter().enumerate().skip(first).take(body) {
         put(buf, inner, inner.x, y, line, inner.width);
         if highlight && index == row {
@@ -259,7 +289,7 @@ fn draw_list(
         inner,
         inner.x,
         inner.bottom() - 1,
-        &Line::styled(hint.to_owned(), dim()),
+        &Line::styled(hint.to_string(), dim()),
         inner.width,
     );
 }
@@ -269,7 +299,10 @@ const TAG_W: usize = 14;
 
 fn draw_history(menu: &Menu, row: usize, area: Rect, buf: &mut Buffer) {
     let header = Line::styled(
-        format!("{:<NAME_W$} {:<TAG_W$} {:>5} {:>5}  cwd", "name", "tag", "ended", "chats"),
+        format!(
+            "{:<NAME_W$} {:<TAG_W$} {:>5} {:>5}  cwd",
+            "name", "tag", "ended", "chats"
+        ),
         dim(),
     );
     let rows: Vec<Line<'static>> = menu
@@ -299,16 +332,15 @@ fn draw_history(menu: &Menu, row: usize, area: Rect, buf: &mut Buffer) {
             ])
         })
         .collect();
-    draw_list(
-        "history",
-        Some(header),
-        &rows,
+    let list = List {
+        title: "history",
+        header: Some(header),
+        rows,
         row,
-        true,
-        "j/k move · enter resume · esc back",
-        area,
-        buf,
-    );
+        highlight: true,
+        hint: "j/k move · enter resume · esc back",
+    };
+    draw_list(&list, area, buf);
 }
 
 fn draw_plugins(menu: &Menu, row: usize, area: Rect, buf: &mut Buffer) {
@@ -335,16 +367,15 @@ fn draw_plugins(menu: &Menu, row: usize, area: Rect, buf: &mut Buffer) {
             ])
         })
         .collect();
-    draw_list(
-        "plugins",
-        None,
-        &rows,
+    let list = List {
+        title: "plugins",
+        header: None,
+        rows,
         row,
-        false,
-        "read-only · plugins.yaml switches them · esc back",
-        area,
-        buf,
-    );
+        highlight: false,
+        hint: "read-only · plugins.yaml switches them · esc back",
+    };
+    draw_list(&list, area, buf);
 }
 
 fn draw_keys(menu: &Menu, row: usize, area: Rect, buf: &mut Buffer) {
@@ -375,16 +406,15 @@ fn draw_keys(menu: &Menu, row: usize, area: Rect, buf: &mut Buffer) {
             ])
         })
         .collect();
-    draw_list(
-        "keys (after the prefix)",
-        None,
-        &rows,
+    let list = List {
+        title: "keys",
+        header: None,
+        rows,
         row,
-        false,
-        "j/k scroll · esc back",
-        area,
-        buf,
-    );
+        highlight: false,
+        hint: "j/k scroll · esc back",
+    };
+    draw_list(&list, area, buf);
 }
 
 #[cfg(test)]
@@ -475,7 +505,11 @@ mod tests {
             .map(|line| line.get(8..).unwrap_or(""))
             .collect();
         assert_eq!(drawn, expected, "\n{}", lines.join("\n"));
-        assert!(lines.iter().all(|line| line.get(..8).is_none_or(|m| m.trim().is_empty())));
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.get(..8).is_none_or(|m| m.trim().is_empty()))
+        );
     }
 
     #[test]
@@ -568,9 +602,22 @@ mod tests {
         let mut menu = Menu::new(context());
         menu.key(KeyCode::Char('p'));
         let lines = text(&render(&menu, 0));
-        let status = |id: &str| lines[row_of(&lines, id)].replace('│', "").trim_end().to_owned();
-        assert!(status("spawn").ends_with("spawn  active"), "{}", status("spawn"));
-        assert!(status("kill").ends_with("kill   disabled"), "{}", status("kill"));
+        let status = |id: &str| {
+            lines[row_of(&lines, id)]
+                .replace('│', "")
+                .trim_end()
+                .to_owned()
+        };
+        assert!(
+            status("spawn").ends_with("spawn  active"),
+            "{}",
+            status("spawn")
+        );
+        assert!(
+            status("kill").ends_with("kill   disabled"),
+            "{}",
+            status("kill")
+        );
     }
 
     #[test]
