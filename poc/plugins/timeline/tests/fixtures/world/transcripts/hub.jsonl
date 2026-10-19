@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-11T07:00:10Z","uuid":"h1","message":{"role":"user","content":"status?"}}
+{"type":"assistant","timestamp":"2026-10-11T07:01:00Z","uuid":"h2","message":{"role":"assistant","model":"claude-opus-4","stop_reason":"end_turn","content":[{"type":"text","text":"All quiet."}]}}

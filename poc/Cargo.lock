@@ -1854,6 +1854,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-timeline"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "ratatui",
+ "regex",
+ "serde_json",
+ "tempfile",
+ "tx-chat",
+ "tx-core",
+ "tx-ui",
+]
+
+[[package]]
 name = "tx-ui"
 version = "0.1.0"
 dependencies = [

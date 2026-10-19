@@ -1,0 +1,40 @@
+                                                                                                             now 12:00┃
+                            -4h        -3h30      -3h         -2h30      -2h        -1h30       -1h        -30m       ┃
+                            ┬──────────┬──────────┬───────────┬──────────┬──────────┬───────────┬──────────┬──────────┃
+BETA (1)                                                                                                              ┃
+○ reviewer claude           ━╌╌╌╌╌╌━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┃
+ALPHA (2)                                                                                                             ┃
+● lead claude                                                            ━━╌╌•╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▴━━━━━━━━━━┃▸
+○ worker codex                                                               ▾━━━━━━━━━━━╌╌╌╌╌╌╌╌╌╌╌╌╌╌━━━━•╌╌╌╌╌╌╌╌╌╌┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+                                                                                                                      ┃
+claude-sonnet-4 · effort medium · ctx — · reviewer · claude · idle · 11 msgs · 0 messages
+h/l pan  [ ] zoom  j/k lane  enter go  tab/shift-tab message  / search  s sys  i idle  n now  q   2.6m/col follow
