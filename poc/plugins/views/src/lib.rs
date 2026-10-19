@@ -2,6 +2,7 @@
 //! core's private server whose panes nest-attach to agent sessions; `ext["views"]` records
 //! which kind of view a session is and which group it belongs to.
 
+pub mod edit;
 pub mod editor;
 pub mod picker;
 pub mod render;
@@ -32,6 +33,8 @@ impl Plugin for ViewsPlugin {
         r.verb(Arc::new(session_verbs::Relabel));
         r.verb(Arc::new(session_verbs::Whoami));
         r.verb(Arc::new(session_verbs::PaneLabel));
+        r.verb(Arc::new(edit::EditSession));
+        r.verb(Arc::new(edit::EditTag));
         Ok(())
     }
 }

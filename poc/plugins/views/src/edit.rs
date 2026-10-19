@@ -1,0 +1,177 @@
+//! The edit verbs: `_edit-session` (prefix+e, the modal form) and `_edit-tag` (the picker's
+//! Ctrl-T popup, an fzf query prompt).
+
+use std::process::{Command, Stdio};
+
+use tx_core::{CoreError, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
+
+use crate::Ext;
+use crate::PLUGIN_ID;
+use crate::editor::edit_session;
+use crate::render::{ACCENT_ANSI, BOLD, RESET};
+use crate::tmux::Ui;
+
+const NO_SESSION: &str = "prefix+e: no tx session in this pane (view homes cannot be edited)";
+const NOT_MANAGED: &str = "prefix+e: the session in this pane is not tx-managed";
+
+/// Comma-separated tags; empty items are dropped.
+pub fn split_tags(s: &str) -> Vec<String> {
+    s.split(',')
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Writes what the form changed, each part only when it differs from `before`. Returns the
+/// first error; earlier parts stay written.
+pub fn apply_edit(
+    core: &TxCore,
+    id: &SessionId,
+    before: &Session,
+    edited: (String, String, String),
+) -> Result<(), CoreError> {
+    let (name, tags, group) = edited;
+    if name != before.name {
+        core.rename_session(id, &name)?;
+    }
+    let tags = split_tags(&tags);
+    if tags != before.tags {
+        core.set_session_tags(id, tags)?;
+    }
+    let group = Some(group.trim().to_owned()).filter(|group| !group.is_empty());
+    if group != current_group(before) {
+        core.update_ext(id, PLUGIN_ID, |value| {
+            let mut ext: Ext = serde_json::from_value(value.clone()).unwrap_or_default();
+            ext.group = group;
+            if let Ok(updated) = serde_json::to_value(ext) {
+                *value = updated;
+            }
+        })?;
+    }
+    Ok(())
+}
+
+fn current_group(session: &Session) -> Option<String> {
+    session
+        .ext::<Ext>(PLUGIN_ID)
+        .ok()
+        .flatten()
+        .and_then(|ext| ext.group)
+}
+
+pub struct EditSession;
+
+impl Verb for EditSession {
+    fn name(&self) -> &'static str {
+        "_edit-session"
+    }
+
+    fn usage(&self) -> &'static str {
+        "_edit-session <pane> <client>   modal session editor (prefix+e, internal)"
+    }
+
+    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+        let [pane, client] = argv else {
+            let _ = writeln!(io.stderr, "usage: txc _edit-session <pane> <client>");
+            return Ok(2);
+        };
+        let ui = Ui::from_core(core);
+        let target = ui
+            .inner_for_pane(pane)
+            .or_else(|| ui.display_message("#{session_name}", Some(pane)));
+        let Some(target) = target.filter(|target| !ui.is_view(target)) else {
+            ui.display_status(client, NO_SESSION);
+            return Ok(1);
+        };
+        let Ok(id) = core.resolve(&target) else {
+            ui.display_status(client, NOT_MANAGED);
+            return Ok(1);
+        };
+        let before = core.get_session(&id)?;
+        let group = current_group(&before).unwrap_or_default();
+        let edited = edit_session(&before.name, &before.tags.join(","), &group, "")
+            .map_err(|e| VerbError::Failed(format!("editor: {e}")))?;
+        let Some(edited) = edited else {
+            return Ok(0);
+        };
+        if let Err(error) = apply_edit(core, &id, &before, edited) {
+            ui.display_status(client, &format!("edit of {} failed: {error}", before.name));
+            return Ok(1);
+        }
+        ui.refresh_labels();
+        Ok(0)
+    }
+}
+
+pub struct EditTag;
+
+impl Verb for EditTag {
+    fn name(&self) -> &'static str {
+        "_edit-tag"
+    }
+
+    fn usage(&self) -> &'static str {
+        "_edit-tag <name>   prefilled tag editor for the picker's Ctrl-T popup (internal)"
+    }
+
+    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+        let [token] = argv else {
+            let _ = writeln!(io.stderr, "usage: txc _edit-tag <name>");
+            return Ok(2);
+        };
+        let Ok(id) = core.resolve(token) else {
+            let _ = writeln!(io.stderr, "txc: session '{token}' not found");
+            return Ok(1);
+        };
+        let session = core.get_session(&id)?;
+        let header = format!("Tags for {ACCENT_ANSI}{BOLD}{}{RESET}", session.name);
+        let Some(answer) = prompt_with_default(&header, &session.tags.join(","))? else {
+            return Ok(1);
+        };
+        core.set_session_tags(&id, split_tags(&answer))?;
+        Ok(0)
+    }
+}
+
+/// fzf's query editor prefilled with `default`; `None` when cancelled.
+fn prompt_with_default(header: &str, default: &str) -> Result<Option<String>, VerbError> {
+    let output = Command::new("fzf")
+        .args([
+            "--disabled",
+            "--query",
+            default,
+            "--ansi",
+            "--prompt",
+            "  ❯ ",
+            "--header",
+            header,
+            "--header-first",
+            "--reverse",
+            "--no-info",
+            "--no-separator",
+            "--bind",
+            "enter:accept-or-print-query",
+            "--color",
+            "fg:#a9b1d6,header:#a9b1d6,prompt:#a9b1d6,query:#c0caf5",
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| VerbError::Failed(format!("could not run fzf: {e}")))?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return Ok(None);
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(Some(text.strip_suffix('\n').unwrap_or(&text).to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_tags_drops_empties() {
+        assert_eq!(split_tags("a,,b,"), ["a", "b"]);
+        assert!(split_tags("").is_empty());
+    }
+}

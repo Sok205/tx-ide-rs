@@ -350,3 +350,29 @@ fn pane_label_shows_nested_session() {
     assert!(!label.ends_with('\n'), "{label:?}");
     cli.ok(&["stop", "outer"]);
 }
+
+#[test]
+fn edit_session_on_view_home_exits_1() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create("a");
+    assert!(
+        cli.tmux(&["new-session", "-d", "-s", "Views", "sleep", "60"])
+            .status
+            .success()
+    );
+    assert!(
+        cli.tmux(&["set-option", "-t", "=Views:", "@tx-view", "1"])
+            .status
+            .success()
+    );
+    let pane = cli.tmux_out(&["display-message", "-p", "-t", "=Views:", "#{pane_id}"]);
+    let output = cli.run(&["_edit-session", &pane, "nonexistent-client"], &[], "");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("prefix+e: no tx session in this pane (view homes cannot be edited)"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
