@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# tx-ide tmux fragment. Invoked via `run-shell` from ~/.tx-ide/tmux.conf,
-# which is sourced from the user's ~/.tmux.conf by install.sh.
+# tx-ide tmux fragment. Invoked via `run-shell` from <state_dir>/tmux.conf,
+# which `txc ui install` writes for the core's private tmux server.
 #
 # Reads @tx-ide-* options to decide which view features to enable:
 #   @tx-ide-popups          on|off   prefix+t (tx), prefix+T (timeline), prefix+e (edit), prefix+/ (assistant), prefix+X (kill),
@@ -56,7 +56,7 @@ CONF=$(mktemp -t tx-ide-bindings.XXXXXX)
 trap 'rm -f "$CONF"' EXIT
 
 # --- Popups (prefix+t / prefix+T / prefix+/) ---
-# prefix+t opens the tx picker; prefix+/ forwards a line to the tx-assistant. tx attach figures
+# prefix+t opens the tx picker; prefix+/ forwards a line to the tx-assistant. `txc pick` figures
 # out the pane to glue into by asking tmux directly (`display-message -p #{pane_id}`), so the bind
 # doesn't need to plumb anything through. There is no mailbox anymore, so prefix+m is left bound to
 # its native `select-pane -m` (tx-ide no longer overrides it).

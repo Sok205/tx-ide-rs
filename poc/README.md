@@ -24,7 +24,8 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `EngineAdapter` for Claude Code | tx-core |
 | `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `EngineAdapter` for Codex | tx-core |
 | `plugins/hooks` (`tx-hooks`) | plugin: `txc hook …`, the agent's hooks → a per-session working / waiting / idle state | tx-core |
-| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled engines | the three above |
+| `plugins/views` (`tx-views`) | plugin: the fzf session picker, the tmux session keys and `txc ui install\|attach` | tx-core |
+| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins | the four above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
 carries everything; only `txc` touches `std::env`.
@@ -190,13 +191,28 @@ record's `ext.<id>` object via `TxCore::update_ext`. Design:
 
 ## Running the IDE
 
+Needs tmux, `fzf` and `curl` (the picker reloads itself through fzf's `--listen` port).
+
 ```
 txc ui install    # writes <state_dir>/tmux.conf, which sources poc/tmux/tx-ide.tmux
 txc ui attach     # attaches this terminal to the core server's `home` session
 ```
 
 Re-run `ui install` after rebuilding `txc`: it records the binary path in the server options
-`@tx-bin` and `@tx-state`, which the key bindings and `poc/bin/*` use to find it.
+`@tx-bin` and `@tx-state`, which the key bindings and `poc/bin/*` use to find it. `ui install`
+finds `poc/` from the running binary; for a `txc` installed elsewhere pass `--poc DIR`. It
+refuses a binary, state or poc path containing whitespace, a backslash, a backtick or any of
+`"'$#;`, since the paths are spliced into tmux config lines.
+
+`ui attach` creates `home` on first use as a view (status bar and pane-border labels on) and
+attaches to it. To try the IDE, start a session and press the picker key:
+
+```
+txc create demo --cwd ~/code/project --exec zsh
+txc ui attach     # then prefix+t
+```
+
+The prefix is `C-a`.
 
 | keys | does |
 |---|---|
@@ -209,6 +225,10 @@ Re-run `ui install` after rebuilding `txc`: it records the binary path in the se
 
 The pane border shows the nested session's name and tags. prefix+T, /, f, n and a appear
 automatically once the plugins that own those verbs exist.
+
+Run `ui attach` from a bare terminal. Inside another tmux whose socket is not the core's it
+nests, and the outer tmux's prefix wins: press the prefix twice to reach the IDE's keys. Inside
+the core's own server it switches the current client to `home` instead of nesting.
 
 ### Recommended next extension points
 

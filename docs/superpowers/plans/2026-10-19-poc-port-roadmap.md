@@ -161,7 +161,12 @@ Sizes are main's line counts for the code being ported, a budget signal, not a t
     - the TPM/resurrect/continuum block is dropped from the poc `tmux.conf`;
     - the fragment emits the prefix+T, /, f, n, a binds only when their verb exists in
       `txc help`;
-    - `ui attach` is the way into the server until phase 7's `start`.
+    - `ui attach` is the way into the server until phase 7's `start`;
+    - `render_ls` and the `show` extras are not ported (txc's `ls` and `show` are core
+      built-ins);
+    - `--host` and `--all` are not ported;
+    - `ui attach` creates the `home` view (`@tx-view`, status on, pane-border labels) when it is
+      missing, so the picker's nest path applies from the first attach.
 
 - [ ] **Phase 2 — `spawn`** (prefix+n; proves the launch slot)
   - Crate `poc/plugins/spawn` (`tx-spawn`), plugin id `spawn`.
