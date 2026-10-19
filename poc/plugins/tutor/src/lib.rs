@@ -346,7 +346,8 @@ impl<'a> Tutor<'a> {
         if args.detach || !std::io::stdin().is_terminal() {
             writeln!(
                 io.stdout,
-                "{view} is ready; attach with `txc ui attach` and pick it, or re-run in a terminal"
+                "{view} is ready: tmux -S {} attach -t ={view}",
+                shell_quote(&self.core.socket_path().to_string_lossy())
             )
             .map_err(failed)?;
             return Ok(0);

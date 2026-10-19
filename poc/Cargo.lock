@@ -1780,6 +1780,7 @@ dependencies = [
  "tx-mockup",
  "tx-picker",
  "tx-spawn",
+ "tx-tutor",
 ]
 
 [[package]]
