@@ -10,7 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use tx_core::{
-    CoreError, Plugin, PluginError, Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
+    CoreError, Plugin, PluginError, Registry, SendOptions, Session, SessionId, TxCore, Verb,
+    VerbError, VerbIo,
 };
 use tx_ui::tmux::{Ui, UiError, shell_quote};
 
@@ -126,6 +127,20 @@ fn session_dir(session: &Session) -> Option<PathBuf> {
         .get("dir")?
         .as_str()
         .map(PathBuf::from)
+}
+
+/// The agent a session dir belongs to: its last path component.
+fn agent_of(dir: &Path) -> Option<SessionId> {
+    dir.file_name()?.to_str()?.parse().ok()
+}
+
+/// Tells the agent how the operator left the viewer, best effort: a dead or renamed agent
+/// just means no message.
+fn notify(core: &TxCore, dir: &Path, outcome: &viewer::Outcome) {
+    let Some(agent) = agent_of(dir) else {
+        return;
+    };
+    let _ = core.send_message(&agent, &outcome.message(), SendOptions::default());
 }
 
 /// The project a session dir lives under (`<project>/.superpowers/mockup/<id>`).
@@ -406,8 +421,12 @@ impl Verb for ViewVerb {
             return Ok(2);
         };
         let ui = Ui::from_core(core);
+        let dir = Path::new(dir);
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            viewer::run(Path::new(dir), || switch_back(&ui, view))
+            viewer::run(dir, |outcome| {
+                switch_back(&ui, view);
+                notify(core, dir, outcome);
+            })
         }));
         switch_back(&ui, view);
         match outcome {
@@ -420,7 +439,16 @@ impl Verb for ViewVerb {
 
 #[cfg(test)]
 mod tests {
-    use super::pick_client;
+    use std::path::Path;
+
+    use super::{agent_of, pick_client};
+
+    #[test]
+    fn agent_is_the_session_dir_name() {
+        let dir = Path::new("/p/.superpowers/mockup/and-48");
+        assert_eq!(agent_of(dir).unwrap().as_str(), "and-48");
+        assert!(agent_of(Path::new("/p/.superpowers/mockup/bad id")).is_none());
+    }
 
     const AGENT: &str = "agent";
 

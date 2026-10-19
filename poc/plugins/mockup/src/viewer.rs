@@ -13,7 +13,7 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::Rect;
 
-use crate::model::{DEFAULT_FPS, Kind, Node, Screen, parse};
+use crate::model::{Choice, DEFAULT_FPS, Kind, Node, Screen, parse};
 use crate::render::{Layout, ViewState, draw};
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -21,11 +21,33 @@ pub const MIN_FPS: u32 = 4;
 pub const MAX_FPS: u32 = 30;
 
 /// What the terminal loop should do after a key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     None,
     /// Switch the operator back to where they came from.
-    Back,
+    Back(Outcome),
+}
+
+/// How the operator left the viewer; what the agent gets told.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Picked {
+        id: String,
+        title: String,
+    },
+    /// `Enter` on a screen without options.
+    Confirmed,
+    Dismissed,
+}
+
+impl Outcome {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Picked { id, title } => format!("mockup: picked {id} ({title})"),
+            Self::Confirmed => "mockup: confirmed".to_owned(),
+            Self::Dismissed => "mockup: dismissed".to_owned(),
+        }
+    }
 }
 
 /// Identity of the file currently shown: path, mtime and length. Any change means re-read.
@@ -177,12 +199,19 @@ impl Viewer {
                 Action::None
             }
             KeyCode::Enter => {
-                self.append_event("confirm", self.state.selected);
-                Action::Back
+                let index = self.state.selected.unwrap_or(self.state.focus);
+                self.append_event("confirm", Some(index));
+                let outcome =
+                    self.option(index)
+                        .map_or(Outcome::Confirmed, |choice| Outcome::Picked {
+                            id: choice.id.clone(),
+                            title: choice.title.clone(),
+                        });
+                Action::Back(outcome)
             }
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.append_event("dismiss", None);
-                Action::Back
+                Action::Back(Outcome::Dismissed)
             }
             _ => Action::None,
         }
@@ -224,6 +253,10 @@ impl Viewer {
             .map_or(0, |screen| screen.options.len())
     }
 
+    fn option(&self, index: usize) -> Option<&Choice> {
+        self.screen.as_ref()?.options.get(index)
+    }
+
     fn move_focus(&mut self, delta: isize) {
         let count = self.option_count();
         if count == 0 {
@@ -234,7 +267,7 @@ impl Viewer {
     }
 
     fn append_event(&self, kind: &str, choice: Option<usize>) {
-        let choice = choice.and_then(|index| self.screen.as_ref()?.options.get(index));
+        let choice = choice.and_then(|index| self.option(index));
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
@@ -270,7 +303,7 @@ fn max_node_fps(node: &Node) -> u32 {
 /// Terminal loop: poll every [`POLL_INTERVAL`], draw at the screen's fps (clamped to
 /// [`MIN_FPS`]..=[`MAX_FPS`]), feed key presses to the viewer, and call `on_back` on
 /// [`Action::Back`]. Never returns on its own; the verb decides when to stop it.
-pub fn run(session_dir: &Path, mut on_back: impl FnMut()) -> io::Result<()> {
+pub fn run(session_dir: &Path, mut on_back: impl FnMut(&Outcome)) -> io::Result<()> {
     let mut viewer = Viewer::new(session_dir)?;
     let mut terminal = ratatui::init();
     let result = event_loop(&mut viewer, &mut terminal, &mut on_back);
@@ -281,7 +314,7 @@ pub fn run(session_dir: &Path, mut on_back: impl FnMut()) -> io::Result<()> {
 fn event_loop(
     viewer: &mut Viewer,
     terminal: &mut ratatui::DefaultTerminal,
-    on_back: &mut impl FnMut(),
+    on_back: &mut impl FnMut(&Outcome),
 ) -> io::Result<()> {
     let mut last_poll = Instant::now() - POLL_INTERVAL;
     loop {
@@ -294,9 +327,9 @@ fn event_loop(
         if event::poll(frame)?
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
-            && viewer.key(key.code) == Action::Back
+            && let Action::Back(outcome) = viewer.key(key.code)
         {
-            on_back();
+            on_back(&outcome);
         }
     }
 }
@@ -443,13 +476,20 @@ mod tests {
         assert!(events(dir.path()).is_empty());
     }
 
+    fn picked(id: &str, title: &str) -> Action {
+        Action::Back(Outcome::Picked {
+            id: id.to_owned(),
+            title: title.to_owned(),
+        })
+    }
+
     #[test]
     fn enter_confirms_and_returns_back() {
         let (dir, mut viewer) = setup();
         write(dir.path(), "layout.json", THREE_OPTIONS);
         viewer.poll();
         viewer.key(KeyCode::Char('2'));
-        assert!(matches!(viewer.key(KeyCode::Enter), Action::Back));
+        assert_eq!(viewer.key(KeyCode::Enter), picked("b", "Beta"));
         let events = events(dir.path());
         assert_eq!(events.len(), 2, "{events:?}");
         assert_eq!(events[1]["type"], "confirm");
@@ -458,14 +498,42 @@ mod tests {
     }
 
     #[test]
-    fn enter_without_selection_confirms_null() {
+    fn enter_without_selection_confirms_focused() {
         let (dir, mut viewer) = setup();
         write(dir.path(), "layout.json", THREE_OPTIONS);
         viewer.poll();
-        assert!(matches!(viewer.key(KeyCode::Enter), Action::Back));
+        viewer.key(KeyCode::Right);
+        assert_eq!(viewer.key(KeyCode::Enter), picked("b", "Beta"));
+        let events = events(dir.path());
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["type"], "confirm");
+        assert_eq!(events[0]["choice"], "b");
+        assert_eq!(events[0]["title"], "Beta");
+    }
+
+    #[test]
+    fn enter_without_options_confirms_null() {
+        let (dir, mut viewer) = setup();
+        write(dir.path(), "single.json", FIRST);
+        viewer.poll();
+        assert_eq!(viewer.key(KeyCode::Enter), Action::Back(Outcome::Confirmed));
         let events = events(dir.path());
         assert_eq!(events[0]["type"], "confirm");
         assert!(events[0]["choice"].is_null());
+    }
+
+    #[test]
+    fn outcome_messages() {
+        assert_eq!(
+            Outcome::Picked {
+                id: "b".to_owned(),
+                title: "Beta".to_owned()
+            }
+            .message(),
+            "mockup: picked b (Beta)"
+        );
+        assert_eq!(Outcome::Confirmed.message(), "mockup: confirmed");
+        assert_eq!(Outcome::Dismissed.message(), "mockup: dismissed");
     }
 
     #[test]
@@ -473,7 +541,7 @@ mod tests {
         let (dir, mut viewer) = setup();
         write(dir.path(), "layout.json", THREE_OPTIONS);
         viewer.poll();
-        assert!(matches!(viewer.key(KeyCode::Esc), Action::Back));
+        assert_eq!(viewer.key(KeyCode::Esc), Action::Back(Outcome::Dismissed));
         let events = events(dir.path());
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["type"], "dismiss");
@@ -487,7 +555,10 @@ mod tests {
         let (dir, mut viewer) = setup();
         write(dir.path(), "layout.json", THREE_OPTIONS);
         viewer.poll();
-        assert!(matches!(viewer.key(KeyCode::Char('q')), Action::Back));
+        assert_eq!(
+            viewer.key(KeyCode::Char('q')),
+            Action::Back(Outcome::Dismissed)
+        );
         assert_eq!(events(dir.path())[0]["type"], "dismiss");
     }
 

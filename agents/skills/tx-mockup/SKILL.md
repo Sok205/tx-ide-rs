@@ -31,9 +31,12 @@ question. "Which of these start menu layouts?" is a mockup.
 2. **Write** `<content_dir>/<semantic-name>.json` with your file tool, then run
    `txc mockup show`. The operator's terminal switches to the view. Give a one-line summary of
    what is on screen and end your turn.
-3. **Read** on your next turn: `<state_dir>/events` (JSON lines; `select`, `confirm`,
-   `dismiss`) together with what the operator typed. The typed reply is primary; the events are
-   the structured pick. An empty or missing events file means they never pressed a key.
+3. **Read** on your next turn. When the operator confirms or dismisses, the viewer sends you
+   a message: `mockup: picked <id> (<title>)` or `mockup: dismissed` (`mockup: confirmed` for
+   a screen without options). Read it together with what the operator typed; the typed reply
+   is primary, the message is the structured pick. `<state_dir>/events` (JSON lines; `select`,
+   `confirm`, `dismiss`) has the same picks on disk. An empty or missing events file and no
+   message means they never pressed a key.
 4. **Iterate or advance**: feedback on the current screen goes into a new file
    (`layout-v2.json`). Only move on once the current question is settled.
 5. **Wait** when the conversation returns to text: `txc mockup wait` puts up a
@@ -49,7 +52,8 @@ screen is a fresh file: `layout.json`, `layout-v2.json`, `splash.json`.
 ## Keys the operator has
 
 `1`–`9` select an option, `←`/`→` or `h`/`l` move between options, `Tab` toggles side-by-side
-and fullscreen, `Enter` confirms and switches back, `Esc`/`q` dismisses, `r` restarts animation.
+and fullscreen, `Enter` confirms the selected (else the focused) option and switches back,
+`Esc`/`q` dismisses, `r` restarts animation.
 
 ## Format
 
