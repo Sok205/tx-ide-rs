@@ -363,5 +363,7 @@ processes racing for one name and six threads sending into one pane. The `fuzz_*
 property-based and adversarial suites written by separate review agents against each module;
 the bugs they found (non-UTF-8 paths, path traversal through ids, trailing `;` in `send-keys`
 and in `new-session` argv, FIFOs in the record dir, a create/refresh race) are all fixed and
-pinned. Two tests stay `#[ignore]`d as documented platform limits: a cooked-mode tty drops a
+pinned. They are slow (thousands of cases, real tmux servers), so they only build behind the
+`fuzz` feature: plain `cargo test --workspace` skips them; run them on purpose with
+`cargo test --workspace --features fuzz`. Two tests stay `#[ignore]`d as documented platform limits: a cooked-mode tty drops a
 single line over 1024 bytes, and flock cannot protect a lock file that is deleted under a holder.

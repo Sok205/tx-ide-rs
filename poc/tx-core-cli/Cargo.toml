@@ -34,3 +34,11 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Heavy property/fuzz suites (many cases, real tmux servers): `cargo test --workspace --features fuzz`.
+fuzz = []
+
+[[test]]
+name = "fuzz_cli"
+required-features = ["fuzz"]

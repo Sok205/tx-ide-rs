@@ -18,3 +18,51 @@ proptest = "1"
 
 [lints]
 workspace = true
+
+[features]
+# Heavy property/fuzz suites (many cases, real tmux servers): `cargo test --workspace --features fuzz`.
+fuzz = []
+
+[[test]]
+name = "fuzz_api"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_core"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_engine"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_events"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_events_sink"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_locks"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_messaging"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_profile"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_session"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_store"
+required-features = ["fuzz"]
+
+[[test]]
+name = "fuzz_tmux"
+required-features = ["fuzz"]
