@@ -23,17 +23,11 @@ fn ships_skill_and_overlay() {
         .collect();
     assert_eq!(
         names,
-        [
-            "agents/COMMON.local.md",
-            "agents/skills/tx-mockup/SKILL.md",
-        ]
+        ["agents/COMMON.local.md", "agents/skills/tx-mockup/SKILL.md",]
     );
 
     let overlay = std::str::from_utf8(resources[0].bytes).unwrap();
-    assert!(
-        overlay.starts_with("---\nskills: [tx-mockup]"),
-        "{overlay}"
-    );
+    assert!(overlay.starts_with("---\nskills: [tx-mockup]"), "{overlay}");
 
     let skill = std::str::from_utf8(resources[1].bytes).unwrap();
     assert!(skill.contains("name: tx-mockup"), "{skill}");
