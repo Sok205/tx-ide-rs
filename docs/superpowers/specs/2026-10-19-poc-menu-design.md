@@ -42,19 +42,25 @@ through the CLI, never their Rust code (D3). That's the same precedent as the pi
 | Section | Item | Key | Runs |
 |---|---|---|---|
 | Sessions | New tx session | `n` | spawn's new-agent form (`_new-agent <pane> <client>`) |
-| | Attach to running | `a` | `pick` (picker) |
-| | Resume from history | `h` | an in-menu history list (`history` data), Enter → `resume <id>` |
+| | Attach to running | `t` | `pick` (picker) |
+| | Resume from history | `h` | an in-menu history list (`history` data, resumable sessions only), Enter → `resume <id>`, then the new session is nested into the launching pane (or the client switched to it), as the picker's Enter does |
 | | Fork this session | `f` | `_fork-pane <pane> <client>` (only when the launching pane is a tx session) |
-| Look around | Timeline | `t` | `_timeline-attach` |
-| | Artifacts | `r` | `_artifact-menu <session> <client>` |
+| Look around | Timeline | `T` | `_timeline-attach` |
+| | Artifacts | `a` | `_artifact-menu <session> <client>` (only when the launching pane is a tx session) |
 | Setup | Plugins | `p` | an in-menu read-only list from `plugins` (id, active/disabled) |
-| | Keys cheat sheet | `k` | an in-menu list built from every `keys/*.tmux` resource's `# keys:` line plus its first comment |
+| | Keys cheat sheet | `K` | an in-menu list built from every `keys/*.tmux` resource's `# keys:` line plus its first comment |
 | Learn | Tutor | `?` | `tutor start` |
 | | Assistant | `/` | switch to `tx-assistant` (`assistant warm` first) |
 | | Quit | `q` / `Esc` | close the menu |
 
+An item's key is the IDE's prefix key for the same thing wherever one exists (`n`, `t`, `f`, `T`,
+`a`, `/`), so a reflexive prefix key lands on the same action; the others are `h`, `p`, `K`
+(`k` moves), `?` and `q`.
+
 `j`/`k` and the arrow keys move; `Enter` runs the selected item. Keys `1`–`3` resume a recent
-session.
+session. Ctrl and Alt chords never reach the menu. A menu opened by the first attach takes only
+the arrows, `j`/`k`, `Enter`, `Esc` and `q` for its first 400 ms, so keys typed for the IDE
+while the client attached do not pick items.
 
 ## Non-goals and anti-goals
 

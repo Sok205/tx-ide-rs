@@ -3,7 +3,7 @@
 //! plugin is seen through its status, its resources and `Session.ext` (D3).
 
 use serde_json::Value;
-use tx_core::{CoreError, Lifecycle, ListFilter, PluginStatus, Session, TxCore};
+use tx_core::{CoreError, Launch, Lifecycle, ListFilter, PluginStatus, Session, TxCore};
 use tx_ui::tmux::Ui;
 
 use crate::model::{Context, KeyHint, Past};
@@ -71,13 +71,21 @@ fn chat_count(session: &Session) -> usize {
         .map_or(0, Vec::len)
 }
 
-/// Exited and stopped sessions, newest end first (the `history` verb's list).
+/// A session `resume` can bring back: an engine session, or one that recorded a chat (a fork
+/// runs the engine as a process). An exited shell is not.
+fn resumable(session: &Session) -> bool {
+    matches!(session.launch, Launch::Agent { .. }) || chat_count(session) > 0
+}
+
+/// Resumable exited and stopped sessions, newest end first (the `history` verb's list, minus
+/// what `resume` would refuse).
 pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
     let mut sessions = Vec::new();
     for lifecycle in [Lifecycle::Exited, Lifecycle::Stopped] {
         for id in core.list_sessions(&ListFilter::new().lifecycle(lifecycle))? {
             match core.get_session(&id) {
-                Ok(session) => sessions.push(session),
+                Ok(session) if resumable(&session) => sessions.push(session),
+                Ok(_) => {}
                 Err(CoreError::NotFound(_)) => {}
                 Err(error) => return Err(error),
             }
@@ -125,7 +133,7 @@ pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, CoreError>
             .map(|(id, _)| id.clone())
             .collect(),
         plugins,
-        fork_source: session_in_pane(core, ui, pane).is_some(),
+        pane_session: session_in_pane(core, ui, pane).is_some(),
         history: past_sessions(core)?,
         keys,
         now: tx_core::events::now(),
@@ -135,6 +143,52 @@ pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, CoreError>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn session(launch: Launch, ext: Option<Value>) -> Session {
+        Session {
+            id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+            name: "s".into(),
+            parent: None,
+            tags: Vec::new(),
+            cwd: "/w".into(),
+            created_at: 1.0,
+            ended_at: Some(2.0),
+            lifecycle: Lifecycle::Exited,
+            launch,
+            ext: ext
+                .map(|chat| [("chat".to_owned(), chat)].into())
+                .unwrap_or_default(),
+        }
+    }
+
+    #[test]
+    fn only_engine_sessions_or_sessions_with_chats_are_resumable() {
+        let agent = Launch::Agent {
+            engine: "claude".into(),
+            profile: Vec::new(),
+            model: None,
+            effort: None,
+            resume: None,
+        };
+        let shell = || Launch::Process {
+            program: "zsh".into(),
+            args: Vec::new(),
+        };
+        assert!(resumable(&session(agent, None)));
+        assert!(!resumable(&session(shell(), None)));
+        assert!(!resumable(&session(
+            shell(),
+            Some(serde_json::json!({"chats": []}))
+        )));
+        assert!(resumable(&session(
+            shell(),
+            Some(serde_json::json!({"chats": [{"id": "c1"}]}))
+        )));
+        assert!(!resumable(&session(
+            shell(),
+            Some(serde_json::json!("bad"))
+        )));
+    }
 
     #[test]
     fn a_fragment_hint_is_its_keys_and_first_sentence() {

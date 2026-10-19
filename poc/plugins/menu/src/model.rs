@@ -3,8 +3,9 @@
 //! tmux or the store.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
@@ -53,15 +54,16 @@ impl Item {
         }
     }
 
-    /// The single key that picks the item. The cheat sheet is `K`: `k` moves up.
+    /// The single key that picks the item: the IDE's prefix key for the same thing wherever
+    /// one exists. The cheat sheet is `K`: `k` moves up.
     pub fn key(self) -> char {
         match self {
             Item::NewSession => 'n',
-            Item::Attach => 'a',
+            Item::Attach => 't',
             Item::History => 'h',
             Item::Fork => 'f',
-            Item::Timeline => 't',
-            Item::Artifacts => 'r',
+            Item::Timeline => 'T',
+            Item::Artifacts => 'a',
             Item::Plugins => 'p',
             Item::Keys => 'K',
             Item::Tutor => '?',
@@ -122,8 +124,8 @@ pub struct Context {
     pub active: BTreeSet<String>,
     /// Every plugin with whether it is active, manifest order.
     pub plugins: Vec<(String, bool)>,
-    /// The launching pane shows a tx session (fork needs one).
-    pub fork_source: bool,
+    /// The launching pane shows a tx session (fork and artifacts need one).
+    pub pane_session: bool,
     pub history: Vec<Past>,
     pub keys: Vec<KeyHint>,
     /// Ages are drawn against this, epoch seconds.
@@ -133,7 +135,7 @@ pub struct Context {
 impl Context {
     pub fn shows(&self, item: Item) -> bool {
         item.needs().iter().all(|id| self.active.contains(*id))
-            && (item != Item::Fork || self.fork_source)
+            && (!matches!(item, Item::Fork | Item::Artifacts) || self.pane_session)
     }
 }
 
@@ -350,6 +352,27 @@ impl Menu {
     }
 }
 
+/// How long a menu opened by the first attach acts only on navigation, Enter and close: keys
+/// typed for the IDE while the client attached must not pick items.
+pub const GRACE: Duration = Duration::from_millis(400);
+
+/// The key the menu acts on, if any. Ctrl and Alt chords (the prefix and the IDE's root keys)
+/// never reach it; during the grace period only arrows, `j`/`k`, Enter, Esc and `q` do.
+pub fn accept(code: KeyCode, modifiers: KeyModifiers, in_grace: bool) -> Option<KeyCode> {
+    if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        return None;
+    }
+    let navigation = matches!(
+        code,
+        KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Enter
+            | KeyCode::Esc
+            | KeyCode::Char('j' | 'k' | 'q')
+    );
+    (!in_grace || navigation).then_some(code)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -385,7 +408,7 @@ pub(crate) mod tests {
         Context {
             active: all_active(),
             plugins: vec![("spawn".into(), true), ("kill".into(), false)],
-            fork_source: true,
+            pane_session: true,
             history: vec![
                 past("id-1", "mockup-t5-verbs", "tx-mockup", 1000.0 - 660.0),
                 past("id-2", "fixer", "agent", 1000.0 - 3420.0),
@@ -422,10 +445,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn fork_needs_a_tx_session_in_the_launching_pane() {
+    fn fork_and_artifacts_need_a_tx_session_in_the_launching_pane() {
         let mut ctx = context();
-        ctx.fork_source = false;
-        assert!(!Menu::new(ctx).items().contains(&Item::Fork));
+        ctx.pane_session = false;
+        let menu = Menu::new(ctx);
+        assert!(!menu.items().contains(&Item::Fork));
+        assert!(!menu.items().contains(&Item::Artifacts));
     }
 
     #[test]
@@ -473,10 +498,10 @@ pub(crate) mod tests {
     fn item_keys_run_their_action() {
         for (key, action) in [
             ('n', Action::NewSession),
-            ('a', Action::Attach),
+            ('t', Action::Attach),
             ('f', Action::Fork),
-            ('t', Action::Timeline),
-            ('r', Action::Artifacts),
+            ('T', Action::Timeline),
+            ('a', Action::Artifacts),
             ('?', Action::Tutor),
             ('/', Action::Assistant),
         ] {
@@ -490,7 +515,7 @@ pub(crate) mod tests {
         let mut ctx = context();
         ctx.active.remove("timeline");
         let mut menu = Menu::new(ctx);
-        assert_eq!(menu.key(KeyCode::Char('t')), Outcome::Stay);
+        assert_eq!(menu.key(KeyCode::Char('T')), Outcome::Stay);
         assert_eq!(menu.view(), View::Main);
     }
 
@@ -560,6 +585,69 @@ pub(crate) mod tests {
         assert_eq!(menu.view(), View::Keys(0));
         menu.key(KeyCode::Backspace);
         assert_eq!(menu.view(), View::Main);
+    }
+
+    #[test]
+    fn item_keys_mirror_the_ide_prefix_keys() {
+        for (item, key) in [
+            (Item::NewSession, 'n'),
+            (Item::Attach, 't'),
+            (Item::Fork, 'f'),
+            (Item::Timeline, 'T'),
+            (Item::Artifacts, 'a'),
+            (Item::Assistant, '/'),
+            (Item::History, 'h'),
+            (Item::Plugins, 'p'),
+            (Item::Keys, 'K'),
+            (Item::Tutor, '?'),
+            (Item::Quit, 'q'),
+        ] {
+            assert_eq!(item.key(), key, "{item:?}");
+        }
+    }
+
+    #[test]
+    fn ctrl_and_alt_chords_never_reach_the_menu() {
+        let none = KeyModifiers::NONE;
+        assert_eq!(
+            accept(KeyCode::Char('a'), KeyModifiers::CONTROL, false),
+            None
+        );
+        assert_eq!(accept(KeyCode::Char('n'), KeyModifiers::ALT, false), None);
+        assert_eq!(accept(KeyCode::Down, KeyModifiers::CONTROL, false), None);
+        assert_eq!(
+            accept(KeyCode::Char('n'), none, false),
+            Some(KeyCode::Char('n'))
+        );
+        assert_eq!(
+            accept(KeyCode::Char('K'), KeyModifiers::SHIFT, false),
+            Some(KeyCode::Char('K'))
+        );
+    }
+
+    #[test]
+    fn the_grace_period_takes_only_navigation_enter_and_close() {
+        let none = KeyModifiers::NONE;
+        for code in [
+            KeyCode::Char('n'),
+            KeyCode::Char('T'),
+            KeyCode::Char('1'),
+            KeyCode::Char('h'),
+            KeyCode::Char('/'),
+        ] {
+            assert_eq!(accept(code, none, true), None, "{code:?}");
+        }
+        for code in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Char('j'),
+            KeyCode::Char('k'),
+            KeyCode::Enter,
+            KeyCode::Esc,
+            KeyCode::Char('q'),
+        ] {
+            assert_eq!(accept(code, none, true), Some(code), "{code:?}");
+        }
     }
 
     #[test]

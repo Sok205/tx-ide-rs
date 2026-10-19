@@ -1,23 +1,26 @@
 //! The terminal loop: draw at the shimmer's [`FPS`], feed key presses to the [`Menu`], return
-//! what it chose. Raw mode and the alternate screen are restored on every exit path.
+//! what it chose. Raw mode and the alternate screen are restored on every exit path. Keys pass
+//! [`accept`] first: no chords, and a first-attach menu starts with a [`GRACE`] period.
 
 use std::io;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
-use crate::model::{Action, Menu, Outcome};
+use crate::model::{Action, GRACE, Menu, Outcome, accept};
 use crate::ui::{self, FPS};
 
-pub fn run(menu: &mut Menu) -> io::Result<Option<Action>> {
+/// `first`: opened by the first attach, so the [`GRACE`] period applies.
+pub fn run(menu: &mut Menu, first: bool) -> io::Result<Option<Action>> {
     let mut terminal = ratatui::try_init()?;
-    let result = event_loop(menu, &mut terminal);
+    let result = event_loop(menu, first, &mut terminal);
     ratatui::restore();
     result
 }
 
 fn event_loop(
     menu: &mut Menu,
+    first: bool,
     terminal: &mut ratatui::DefaultTerminal,
 ) -> io::Result<Option<Action>> {
     let started = Instant::now();
@@ -37,7 +40,11 @@ fn event_loop(
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Ok(None);
         }
-        match menu.key(key.code) {
+        let in_grace = first && started.elapsed() < GRACE;
+        let Some(code) = accept(key.code, key.modifiers, in_grace) else {
+            continue;
+        };
+        match menu.key(code) {
             Outcome::Stay => {}
             Outcome::Close => return Ok(None),
             Outcome::Run(action) => return Ok(Some(action)),

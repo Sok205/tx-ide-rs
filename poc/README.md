@@ -305,7 +305,7 @@ The prefix is `C-a`.
 | prefix+s | refresh labels, then `choose-tree` |
 | prefix+a | in an agent: the artifacts it touched, its parent and children; Enter re-hosts the pane on the pick, f focuses the pane showing it, p pops it up. In an artifact's view: back to the agent |
 | prefix+T | the resident timeline in a popup; q detaches, Enter jumps to the lane's session |
-| prefix+m | the start menu: n new, a attach, h history, f fork, t timeline, r artifacts, p plugins, K keys, ? tutor, / assistant, 1-3 resume a recent session, q quit; it also opens by itself on a fresh server's first attach |
+| prefix+m | the start menu (its keys mirror the prefix keys): n new, t attach, h history, f fork, T timeline, a artifacts, p plugins, K keys, ? tutor, / assistant, 1-3 resume a recent session, q quit; it also opens by itself on a fresh server's first attach |
 | C-h / C-j / C-k / C-l | move between panes; the move bubbles out of nested sessions |
 | C-u / C-d | page the agent's scrollback |
 

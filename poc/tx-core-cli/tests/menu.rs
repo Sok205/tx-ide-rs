@@ -212,7 +212,7 @@ fn prefix_m_opens_the_menu_without_disabled_plugins_items() {
         assert!(!shown.contains(hidden), "{hidden}:\n{shown}");
     }
     // A hidden item's key does nothing; the plugins list is read-only and Esc leaves it.
-    press(&cli, &["t"]);
+    press(&cli, &["T"]);
     press(&cli, &["p"]);
     assert!(
         cli.wait_for(5, || screen(&cli).contains("disabled")),
@@ -238,4 +238,33 @@ fn menu_outside_tx_ide_says_where_to_run_it() {
     cli.fails(&["_menu-open", "%1"], 2);
     cli.fails(&["_menu-first"], 2);
     cli.fails(&["_menu-tui", "%1", "c"], 2);
+}
+
+/// Keys the operator typed for the IDE as the client attached must not pick items: a first-open
+/// menu ignores item keys for its grace period, then takes them.
+#[test]
+fn a_first_open_menu_ignores_item_keys_in_its_grace_period() {
+    require_tmux!();
+    let cli = Cli::new();
+    installed_server(&cli, NO_ASSISTANT);
+    let sock = cli.sock().display().to_string();
+    cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =probe"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !menu_shown(&cli) {
+        assert!(std::time::Instant::now() < deadline, "{}", screen(&cli));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    press(&cli, &["h"]);
+    assert!(
+        !cli.wait_for(1, || screen(&cli).contains("enter resume")),
+        "h in the grace period opened the history:\n{}",
+        screen(&cli)
+    );
+    assert!(menu_shown(&cli), "{}", screen(&cli));
+    press(&cli, &["h"]);
+    assert!(
+        cli.wait_for(5, || screen(&cli).contains("enter resume")),
+        "h after the grace period did nothing:\n{}",
+        screen(&cli)
+    );
 }

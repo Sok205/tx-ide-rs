@@ -69,7 +69,7 @@ impl Verb for MenuVerb {
             );
             return Ok(1);
         };
-        open(core, &ui, &pane, &client)
+        open(core, &ui, &pane, &client, false)
     }
 }
 
@@ -89,7 +89,8 @@ impl Verb for Open {
         let [pane, client] = argv else {
             return usage(io, "_menu-open <pane> <client>");
         };
-        open(core, &Ui::from_core(core), pane, client)
+        let ui = Ui::from_core(core);
+        reported(&ui, client, open(core, &ui, pane, client, false))
     }
 }
 
@@ -113,11 +114,12 @@ impl Verb for First {
         if is_nested(&ui, client) || !claim_first(&ui) {
             return Ok(0);
         }
-        open(core, &ui, pane, client)
+        reported(&ui, client, open(core, &ui, pane, client, true))
     }
 }
 
-/// `_menu-tui <pane> <client> <choice-file>`: the menu itself, inside the popup.
+/// `_menu-tui <pane> <client> <choice-file> [--first]`: the menu itself, inside the popup.
+/// `--first`: opened by the first attach, so it starts with the grace period.
 struct Tui;
 
 impl Verb for Tui {
@@ -126,34 +128,49 @@ impl Verb for Tui {
     }
 
     fn usage(&self) -> &'static str {
-        "_menu-tui <pane> <client> <file>   the menu in the popup; writes the choice (internal)"
+        "_menu-tui <pane> <client> <file> [--first]   the menu in the popup; writes the choice (internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let [pane, _client, file] = argv else {
-            return usage(io, "_menu-tui <pane> <client> <file>");
+        let (pane, file, first) = match argv {
+            [pane, _client, file] => (pane, file, false),
+            [pane, _client, file, flag] if flag == "--first" => (pane, file, true),
+            _ => return usage(io, "_menu-tui <pane> <client> <file> [--first]"),
         };
         let ui = Ui::from_core(core);
         let mut menu = Menu::new(data::context(core, &ui, pane)?);
-        if let Some(action) = run::run(&mut menu).map_err(failed)? {
+        if let Some(action) = run::run(&mut menu, first).map_err(failed)? {
             std::fs::write(file, action.encode()).map_err(|e| failed(format!("{file}: {e}")))?;
         }
         Ok(0)
     }
 }
 
-/// A client whose tty is one of this server's panes: the nested attach inside a view.
-fn is_nested(ui: &Ui, client: &str) -> bool {
-    let (_, clients) = ui.quiet(&["list-clients", "-F", "#{client_name}\t#{client_tty}"]);
+/// The menu's own failure, on the client's status line: the hook and the bind swallow output.
+fn reported(ui: &Ui, client: &str, result: Result<i32, VerbError>) -> Result<i32, VerbError> {
+    if let Err(error) = &result {
+        status(ui, client, &format!("tx menu: {error}"));
+    }
+    result
+}
+
+/// Whether `client` should not count as a first attach: it is nested (its tty is one of this
+/// server's panes: the attach inside a view), or it is already gone.
+fn skips_first(clients: &str, pane_ttys: &str, client: &str) -> bool {
     let Some(tty) = clients.lines().find_map(|line| {
         line.split_once('\t')
             .filter(|(name, _)| *name == client)
-            .map(|(_, tty)| tty.to_owned())
+            .map(|(_, tty)| tty)
     }) else {
-        return false;
+        return true;
     };
+    pane_ttys.lines().any(|pane_tty| pane_tty == tty)
+}
+
+fn is_nested(ui: &Ui, client: &str) -> bool {
+    let (_, clients) = ui.quiet(&["list-clients", "-F", "#{client_name}\t#{client_tty}"]);
     let (_, ttys) = ui.quiet(&["list-panes", "-a", "-F", "#{pane_tty}"]);
-    ttys.lines().any(|pane_tty| pane_tty == tty)
+    skips_first(&clients, &ttys, client)
 }
 
 /// Test-and-set of [`SHOWN_OPTION`] in one tmux command, so two first clients cannot both win.
@@ -204,19 +221,25 @@ impl Txc {
     }
 }
 
-fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str) -> Result<i32, VerbError> {
+fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result<i32, VerbError> {
     let txc = Txc::current(core)?;
     let choice = tempfile::Builder::new()
         .prefix("tx-menu-")
         .tempfile()
         .map_err(|e| failed(format!("choice file: {e}")))?
         .into_temp_path();
-    let command = txc.shell(&[TUI_VERB, pane, client, &choice.to_string_lossy()]);
+    let choice_path = choice.to_string_lossy();
+    let mut args = vec![TUI_VERB, pane, client, &choice_path];
+    if first {
+        args.push("--first");
+    }
+    let command = txc.shell(&args);
+    // -EE: a menu that fails keeps its popup open, showing why.
     ui.run(&[
         "display-popup",
         "-c",
         client,
-        "-E",
+        "-EE",
         "-w",
         "80%",
         "-h",
@@ -364,19 +387,57 @@ fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
             Ok(name) => switch(ui, client, name.trim()),
             Err(error) => status(ui, client, &format!("assistant: {error}")),
         },
-        Action::Resume(id) => {
-            let message = match output(txc.command(&["resume", id])) {
-                Ok(out) => out.lines().next().unwrap_or("resumed").to_owned(),
-                Err(error) => error,
-            };
-            status(ui, client, &message);
-        }
+        Action::Resume(id) => match output(txc.command(&["resume", id])) {
+            Ok(out) => {
+                let said = out.lines().next().unwrap_or("resumed");
+                status(ui, client, said);
+                if let Some(name) = resumed_name(&out) {
+                    show(ui, pane, client, name);
+                }
+            }
+            Err(error) => status(ui, client, &format!("resume: {error}")),
+        },
     }
 }
 
 fn switch(ui: &Ui, client: &str, session: &str) {
     if let Err(error) = ui.run(&["switch-client", "-c", client, "-t", &format!("={session}")]) {
         status(ui, client, &format!("tx menu: {error}"));
+    }
+}
+
+/// `resume` says `Resumed '<old>' as '<new>' (chat …)`.
+fn resumed_name(stdout: &str) -> Option<&str> {
+    stdout.lines().find_map(|line| {
+        let rest = line.strip_prefix("Resumed '")?;
+        let (_, rest) = rest.split_once("' as '")?;
+        let (name, _) = rest.split_once('\'')?;
+        (!name.is_empty()).then_some(name)
+    })
+}
+
+/// Foreground commands of a pane the picker's Enter would replace by a nested attach.
+const HOSTING_COMMANDS: [&str; 6] = ["zsh", "bash", "sh", "fish", "dash", "tmux"];
+
+/// The picker's Enter: nest into the firing pane when it is a view's shell (or nested client).
+fn nests_here(pane_in_view: bool, pane_command: Option<&str>) -> bool {
+    pane_in_view && pane_command.is_some_and(|command| HOSTING_COMMANDS.contains(&command))
+}
+
+/// Shows session `name` the way the picker's Enter does: nested into the firing pane, else
+/// the client switched to it.
+fn show(ui: &Ui, pane: &str, client: &str, name: &str) {
+    let in_view = ui
+        .display_message("#{session_name}", Some(pane))
+        .is_some_and(|session| ui.is_view(&session));
+    let command = ui.display_message("#{pane_current_command}", Some(pane));
+    match ui.live_targets().get(name) {
+        Some(target) if nests_here(in_view, command.as_deref()) => {
+            if let Err(error) = ui.respawn_pane(pane, &ui.nest_attach_command(target)) {
+                status(ui, client, &format!("tx menu: {error}"));
+            }
+        }
+        _ => switch(ui, client, name),
     }
 }
 
@@ -415,6 +476,33 @@ mod tests {
                    tutor-rust is ready: tmux -S '/s/tmux.sock' attach -t =tutor-rust\n";
         assert_eq!(tutor_view(out), Some("tutor-rust"));
         assert_eq!(tutor_view("tutor-rust view created.\n"), None);
+    }
+
+    #[test]
+    fn a_gone_or_nested_client_is_no_first_attach() {
+        let clients = "/dev/ttys001\t/dev/ttys001\n/dev/ttys009\t/dev/ttys009\n";
+        let panes = "/dev/ttys009\n/dev/ttys010\n";
+        assert!(!skips_first(clients, panes, "/dev/ttys001"));
+        assert!(skips_first(clients, panes, "/dev/ttys009"), "nested");
+        assert!(skips_first(clients, panes, "/dev/ttys002"), "gone");
+        assert!(skips_first("", "", "/dev/ttys001"), "no server");
+    }
+
+    #[test]
+    fn the_resumed_name_is_read_from_resumes_line() {
+        let out = "Resumed 'fixer' as 'fixer-2' (chat 0f3a, cwd=/w)\n";
+        assert_eq!(resumed_name(out), Some("fixer-2"));
+        assert_eq!(resumed_name("Resumed 'a' as '' (chat x)\n"), None);
+        assert_eq!(resumed_name("something else\n"), None);
+    }
+
+    #[test]
+    fn the_resumed_session_nests_only_into_a_views_shell() {
+        assert!(nests_here(true, Some("zsh")));
+        assert!(nests_here(true, Some("tmux")));
+        assert!(!nests_here(true, Some("nvim")));
+        assert!(!nests_here(false, Some("zsh")));
+        assert!(!nests_here(true, None));
     }
 
     #[test]
