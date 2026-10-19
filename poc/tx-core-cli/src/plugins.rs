@@ -23,7 +23,7 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_engine_claude::ClaudePlugin),
     || Box::new(tx_engine_codex::CodexPlugin),
     || Box::new(tx_hooks::HooksPlugin),
-    || Box::new(tx_views::ViewsPlugin),
+    || Box::new(tx_ide::IdePlugin),
     || Box::new(tx_labels::LabelsPlugin),
     || Box::new(tx_kill::KillPlugin),
     || Box::new(tx_picker::PickerPlugin),

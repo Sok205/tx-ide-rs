@@ -26,9 +26,6 @@ esac
 
 [[ -z "$pane" ]] && exit 0
 
-# One toggle guard covers both callers; when off, nvim's maps degrade to plain wincmd.
-[[ "$(tmux show-option -gqv @tx-ide-nav-keys 2>/dev/null)" == off ]] && exit 0
-
 # Pane hosting a client of `session_id`; empty at the top level. Only DISPLAYED panes
 # qualify — active + current window + attached session (the active flags alone are
 # layout state, still 1 when detached): every link of the delivery chain was displayed

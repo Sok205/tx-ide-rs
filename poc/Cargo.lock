@@ -539,10 +539,10 @@ dependencies = [
  "tx-engine-claude",
  "tx-engine-codex",
  "tx-hooks",
+ "tx-ide",
  "tx-kill",
  "tx-labels",
  "tx-picker",
- "tx-views",
 ]
 
 [[package]]
@@ -583,6 +583,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-ide"
+version = "0.1.0"
+dependencies = [
+ "tx-core",
+ "tx-ui",
+]
+
+[[package]]
 name = "tx-kill"
 version = "0.1.0"
 dependencies = [
@@ -619,14 +627,6 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tx-core",
-]
-
-[[package]]
-name = "tx-views"
-version = "0.1.0"
-dependencies = [
- "tx-core",
- "tx-ui",
 ]
 
 [[package]]

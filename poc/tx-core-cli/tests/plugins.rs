@@ -59,7 +59,7 @@ fn without_a_yaml_every_plugin_is_active() {
     let cli = Cli::new();
     assert_eq!(
         cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nviews\tactive\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
+        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nide\tactive\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
     );
     assert_eq!(cli.ok(&["engines"]), "claude\ncodex\n");
 }
@@ -70,7 +70,7 @@ fn a_disabled_engine_disappears() {
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
     assert_eq!(
         cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tdisabled\nhooks\tactive\nviews\tactive\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
+        "engine-claude\tactive\nengine-codex\tdisabled\nhooks\tactive\nide\tactive\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
     );
     assert_eq!(cli.ok(&["engines"]), "claude\n");
 }
@@ -120,12 +120,12 @@ fn help_lists_plugin_verbs() {
 }
 
 #[test]
-fn disabled_views_hides_verbs() {
+fn disabled_ide_hides_verbs() {
     let cli = Cli::new();
-    cli.write_yaml("plugins:\n  views: { enabled: false }\n");
+    cli.write_yaml("plugins:\n  ide: { enabled: false }\n");
     cli.fails(&["ui", "attach"], 2);
     assert_eq!(
         cli.ok(&["plugins"]),
-        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nviews\tdisabled\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
+        "engine-claude\tactive\nengine-codex\tactive\nhooks\tactive\nide\tdisabled\nlabels\tactive\nkill\tactive\npicker\tactive\nedit\tactive\n"
     );
 }
