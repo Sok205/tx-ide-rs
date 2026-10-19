@@ -42,6 +42,8 @@ pub const DISTILLER_TAG: &str = "temporary";
 pub const POLL_ENV: &str = "TX_CHAT_OP_POLL_S";
 pub const GRACE_ENV: &str = "TX_CHAT_OP_GRACE_S";
 pub const TIMEOUT_ENV: &str = "TX_CHAT_OP_TIMEOUT_S";
+/// Set on a detached `_chat-op-finish`, so it never re-detaches.
+pub const DETACHED_ENV: &str = "TX_CHAT_OP_DETACHED";
 
 const SPEC_FILE: &str = "spec.json";
 const CLAIM_DIR: &str = "claim";
@@ -117,12 +119,6 @@ impl WatchTimings {
             grace: seconds(GRACE_ENV, defaults.grace, true),
             timeout: seconds(TIMEOUT_ENV, defaults.timeout, true),
         }
-    }
-
-    /// `int(GRACE / POLL)`: the post-finish wait for a finisher still holding the claim.
-    fn settle_polls(&self) -> u64 {
-        // Truncation is the reference's `int()`; both operands are finite and non-negative.
-        (self.grace.as_secs_f64() / self.poll.as_secs_f64()) as u64
     }
 }
 
@@ -448,11 +444,16 @@ impl<'a> Ops<'a> {
     }
 
     fn detach(&self, verb: &str, op_id: &str) -> Result<(), ChatError> {
+        let env: &[(&str, &str)] = if verb == FINISH_VERB {
+            &[(DETACHED_ENV, "1")]
+        } else {
+            &[]
+        };
         detach(
             &self.exe,
             &self.core.config().state_dir,
             &[verb, op_id],
-            &[],
+            env,
         )
         .map_err(io_err(&self.exe))
     }
@@ -806,6 +807,15 @@ impl<'a> Ops<'a> {
         Ok(())
     }
 
+    /// The `_chat-op-finish` verb. A rollover finish waits for the turn to end, so run in the
+    /// foreground (a distiller's Bash tool) it re-runs itself detached, outliving its caller.
+    pub fn finish_verb(&self, op_id: &str, detached: bool) -> Result<(), ChatError> {
+        if !detached && self.load_spec(op_id)?.kind == OpKind::Rollover {
+            return self.detach(FINISH_VERB, op_id);
+        }
+        self.finish(op_id)
+    }
+
     fn spec_source(&self, spec: &ChatOpSpec) -> Result<Session, ChatError> {
         let not_found = || ChatError::NotFound {
             op: FINISH_VERB.to_owned(),
@@ -977,10 +987,10 @@ impl<'a> Ops<'a> {
         if !done.exists() {
             self.finish(op_id)?;
         }
-        for _ in 0..t.settle_polls() {
-            if done.exists() {
-                break;
-            }
+        // A finisher holding the claim may wait out a turn: never tear it down early.
+        let claim = dir.join(CLAIM_DIR);
+        let settle_end = Instant::now() + t.timeout;
+        while Instant::now() < settle_end && claim.exists() && !done.exists() {
             std::thread::sleep(t.poll);
         }
         self.cleanup(&spec);
@@ -1351,7 +1361,8 @@ impl Verb for OpFinish {
             say(io.stderr, "usage: txc _chat-op-finish <op>\n")?;
             return Ok(2);
         };
-        match ops(core)?.finish(op_id) {
+        let detached = std::env::var_os(DETACHED_ENV).is_some();
+        match ops(core)?.finish_verb(op_id, detached) {
             Ok(()) => Ok(0),
             Err(error) => report(io, FINISH_VERB, error),
         }
@@ -1495,7 +1506,6 @@ mod tests {
         assert_eq!(defaults.poll, Duration::from_secs(2));
         assert_eq!(defaults.grace, Duration::from_secs(20));
         assert_eq!(defaults.timeout, Duration::from_secs(600));
-        assert_eq!(defaults.settle_polls(), 10);
         let set = timings(&[(POLL_ENV, "0.05"), (GRACE_ENV, " 0.2 "), (TIMEOUT_ENV, "4")]);
         assert_eq!(set.poll, Duration::from_millis(50));
         assert_eq!(set.grace, Duration::from_millis(200));

@@ -580,6 +580,66 @@ fn an_abandoned_op_is_finished_once_by_the_next_chat_verb() {
 }
 
 #[test]
+fn the_watcher_waits_for_a_finisher_holding_the_claim() {
+    let cli = Cli::new();
+    let cwd = cli.dir.path().to_str().unwrap().to_owned();
+    write_stale_spec(&cli, "held", "not-a-session", &cwd, "w");
+    let op = cli.ops_dir().join("held");
+    std::fs::create_dir(op.join("claim")).unwrap();
+    let timings = [
+        ("TX_CHAT_OP_TIMEOUT_S", "20"),
+        ("TX_CHAT_OP_GRACE_S", "0"),
+        ("TX_CHAT_OP_POLL_S", "0.1"),
+    ];
+    std::thread::scope(|scope| {
+        let watcher = scope.spawn(|| cli.op(&["_chat-op-watch", "held"], &timings));
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        assert!(
+            op.join("spec.json").exists(),
+            "the op was torn down under a live finisher"
+        );
+        std::fs::write(op.join("done"), "").unwrap();
+        let output = watcher.join().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    });
+    assert!(!op.exists());
+}
+
+#[test]
+fn a_foreground_rollover_finish_detaches_itself() {
+    require_tmux!();
+    let cli = Cli::new();
+    let id = cli.create_agent("a");
+    cli.capture(&id, "c1");
+    let path = cli.record_path(&id);
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["ext"]["hooks"] = json!({"state": "working"});
+    std::fs::write(&path, record.to_string()).unwrap();
+    let cwd = record["cwd"].as_str().unwrap().to_owned();
+    let dir = cli.ops_dir().join("roll");
+    std::fs::create_dir_all(&dir).unwrap();
+    let spec = json!({
+        "op_id": "roll", "kind": "rollover", "source": id, "source_chat": "c1",
+        "cwd": cwd, "artifact_path": "", "self_catch_up": false,
+        "worker_name": "", "pane": "%999", "distiller_name": "a-rollover-distill",
+    });
+    std::fs::write(dir.join("spec.json"), spec.to_string()).unwrap();
+    let timings = [("TX_CHAT_OP_TIMEOUT_S", "6"), ("TX_CHAT_OP_POLL_S", "0.1")];
+    let started = std::time::Instant::now();
+    let output = cli.op(&["_chat-op-finish", "roll"], &timings);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "the finisher blocked its caller for {:?}",
+        started.elapsed()
+    );
+    assert!(
+        cli.wait_for(5, || dir.join("claim").exists()),
+        "the detached finisher took the claim"
+    );
+}
+
+#[test]
 fn fork_without_a_chat_exits_1() {
     require_tmux!();
     let cli = Cli::new();

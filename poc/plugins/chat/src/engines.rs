@@ -156,7 +156,8 @@ pub fn bundle_sidecars(engine: &str, src_transcript: &Path, chat_id: &str) -> Ve
 }
 
 /// Copies Claude's cwd-keyed chat files so a resume or fork can start in another directory.
-/// Other engines key nothing on the cwd.
+/// Other engines key nothing on the cwd. Only missing files are copied: an existing
+/// destination may be a newer live chat and is never overwritten.
 pub fn prepare_chat_for_cwd(
     loc: &Locator,
     engine: &str,
@@ -175,7 +176,7 @@ pub fn prepare_chat_for_cwd(
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(io(parent))?;
     }
-    copy2(&source, &target)?;
+    copy2_if_absent(&source, &target)?;
     let sidecars = source.with_extension("");
     if sidecars.is_dir() {
         copytree(&sidecars, &target.with_extension(""))?;
@@ -190,8 +191,11 @@ fn io(path: &Path) -> impl FnOnce(std::io::Error) -> ChatError + '_ {
     }
 }
 
-/// Content, permission bits, and access / modification times.
-fn copy2(source: &Path, target: &Path) -> Result<(), ChatError> {
+/// Content, permission bits, and access / modification times; an existing target is kept.
+fn copy2_if_absent(source: &Path, target: &Path) -> Result<(), ChatError> {
+    if target.symlink_metadata().is_ok() {
+        return Ok(());
+    }
     std::fs::copy(source, target).map_err(io(target))?;
     copy_times(source, target)
 }
@@ -209,8 +213,9 @@ fn copy_times(source: &Path, target: &Path) -> Result<(), ChatError> {
     file.set_times(times).map_err(io(target))
 }
 
-/// Recursive merge into an existing tree, symlinks followed.
+/// Recursive merge into an existing tree, symlinks followed; only missing entries are copied.
 fn copytree(source: &Path, target: &Path) -> Result<(), ChatError> {
+    let created = target.symlink_metadata().is_err();
     std::fs::create_dir_all(target).map_err(io(target))?;
     for entry in std::fs::read_dir(source).map_err(io(source))? {
         let entry = entry.map_err(io(source))?;
@@ -219,8 +224,11 @@ fn copytree(source: &Path, target: &Path) -> Result<(), ChatError> {
         if from.is_dir() {
             copytree(&from, &to)?;
         } else {
-            copy2(&from, &to)?;
+            copy2_if_absent(&from, &to)?;
         }
+    }
+    if !created {
+        return Ok(());
     }
     let permissions = std::fs::metadata(source).map_err(io(source))?.permissions();
     std::fs::set_permissions(target, permissions).map_err(io(target))?;
@@ -767,6 +775,41 @@ mod tests {
                 .collect();
         names.sort();
         assert_eq!(names, ["a.txt", "z.txt"]);
+    }
+
+    #[test]
+    fn prepare_chat_for_cwd_never_overwrites_a_newer_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let loc = locator(&base);
+        let (src, dst) = (base.join("src"), base.join("dst"));
+        let path = |cwd: &Path| loc.claude_transcript("c1", cwd.to_str().unwrap());
+        write(&path(&src), "old\n");
+        write(
+            &path(&src).with_extension("").join("tool-results/a.txt"),
+            "old A",
+        );
+        write(
+            &path(&src).with_extension("").join("tool-results/b.txt"),
+            "B",
+        );
+        write(&path(&dst), "old\nnewer live turn\n");
+        write(
+            &path(&dst).with_extension("").join("tool-results/a.txt"),
+            "new A",
+        );
+
+        prepare_chat_for_cwd(&loc, "claude", "c1", &src, &dst).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path(&dst)).unwrap(),
+            "old\nnewer live turn\n"
+        );
+        let results = path(&dst).with_extension("").join("tool-results");
+        assert_eq!(
+            std::fs::read_to_string(results.join("a.txt")).unwrap(),
+            "new A"
+        );
+        assert_eq!(std::fs::read_to_string(results.join("b.txt")).unwrap(), "B");
     }
 
     #[test]
