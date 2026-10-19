@@ -287,7 +287,7 @@ fn session_vanished(stderr: &str) -> bool {
     crate::tmux::is_no_server(stderr)
         || stderr.starts_with("can't find session")
         || stderr.starts_with("no such session")
-        || stderr == "server exited unexpectedly"
+        || crate::tmux::server_quit(stderr)
 }
 
 /// `env[key] = value` for each pair: replaces in place, else appends.

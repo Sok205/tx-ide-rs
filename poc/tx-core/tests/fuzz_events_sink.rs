@@ -110,7 +110,9 @@ fn verdict<T>(result: &Result<T, CoreError>) -> String {
     }
 }
 
-/// A process that exits at once: `created` + `exited` in one emit batch.
+/// A process that exits at once. Whether `exited` lands in the `create_session` batch depends
+/// on `true` dying before `set-option @tx-id` runs; otherwise a later refresh records it. Tests
+/// that need a fixed log call [`await_exit`] right after creating one.
 fn exiting(name: &str, cwd: &std::path::Path) -> CreateOptions {
     CreateOptions::new(
         name,
@@ -146,12 +148,26 @@ fn check_lifecycle(id: &str, types: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Refreshes `id` until its record is `Exited`, so both exit paths reach the same log.
+fn await_exit(core: &TxCore, id: &SessionId) {
+    assert!(
+        wait_for(Duration::from_secs(5), || core
+            .refresh_session(id)
+            .unwrap()
+            .session()
+            .lifecycle
+            == Lifecycle::Exited),
+        "{id} never exited"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // 1. Model check: the sink's view equals the log, op by op
 // ---------------------------------------------------------------------------------------------
 
 const NAMES: [&str; 7] = ["alpha", "beta", "gamma", "delta", "eps", "zeta", "bad name"];
 
+/// `AwaitExit` is never generated: it settles an `exiting` create in scripted sequences.
 #[derive(Clone, Debug)]
 enum Op {
     Create { name: usize, exiting: bool },
@@ -163,6 +179,7 @@ enum Op {
     Refresh(usize),
     RefreshAll,
     Kill(usize),
+    AwaitExit(usize),
 }
 
 fn arb_op() -> impl Strategy<Value = Op> {
@@ -226,6 +243,10 @@ fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<SessionId>, step: usize, op:
         Op::Kill(name) => {
             let _ = h.tmux(&["kill-session", "-t", &format!("={}", NAMES[*name])]);
             "kill".to_owned()
+        }
+        Op::AwaitExit(who) => {
+            await_exit(core, &id_for(ids, *who));
+            "Ok".to_owned()
         }
     }
 }
@@ -325,7 +346,8 @@ fn scripted_sequence_sink_view_equals_the_log() {
         Op::Create {
             name: 1,
             exiting: true,
-        }, // created + exited in one batch
+        }, // created (+ exited if `true` beat `set-option`)
+        Op::AwaitExit(1), // exited, unless already in the create batch
         Op::Create {
             name: 0,
             exiting: false,
@@ -529,6 +551,7 @@ fn sixteen_sinks_run_in_registration_order_once_per_event() {
     }
     let a = core.create_session(process("a", &h.workdir("a"))).unwrap();
     let b = core.create_session(exiting("b", &h.workdir("b"))).unwrap();
+    await_exit(&core, &b);
     core.rename_session(&a, "a2").unwrap();
     core.set_session_tags(&a, vec![]).unwrap();
     core.stop_session(&a).unwrap();
