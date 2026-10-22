@@ -32,18 +32,36 @@ fi
 # `_pane-info` read — a single Python launch on the ~1 Hz (status-interval) render path. `$1` is the
 # inner session's tmux name (an id for a PROCESS, a human name for a VIEW), used ONLY to resolve
 # @tx_id → the record. Falls back to that raw tmux name when the pane hosts an untracked session (no
-# @tx_id) or its record is absent, so the border never goes blank. Two read -r's (not `mapfile`,
-# which macOS bash 3.2 lacks); `_pane-info` always emits exactly two lines (name, tags).
+# @tx_id) or its record is absent, so the border never goes blank. Three read -r's (not `mapfile`,
+# which macOS bash 3.2 lacks); `_pane-info` always emits exactly three lines (name, tags, state).
+#
+# The state glyph before the name: WORKING spins one step per redraw (tmux re-runs this job once a
+# second), WAITING is a filled dot in the warn colour (the operator is needed), IDLE a hollow dot.
+# Non-llm roles (alive / exited) show nothing. The frame is the epoch second; the bash builtin
+# `printf %(%s)T` keeps the 1 Hz hot path process-free, `date` is the bash 3.2 fallback.
+state_glyph() {
+  local -a frames=(◐ ◓ ◑ ◒)
+  local epoch
+  case "$1" in
+    working)
+      printf -v epoch '%(%s)T' -1 2>/dev/null || epoch=$(date +%s)
+      printf '#[fg=%s,bold]%s#[default] ' "$ACCENT_HEX" "${frames[epoch % 4]}"
+      ;;
+    waiting) printf '#[fg=%s,bold]●#[default] ' "$WARN_HEX" ;;
+    idle) printf '#[fg=%s,nobold]○#[default] ' "$DIM_FG_HEX" ;;
+  esac
+}
+
 render_inner() {
-  local session="$1" id name="" tag="" part color
+  local session="$1" id name="" tag="" state="" part color
   local -a parts
   id=$(tmux show-options -vqt "$session" @tx_id 2>/dev/null) || id=""
   if [[ -z "$id" ]]; then
     printf '#[bold]%s#[default]' "$session"
     return 0
   fi
-  { IFS= read -r name; IFS= read -r tag; } < <("$TX" _pane-info "$id" 2>/dev/null) || true
-  printf '#[bold]%s#[default]' "${name:-$session}"
+  { IFS= read -r name; IFS= read -r tag; IFS= read -r state; } < <("$TX" _pane-info "$id" 2>/dev/null) || true
+  printf '%s#[bold]%s#[default]' "$(state_glyph "$state")" "${name:-$session}"
   [[ -z "$tag" ]] && return 0
   IFS=',' read -ra parts <<<"$tag"
   for part in "${parts[@]}"; do

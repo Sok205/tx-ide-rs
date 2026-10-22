@@ -819,8 +819,8 @@ fn focus_envelope(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, B
     Ok(0)
 }
 
-/// The pane border's single read: line 1 the display name, line 2 the tags; both empty for an
-/// absent or unreadable record (a bad record never breaks the border).
+/// The pane border's single read: line 1 the display name, line 2 the tags, line 3 the state; all
+/// empty for an absent or unreadable record (a bad record never breaks the border).
 fn pane_info(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxError> {
     let parser = parser.arg(Arg::positional("session_id"));
     let matches = parse!(parser, argv);
@@ -831,8 +831,13 @@ fn pane_info(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxErr
         deps.service.store().load(session_id).ok().flatten()
     };
     match record {
-        Some(record) => println!("{}\n{}", record.name, record.tags.join(",")),
-        None => println!("\n"),
+        Some(record) => println!(
+            "{}\n{}\n{}",
+            record.name,
+            record.tags.join(","),
+            record.state.as_str()
+        ),
+        None => println!("\n\n"),
     }
     Ok(0)
 }
