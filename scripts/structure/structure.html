@@ -59,6 +59,8 @@ button { font: 14px var(--ui-font); color: var(--main-color); cursor: pointer; }
 .mod.sel .mod-box { stroke: var(--link-color); stroke-width: 1.5; }
 .mod-head { cursor: pointer; }
 .mod-name { fill: var(--mod-link-color); font: 500 15px var(--ui-font); }
+.mod-name.legend { font-size: 13px; }
+.mod-legend { fill: var(--main-background-color); }
 .mod-sub { fill: var(--right-side-color); font: 11px var(--ui-font); }
 .mod-toggle { fill: var(--right-side-color); font: 600 15px var(--ui-font); }
 .item { cursor: pointer; }
@@ -162,7 +164,8 @@ function visibleItems(module) {
     .sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.name.localeCompare(b.name));
 }
 
-const PILL_W = 186, PILL_H = 26, PILL_GAP = 7, HEAD = 46, COLLAPSED_W = 180, COLLAPSED_H = 52;
+// An expanded module's name sits on its top border, so its items start right below it.
+const PILL_W = 186, PILL_H = 26, PILL_GAP = 7, HEAD = 16, COLLAPSED_W = 180, COLLAPSED_H = 52;
 function mapLayout() {
   const modules = new Map(), items = new Map();
   let y = 0;
@@ -310,21 +313,39 @@ function pillSvg(id, pill, classes) {
     <text class="badge" x="${pill.x + 14.5}" y="${pill.y + 16.5}" text-anchor="middle">${card.kind[0].toUpperCase()}</text>
     <text class="name kind-${card.kind === "method" ? "fn" : card.kind}" x="${pill.x + 29}" y="${pill.y + 17.5}">${escapeHtml(label.length > 21 ? label.slice(0, 20) + "…" : label)}</text></g>`;
 }
+// [box, label]: the label layer is drawn above the edges, so edges never cross a module's name.
 function moduleSvg(module, box, classes, subtitle, toggle) {
-  return `<g class="mod${classes}" data-module="${module}">
+  if (!box.expanded) {
+    return [`<g class="mod${classes}" data-module="${module}">
     <rect class="mod-box" x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="9"/>
     <rect x="${box.x}" y="${box.y}" width="${box.w}" height="4" rx="2" fill="${MODULE_COLORS[module]}"/>
     <g class="mod-head" data-module="${module}">
-      <rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.head || (box.expanded ? 40 : box.h)}" fill="transparent"/>
-      <text class="mod-name" x="${box.x + 12}" y="${box.y + (box.head ? 21 : 23)}">${module}</text>
+      <rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="transparent"/>
+      <text class="mod-name" x="${box.x + 12}" y="${box.y + 23}">${module}</text>
       ${subtitle ? `<text class="mod-sub" x="${box.x + 12}" y="${box.y + 38}">${subtitle}</text>` : ""}
-      ${toggle ? `<text class="mod-toggle" x="${box.x + box.w - 22}" y="${box.y + 25}">${box.expanded ? "−" : "+"}</text>` : ""}
-    </g></g>`;
+      ${toggle ? `<text class="mod-toggle" x="${box.x + box.w - 22}" y="${box.y + 25}">+</text>` : ""}
+    </g></g>`, ""];
+  }
+  // Expanded: the name (and the collapse toggle) sit on the coloured top border, like a fieldset legend.
+  return [`<g class="mod${classes}" data-module="${module}">
+    <rect class="mod-box" x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="7"/>
+    <rect x="${box.x}" y="${box.y - 1.5}" width="${box.w}" height="3" rx="1.5" fill="${MODULE_COLORS[module]}"/></g>`,
+    `<g class="mod mod-label" data-module="${module}"><g class="mod-head" data-module="${module}">
+      <rect class="mod-legend" x="${box.x + 10}" y="${box.y - 9}" width="${module.length * 7.5 + 12}" height="18" rx="4"/>
+      <text class="mod-name legend" x="${box.x + 16}" y="${box.y + 4.5}">${module}</text>
+      ${toggle ? `<rect class="mod-legend" x="${box.x + box.w - 30}" y="${box.y - 9}" width="20" height="18" rx="4"/><text class="mod-toggle" x="${box.x + box.w - 24.5}" y="${box.y + 5}">−</text>` : ""}
+    </g></g>`];
 }
+// Legend backgrounds take the measured width of their name once it is drawn in the real font.
+function fitLegends() {
+  for (const name of viewport.querySelectorAll("text.legend")) name.previousElementSibling.setAttribute("width", name.getComputedTextLength() + 12);
+}
+document.fonts.ready.then(fitLegends);
 
 function render() {
   saveSettings();
   if (state.mode === "focus") renderFocus(); else renderMap();
+  fitLegends();
   hovered = null;
   svg.classList.remove("hovering");
   applyTransform();
@@ -339,12 +360,14 @@ function renderMap() {
   const base = selectedCard && (selectedCard.owner ? cards.get(selectedCard.owner) : selectedCard);
   const selectedKey = !state.selected ? null : base ? (layout.items.has(base.id) ? base.id : "module/" + base.module) : state.selected;
   const neighbours = new Set();
-  let html = "", edgesHtml = "", itemsHtml = "";
+  let html = "", edgesHtml = "", labelsHtml = "", itemsHtml = "";
   for (const module of moduleNames) {
     const box = layout.modules.get(module);
     const count = visibleItems(module).length;
-    html += moduleSvg(module, box, selectedKey === "module/" + module ? " sel" : "",
+    const [body, label] = moduleSvg(module, box, selectedKey === "module/" + module ? " sel" : "",
       count ? `${count} ${INTERNAL ? "item" : "interface"}${count > 1 ? "s" : ""}` : "internal only", count > 0);
+    html += body;
+    labelsHtml += label;
   }
   currentEdges.forEach((edge, index) => {
     const hot = selectedKey && (edge.a.key === selectedKey || edge.b.key === selectedKey);
@@ -352,7 +375,7 @@ function renderMap() {
     if (!edge.intra || hot) edgesHtml += edgeSvg(edge, index, hot, true);
   });
   for (const [id, pill] of layout.items) itemsHtml += pillSvg(id, pill, `${id === selectedKey ? " sel" : ""}${neighbours.has(id) && id !== selectedKey ? " nb" : ""}`);
-  viewport.innerHTML = html + edgesHtml + itemsHtml;
+  viewport.innerHTML = html + edgesHtml + labelsHtml + itemsHtml;
   svg.classList.toggle("focused", Boolean(selectedKey));
   for (const module of moduleNames) {
     if (neighbours.has("module/" + module) && selectedKey !== "module/" + module) viewport.querySelector(`.mod[data-module="${module}"] .mod-box`).style.stroke = MODULE_COLORS[module];
@@ -381,10 +404,10 @@ function focusModel(id) {
   return { card, uses, usedBy };
 }
 
-// Used-by on the left, the object in the middle, uses on the right, grouped by module. Each side
-// wraps into as many columns as make the graph fill the frame best; a module that does not fit in a
+// Used-by above, the object in the middle, uses below, grouped by module. Each band is split into as
+// many side-by-side columns as make the graph fill the frame best; a module that does not fit in a
 // column continues at the top of the next one.
-const FOCUS_BOX_W = PILL_W + 24, FOCUS_HEAD = 30, FOCUS_PAD = 6, FOCUS_GAP = 12, FOCUS_COLUMN_GAP = 36, FOCUS_SIDE_GAP = 110;
+const FOCUS_BOX_W = PILL_W + 24, FOCUS_HEAD = HEAD, FOCUS_PAD = 6, FOCUS_GAP = 12, FOCUS_COLUMN_GAP = 24, FOCUS_BAND_GAP = 90;
 const FOCUS_ROW = PILL_H + PILL_GAP, FOCUS_MAX_ZOOM = 1.25, MAP_MAX_ZOOM = 1.4;
 const pieceHeight = (piece) => FOCUS_HEAD + piece.list.length * FOCUS_ROW + FOCUS_PAD;
 function packColumns(groups, columnCount) {
@@ -423,69 +446,72 @@ function renderFocus() {
     return [...byModule].sort((a, b) => moduleNames.indexOf(a[0]) - moduleNames.indexOf(b[0]))
       .map(([module, list]) => ({ module, list: list.sort((a, b) => pillLabel(a).localeCompare(pillLabel(b))) }));
   };
-  const sides = { usedBy: groupsOf([...model.usedBy.keys()].filter((id) => !model.uses.has(id))), uses: groupsOf([...model.uses.keys()]) };
-  // Try every column count per side and keep the one that lets the graph be drawn largest.
+  const bands = { usedBy: groupsOf([...model.usedBy.keys()].filter((id) => !model.uses.has(id))), uses: groupsOf([...model.uses.keys()]) };
+  // Try every column count per band and keep the one that lets the graph be drawn largest.
   const rect = svg.getBoundingClientRect();
-  const sideWidth = (columns) => columns.length ? columns.length * FOCUS_BOX_W + (columns.length - 1) * FOCUS_COLUMN_GAP + FOCUS_SIDE_GAP : 0;
+  const centerHeight = FOCUS_HEAD + FOCUS_ROW + FOCUS_PAD;
+  const bandWidth = (columns) => columns.length * FOCUS_BOX_W + Math.max(0, columns.length - 1) * FOCUS_COLUMN_GAP;
+  const bandHeight = (columns) => columns.length ? Math.max(...columns.map(columnHeight)) + FOCUS_BAND_GAP : 0;
   let best = null;
   const counts = (groups) => groups.length ? [1, 2, 3, 4, 5, 6] : [0];
-  for (const leftCount of counts(sides.usedBy)) {
-    for (const rightCount of counts(sides.uses)) {
-      const left = leftCount ? packColumns(sides.usedBy, leftCount) : [], right = rightCount ? packColumns(sides.uses, rightCount) : [];
-      const width = sideWidth(left) + FOCUS_BOX_W + sideWidth(right);
-      const height = Math.max(FOCUS_HEAD + FOCUS_ROW + FOCUS_PAD, ...left.map(columnHeight), ...right.map(columnHeight));
+  for (const topCount of counts(bands.usedBy)) {
+    for (const bottomCount of counts(bands.uses)) {
+      const top = topCount ? packColumns(bands.usedBy, topCount) : [], bottom = bottomCount ? packColumns(bands.uses, bottomCount) : [];
+      const width = Math.max(FOCUS_BOX_W, bandWidth(top), bandWidth(bottom));
+      const height = bandHeight(top) + centerHeight + bandHeight(bottom);
       const zoom = Math.min(FOCUS_MAX_ZOOM, (rect.width - 24) / width, (rect.height - 60) / height);
-      if (!best || zoom > best.zoom + 0.001) best = { zoom, left, right };
+      if (!best || zoom > best.zoom + 0.001) best = { zoom, top, bottom };
     }
   }
-  const place = (pieces, x) => {
-    let y = -columnHeight(pieces) / 2;
+  // Columns above hang from the band's bottom edge, columns below from its top edge: both hug the object.
+  const place = (pieces, x, y) => {
     for (const piece of pieces) {
-      const box = { module: piece.module, x, y, w: FOCUS_BOX_W, h: pieceHeight(piece), head: FOCUS_HEAD };
+      const box = { module: piece.module, x, y, w: FOCUS_BOX_W, h: pieceHeight(piece), expanded: true };
       modules.set(modules.size + "/" + piece.module, box);
       piece.list.forEach((card, row) => items.set(card.id, { card, x: x + 12, y: y + FOCUS_HEAD + row * FOCUS_ROW, w: PILL_W, h: PILL_H }));
       y += box.h + FOCUS_GAP;
     }
   };
-  place([{ module: center.module, list: [center] }], -FOCUS_BOX_W / 2);
-  best.left.forEach((column, index) => place(column, -FOCUS_BOX_W / 2 - FOCUS_SIDE_GAP - FOCUS_BOX_W - index * (FOCUS_BOX_W + FOCUS_COLUMN_GAP)));
-  best.right.forEach((column, index) => place(column, FOCUS_BOX_W / 2 + FOCUS_SIDE_GAP + index * (FOCUS_BOX_W + FOCUS_COLUMN_GAP)));
+  place([{ module: center.module, list: [center] }], -FOCUS_BOX_W / 2, -centerHeight / 2);
+  const columnX = (columns, index) => -bandWidth(columns) / 2 + index * (FOCUS_BOX_W + FOCUS_COLUMN_GAP);
+  best.top.forEach((column, index) => place(column, columnX(best.top, index), -centerHeight / 2 - FOCUS_BAND_GAP - columnHeight(column)));
+  best.bottom.forEach((column, index) => place(column, columnX(best.bottom, index), centerHeight / 2 + FOCUS_BAND_GAP));
   state.layout = { modules, items };
   const endpoint = (id) => ({ key: id, box: items.get(id), module: cards.get(id).module });
   const link = (source, target, edges) => ({ key: source + ">" + target, a: endpoint(source), b: endpoint(target), edges, kinds: new Set(edges.map((edge) => edge.kind)), kind: "item" });
   currentEdges = [...[...model.uses].map(([other, edges]) => link(center.id, other, edges)),
                   ...[...model.usedBy].map(([other, edges]) => link(other, center.id, edges))];
   focusRoute(currentEdges, center.id);
-  let html = "";
-  for (const box of modules.values()) html += moduleSvg(box.module, box, "", "", false);
-  currentEdges.forEach((edge, index) => { html += edgeSvg(edge, index, true, false); });
-  for (const [id, pill] of items) html += pillSvg(id, pill, id === center.id ? " sel" : " nb");
-  viewport.innerHTML = html;
+  const parts = [...modules.values()].map((box) => moduleSvg(box.module, box, "", "", false));
+  viewport.innerHTML = parts.map(([body]) => body).join("")
+    + currentEdges.map((edge, index) => edgeSvg(edge, index, true, false)).join("")
+    + parts.map(([, label]) => label).join("")
+    + [...items].map(([id, pill]) => pillSvg(id, pill, id === center.id ? " sel" : " nb")).join("");
   svg.classList.remove("focused");
 }
 
-// Focus edges always run sideways, from the right edge of the left pill to the left edge of the right
-// pill, fanned out a little where they meet the object in the middle.
+// Focus edges run vertically: from the object's top edge up to the bottom of each user, and from its
+// bottom edge down to the top of each thing it uses, fanned out along the object's edge.
 function focusRoute(edges, centerId) {
   const centerPill = state.layout.items.get(centerId);
-  const fan = { left: [], right: [] };
+  const fan = { above: [], below: [] };
   for (const edge of edges) {
     const other = edge.a.key === centerId ? edge.b : edge.a;
     edge.otherPill = other.box;
-    fan[other.box.x < centerPill.x ? "left" : "right"].push(edge);
+    fan[other.box.y < centerPill.y ? "above" : "below"].push(edge);
   }
   for (const list of Object.values(fan)) {
-    list.sort((p, q) => p.otherPill.y - q.otherPill.y);
-    const step = Math.min(3, (centerPill.h - 8) / Math.max(1, list.length));
+    list.sort((p, q) => p.otherPill.x - q.otherPill.x || p.otherPill.y - q.otherPill.y);
+    const step = Math.min(6, (centerPill.w - 24) / Math.max(1, list.length));
     list.forEach((edge, index) => { edge.fanOffset = (index - (list.length - 1) / 2) * step; });
   }
   for (const edge of edges) {
     const fromPill = edge.a.box, toPill = edge.b.box;
-    const forward = fromPill.x < toPill.x;
-    const anchor = (pill, side) => [side === "right" ? pill.x + pill.w : pill.x, pill.y + pill.h / 2 + (pill === centerPill ? edge.fanOffset : 0)];
-    const [x1, y1] = anchor(fromPill, forward ? "right" : "left"), [x2, y2] = anchor(toPill, forward ? "left" : "right");
-    const bend = Math.max(40, Math.abs(x2 - x1) * 0.45) * (forward ? 1 : -1);
-    edge.path = `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`;
+    const downward = fromPill.y < toPill.y;
+    const anchor = (pill, side) => [pill.x + pill.w / 2 + (pill === centerPill ? edge.fanOffset : 0), side === "bottom" ? pill.y + pill.h : pill.y];
+    const [x1, y1] = anchor(fromPill, downward ? "bottom" : "top"), [x2, y2] = anchor(toPill, downward ? "top" : "bottom");
+    const bend = Math.max(30, Math.abs(y2 - y1) * 0.45) * (downward ? 1 : -1);
+    edge.path = `M${x1},${y1} C${x1},${y1 + bend} ${x2},${y2 - bend} ${x2},${y2}`;
     edge.mid = [(x1 + x2) / 2, (y1 + y2) / 2];
   }
 }
@@ -592,10 +618,12 @@ function setHover(element) {
   svg.classList.toggle("hovering", Boolean(element));
   if (!element) return;
   element.classList.add("hover-self");
+  // A module is drawn in two layers (box and label): mark both.
+  if (!element.classList.contains("item")) for (const part of viewport.querySelectorAll(`.mod[data-module="${element.dataset.module}"]`)) part.classList.add("hover-self");
   const itemKey = element.classList.contains("item") ? element.dataset.id : null;
   const module = element.dataset.module;
   const markEnd = (end) => {
-    if (end.key.startsWith("module/")) viewport.querySelector(`.mod[data-module="${end.module}"]`).classList.add("hover-nb");
+    if (end.key.startsWith("module/")) for (const part of viewport.querySelectorAll(`.mod[data-module="${end.module}"]`)) part.classList.add("hover-nb");
     else viewport.querySelector(`.item[data-id="${CSS.escape(end.key)}"]`).classList.add("hover-nb");
   };
   for (const edgeElement of viewport.querySelectorAll(".edge")) {
