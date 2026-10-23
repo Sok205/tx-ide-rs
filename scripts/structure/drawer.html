@@ -6,14 +6,15 @@
   <iframe id="tx-structure-frame" title="tx-core structure"></iframe>
 </div>
 <style>
-#tx-structure { position: fixed; top: 0; right: 0; width: var(--tx-structure-width, 46vw); height: min(var(--tx-structure-width, 46vw), 100vh); z-index: 100; background: var(--main-background-color); border-left: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+/* An overlay: the docs keep their full width underneath. */
+#tx-structure { position: fixed; top: 12px; right: 12px; width: var(--tx-structure-width, 40vw); height: min(var(--tx-structure-width, 40vw), calc(100vh - 24px)); z-index: 100; background: var(--main-background-color); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.22); }
+#tx-structure iframe { border-radius: 6px; }
 #tx-structure iframe { width: 100%; height: 100%; border: 0; display: block; }
-#tx-structure.tx-structure-closed { width: 0; border: 0; box-shadow: none; }
+#tx-structure.tx-structure-closed { width: 0; border: 0; box-shadow: none; right: 0; }
 #tx-structure.tx-structure-closed iframe, #tx-structure.tx-structure-closed #tx-structure-resize { display: none; }
 #tx-structure-tab { position: absolute; top: 120px; right: 100%; transform-origin: right bottom; transform: rotate(-90deg) translateY(0); white-space: nowrap; background: var(--sidebar-background-color); color: var(--main-color); border: 1px solid var(--border-color); border-bottom: 0; border-radius: 4px 4px 0 0; padding: 3px 12px; font: 500 14px "Fira Sans", Arial, NanumBarunGothic, sans-serif; cursor: pointer; }
 #tx-structure-tab:hover { background: var(--sidebar-background-color-hover); }
 #tx-structure-resize { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; }
-body.tx-structure-open { padding-right: var(--tx-structure-width, 46vw); }
 body.tx-structure-resizing iframe { pointer-events: none; }
 </style>
 <script>
@@ -28,7 +29,6 @@ body.tx-structure-resizing iframe { pointer-events: none; }
 
   function setOpen(open) {
     drawer.classList.toggle("tx-structure-closed", !open);
-    document.body.classList.toggle("tx-structure-open", open);
     localStorage.setItem("tx-structure-open", open ? "1" : "0");
     if (open && !frame.src) frame.src = `${root}structure.html?page=${encodeURIComponent(page())}`;
   }
@@ -76,7 +76,7 @@ body.tx-structure-resizing iframe { pointer-events: none; }
     event.preventDefault();
     document.body.classList.add("tx-structure-resizing");
     const move = (moveEvent) => {
-      const value = Math.max(320, Math.min(innerWidth - 360, innerWidth - moveEvent.clientX)) + "px";
+      const value = Math.max(320, Math.min(innerWidth - 360, innerWidth - 12 - moveEvent.clientX)) + "px";
       document.documentElement.style.setProperty("--tx-structure-width", value);
       localStorage.setItem("tx-structure-width", value);
     };
