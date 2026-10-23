@@ -32,7 +32,7 @@ button { font: 14px var(--ui-font); color: var(--main-color); cursor: pointer; }
 .button { background: var(--main-background-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 2px 9px; }
 .button:hover { border-color: var(--right-side-color); }
 
-#mode { position: absolute; top: 8px; left: 10px; z-index: 3; }
+#top-left { position: absolute; top: 8px; left: 10px; z-index: 3; display: flex; gap: 6px; }
 #settings-button { position: absolute; top: 8px; right: 10px; z-index: 3; width: 30px; height: 30px; padding: 0; border: 1px solid var(--border-color); border-radius: 4px; background: var(--main-background-color); color: var(--right-side-color); font-size: 18px; line-height: 28px; }
 #settings-button:hover, #settings-button.on { color: var(--main-color); border-color: var(--right-side-color); }
 #settings { display: none; position: absolute; top: 44px; right: 10px; z-index: 4; width: 270px; padding: 10px 14px 12px; background: var(--main-background-color); border: 1px solid var(--border-color); border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 14px; }
@@ -93,12 +93,15 @@ svg.hovering .item.hover-self rect.pill { stroke-width: 2; }
 </head>
 <body>
 <div id="graph">
-  <div class="segmented" id="mode"><button data-mode="modules" title="Modules and how they relate">Modules</button><button data-mode="focus" title="This object and its relations">Focus</button></div>
+  <div id="top-left">
+    <div class="segmented" id="mode"><button data-mode="modules" title="Modules and how they relate">Modules</button><button data-mode="focus" title="This object and its relations">Focus</button></div>
+    <button class="button" id="fit" title="Fit the graph (f)">Fit</button>
+  </div>
   <button id="settings-button" title="Graph settings">⚙</button>
   <div id="settings">
     <h3>View</h3><div class="row"><div class="segmented" id="views"><button data-view="internal">Internal</button><button data-view="public">Public</button></div></div>
     <h3>Show</h3><div class="toggles" id="toggles"></div>
-    <h3>Layout</h3><div class="row"><button class="button" id="expand-all">Expand all</button><button class="button" id="collapse-all">Collapse all</button><button class="button" id="fit">Fit</button></div>
+    <h3>Layout</h3><div class="row"><button class="button" id="expand-all">Expand all</button><button class="button" id="collapse-all">Collapse all</button></div>
     <h3>Edges</h3><div id="legend"></div>
   </div>
   <svg id="svg"><defs id="defs"></defs><g id="viewport"></g></svg>
