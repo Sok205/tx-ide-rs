@@ -1,0 +1,1 @@
+rd_("gtx_core")

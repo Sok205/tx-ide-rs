@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PluginError","PluginStatus","VerbError"],"fn":["preview_verbs"],"struct":["PluginConfig","Registry","Resource","VerbIo"],"trait":["Plugin","Verb"]};

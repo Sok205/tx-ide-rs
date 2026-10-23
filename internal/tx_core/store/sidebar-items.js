@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["RECORD_SUFFIX","TEMP_SUFFIX"],"enum":["ReadError","StoreError"],"fn":["file_name","io_error","read"],"struct":["SessionStore"]};

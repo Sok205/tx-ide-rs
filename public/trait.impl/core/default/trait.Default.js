@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["tx_core",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"tx_core/engine/struct.EngineRegistry.html\" title=\"struct tx_core::engine::EngineRegistry\">EngineRegistry</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"tx_core/engine/struct.LaunchPlan.html\" title=\"struct tx_core::engine::LaunchPlan\">LaunchPlan</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"tx_core/core/struct.ListFilter.html\" title=\"struct tx_core::core::ListFilter\">ListFilter</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"tx_core/plugin/struct.PluginConfig.html\" title=\"struct tx_core::plugin::PluginConfig\">PluginConfig</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"tx_core/core/struct.SendOptions.html\" title=\"struct tx_core::core::SendOptions\">SendOptions</a>",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1456]}

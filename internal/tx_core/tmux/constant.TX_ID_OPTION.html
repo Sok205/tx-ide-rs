@@ -1,0 +1,89 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The session option that links a tmux session to its record."><title>TX_ID_OPTION in tx_core::tmux - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-1ed95124.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="tx_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.98.1 (48a229cea 2026-09-01)" data-channel="1.98.1" data-search-js="search-9944d736.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc constant"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">TX_ID_OPTION</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../tx_core/index.html">tx_core</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In tx_<wbr>core::<wbr>tmux</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">tx_core</a>::<wbr><a href="index.html">tmux</a></div><h1>Constant <span class="constant">TX_<wbr>ID_<wbr>OPTION</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/tx_core/tmux.rs.html#15">Source</a> </span></div><pre class="rust item-decl"><code>pub const TX_ID_OPTION: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.98.1/std/primitive.str.html">str</a> = &quot;@tx-id&quot;;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The session option that links a tmux session to its record.</p>
+</div></details></section></div></main><div id="tx-structure" class="tx-structure-closed">
+  <button id="tx-structure-tab" title="Structure graph (g)">Structure</button>
+  <div id="tx-structure-resize"></div>
+  <iframe id="tx-structure-frame" title="tx-core structure"></iframe>
+</div>
+<style>
+#tx-structure { position: fixed; top: 0; right: 0; width: var(--tx-structure-width, 46vw); height: min(var(--tx-structure-width, 46vw), 100vh); z-index: 100; background: var(--main-background-color); border-left: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+#tx-structure iframe { width: 100%; height: 100%; border: 0; display: block; }
+#tx-structure.tx-structure-closed { width: 0; border: 0; box-shadow: none; }
+#tx-structure.tx-structure-closed iframe, #tx-structure.tx-structure-closed #tx-structure-resize { display: none; }
+#tx-structure-tab { position: absolute; top: 120px; right: 100%; transform-origin: right bottom; transform: rotate(-90deg) translateY(0); white-space: nowrap; background: var(--sidebar-background-color); color: var(--main-color); border: 1px solid var(--border-color); border-bottom: 0; border-radius: 4px 4px 0 0; padding: 3px 12px; font: 500 14px "Fira Sans", Arial, NanumBarunGothic, sans-serif; cursor: pointer; }
+#tx-structure-tab:hover { background: var(--sidebar-background-color-hover); }
+#tx-structure-resize { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; }
+body.tx-structure-open { padding-right: var(--tx-structure-width, 46vw); }
+body.tx-structure-resizing iframe { pointer-events: none; }
+</style>
+<script>
+(() => {
+  const root = document.querySelector('meta[name="rustdoc-vars"]').dataset.rootPath;
+  const rootPath = new URL(root, location.href).pathname;
+  const drawer = document.getElementById("tx-structure");
+  const frame = document.getElementById("tx-structure-frame");
+  const page = () => decodeURIComponent(location.pathname.slice(rootPath.length)) + location.hash;
+  const width = localStorage.getItem("tx-structure-width");
+  if (width) document.documentElement.style.setProperty("--tx-structure-width", width);
+
+  function setOpen(open) {
+    drawer.classList.toggle("tx-structure-closed", !open);
+    document.body.classList.toggle("tx-structure-open", open);
+    localStorage.setItem("tx-structure-open", open ? "1" : "0");
+    if (open && !frame.src) frame.src = `${root}structure.html?embed=1&page=${encodeURIComponent(page())}`;
+  }
+  setOpen(localStorage.getItem("tx-structure-open") !== "0");
+  document.getElementById("tx-structure-tab").onclick = () => setOpen(drawer.classList.contains("tx-structure-closed"));
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "g" || event.metaKey || event.ctrlKey || event.altKey || event.target.closest("input, textarea")) return;
+    setOpen(drawer.classList.contains("tx-structure-closed"));
+  });
+
+  // The graph asks for navigation; rustdoc tells the graph which item is on screen.
+  window.addEventListener("message", (event) => {
+    if (event.source === frame.contentWindow && event.data.type === "tx-open") location.href = root + event.data.url;
+  });
+  // The drawer wears the page's theme: send rustdoc's resolved variables now and on every theme change.
+  const THEME_VARIABLES = ["--main-background-color", "--main-color", "--sidebar-background-color",
+    "--sidebar-background-color-hover", "--border-color", "--headings-border-bottom-color", "--code-block-background-color",
+    "--button-background-color", "--right-side-color", "--link-color", "--mod-link-color", "--type-link-color",
+    "--trait-link-color", "--function-link-color", "--target-background-color", "--target-border-color",
+    "--warning-border-color", "--search-input-focused-border-color", "--scrollbar-track-background-color",
+    "--scrollbar-thumb-background-color"];
+  function sendTheme() {
+    const style = getComputedStyle(document.documentElement);
+    const variables = Object.fromEntries(THEME_VARIABLES.map((name) => [name, style.getPropertyValue(name).trim()]));
+    frame.contentWindow.postMessage({ type: "tx-theme", variables }, "*");
+  }
+  frame.addEventListener("load", sendTheme);
+  new MutationObserver(sendTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  // Hovering a link to a documented item in the page lights that item's connections in the graph.
+  let hoveredPage = null;
+  document.addEventListener("mouseover", (event) => {
+    const link = event.target.closest("a[href]");
+    let target = null;
+    if (link && !link.closest("#tx-structure")) {
+      const url = new URL(link.href, location.href);
+      if (url.pathname.startsWith(rootPath)) target = decodeURIComponent(url.pathname.slice(rootPath.length)) + url.hash;
+    }
+    if (target === hoveredPage) return;
+    hoveredPage = target;
+    frame.contentWindow.postMessage({ type: "tx-hover", page: target }, "*");
+  });
+  window.addEventListener("hashchange", () => frame.contentWindow && frame.contentWindow.postMessage({ type: "tx-page", page: page() }, "*"));
+
+  document.getElementById("tx-structure-resize").addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    document.body.classList.add("tx-structure-resizing");
+    const move = (moveEvent) => {
+      const value = Math.max(320, Math.min(innerWidth - 360, innerWidth - moveEvent.clientX)) + "px";
+      document.documentElement.style.setProperty("--tx-structure-width", value);
+      localStorage.setItem("tx-structure-width", value);
+    };
+    const up = () => { document.body.classList.remove("tx-structure-resizing"); removeEventListener("mousemove", move); removeEventListener("mouseup", up); };
+    addEventListener("mousemove", move);
+    addEventListener("mouseup", up);
+  });
+})();
+</script>
+
+</body></html>

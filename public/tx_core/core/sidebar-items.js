@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_TMUX_CONF","LOCKS_DIR","LOG_FILE","PROFILES_DIR","SESSIONS_DIR","SESSION_ID_ENV","STATE_DIR_ENV","TMUX_BINARY","TMUX_SOCKET_ENV"],"enum":["LaunchOptions","RefreshResult"],"struct":["CreateOptions","DeliveryReceipt","ExecutionLocation","ListFilter","SendOptions","TxCore"]};

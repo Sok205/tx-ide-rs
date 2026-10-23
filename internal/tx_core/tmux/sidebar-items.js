@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ESCAPED_SEMICOLON","LIST_FORMAT","TX_ID_OPTION"],"enum":["TmuxError"],"fn":["escape_trailing_semicolon","exact","exact_for_pane_target","is_no_server","literal_chunks","server_quit"],"struct":["Live","LiveTable","Tmux"]};

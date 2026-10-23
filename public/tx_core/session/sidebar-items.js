@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_ID_BYTES","MAX_NAME_BYTES","RECORD_VERSION"],"enum":["Effort","Launch","Lifecycle","RecordError"],"fn":["validate_name"],"struct":["InvalidEffort","InvalidLifecycle","InvalidSessionId","Session","SessionId"]};

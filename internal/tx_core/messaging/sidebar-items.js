@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DELIVERY_PAUSE"],"fn":["build_envelope","deliver"]};

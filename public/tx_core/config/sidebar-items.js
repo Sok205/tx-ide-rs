@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CONF_FILE","MAX_SOCKET_PATH_BYTES","SOCKET_FILE"],"struct":["CoreConfig"]};

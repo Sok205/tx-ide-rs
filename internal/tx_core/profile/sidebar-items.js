@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FRONTMATTER_DELIMITER","LOCAL_SUFFIX","ROLE_SUFFIX","SKILL_FILE"],"enum":["RoleError"],"fn":["dirs","is_bare_name","skills_in","split_frontmatter"],"struct":["Profile","Profiles","ResolvedProfile"]};

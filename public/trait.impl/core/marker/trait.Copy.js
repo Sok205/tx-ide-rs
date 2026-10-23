@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["tx_core",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/marker/trait.Copy.html\" title=\"trait core::marker::Copy\">Copy</a> for <a class=\"enum\" href=\"tx_core/session/enum.Effort.html\" title=\"enum tx_core::session::Effort\">Effort</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/marker/trait.Copy.html\" title=\"trait core::marker::Copy\">Copy</a> for <a class=\"enum\" href=\"tx_core/events/enum.EventType.html\" title=\"enum tx_core::events::EventType\">EventType</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/marker/trait.Copy.html\" title=\"trait core::marker::Copy\">Copy</a> for <a class=\"enum\" href=\"tx_core/session/enum.Lifecycle.html\" title=\"enum tx_core::session::Lifecycle\">Lifecycle</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/marker/trait.Copy.html\" title=\"trait core::marker::Copy\">Copy</a> for <a class=\"enum\" href=\"tx_core/plugin/enum.PluginStatus.html\" title=\"enum tx_core::plugin::PluginStatus\">PluginStatus</a>",0],["impl&lt;'a&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.98.1/core/marker/trait.Copy.html\" title=\"trait core::marker::Copy\">Copy</a> for <a class=\"struct\" href=\"tx_core/engine/struct.LaunchRequest.html\" title=\"struct tx_core::engine::LaunchRequest\">LaunchRequest</a>&lt;'a&gt;",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1385]}

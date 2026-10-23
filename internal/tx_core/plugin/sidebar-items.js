@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PluginError","PluginStatus","VerbError"],"fn":["insert_verb","load","preview_verbs","validate_id","validate_resource_name"],"struct":["Host","Loaded","PluginConfig","Registry","Resource","VerbIo"],"trait":["Plugin","Verb"],"type":["VerbTable"]};

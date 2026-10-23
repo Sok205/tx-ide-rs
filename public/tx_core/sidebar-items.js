@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ReadError","StoreError","TmuxError"],"fn":["build_envelope"],"mod":["config","core","engine","error","events","plugin","profile","session"]};
