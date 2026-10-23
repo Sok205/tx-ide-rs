@@ -174,7 +174,7 @@ function mapLayout() {
       const rows = Math.ceil(list.length / columns);
       return { module, list, columns, w: Math.max(COLLAPSED_W, columns * PILL_W + (columns - 1) * PILL_GAP + 24), h: HEAD + rows * (PILL_H + PILL_GAP) + 8, expanded: true };
     });
-    const gap = 90;
+    const gap = 56;
     let x = -(boxes.reduce((sum, box) => sum + box.w, 0) + gap * (boxes.length - 1)) / 2;
     const height = Math.max(...boxes.map((box) => box.h));
     for (const box of boxes) {
@@ -188,7 +188,7 @@ function mapLayout() {
       }
       x += box.w + gap;
     }
-    y += height + 120;
+    y += height + 84;
   }
   return { modules, items };
 }
@@ -315,9 +315,9 @@ function moduleSvg(module, box, classes, subtitle, toggle) {
     <rect class="mod-box" x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="9"/>
     <rect x="${box.x}" y="${box.y}" width="${box.w}" height="4" rx="2" fill="${MODULE_COLORS[module]}"/>
     <g class="mod-head" data-module="${module}">
-      <rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.expanded ? 40 : box.h}" fill="transparent"/>
-      <text class="mod-name" x="${box.x + 12}" y="${box.y + 23}">${module}</text>
-      <text class="mod-sub" x="${box.x + 12}" y="${box.y + 38}">${subtitle}</text>
+      <rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.head || (box.expanded ? 40 : box.h)}" fill="transparent"/>
+      <text class="mod-name" x="${box.x + 12}" y="${box.y + (box.head ? 21 : 23)}">${module}</text>
+      ${subtitle ? `<text class="mod-sub" x="${box.x + 12}" y="${box.y + 38}">${subtitle}</text>` : ""}
       ${toggle ? `<text class="mod-toggle" x="${box.x + box.w - 22}" y="${box.y + 25}">${box.expanded ? "−" : "+"}</text>` : ""}
     </g></g>`;
 }
@@ -381,48 +381,75 @@ function focusModel(id) {
   return { card, uses, usedBy };
 }
 
-// Used-by on the left, the object in the middle, uses on the right, each grouped by module. A side
-// taller than FOCUS_COLUMN_HEIGHT wraps into more columns, moving outward, so the graph stays square.
-const FOCUS_BOX_W = PILL_W + 24, FOCUS_GAP = 18, FOCUS_COLUMN_GAP = 70, FOCUS_COLUMN_HEIGHT = 560;
-const FOCUS_START = { usedBy: -FOCUS_BOX_W / 2 - 150 - FOCUS_BOX_W, center: -FOCUS_BOX_W / 2, uses: FOCUS_BOX_W / 2 + 150 };
-const FOCUS_DIRECTION = { usedBy: -1, center: 0, uses: 1 };
+// Used-by on the left, the object in the middle, uses on the right, grouped by module. Each side
+// wraps into as many columns as make the graph fill the frame best; a module that does not fit in a
+// column continues at the top of the next one.
+const FOCUS_BOX_W = PILL_W + 24, FOCUS_HEAD = 30, FOCUS_PAD = 6, FOCUS_GAP = 12, FOCUS_COLUMN_GAP = 36, FOCUS_SIDE_GAP = 110;
+const FOCUS_ROW = PILL_H + PILL_GAP, FOCUS_MAX_ZOOM = 1.25, MAP_MAX_ZOOM = 1.4;
+const pieceHeight = (piece) => FOCUS_HEAD + piece.list.length * FOCUS_ROW + FOCUS_PAD;
+function packColumns(groups, columnCount) {
+  const total = groups.reduce((sum, group) => sum + FOCUS_HEAD + group.list.length * FOCUS_ROW + FOCUS_PAD + FOCUS_GAP, 0);
+  const target = total / columnCount;
+  const columns = [[]];
+  let filled = 0;
+  for (const group of groups) {
+    let remaining = group.list;
+    while (remaining.length) {
+      const last = columns.length === columnCount;
+      const room = Math.floor((target - filled - FOCUS_HEAD - FOCUS_PAD) / FOCUS_ROW);
+      if (!last && filled > 0 && room < Math.min(2, remaining.length)) { columns.push([]); filled = 0; continue; }
+      const take = last ? remaining.length : Math.min(remaining.length, Math.max(1, room));
+      const piece = { module: group.module, list: remaining.slice(0, take) };
+      columns[columns.length - 1].push(piece);
+      filled += pieceHeight(piece) + FOCUS_GAP;
+      remaining = remaining.slice(take);
+      if (remaining.length && !last) { columns.push([]); filled = 0; }
+    }
+  }
+  return columns;
+}
+const columnHeight = (column) => column.reduce((sum, piece) => sum + pieceHeight(piece), 0) + FOCUS_GAP * Math.max(0, column.length - 1);
 function renderFocus() {
   const model = focusModel(state.focusId);
   const center = model.card;
   const modules = new Map(), items = new Map();
-  const column = (ids, side) => {
+  const groupsOf = (ids) => {
     const byModule = new Map();
     for (const id of ids) {
       const card = cards.get(id);
       if (!byModule.has(card.module)) byModule.set(card.module, []);
       byModule.get(card.module).push(card);
     }
-    const boxes = [...byModule].sort((a, b) => moduleNames.indexOf(a[0]) - moduleNames.indexOf(b[0]))
-      .map(([module, list]) => ({ module, list, h: HEAD + list.length * (PILL_H + PILL_GAP) + 8 }));
-    const total = boxes.reduce((sum, box) => sum + box.h + FOCUS_GAP, 0);
-    const columnCount = Math.max(1, Math.ceil(total / FOCUS_COLUMN_HEIGHT));
-    const columns = [[]];
-    let filled = 0;
-    for (const box of boxes) {
-      if (filled > 0 && filled + box.h / 2 > total / columnCount && columns.length < columnCount) { columns.push([]); filled = 0; }
-      columns[columns.length - 1].push(box);
-      filled += box.h + FOCUS_GAP;
-    }
-    columns.forEach((boxesInColumn, index) => {
-      const x = FOCUS_START[side] + FOCUS_DIRECTION[side] * index * (FOCUS_BOX_W + FOCUS_COLUMN_GAP);
-      let y = -(boxesInColumn.reduce((sum, box) => sum + box.h, 0) + FOCUS_GAP * (boxesInColumn.length - 1)) / 2;
-      for (const { module, list, h } of boxesInColumn) {
-        const box = { module, x, y, w: FOCUS_BOX_W, h, expanded: true, count: list.length };
-        modules.set(side + "/" + modules.size + "/" + module, box);
-        list.sort((a, b) => pillLabel(a).localeCompare(pillLabel(b))).forEach((card, row) =>
-          items.set(card.id, { card, x: box.x + 12, y: y + HEAD + row * (PILL_H + PILL_GAP), w: PILL_W, h: PILL_H }));
-        y += h + FOCUS_GAP;
-      }
-    });
+    return [...byModule].sort((a, b) => moduleNames.indexOf(a[0]) - moduleNames.indexOf(b[0]))
+      .map(([module, list]) => ({ module, list: list.sort((a, b) => pillLabel(a).localeCompare(pillLabel(b))) }));
   };
-  column([center.id], "center");
-  column([...model.usedBy.keys()].filter((id) => !model.uses.has(id)), "usedBy");
-  column([...model.uses.keys()], "uses");
+  const sides = { usedBy: groupsOf([...model.usedBy.keys()].filter((id) => !model.uses.has(id))), uses: groupsOf([...model.uses.keys()]) };
+  // Try every column count per side and keep the one that lets the graph be drawn largest.
+  const rect = svg.getBoundingClientRect();
+  const sideWidth = (columns) => columns.length ? columns.length * FOCUS_BOX_W + (columns.length - 1) * FOCUS_COLUMN_GAP + FOCUS_SIDE_GAP : 0;
+  let best = null;
+  const counts = (groups) => groups.length ? [1, 2, 3, 4, 5, 6] : [0];
+  for (const leftCount of counts(sides.usedBy)) {
+    for (const rightCount of counts(sides.uses)) {
+      const left = leftCount ? packColumns(sides.usedBy, leftCount) : [], right = rightCount ? packColumns(sides.uses, rightCount) : [];
+      const width = sideWidth(left) + FOCUS_BOX_W + sideWidth(right);
+      const height = Math.max(FOCUS_HEAD + FOCUS_ROW + FOCUS_PAD, ...left.map(columnHeight), ...right.map(columnHeight));
+      const zoom = Math.min(FOCUS_MAX_ZOOM, (rect.width - 24) / width, (rect.height - 60) / height);
+      if (!best || zoom > best.zoom + 0.001) best = { zoom, left, right };
+    }
+  }
+  const place = (pieces, x) => {
+    let y = -columnHeight(pieces) / 2;
+    for (const piece of pieces) {
+      const box = { module: piece.module, x, y, w: FOCUS_BOX_W, h: pieceHeight(piece), head: FOCUS_HEAD };
+      modules.set(modules.size + "/" + piece.module, box);
+      piece.list.forEach((card, row) => items.set(card.id, { card, x: x + 12, y: y + FOCUS_HEAD + row * FOCUS_ROW, w: PILL_W, h: PILL_H }));
+      y += box.h + FOCUS_GAP;
+    }
+  };
+  place([{ module: center.module, list: [center] }], -FOCUS_BOX_W / 2);
+  best.left.forEach((column, index) => place(column, -FOCUS_BOX_W / 2 - FOCUS_SIDE_GAP - FOCUS_BOX_W - index * (FOCUS_BOX_W + FOCUS_COLUMN_GAP)));
+  best.right.forEach((column, index) => place(column, FOCUS_BOX_W / 2 + FOCUS_SIDE_GAP + index * (FOCUS_BOX_W + FOCUS_COLUMN_GAP)));
   state.layout = { modules, items };
   const endpoint = (id) => ({ key: id, box: items.get(id), module: cards.get(id).module });
   const link = (source, target, edges) => ({ key: source + ">" + target, a: endpoint(source), b: endpoint(target), edges, kinds: new Set(edges.map((edge) => edge.kind)), kind: "item" });
@@ -430,7 +457,7 @@ function renderFocus() {
                   ...[...model.usedBy].map(([other, edges]) => link(other, center.id, edges))];
   focusRoute(currentEdges, center.id);
   let html = "";
-  for (const box of modules.values()) html += moduleSvg(box.module, box, "", `${box.count} ${box.count > 1 ? "items" : "item"}`, false);
+  for (const box of modules.values()) html += moduleSvg(box.module, box, "", "", false);
   currentEdges.forEach((edge, index) => { html += edgeSvg(edge, index, true, false); });
   for (const [id, pill] of items) html += pillSvg(id, pill, id === center.id ? " sel" : " nb");
   viewport.innerHTML = html;
@@ -475,7 +502,7 @@ function restoreMapView() {
 function setMode(mode) {
   state.mode = mode;
   render();
-  if (mode === "focus") fit(1); else restoreMapView();
+  if (mode === "focus") fit(FOCUS_MAX_ZOOM); else restoreMapView();
   for (const button of document.querySelectorAll("#mode button")) {
     button.classList.toggle("on", button.dataset.mode === mode);
     button.disabled = button.dataset.mode === "focus" && !state.focusId;
@@ -485,12 +512,12 @@ function applyTransform() {
   const rect = svg.getBoundingClientRect();
   viewport.setAttribute("transform", `translate(${rect.width / 2 - state.panX * state.zoom},${rect.height / 2 - state.panY * state.zoom}) scale(${state.zoom})`);
 }
-function fit(maxZoom = 1.4) {
+function fit(maxZoom = MAP_MAX_ZOOM) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const box of state.layout.modules.values()) { minX = Math.min(minX, box.x); minY = Math.min(minY, box.y); maxX = Math.max(maxX, box.x + box.w); maxY = Math.max(maxY, box.y + box.h); }
   const rect = svg.getBoundingClientRect();
-  state.zoom = Math.min(maxZoom, (rect.width - 60) / (maxX - minX), (rect.height - 110) / (maxY - minY));
-  state.panX = (minX + maxX) / 2; state.panY = (minY + maxY) / 2 + 12 / state.zoom;
+  state.zoom = Math.min(maxZoom, (rect.width - 24) / (maxX - minX), (rect.height - 60) / (maxY - minY));
+  state.panX = (minX + maxX) / 2; state.panY = (minY + maxY) / 2 - 18 / state.zoom;
   applyTransform();
 }
 
@@ -628,7 +655,7 @@ settingsButton.onclick = () => setSettingsOpen(!settings.classList.contains("ope
 document.addEventListener("click", (event) => { if (!event.target.closest("#settings, #settings-button")) setSettingsOpen(false); });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") setSettingsOpen(false);
-  if (event.key === "f" && !event.metaKey && !event.ctrlKey) fit(state.mode === "focus" ? 1 : 1.4);
+  if (event.key === "f" && !event.metaKey && !event.ctrlKey) fit(state.mode === "focus" ? FOCUS_MAX_ZOOM : MAP_MAX_ZOOM);
 });
 document.getElementById("toggles").innerHTML = TOGGLES.map(([key, label, , title]) =>
   `<label title="${escapeHtml(title)}"><input type="checkbox" data-toggle="${key}" ${state[key] ? "checked" : ""}> ${label}</label>`).join("");
@@ -636,7 +663,7 @@ document.getElementById("toggles").innerHTML = TOGGLES.map(([key, label, , title
 for (const input of document.querySelectorAll("[data-toggle]")) input.onchange = () => { state[input.dataset.toggle] = input.checked; render(); };
 document.getElementById("expand-all").onclick = () => { moduleNames.forEach((module) => state.expanded.add(module)); render(); };
 document.getElementById("collapse-all").onclick = () => { state.expanded.clear(); render(); };
-document.getElementById("fit").onclick = () => { fit(state.mode === "focus" ? 1 : 1.4); saveMapView(); };
+document.getElementById("fit").onclick = () => { fit(state.mode === "focus" ? FOCUS_MAX_ZOOM : MAP_MAX_ZOOM); saveMapView(); };
 for (const button of document.querySelectorAll("#mode button")) button.onclick = () => setMode(button.dataset.mode);
 for (const button of document.querySelectorAll("#views button")) {
   button.classList.toggle("on", button.dataset.view === VIEW);
