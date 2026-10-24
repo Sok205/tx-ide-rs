@@ -36,14 +36,15 @@ fi
 # which macOS bash 3.2 lacks); `_pane-info` always emits exactly four lines (name, tags, state,
 # resting age).
 #
-# State mark at the right end of the border: a six-cell green bar of middle sextants (cell-aligned,
+# State mark at the right end of the border: a four-cell green bar of middle sextants (cell-aligned,
 # so they sit on the line) while WORKING; when resting just the age since the session stopped
-# (`0m`, `14m`, `2h`) in the dim foreground. Both sit between single spaces; non-llm panes show nothing.
+# (`0m`, `14m`, `2h`) in the dim foreground between single spaces, the same slot; non-llm panes
+# show nothing.
 WORKING_HEX='#9ece6a'
-WORKING_BAR='🬋🬋🬋🬋🬋🬋'
+WORKING_BAR='🬋🬋🬋🬋'  # the width of " 1h ": the bar fills the slot the age and its spaces take
 state_bar() {
   case "$1" in
-    working) printf '#[align=right] #[fg=%s]%s#[default] ' "$WORKING_HEX" "$WORKING_BAR" ;;
+    working) printf '#[align=right]#[fg=%s]%s#[default]' "$WORKING_HEX" "$WORKING_BAR" ;;
     waiting | idle) [[ -n "$2" ]] && printf '#[align=right] #[fg=%s]%s#[default] ' "$DIM_FG_HEX" "$2" ;;
   esac
   return 0
