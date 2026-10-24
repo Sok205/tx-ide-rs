@@ -235,20 +235,20 @@ impl ArtifactNav {
 
     /// Inside the popup: run the list (a focus on a view no pane shows is declined with a notice),
     /// then hand the choice to a background `_artifact-go` so the popup is gone before the pane
-    /// it sits on is re-hosted. A delete is done here and now, and the list comes back without
-    /// the row and with the outcome under it; the popup closes when nothing is left to list.
+    /// it sits on is re-hosted. A delete is done here and now and the list comes back without
+    /// the row (a failure is reported under it); the popup closes when nothing is left to list.
     fn pick(&self, session: &str, client: &str) -> Result<i32, BoxError> {
         let Some(record) = self.record(session, client)? else {
             return Ok(1);
         };
-        let mut outcome: Option<String> = None;
+        let mut failure: Option<String> = None;
         let (listing, mode, index) = loop {
             let listing = self.listing(&record, client)?;
             if listing.targets.is_empty() {
-                if let Some(outcome) = outcome {
+                if let Some(failure) = failure {
                     self.service
                         .tmux()
-                        .display_status(client, &format!("prefix+a: {outcome}"));
+                        .display_status(client, &format!("prefix+a: {failure}"));
                 }
                 return Ok(0);
             }
@@ -276,7 +276,7 @@ impl ArtifactNav {
             let Some(pick) = artifact_picker::pick(
                 &listing.header,
                 &listing.items,
-                outcome.take(),
+                failure.take(),
                 decline,
                 confirm_text,
             )?
@@ -288,8 +288,10 @@ impl ArtifactNav {
                 Pick::Focus(index) => break (listing, Mode::Focus, index),
                 Pick::Popup(index) => break (listing, Mode::Popup, index),
                 Pick::Delete(index) => {
-                    outcome =
-                        Some(self.delete(&record, &listing.targets[index], &listing.names[index]));
+                    failure = self
+                        .delete(&record, &listing.targets[index])
+                        .err()
+                        .map(|error| format!("\"{}\": {error}", listing.names[index]));
                 }
             }
         };
@@ -308,20 +310,16 @@ impl ArtifactNav {
         Ok(0)
     }
 
-    /// The outcome line of a confirmed delete: a session is killed; an artifact has its live
-    /// views killed and is archived, the llm session the key fired in being the actor.
-    fn delete(&self, record: &Session, target: &Target, name: &str) -> String {
-        let done = match target.kind {
-            "session" => self
-                .service
-                .kill(&target.id)
-                .map(|_| format!("killed \"{name}\""))
-                .map_err(BoxError::from),
-            _ => self
-                .archive_artifact(record, &target.id)
-                .map(|()| format!("archived \"{name}\"")),
-        };
-        done.unwrap_or_else(|error| format!("\"{name}\": {error}"))
+    /// A confirmed delete: a session is killed; an artifact has its live views killed and is
+    /// archived, the llm session the key fired in being the actor.
+    fn delete(&self, record: &Session, target: &Target) -> Result<(), BoxError> {
+        match target.kind {
+            "session" => {
+                self.service.kill(&target.id)?;
+                Ok(())
+            }
+            _ => self.archive_artifact(record, &target.id),
+        }
     }
 
     fn archive_artifact(&self, record: &Session, artifact_id: &str) -> Result<(), BoxError> {
