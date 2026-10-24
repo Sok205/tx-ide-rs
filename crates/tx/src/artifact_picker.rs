@@ -184,8 +184,8 @@ impl<'a> Picker<'a> {
         std::mem::replace(&mut self.operation, Operation::Attach)
     }
 
-    /// The screen: header, sections and rows (the cursor's row on the selection background), the
-    /// hint last — unless d's question is showing, which stands alone.
+    /// The screen: header, sections and rows (the cursor's row on the selection background), a
+    /// notice, the hint last — unless d's question is showing, which takes the hint's line alone.
     pub fn render(&self, height: usize, width: usize) -> String {
         let mut out = String::from("\x1b[0m\x1b[H\x1b[2J");
         let mut screen_row = 0;
@@ -215,16 +215,15 @@ impl<'a> Picker<'a> {
             }
         }
         if height > self.items.len() + 3 {
-            if let Some(notice) = &self.notice {
-                out += &format!("\x1b[{};1H{WARN_ANSI}{notice}{RESET}", height - 1);
-            }
-            if self.confirm.is_none() {
-                out += &format!(
-                    "\x1b[{};1H{DIM_FG_ANSI}{}{RESET}",
-                    height,
-                    self.operation.hint()
-                );
-            }
+            let last = if self.confirm.is_some() {
+                format!("{WARN_ANSI}{}", self.notice.as_deref().unwrap_or_default())
+            } else {
+                if let Some(notice) = &self.notice {
+                    out += &format!("\x1b[{};1H{WARN_ANSI}{notice}{RESET}", height - 1);
+                }
+                format!("{DIM_FG_ANSI}{}", self.operation.hint())
+            };
+            out += &format!("\x1b[{};1H{last}{RESET}", height);
         }
         out
     }
@@ -341,9 +340,12 @@ mod tests {
         assert_eq!(picker.handle(Key::Char('d')), None);
         assert_eq!(picker.pending_delete(), Some(1));
         picker.notice("Kill \"b\"? [y/N]".into());
-        // The question stands alone: no hint line under it.
+        // The question takes the hint's line, nothing under it.
         let screen = picker.render(10, 40);
-        assert!(screen.contains("Kill \"b\"? [y/N]"));
+        assert!(
+            screen.contains(&format!("\x1b[10;1H{WARN_ANSI}Kill \"b\"? [y/N]")),
+            "{screen:?}"
+        );
         assert!(!screen.contains(HINT));
         // Anything but y cancels, back to the plain list; the question is gone.
         assert_eq!(picker.handle(Key::Char('n')), None);
