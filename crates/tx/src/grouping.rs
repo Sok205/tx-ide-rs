@@ -216,8 +216,8 @@ mod tests {
             .map(|(rev, author)| json!({"session_id": author, "at": 1000.0, "rev": rev, "changes": null}))
             .collect();
         Artifact::from_value(&json!({
-            "artifact_schema_version": 2, "id": id, "title": null, "filename": "f.md",
-            "created_at": 1000.0, "group": group, "history": history,
+            "artifact_schema_version": 3, "id": id, "title": null, "filename": "f.md",
+            "created_at": 1000.0, "group": group, "archived_at": null, "history": history,
         }))
         .unwrap()
     }

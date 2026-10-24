@@ -2,9 +2,11 @@
 //!
 //! Pure list logic ([`Picker`]) — keys in, the chosen action out — around the session editor's
 //! terminal layer. Enter attaches the cursor's row in the pane and a digit attaches that row;
-//! f (focus the pane already showing it) and p (open it in a popup) arm the operation instead,
-//! and the next digit or Enter applies it to that row — so `f 3` focuses the third row, as does
-//! `f ↓ ↓ Enter`. Rows past the ninth take choose-tree's keys: `M-a`…`M-z`, then `M-A`…`M-Z`.
+//! f (focus the pane already showing it), p (open it in a popup) and d (delete: kill a session,
+//! archive an artifact) arm the operation instead, and the next digit or Enter applies it to that
+//! row — so `f 3` focuses the third row, as does `f ↓ ↓ Enter`. A delete is not applied until
+//! confirmed: the row's confirm text takes the notice line and `y` fires it; any other key cancels.
+//! Rows past the ninth take choose-tree's keys: `M-a`…`M-z`, then `M-A`…`M-Z`.
 //! Esc disarms, then closes (q too). A pick the caller declines (a focus with nothing to focus)
 //! becomes a notice line and the list stays open.
 
@@ -13,7 +15,8 @@ use std::io;
 use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, RESET, SELECTION_BG, WARN_ANSI};
 use crate::session_editor::{Decoder, Key, Terminal, read_key, write_all};
 
-pub const HINT: &str = "Enter/key attach here   f focus its pane   p popup   Esc close";
+pub const HINT: &str = "Enter/key attach here   f focus its pane   p popup   d delete   Esc close";
+const CONFIRM_HINT: &str = "y confirm   any other key cancel";
 
 /// The key that picks row `index` (0-based), as choose-tree labels them: `1`…`9`, then `M-a`…
 /// `M-z`, then `M-A`…`M-Z`; `None` past those.
@@ -51,14 +54,17 @@ pub enum Pick {
     Focus(usize),
     /// Open the row's view nest-attached in a popup over the terminal.
     Popup(usize),
+    /// Kill the row's session, or archive the row's artifact (confirmed with `y`).
+    Delete(usize),
 }
 
-/// What f / p arm: the operation the next digit or Enter applies.
+/// What f / p / d arm: the operation the next digit or Enter applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Operation {
     Attach,
     Focus,
     Popup,
+    Delete,
 }
 
 impl Operation {
@@ -67,6 +73,7 @@ impl Operation {
             Self::Attach => Pick::Attach(index),
             Self::Focus => Pick::Focus(index),
             Self::Popup => Pick::Popup(index),
+            Self::Delete => Pick::Delete(index),
         }
     }
 
@@ -75,6 +82,7 @@ impl Operation {
             Self::Attach => HINT,
             Self::Focus => "focus mode: digit or Enter picks the row   Esc back",
             Self::Popup => "popup mode: digit or Enter picks the row   Esc back",
+            Self::Delete => "delete mode: digit or Enter picks the row   Esc back",
         }
     }
 }
@@ -102,10 +110,14 @@ pub struct Picker<'a> {
     items: &'a [Item],
     rows: usize,
     cursor: usize,
-    /// The operation f / p armed; Enter and digits (rows are numbered from 1) apply it.
+    /// The operation f / p / d armed; Enter and digits (rows are numbered from 1) apply it.
     /// `Attach` when nothing is armed.
     operation: Operation,
-    /// A one-line message under the rows (a declined pick); the next key clears it.
+    /// The row a delete was picked for, awaiting `y` (the caller puts its confirm text in the
+    /// notice).
+    confirm: Option<usize>,
+    /// A one-line message under the rows (a declined pick, a confirm text, an outcome); the
+    /// next key clears it.
     notice: Option<String>,
 }
 
@@ -120,6 +132,7 @@ impl<'a> Picker<'a> {
                 .count(),
             cursor: 0,
             operation: Operation::Attach,
+            confirm: None,
             notice: None,
         }
     }
@@ -128,22 +141,34 @@ impl<'a> Picker<'a> {
         self.notice = Some(text);
     }
 
+    /// The row a delete was picked for and not yet confirmed.
+    pub fn pending_delete(&self) -> Option<usize> {
+        self.confirm
+    }
+
     /// `Some(Some(pick))` chooses, `Some(None)` cancels, `None` keeps going.
     pub fn handle(&mut self, key: Key) -> Option<Option<Pick>> {
         self.notice = None;
+        if let Some(index) = self.confirm.take() {
+            return matches!(key, Key::Char('y')).then_some(Some(Pick::Delete(index)));
+        }
         match key {
             Key::Up | Key::Char('k') => self.cursor = self.cursor.saturating_sub(1),
             Key::Down | Key::Char('j') => {
                 self.cursor = (self.cursor + 1).min(self.rows.saturating_sub(1));
             }
             Key::Enter | Key::Char('\r') | Key::Char('\n') => {
-                return Some(self.row().map(|index| self.disarm().pick(index)));
+                let Some(index) = self.row() else {
+                    return Some(None);
+                };
+                return self.apply(index);
             }
             Key::Char('f') => self.operation = Operation::Focus,
             Key::Char('p') => self.operation = Operation::Popup,
+            Key::Char('d') => self.operation = Operation::Delete,
             Key::Char('1'..='9') | Key::Alt(_) => {
                 if let Some(index) = row_index(key).filter(|index| *index < self.rows) {
-                    return Some(Some(self.disarm().pick(index)));
+                    return self.apply(index);
                 }
             }
             Key::Char('\x1b') if self.operation != Operation::Attach => {
@@ -157,6 +182,17 @@ impl<'a> Picker<'a> {
 
     fn row(&self) -> Option<usize> {
         (self.rows > 0).then_some(self.cursor)
+    }
+
+    /// Apply the armed operation to `index`: a pick, except a delete, which waits for `y`.
+    fn apply(&mut self, index: usize) -> Option<Option<Pick>> {
+        match self.disarm() {
+            Operation::Delete => {
+                self.confirm = Some(index);
+                None
+            }
+            operation => Some(Some(operation.pick(index))),
+        }
     }
 
     /// Back to plain attach; the operation that was armed.
@@ -198,11 +234,12 @@ impl<'a> Picker<'a> {
             if let Some(notice) = &self.notice {
                 out += &format!("\x1b[{};1H{WARN_ANSI}{notice}{RESET}", height - 1);
             }
-            out += &format!(
-                "\x1b[{};1H{DIM_FG_ANSI}{}{RESET}",
-                height,
+            let hint = if self.confirm.is_some() {
+                CONFIRM_HINT
+            } else {
                 self.operation.hint()
-            );
+            };
+            out += &format!("\x1b[{};1H{DIM_FG_ANSI}{hint}{RESET}", height);
         }
         out
     }
@@ -226,15 +263,22 @@ pub fn visible_width(text: &str) -> usize {
     width
 }
 
-/// Run the picker on the controlling terminal; `None` on Esc / q / Ctrl-C. `decline` vets a pick:
+/// Run the picker on the controlling terminal; `None` on Esc / q / Ctrl-C. `notice` opens the
+/// list with a message under the rows (the previous round's outcome). `decline` vets a pick:
 /// `Some(message)` shows it as the notice and keeps the list open, `None` accepts the pick.
+/// `confirm_text` is the question shown when a delete is picked for a row, before `y` fires it.
 pub fn pick(
     header: &str,
     items: &[Item],
+    notice: Option<String>,
     mut decline: impl FnMut(Pick) -> Option<String>,
+    confirm_text: impl Fn(usize) -> String,
 ) -> io::Result<Option<Pick>> {
     let _terminal = Terminal::open()?;
     let mut picker = Picker::new(header, items);
+    if let Some(notice) = notice {
+        picker.notice(notice);
+    }
     let mut decoder = Decoder::default();
     loop {
         let (height, width) = Terminal::size();
@@ -246,7 +290,11 @@ pub fn pick(
                 None => return Ok(Some(chosen)),
             },
             Some(None) => return Ok(None),
-            None => {}
+            None => {
+                if let Some(index) = picker.pending_delete() {
+                    picker.notice(confirm_text(index));
+                }
+            }
         }
     }
 }
@@ -292,6 +340,45 @@ mod tests {
         assert_eq!(picker.handle(Key::Char('f')), None);
         assert_eq!(picker.handle(Key::Char('\x1b')), None);
         assert!(picker.render(10, 40).contains(HINT));
+        assert_eq!(picker.handle(Key::Char('\x1b')), Some(None));
+    }
+
+    #[test]
+    fn d_arms_a_delete_that_waits_for_y() {
+        let items = vec![
+            Item::Row("a".to_owned()),
+            Item::Row("b".to_owned()),
+            Item::Row("c".to_owned()),
+        ];
+        let mut picker = Picker::new("H", &items);
+        assert_eq!(picker.handle(Key::Char('d')), None);
+        assert!(picker.render(10, 40).contains("delete mode:"));
+        // Picking the row asks first; the caller supplies the question as the notice.
+        assert_eq!(picker.handle(Key::Char('2')), None);
+        assert_eq!(picker.pending_delete(), Some(1));
+        picker.notice("Kill \"b\"?".into());
+        let screen = picker.render(10, 40);
+        assert!(screen.contains("Kill \"b\"?"));
+        assert!(screen.contains(CONFIRM_HINT));
+        // Anything but y cancels, back to the plain list; the question is gone.
+        assert_eq!(picker.handle(Key::Char('n')), None);
+        assert_eq!(picker.pending_delete(), None);
+        let screen = picker.render(10, 40);
+        assert!(!screen.contains("Kill"));
+        assert!(screen.contains(HINT));
+        assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Attach(0))));
+        // d then Enter on the cursor's row, then y, fires.
+        assert_eq!(picker.handle(Key::Down), None);
+        assert_eq!(picker.handle(Key::Down), None);
+        assert_eq!(picker.handle(Key::Char('d')), None);
+        assert_eq!(picker.handle(Key::Enter), None);
+        assert_eq!(picker.pending_delete(), Some(2));
+        assert_eq!(picker.handle(Key::Char('y')), Some(Some(Pick::Delete(2))));
+        assert_eq!(picker.pending_delete(), None);
+        // Esc while a confirm is pending cancels the delete, it does not close.
+        assert_eq!(picker.handle(Key::Char('d')), None);
+        assert_eq!(picker.handle(Key::Char('1')), None);
+        assert_eq!(picker.handle(Key::Char('\x1b')), None);
         assert_eq!(picker.handle(Key::Char('\x1b')), Some(None));
     }
 

@@ -308,8 +308,14 @@ pub fn render_artifact_show(
         format!("  group:      {group}"),
         format!("  revisions:  {}", artifact.history().len()),
         format!("  working:    {working}"),
-        "  history:".into(),
     ];
+    if let Some(archived_at) = &artifact.archived_at {
+        lines.push(format!(
+            "  archived:   {} ago (hidden from pickers; `tx artifact unarchive` restores)",
+            reltime(Some(archived_at), now)
+        ));
+    }
+    lines.push("  history:".into());
     for touch in artifact.history() {
         let note = match touch.changes.as_deref() {
             Some(changes) if !changes.is_empty() => format!("  {changes}"),
@@ -805,12 +811,13 @@ mod tests {
  ],
  "artifacts": [
   {
-   "artifact_schema_version": 2,
+   "artifact_schema_version": 3,
    "id": "art1",
    "title": "Rust port plan",
    "filename": "plan.md",
    "created_at": 999100.0,
    "group": null,
+   "archived_at": null,
    "history": [
     {
      "session_id": "b1",
@@ -833,12 +840,13 @@ mod tests {
    ]
   },
   {
-   "artifact_schema_version": 2,
+   "artifact_schema_version": 3,
    "id": "art2",
    "title": "",
    "filename": "a-very-long-file-name-that-overflows.txt",
    "created_at": 999100.0,
    "group": null,
+   "archived_at": null,
    "history": [
     {
      "session_id": "user",
@@ -861,12 +869,13 @@ mod tests {
    ]
   },
   {
-   "artifact_schema_version": 2,
+   "artifact_schema_version": 3,
    "id": "art3",
    "title": null,
    "filename": "f.md",
    "created_at": 1000,
    "group": null,
+   "archived_at": null,
    "history": [
     {
      "session_id": "v2",
@@ -877,12 +886,13 @@ mod tests {
    ]
   },
   {
-   "artifact_schema_version": 2,
+   "artifact_schema_version": 3,
    "id": "art4",
    "title": null,
    "filename": "f.md",
    "created_at": 1000,
    "group": "g",
+   "archived_at": null,
    "history": [
     {
      "session_id": "user",
@@ -899,12 +909,13 @@ mod tests {
    ]
   },
   {
-   "artifact_schema_version": 2,
+   "artifact_schema_version": 3,
    "id": "art5",
    "title": "日本語タイトルはとても長いのでここで切り詰められるはずです",
    "filename": "f.md",
    "created_at": 999910.0,
    "group": null,
+   "archived_at": null,
    "history": [
     {
      "session_id": "m1",
@@ -1472,9 +1483,9 @@ mod tests {
         let touch = |sid: &str, at: f64, rev: u64, changes: Value| json!({"session_id": sid, "at": at, "rev": rev, "changes": changes});
         let artifacts = [
             Artifact::from_value(&json!({
-                "artifact_schema_version": 2, "id": "abcdef01-2345-4678-8abc-000000000001",
+                "artifact_schema_version": 3, "id": "abcdef01-2345-4678-8abc-000000000001",
                 "title": "Rust port plan", "filename": "plan.md", "created_at": now - 900.0,
-                "group": null, "history": [
+                "group": null, "archived_at": null, "history": [
                     touch("sess-aaaaaaaa-1", now - 900.0, 0, Value::Null),
                     touch("user", now - 300.0, 1, json!("typo fix")),
                     touch("sess-aaaaaaaa-1", now - 90.0, 2, Value::Null),
@@ -1482,9 +1493,9 @@ mod tests {
             }))
             .unwrap(),
             Artifact::from_value(&json!({
-                "artifact_schema_version": 2, "id": "ffffffff-0000-4000-8000-000000000002",
+                "artifact_schema_version": 3, "id": "ffffffff-0000-4000-8000-000000000002",
                 "title": null, "filename": "a-very-long-file-name-that-overflows.txt",
-                "created_at": now - 900.0, "group": "g1",
+                "created_at": now - 900.0, "group": "g1", "archived_at": null,
                 "history": [touch("gone-1234-5678", now - 900.0, 0, Value::Null)],
             }))
             .unwrap(),

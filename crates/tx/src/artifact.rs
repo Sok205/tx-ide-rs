@@ -10,18 +10,19 @@ use serde_json::{Map, Number, Value};
 
 use crate::pyjson::float_repr;
 
-pub const ARTIFACT_SCHEMA_VERSION: u64 = 2;
+pub const ARTIFACT_SCHEMA_VERSION: u64 = 3;
 
 /// Actor for a touch made outside any tx session (a manual edit, or a plain-terminal call).
 pub const USER_ACTOR: &str = "user";
 
-const ARTIFACT_KEYS: [&str; 7] = [
+const ARTIFACT_KEYS: [&str; 8] = [
     "artifact_schema_version",
     "id",
     "title",
     "filename",
     "created_at",
     "group",
+    "archived_at",
     "history",
 ];
 const TOUCH_KEYS: [&str; 4] = ["session_id", "at", "rev", "changes"];
@@ -61,6 +62,8 @@ pub struct Artifact {
     pub filename: String,
     pub created_at: Number,
     pub group: Option<String>,
+    /// When the artifact was archived — hidden from pickers and default listings, history kept.
+    pub archived_at: Option<Number>,
     history: Vec<Touch>,
 }
 
@@ -86,8 +89,13 @@ impl Artifact {
             filename,
             created_at,
             group,
+            archived_at: None,
             history: vec![create],
         }
+    }
+
+    pub fn is_archived(&self) -> bool {
+        self.archived_at.is_some()
     }
 
     pub fn history(&self) -> &[Touch] {
@@ -144,6 +152,10 @@ impl Artifact {
         map.insert("filename".into(), Value::String(self.filename.clone()));
         map.insert("created_at".into(), Value::Number(self.created_at.clone()));
         map.insert("group".into(), opt_str(self.group.as_deref()));
+        map.insert(
+            "archived_at".into(),
+            self.archived_at.clone().map_or(Value::Null, Value::Number),
+        );
         map.insert(
             "history".into(),
             Value::Array(self.history.iter().map(Touch::to_value).collect()),
@@ -206,6 +218,7 @@ impl Artifact {
             filename: req_str(map, "filename", &id_repr)?,
             created_at: req_num(map, "created_at", &id_repr)?,
             group: opt_str_field(map, "group", &id_repr)?,
+            archived_at: opt_num_field(map, "archived_at", &id_repr)?,
             history,
         })
     }
@@ -301,6 +314,18 @@ fn req_num(
 ) -> Result<Number, UnsupportedArtifactError> {
     match &map[field] {
         Value::Number(n) => Ok(n.clone()),
+        other => Err(invalid(id_repr, field, other)),
+    }
+}
+
+fn opt_num_field(
+    map: &Map<String, Value>,
+    field: &str,
+    id_repr: &str,
+) -> Result<Option<Number>, UnsupportedArtifactError> {
+    match &map[field] {
+        Value::Null => Ok(None),
+        Value::Number(n) => Ok(Some(n.clone())),
         other => Err(invalid(id_repr, field, other)),
     }
 }
@@ -425,11 +450,11 @@ mod tests {
     const HAND_WRITTEN_A: &str = concat!(
         r#"{"history":[{"rev":0,"changes":null,"at":1.5,"session_id":"s1"},"#,
         r#"{"changes":"tweak","session_id":"user","rev":1,"at":2.0}],"group":null,"created_at":1.5,"#,
-        r#""filename":"plan.md","title":null,"id":"a","artifact_schema_version":2}"#
+        r#""archived_at":null,"filename":"plan.md","title":null,"id":"a","artifact_schema_version":3}"#
     );
 
     /// golden/art/01.txt
-    const GOLDEN_01: &str = "{\n  \"artifact_schema_version\": 2,\n  \"id\": \"a\",\n  \"title\": null,\n  \"filename\": \"plan.md\",\n  \"created_at\": 1.5,\n  \"group\": null,\n  \"history\": [\n    {\n      \"session_id\": \"s1\",\n      \"at\": 1.5,\n      \"rev\": 0,\n      \"changes\": null\n    },\n    {\n      \"session_id\": \"user\",\n      \"at\": 2.0,\n      \"rev\": 1,\n      \"changes\": \"tweak\"\n    }\n  ]\n}";
+    const GOLDEN_01: &str = "{\n  \"artifact_schema_version\": 3,\n  \"id\": \"a\",\n  \"title\": null,\n  \"filename\": \"plan.md\",\n  \"created_at\": 1.5,\n  \"group\": null,\n  \"archived_at\": null,\n  \"history\": [\n    {\n      \"session_id\": \"s1\",\n      \"at\": 1.5,\n      \"rev\": 0,\n      \"changes\": null\n    },\n    {\n      \"session_id\": \"user\",\n      \"at\": 2.0,\n      \"rev\": 1,\n      \"changes\": \"tweak\"\n    }\n  ]\n}";
 
     fn err(data: Value) -> String {
         Artifact::from_value(&data).unwrap_err().to_string()
@@ -441,8 +466,8 @@ mod tests {
             .map(|rev| json!({"session_id": "s1", "at": 1.0, "rev": rev, "changes": null}))
             .collect();
         json!({
-            "artifact_schema_version": 2, "id": id, "title": null, "filename": "plan.md",
-            "created_at": 1.0, "group": null, "history": history,
+            "artifact_schema_version": 3, "id": id, "title": null, "filename": "plan.md",
+            "created_at": 1.0, "group": null, "archived_at": null, "history": history,
         })
     }
 
@@ -470,7 +495,7 @@ mod tests {
     #[test]
     fn version_guard_messages() {
         let tail =
-            "is unsupported (expected 2); tx-ide does not back-migrate older artifact records";
+            "is unsupported (expected 3); tx-ide does not back-migrate older artifact records";
         assert_eq!(
             err(json!({"artifact_schema_version": 1, "id": "old", "foo": 1})),
             format!("record artifact_schema_version=1 {tail}")
@@ -480,8 +505,8 @@ mod tests {
             format!("record artifact_schema_version=None {tail}")
         );
         assert_eq!(
-            err(json!({"artifact_schema_version": "2"})),
-            format!("record artifact_schema_version='2' {tail}")
+            err(json!({"artifact_schema_version": "3"})),
+            format!("record artifact_schema_version='3' {tail}")
         );
     }
 
@@ -501,14 +526,14 @@ mod tests {
             "a history entry has an invalid key set: unexpected ['how']"
         );
         assert_eq!(
-            err(json!({"artifact_schema_version": 2, "id": "it's", "z": 1, "a": 2})),
+            err(json!({"artifact_schema_version": 3, "id": "it's", "z": 1, "a": 2})),
             "artifact \"it's\" has an invalid key set: unexpected ['a', 'z']; missing \
-             ['created_at', 'filename', 'group', 'history', 'title']"
+             ['archived_at', 'created_at', 'filename', 'group', 'history', 'title']"
         );
         assert_eq!(
-            err(json!({"artifact_schema_version": 2, "x": 1})),
+            err(json!({"artifact_schema_version": 3, "x": 1})),
             "artifact None has an invalid key set: unexpected ['x']; missing \
-             ['created_at', 'filename', 'group', 'history', 'id', 'title']"
+             ['archived_at', 'created_at', 'filename', 'group', 'history', 'id', 'title']"
         );
     }
 
