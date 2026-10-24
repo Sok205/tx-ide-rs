@@ -45,8 +45,8 @@
   popup closes on exit with a failure on the status line (the reference kept it open on errors).
 - Pane borders show the hosted session's state: `tx _pane-info` prints a third line (the record's
   state) and `tmux-pane-session-name` ends the label with a right-aligned bar of middle sextants,
-  green while `working`, border grey otherwise, with the resting age (`14m`) before it once a minute
-  has passed (`last_activity` is now stamped on every live transition, so it reads "since the
+  green while `working`, border grey otherwise, with the resting age (`0m`, `14m`) inside it
+  (`last_activity` is now stamped on every live transition, so it reads "since the
   state changed" in the picker too); the global `pane-border-format` lost its trailing
   space so the bar reaches tmux's two-cell inset. New here; the reference's `_pane-info` printed
   two lines and stamped `last_activity` only at turn start. Deferred: a session resting while its spawned workers or Claude's own background

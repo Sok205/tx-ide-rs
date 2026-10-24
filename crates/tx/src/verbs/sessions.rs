@@ -821,8 +821,8 @@ fn focus_envelope(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, B
 }
 
 /// The pane border's single read: line 1 the display name, line 2 the tags, line 3 the state,
-/// line 4 how long a resting llm session has been resting (`3m`, `2h`; empty while working or
-/// under a minute); all empty for an absent or unreadable record (a bad record never breaks the
+/// line 4 how long a resting llm session has been resting (`0m`, `3m`, `2h`; empty while working);
+/// all empty for an absent or unreadable record (a bad record never breaks the
 /// border).
 fn pane_info(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxError> {
     let parser = parser.arg(Arg::positional("session_id"));
@@ -846,7 +846,7 @@ fn pane_info(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxErr
     Ok(0)
 }
 
-/// The compact age since a resting llm session last changed state, once it is a minute or more.
+/// The compact age since a resting llm session last changed state; `0m` for the first minute.
 fn resting_age(record: &Session, now: f64) -> String {
     let Some(llm) = record.llm() else {
         return String::new();
@@ -854,7 +854,8 @@ fn resting_age(record: &Session, now: f64) -> String {
     let resting = matches!(record.state, State::Waiting | State::Idle);
     let since = llm.last_activity.as_ref().and_then(Number::as_f64);
     match since {
-        Some(since) if resting && now - since >= 60.0 => reltime(llm.last_activity.as_ref(), now),
+        Some(since) if resting && now - since < 60.0 => "0m".to_owned(),
+        Some(_) if resting => reltime(llm.last_activity.as_ref(), now),
         _ => String::new(),
     }
 }

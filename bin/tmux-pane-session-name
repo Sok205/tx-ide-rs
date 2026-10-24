@@ -38,7 +38,7 @@ fi
 #
 # State bar at the right end of the border: middle sextants (cell-aligned, so they sit on the
 # line), green while WORKING, border grey when resting; non-llm panes show none. A resting
-# session that has rested a minute or more carries its age (`14m`, `2h`) dim inside the bar.
+# session carries its age (`0m`, `14m`, `2h`) dim inside the bar.
 WORKING_HEX='#9ece6a'
 STATE_BAR='🬋🬋🬋🬋🬋🬋'
 STATE_BAR_HALF='🬋🬋🬋'
