@@ -74,6 +74,11 @@ impl Home {
         self.root.join("nvim")
     }
     /// Per-worker playground logs (`<session-id>.log`); created on first use, like `nvim_dir`.
+    /// The roles the `tx attach` picker hides, remembered across runs.
+    pub fn picker_hidden_roles_path(&self) -> PathBuf {
+        self.root.join("picker-hidden-roles")
+    }
+
     pub fn playground_dir(&self) -> PathBuf {
         self.root.join("playground")
     }
