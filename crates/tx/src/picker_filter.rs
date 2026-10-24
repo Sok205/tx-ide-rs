@@ -49,6 +49,16 @@ pub fn toggle(path: &Path, role: Role) -> io::Result<()> {
     write_hidden(path, &hidden)
 }
 
+/// All on when anything is hidden, else all off.
+pub fn toggle_all(path: &Path) -> io::Result<()> {
+    let hidden = read_hidden(path)?;
+    if hidden.is_empty() {
+        write_hidden(path, Role::ALL)
+    } else {
+        write_hidden(path, &[])
+    }
+}
+
 fn chip(role: Role, hidden: &[Role]) -> String {
     let name = role.as_str();
     if hidden.contains(&role) {
@@ -79,7 +89,7 @@ pub fn panel_rows(hidden: &[Role]) -> String {
 /// The TAB panel's header: a bold key legend.
 pub fn panel_legend() -> String {
     format!(
-        "{DIM_FG_ANSI}{BOLD}space{RESET}{DIM_FG_ANSI} toggle · {BOLD}a{RESET}{DIM_FG_ANSI} all on · {BOLD}⏎{RESET}{DIM_FG_ANSI} close{RESET}"
+        "{DIM_FG_ANSI}{BOLD}space{RESET}{DIM_FG_ANSI} toggle · {BOLD}a{RESET}{DIM_FG_ANSI} toggle all · {BOLD}⏎{RESET}{DIM_FG_ANSI} close{RESET}"
     )
 }
 
@@ -107,6 +117,12 @@ mod tests {
         toggle(&path, Role::Shell).unwrap();
         toggle(&path, Role::Nvim).unwrap();
         assert_eq!(read_hidden(&path).unwrap(), [Role::Shell]);
+        toggle_all(&path).unwrap();
+        assert!(read_hidden(&path).unwrap().is_empty());
+        toggle_all(&path).unwrap();
+        assert_eq!(read_hidden(&path).unwrap(), Role::ALL);
+        toggle_all(&path).unwrap();
+        assert!(read_hidden(&path).unwrap().is_empty());
     }
 
     #[test]

@@ -1032,13 +1032,13 @@ impl Command for ToggleHide {
         "_toggle-hide"
     }
     fn summary(&self) -> &'static str {
-        "Internal: flip a role in the picker's hide file (--all-on clears it); non-roles are ignored."
+        "Internal: flip a role in the picker's hide file (--all: everything on, or everything off when nothing is hidden); non-roles are ignored."
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let path = hide_file(&self.0.env)?;
         let word = argv.first().map(String::as_str).unwrap_or_default();
-        if word == "--all-on" {
-            picker_filter::write_hidden(&path, &[])?;
+        if word == "--all" {
+            picker_filter::toggle_all(&path)?;
         } else if let Ok(role) = word.parse::<Role>() {
             picker_filter::toggle(&path, role)?;
         }
@@ -1062,7 +1062,7 @@ impl Command for RolesPanel {
         let bin_tx = bin_tx.display();
         let reload = format!("reload-sync({bin_tx} _roles)");
         let toggle = format!("execute-silent({bin_tx} _toggle-hide {{1}})+{reload}");
-        let all_on = format!("execute-silent({bin_tx} _toggle-hide --all-on)+{reload}");
+        let toggle_all = format!("execute-silent({bin_tx} _toggle-hide --all)+{reload}");
         let color = format!(
             "bg:{BG_DEEP_HEX},fg:{DIM_FG_HEX},pointer:{ACCENT_HEX},fg+:{FG_HEX}:regular,\
              bg+:{SELECTION_BG}:regular,header:{DIM_FG_HEX},prompt:{ACCENT_HEX}"
@@ -1084,7 +1084,7 @@ impl Command for RolesPanel {
                 &format!("--header={}", picker_filter::panel_legend()),
                 &format!("--color={color}"),
                 &format!("--bind=space:{toggle}"),
-                &format!("--bind=a:{all_on}"),
+                &format!("--bind=a:{toggle_all}"),
                 "--bind=j:down,k:up",
                 "--bind=enter,tab,q,esc:abort",
             ])
