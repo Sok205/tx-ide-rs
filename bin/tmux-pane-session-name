@@ -35,14 +35,8 @@ fi
 # @tx_id) or its record is absent, so the border never goes blank. Three read -r's (not `mapfile`,
 # which macOS bash 3.2 lacks); `_pane-info` always emits exactly three lines (name, tags, state).
 #
-# The state bar at the right end of the border: a run of middle-sextant cells (U+1FB0B, Symbols for
-# Legacy Computing: the middle third of the cell, filled). Block and sextant glyphs are laid out on
-# the cell like box drawing, so the bar is centred on the border line; geometric shapes such as `▬`
-# sit on the text's math axis, below the cell centre, which is why they looked low. In the state's colour,
-# right-aligned (`#[align=right]`, honoured in pane-border-format). No text, no
-# animation: WORKING green; WAITING and IDLE the inactive border grey, on the active pane too (a
-# focused session must not show the bar in the accent). Non-llm roles (alive / exited) show nothing. tmux keeps two plain border cells right of the text region,
-# so the bar ends two cells before the corner.
+# State bar at the right end of the border: middle sextants (cell-aligned, so they sit on the
+# line), green while WORKING, border grey when resting; non-llm panes show none.
 WORKING_HEX='#9ece6a'
 STATE_BAR='🬋🬋🬋🬋🬋🬋'
 state_bar() {
