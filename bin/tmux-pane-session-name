@@ -38,9 +38,10 @@ fi
 #
 # State bar at the right end of the border: middle sextants (cell-aligned, so they sit on the
 # line), green while WORKING, border grey when resting; non-llm panes show none. A resting
-# session that has rested a minute or more carries its age (`14m`, `2h`) dim before the bar.
+# session that has rested a minute or more carries its age (`14m`, `2h`) dim inside the bar.
 WORKING_HEX='#9ece6a'
 STATE_BAR='🬋🬋🬋🬋🬋🬋'
+STATE_BAR_HALF='🬋🬋🬋'
 state_bar() {
   local color
   case "$1" in
@@ -48,7 +49,11 @@ state_bar() {
     waiting | idle) color="$BORDER_DIM_HEX" ;;
     *) return 0 ;;
   esac
-  printf '#[align=right]%s#[fg=%s]%s#[default]' "${2:+#[fg=$DIM_FG_HEX]$2 }" "$color" "$STATE_BAR"
+  if [[ -n "$2" ]]; then
+    printf '#[align=right]#[fg=%s]%s #[fg=%s]%s #[fg=%s]%s#[default]' "$color" "$STATE_BAR_HALF" "$DIM_FG_HEX" "$2" "$color" "$STATE_BAR_HALF"
+  else
+    printf '#[align=right]#[fg=%s]%s#[default]' "$color" "$STATE_BAR"
+  fi
 }
 
 render_inner() {
