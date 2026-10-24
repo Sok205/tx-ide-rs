@@ -36,20 +36,17 @@ fi
 # which macOS bash 3.2 lacks); `_pane-info` always emits exactly four lines (name, tags, state,
 # resting age).
 #
-# State mark at the right end of the border: three middle-sextant cells (cell-aligned, so they sit on
-# the line): a six-cell green bar while WORKING; border grey when resting, followed by the age (`0m`,
-# `14m`, `2h`) dim and a trailing space; non-llm panes show none.
+# State mark at the right end of the border: a six-cell green bar of middle sextants (cell-aligned,
+# so they sit on the line) while WORKING; when resting just the age since the session stopped
+# (`0m`, `14m`, `2h`) in the dim foreground. Both end with a space; non-llm panes show nothing.
 WORKING_HEX='#9ece6a'
-STATE_BAR='🬋🬋🬋'
-WORKING_BAR='🬋🬋🬋🬋🬋🬋'  # as wide as the resting mark with its age
+WORKING_BAR='🬋🬋🬋🬋🬋🬋'
 state_bar() {
-  local color
   case "$1" in
-    working) printf '#[align=right]#[fg=%s]%s#[default] ' "$WORKING_HEX" "$WORKING_BAR"; return 0 ;;
-    waiting | idle) color="$BORDER_DIM_HEX" ;;
-    *) return 0 ;;
+    working) printf '#[align=right]#[fg=%s]%s#[default] ' "$WORKING_HEX" "$WORKING_BAR" ;;
+    waiting | idle) [[ -n "$2" ]] && printf '#[align=right]#[fg=%s]%s#[default] ' "$DIM_FG_HEX" "$2" ;;
   esac
-  printf '#[align=right]#[fg=%s]%s%s#[default] ' "$color" "$STATE_BAR" "${2:+ #[fg=$DIM_FG_HEX]$2}"
+  return 0
 }
 
 render_inner() {
