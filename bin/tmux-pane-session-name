@@ -40,8 +40,8 @@ fi
 # the cell like box drawing, so the bar is centred on the border line; geometric shapes such as `▬`
 # sit on the text's math axis, below the cell centre, which is why they looked low. In the state's colour,
 # right-aligned (`#[align=right]`, honoured in pane-border-format). No text, no
-# animation: WORKING green; WAITING and IDLE keep the border's own colour, so a resting session shows
-# only the thicker stretch. Non-llm roles (alive / exited) show nothing. tmux keeps two plain border cells right of the text region,
+# animation: WORKING green; WAITING and IDLE the inactive border grey, on the active pane too (a
+# focused session must not show the bar in the accent). Non-llm roles (alive / exited) show nothing. tmux keeps two plain border cells right of the text region,
 # so the bar ends two cells before the corner.
 WORKING_HEX='#9ece6a'
 STATE_BAR='🬋🬋🬋🬋🬋🬋'
@@ -49,7 +49,7 @@ state_bar() {
   local color
   case "$1" in
     working) color="$WORKING_HEX" ;;
-    waiting | idle) color="" ;;
+    waiting | idle) color="$BORDER_DIM_HEX" ;;
     *) return 0 ;;
   esac
   printf '#[align=right]%s%s#[default]' "${color:+#[fg=$color]}" "$STATE_BAR"
