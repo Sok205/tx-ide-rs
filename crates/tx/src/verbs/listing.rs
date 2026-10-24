@@ -643,10 +643,7 @@ impl Attach {
         // `display-popup` runs in the server's environment: bake the home into the command.
         let home = self.0.home.root().display();
         let edit_tag = format!("env TX_IDE_HOME={home} {bin_tx} _edit-tag {{1}}");
-        // The popup inherits the server's environment, not fzf's: bake the hide file in too.
-        let roles_panel = format!(
-            "env TX_IDE_HOME={home} {HIDE_FILE_ENV}=\"${HIDE_FILE_ENV}\" {bin_tx} _roles-panel"
-        );
+        let roles_panel = format!("{bin_tx} _roles-panel");
         let chips = format!("{bin_tx} _roles --chips");
         let header_cols = format!(
             "{:<namew$}   {:<LOCATION_W$} {:<7} {:<6} {:<ROLE_W$} TAGS",
@@ -692,12 +689,9 @@ impl Attach {
             format!(
                 "--bind=ctrl-t:execute(tmux display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}"
             ),
-            // The roles panel sits just under the search bar: pane top + prompt/info rows.
-            format!(
-                "--bind=tab:execute(tmux display-popup -E -B -x '#{{e|+:#{{popup_pane_left}},2}}' \
-                 -y '#{{e|+:#{{popup_pane_top}},2}}' -h {PANEL_HEIGHT} -w {PANEL_WIDTH} \
-                 \"{roles_panel}\")+{reload}+transform-header({focus_cmd})"
-            ),
+            // The roles panel runs in the picker's own terminal (fzf hands it over for the
+            // duration): a tmux popup cannot nest inside the prefix+t picker popup.
+            format!("--bind=tab:execute({roles_panel})+{reload}+transform-header({focus_cmd})"),
             format!(
                 "--bind=click-header:execute-silent({bin_tx} _toggle-hide \
                  \"$FZF_CLICK_HEADER_WORD\")+{reload}+transform-header({focus_cmd})"
@@ -988,10 +982,6 @@ pub(super) fn prompt_with_default(label: &str, default: &str) -> Result<Option<S
     Ok(Some(text.strip_suffix('\n').unwrap_or(&text).to_owned()))
 }
 
-/// The roles panel popup: four role rows + legend, inside a border.
-const PANEL_HEIGHT: usize = 7;
-const PANEL_WIDTH: usize = 34;
-
 /// The roles the picker currently hides, from the file named by `TX_HIDE_FILE` (none when the
 /// variable is unset — `tx _list` outside a picker shows everything).
 fn hidden_roles(env: &Env) -> Result<Vec<Role>, BoxError> {
@@ -1064,18 +1054,14 @@ impl Command for RolesPanel {
         "_roles-panel"
     }
     fn summary(&self) -> &'static str {
-        "Internal: the picker's TAB roles panel (fzf in a tmux popup; space toggles a role)."
+        "Internal: the picker's TAB roles panel (fzf over the roles; space toggles one)."
     }
     fn run(&self, _argv: &[String]) -> Result<i32, BoxError> {
         use palette::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX, FG_HEX, SELECTION_BG};
         let hide = hide_file(&self.0.env)?;
         let bin_tx = self.0.bin_tx();
         let bin_tx = bin_tx.display();
-        let home = self.0.home.root().display();
-        let reload = format!(
-            "reload-sync(env TX_IDE_HOME={home} {HIDE_FILE_ENV}={} {bin_tx} _roles)",
-            hide.display()
-        );
+        let reload = format!("reload-sync({bin_tx} _roles)");
         let toggle = format!("execute-silent({bin_tx} _toggle-hide {{1}})+{reload}");
         let all_on = format!("execute-silent({bin_tx} _toggle-hide --all-on)+{reload}");
         let color = format!(
@@ -1094,6 +1080,7 @@ impl Command for RolesPanel {
                 "--id-nth=1",
                 "--delimiter=\t",
                 "--with-nth=2..",
+                "--height=100%",
                 "--prompt=  roles ",
                 &format!("--header={}", picker_filter::panel_legend()),
                 &format!("--color={color}"),
