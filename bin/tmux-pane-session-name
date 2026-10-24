@@ -38,13 +38,13 @@ fi
 #
 # State mark at the right end of the border: a six-cell green bar of middle sextants (cell-aligned,
 # so they sit on the line) while WORKING; when resting just the age since the session stopped
-# (`0m`, `14m`, `2h`) in the dim foreground. Both end with a space; non-llm panes show nothing.
+# (`0m`, `14m`, `2h`) in the dim foreground. Both sit between single spaces; non-llm panes show nothing.
 WORKING_HEX='#9ece6a'
 WORKING_BAR='🬋🬋🬋🬋🬋🬋'
 state_bar() {
   case "$1" in
-    working) printf '#[align=right]#[fg=%s]%s#[default] ' "$WORKING_HEX" "$WORKING_BAR" ;;
-    waiting | idle) [[ -n "$2" ]] && printf '#[align=right]#[fg=%s]%s#[default] ' "$DIM_FG_HEX" "$2" ;;
+    working) printf '#[align=right] #[fg=%s]%s#[default] ' "$WORKING_HEX" "$WORKING_BAR" ;;
+    waiting | idle) [[ -n "$2" ]] && printf '#[align=right] #[fg=%s]%s#[default] ' "$DIM_FG_HEX" "$2" ;;
   esac
   return 0
 }
