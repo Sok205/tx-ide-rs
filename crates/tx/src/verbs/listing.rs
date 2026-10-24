@@ -20,12 +20,13 @@ use crate::artifact_store::ArtifactStore;
 use crate::engines::EngineRegistry;
 use crate::grouping::GroupResolver;
 use crate::palette;
+use crate::picker_filter::{self, HIDE_FILE_ENV};
 use crate::pyjson::dumps_pretty;
 use crate::render::{
     LOCATION_W, ROLE_W, picker_display_rows, picker_namew, render_chats, render_history, render_ls,
 };
 use crate::service::SessionService;
-use crate::session::{Session, State};
+use crate::session::{Role, Session, State};
 use crate::session_editor::edit_session;
 use crate::spawn::{SHELL_COMMANDS, SpawnSpec};
 use crate::storage::Home;
@@ -130,6 +131,9 @@ impl Component for ListingVerbs {
         table.register(ctx, Visibility::Hidden, List(d()));
         table.register(ctx, Visibility::Hidden, EditSession(d()));
         table.register(ctx, Visibility::Hidden, EditTag(d()));
+        table.register(ctx, Visibility::Hidden, Roles(d()));
+        table.register(ctx, Visibility::Hidden, RolesPanel(d()));
+        table.register(ctx, Visibility::Hidden, ToggleHide(d()));
         Ok(())
     }
 }
@@ -178,7 +182,8 @@ impl Command for List {
     }
     fn run(&self, _argv: &[String]) -> Result<i32, BoxError> {
         // Lenient on argv: the picker is the only caller.
-        let live = self.0.service.live_sessions()?;
+        let hidden = hidden_roles(&self.0.env)?;
+        let live = visible_sessions(self.0.service.live_sessions()?, &hidden);
         println!(
             "{}",
             picker_display_rows(&live, env_namew(&self.0.env), now())
@@ -542,6 +547,12 @@ impl Command for Attach {
                     .dest("mix")
                     .flag()
                     .help("(unsupported) merged local+remote picker — use --host ALIAS"),
+            )
+            .arg(
+                Arg::option("--hide")
+                    .default("")
+                    .metavar("ROLE[,ROLE...]")
+                    .help("start with these roles hidden (llm, nvim, shell, other); TAB toggles them in the picker"),
             );
         let args = match parse(&parser, argv) {
             Ok(args) => args,
@@ -578,12 +589,21 @@ impl Command for Attach {
             .rand_bytes(8)
             .tempfile_in(temp_dir(&self.0.env))?
             .into_temp_path();
+        // The roles panel's hide-state file, seeded from --hide; removed (drop) whenever we leave.
+        let hide_file = tempfile::Builder::new()
+            .prefix("tx-picker-hide.")
+            .rand_bytes(8)
+            .tempfile_in(temp_dir(&self.0.env))?
+            .into_temp_path();
+        let hidden = picker_filter::parse_hidden(args.get_one("hide").unwrap_or_default());
+        picker_filter::write_hidden(&hide_file, &hidden)?;
         let query = args.get_one("query").unwrap_or_default();
         let picker = Picker {
             deps: &self.0,
             opts: self.fzf_opts(namew, query),
             namew,
             arm_file: &arm_file,
+            hide_file: &hide_file,
         };
         picker.run(args.get_flag("jump"))
     }
@@ -621,20 +641,24 @@ impl Attach {
         let bin_tx = bin_tx.display();
         let reload = format!("reload-sync({bin_tx} _list)");
         // `display-popup` runs in the server's environment: bake the home into the command.
-        let edit_tag = format!(
-            "env TX_IDE_HOME={} {bin_tx} _edit-tag {{1}}",
-            self.0.home.root().display()
+        let home = self.0.home.root().display();
+        let edit_tag = format!("env TX_IDE_HOME={home} {bin_tx} _edit-tag {{1}}");
+        // The popup inherits the server's environment, not fzf's: bake the hide file in too.
+        let roles_panel = format!(
+            "env TX_IDE_HOME={home} {HIDE_FILE_ENV}=\"${HIDE_FILE_ENV}\" {bin_tx} _roles-panel"
         );
+        let chips = format!("{bin_tx} _roles --chips");
         let header_cols = format!(
             "{:<namew$}   {:<LOCATION_W$} {:<7} {:<6} {:<ROLE_W$} TAGS",
             "NAME", "LOCATION", "STARTED", "IDLE", "ROLE"
         );
         let focus_cmd = format!(
-            "printf '{ACCENT_ANSI}{BOLD}%s{RESET} {FG_ANSI}{BOLD}%s{RESET}\\n%s' {{1}} {{2}} \
-             '{header_cols}'"
+            "printf '{ACCENT_ANSI}{BOLD}%s{RESET} {FG_ANSI}{BOLD}%s{RESET}\\n' {{1}} {{2}}; {chips}; \
+             printf '%s' '{header_cols}'"
         );
         let arm_cmd = format!(
-            "printf '{WARN_ANSI}{BOLD} ⚠  Kill \"%s\"? [y/N]{RESET}\\n%s' {{1}} '{header_cols}'"
+            "printf '{WARN_ANSI}{BOLD} ⚠  Kill \"%s\"? [y/N]{RESET}\\n' {{1}}; {chips}; \
+             printf '%s' '{header_cols}'"
         );
         let color = format!(
             "fg:{DIM_FG_HEX},pointer:{ACCENT_HEX},fg+:{DIM_FG_HEX}:regular,\
@@ -653,7 +677,7 @@ impl Attach {
             "--listen".to_owned(),
             "--track".to_owned(),
             format!("--color={color}"),
-            format!("--header={header_cols}"),
+            format!("--header={}\n{header_cols}", picker_filter::chips_line(&[])),
             format!("--query={query}"),
             format!(
                 "--bind=start:execute-silent(( while sleep 1; do curl -fsS -XPOST \
@@ -667,6 +691,16 @@ impl Attach {
             ),
             format!(
                 "--bind=ctrl-t:execute(tmux display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}"
+            ),
+            // The roles panel sits just under the search bar: pane top + prompt/info rows.
+            format!(
+                "--bind=tab:execute(tmux display-popup -E -B -x '#{{e|+:#{{popup_pane_left}},2}}' \
+                 -y '#{{e|+:#{{popup_pane_top}},2}}' -h {PANEL_HEIGHT} -w {PANEL_WIDTH} \
+                 \"{roles_panel}\")+{reload}+transform-header({focus_cmd})"
+            ),
+            format!(
+                "--bind=click-header:execute-silent({bin_tx} _toggle-hide \
+                 \"$FZF_CLICK_HEADER_WORD\")+{reload}+transform-header({focus_cmd})"
             ),
             format!(
                 "--bind=ctrl-d:execute-silent(printf '%s' {{1}} \
@@ -691,6 +725,7 @@ struct Picker<'a> {
     opts: Vec<String>,
     namew: i64,
     arm_file: &'a Path,
+    hide_file: &'a Path,
 }
 
 impl Picker<'_> {
@@ -724,13 +759,15 @@ impl Picker<'_> {
 
     /// Run fzf once over a fresh feed; `None` on abort / an empty selection.
     fn select(&self) -> Result<Option<String>, BoxError> {
-        let live = self.deps.service.live_sessions()?;
+        let hidden = picker_filter::read_hidden(self.hide_file)?;
+        let live = visible_sessions(self.deps.service.live_sessions()?, &hidden);
         let feed = picker_display_rows(&live, self.namew, now());
         let _ = std::io::stdout().flush();
         let mut child = Process::new(&self.opts[0])
             .args(&self.opts[1..])
             .env("NAMEW", self.namew.to_string())
             .env("TX_ARM_FILE", self.arm_file)
+            .env(HIDE_FILE_ENV, self.hide_file)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -951,6 +988,133 @@ pub(super) fn prompt_with_default(label: &str, default: &str) -> Result<Option<S
     Ok(Some(text.strip_suffix('\n').unwrap_or(&text).to_owned()))
 }
 
+/// The roles panel popup: four role rows + legend, inside a border.
+const PANEL_HEIGHT: usize = 7;
+const PANEL_WIDTH: usize = 34;
+
+/// The roles the picker currently hides, from the file named by `TX_HIDE_FILE` (none when the
+/// variable is unset — `tx _list` outside a picker shows everything).
+fn hidden_roles(env: &Env) -> Result<Vec<Role>, BoxError> {
+    match env.var(HIDE_FILE_ENV).filter(|path| !path.is_empty()) {
+        Some(path) => Ok(picker_filter::read_hidden(Path::new(path))?),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn visible_sessions(sessions: Vec<Session>, hidden: &[Role]) -> Vec<Session> {
+    sessions
+        .into_iter()
+        .filter(|session| !hidden.contains(&session.role()))
+        .collect()
+}
+
+/// The hide file a picker-spawned command must have; a missing variable is a caller bug.
+fn hide_file(env: &Env) -> Result<PathBuf, BoxError> {
+    match env.var(HIDE_FILE_ENV).filter(|path| !path.is_empty()) {
+        Some(path) => Ok(PathBuf::from(path)),
+        None => Err(format!("{HIDE_FILE_ENV} is not set (run from the tx attach picker)").into()),
+    }
+}
+
+struct Roles(Rc<Deps>);
+
+impl Command for Roles {
+    fn name(&self) -> &'static str {
+        "_roles"
+    }
+    fn summary(&self) -> &'static str {
+        "Internal: the picker's role chips (--chips: header line; default: TAB panel feed)."
+    }
+    fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let hidden = hidden_roles(&self.0.env)?;
+        if argv.iter().any(|arg| arg == "--chips") {
+            println!("{}", picker_filter::chips_line(&hidden));
+        } else {
+            println!("{}", picker_filter::panel_rows(&hidden));
+        }
+        Ok(0)
+    }
+}
+
+struct ToggleHide(Rc<Deps>);
+
+impl Command for ToggleHide {
+    fn name(&self) -> &'static str {
+        "_toggle-hide"
+    }
+    fn summary(&self) -> &'static str {
+        "Internal: flip a role in the picker's hide file (--all-on clears it); non-roles are ignored."
+    }
+    fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let path = hide_file(&self.0.env)?;
+        let word = argv.first().map(String::as_str).unwrap_or_default();
+        if word == "--all-on" {
+            picker_filter::write_hidden(&path, &[])?;
+        } else if let Ok(role) = word.parse::<Role>() {
+            picker_filter::toggle(&path, role)?;
+        }
+        Ok(0)
+    }
+}
+
+struct RolesPanel(Rc<Deps>);
+
+impl Command for RolesPanel {
+    fn name(&self) -> &'static str {
+        "_roles-panel"
+    }
+    fn summary(&self) -> &'static str {
+        "Internal: the picker's TAB roles panel (fzf in a tmux popup; space toggles a role)."
+    }
+    fn run(&self, _argv: &[String]) -> Result<i32, BoxError> {
+        use palette::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX, FG_HEX, SELECTION_BG};
+        let hide = hide_file(&self.0.env)?;
+        let bin_tx = self.0.bin_tx();
+        let bin_tx = bin_tx.display();
+        let home = self.0.home.root().display();
+        let reload = format!(
+            "reload-sync(env TX_IDE_HOME={home} {HIDE_FILE_ENV}={} {bin_tx} _roles)",
+            hide.display()
+        );
+        let toggle = format!("execute-silent({bin_tx} _toggle-hide {{1}})+{reload}");
+        let all_on = format!("execute-silent({bin_tx} _toggle-hide --all-on)+{reload}");
+        let color = format!(
+            "bg:{BG_DEEP_HEX},fg:{DIM_FG_HEX},pointer:{ACCENT_HEX},fg+:{FG_HEX}:regular,\
+             bg+:{SELECTION_BG}:regular,header:{DIM_FG_HEX},prompt:{ACCENT_HEX}"
+        );
+        let feed = picker_filter::panel_rows(&picker_filter::read_hidden(&hide)?);
+        let mut child = Process::new("fzf")
+            .args([
+                "--ansi",
+                "--disabled",
+                "--reverse",
+                "--no-info",
+                "--no-separator",
+                "--track",
+                "--id-nth=1",
+                "--delimiter=\t",
+                "--with-nth=2..",
+                "--prompt=  roles ",
+                &format!("--header={}", picker_filter::panel_legend()),
+                &format!("--color={color}"),
+                &format!("--bind=space:{toggle}"),
+                &format!("--bind=a:{all_on}"),
+                "--bind=j:down,k:up",
+                "--bind=enter,tab,q,esc:abort",
+            ])
+            .env(HIDE_FILE_ENV, &hide)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .map_err(run_error("fzf"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(feed.as_bytes());
+        }
+        child.wait()?;
+        Ok(0)
+    }
+}
+
 struct EditTag(Rc<Deps>);
 
 impl Command for EditTag {
@@ -975,8 +1139,10 @@ impl Command for EditTag {
             eprintln!("tx: session '{wanted}' not found (not tx-managed)");
             return Ok(1);
         };
-        let Some(edited) =
-            prompt_with_default(&format!("Tags for {ACCENT_ANSI}{BOLD}{wanted}{RESET}"), &session.tags.join(","))?
+        let Some(edited) = prompt_with_default(
+            &format!("Tags for {ACCENT_ANSI}{BOLD}{wanted}{RESET}"),
+            &session.tags.join(","),
+        )?
         else {
             return Ok(1);
         };
