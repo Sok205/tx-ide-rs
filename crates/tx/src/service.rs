@@ -708,8 +708,7 @@ impl SessionService {
             session.ended_at = now;
             session.attached_to.clear();
         } else {
-            // Every live transition is activity, so `last_activity` is "since the state changed":
-            // the age a resting session shows on its border and in the picker's IDLE column.
+            // Any live transition is activity: `last_activity` means "since the state changed".
             if let Some(llm) = session.llm_mut() {
                 llm.last_activity.clone_from(&now);
             }

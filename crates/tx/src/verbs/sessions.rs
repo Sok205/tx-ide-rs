@@ -820,10 +820,8 @@ fn focus_envelope(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, B
     Ok(0)
 }
 
-/// The pane border's single read: line 1 the display name, line 2 the tags, line 3 the state,
-/// line 4 how long a resting llm session has been resting (`0m`, `3m`, `2h`; empty while working);
-/// all empty for an absent or unreadable record (a bad record never breaks the
-/// border).
+/// The pane border's single read: name, tags, state, resting age (`0m`, `2h`; empty while working),
+/// one per line; all empty for an absent or unreadable record so a bad record never breaks the border.
 fn pane_info(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxError> {
     let parser = parser.arg(Arg::positional("session_id"));
     let matches = parse!(parser, argv);
