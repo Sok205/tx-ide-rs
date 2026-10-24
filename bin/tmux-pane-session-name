@@ -35,21 +35,21 @@ fi
 # @tx_id) or its record is absent, so the border never goes blank. Three read -r's (not `mapfile`,
 # which macOS bash 3.2 lacks); `_pane-info` always emits exactly three lines (name, tags, state).
 #
-# The state glyph before the name: WORKING spins one step per redraw (tmux re-runs this job once a
-# second), WAITING is a filled dot in the warn colour (the operator is needed), IDLE a hollow dot.
-# Non-llm roles (alive / exited) show nothing. The frame is the epoch second; the bash builtin
-# `printf %(%s)T` keeps the 1 Hz hot path process-free, `date` is the bash 3.2 fallback.
-state_glyph() {
-  local -a frames=(◐ ◓ ◑ ◒)
-  local epoch
+# The state label at the right end of the border: a short run of thicker line (`▬`) in the state's
+# colour around the state word, right-aligned (`#[align=right]`, honoured in pane-border-format).
+# WORKING green, WAITING the warn colour (the operator is needed), IDLE dim. Non-llm roles (alive /
+# exited) show nothing. tmux keeps two plain border cells right of the text region, so the label
+# ends two cells before the corner.
+WORKING_HEX='#9ece6a'
+state_label() {
+  local color
   case "$1" in
-    working)
-      printf -v epoch '%(%s)T' -1 2>/dev/null || epoch=$(date +%s)
-      printf '#[fg=%s,bold]%s#[default] ' "$ACCENT_HEX" "${frames[epoch % 4]}"
-      ;;
-    waiting) printf '#[fg=%s,bold]●#[default] ' "$WARN_HEX" ;;
-    idle) printf '#[fg=%s,nobold]○#[default] ' "$DIM_FG_HEX" ;;
+    working) color="$WORKING_HEX" ;;
+    waiting) color="$WARN_HEX" ;;
+    idle) color="$DIM_FG_HEX" ;;
+    *) return 0 ;;
   esac
+  printf '#[align=right]#[fg=%s]▬▬ %s ▬▬#[default]' "$color" "$1"
 }
 
 render_inner() {
@@ -61,14 +61,14 @@ render_inner() {
     return 0
   fi
   { IFS= read -r name; IFS= read -r tag; IFS= read -r state; } < <("$TX" _pane-info "$id" 2>/dev/null) || true
-  printf '%s#[bold]%s#[default]' "$(state_glyph "$state")" "${name:-$session}"
-  [[ -z "$tag" ]] && return 0
+  printf '#[bold]%s#[default]' "${name:-$session}"
   IFS=',' read -ra parts <<<"$tag"
   for part in "${parts[@]}"; do
     [[ -z "$part" ]] && continue
     color=$(tag_hex "$part")
     printf ' #[fg=%s,#{?pane_active,bold,nobold}][%s]#[default]' "$color" "$part"
   done
+  state_label "$state"
 }
 
 pane_tty=$(tmux display-message -p -t "$pane_id" '#{pane_tty}' 2>/dev/null) || exit 0
