@@ -355,7 +355,8 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     }
 }
 
-/// Peer messages, lane to lane: `•` where it left, a dotted line, `▾`/`▴` where it arrived —
+/// Peer messages and spawns, lane to lane: `•` where it left, a dotted line, `▾`/`▴` where it
+/// arrived —
 /// small glyphs, plain weight, so the arrows sit under the bars rather than over them. The
 /// selected message is amber and bold; a bar the line crosses keeps its heavy horizontal (`┿`).
 fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>]) {
