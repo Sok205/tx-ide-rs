@@ -140,14 +140,17 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
     draw_now_column(app, buffer, day_row, rule_row + 1, true);
 }
 
+/// One column past now, so the present column (a fresh spawn arrow) stays visible.
 fn draw_now_column(app: &App, buffer: &mut Buffer, top: u16, bottom: u16, label: bool) {
-    let column = app.column_of(app.now);
-    if !app.on_canvas(column) {
+    let column = app.column_of(app.now) + 1;
+    if column < 0 || column > i64::from(app.geometry.canvas.width) {
         return;
     }
     let x = app.geometry.canvas.x + column as u16;
     for y in top..bottom {
-        put(buffer, x, y, "┃", Style::new().fg(NOW));
+        if symbol_at(buffer, x, y) != "▸" {
+            put(buffer, x, y, "┃", Style::new().fg(NOW));
+        }
     }
     if label {
         // "now HH:MM", right-aligned against the now column
@@ -355,7 +358,8 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     }
 }
 
-/// Peer messages, lane to lane: `•` where it left, a dotted line, `▾`/`▴` where it arrived —
+/// Peer messages and spawns, lane to lane: `•` where it left, a dotted line, `▾`/`▴` where it
+/// arrived —
 /// small glyphs, plain weight, so the arrows sit under the bars rather than over them. The
 /// selected message is amber and bold; a bar the line crosses keeps its heavy horizontal (`┿`).
 fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>]) {
