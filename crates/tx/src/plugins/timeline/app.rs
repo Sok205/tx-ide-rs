@@ -1,8 +1,9 @@
 //! Timeline state and input — pure: keys and mouse in, state out; [`super::ui`] draws it.
 //!
 //! The view shows two things per lane: when the session was working (bars) or idle, and the
-//! peer messages it sent or received (arrows between lanes). Everything else the payload carries
-//! (you-spoke events, milestones, spawn edges) stays in the model for parity and is not drawn.
+//! arrows between lanes — peer messages it sent or received, and the spawn (or resume) that
+//! brought it into being, drawn alike with the spawn prompt as the body. Everything else the
+//! payload carries (you-spoke events, milestones) stays in the model for parity and is not drawn.
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -310,19 +311,19 @@ impl App {
 
     // ----- messages --------------------------------------------------------------------------
 
-    /// Peer messages in the observation window, in time order for selection and arrows.
+    /// Edges in the observation window — peer messages and spawns alike — in time order for
+    /// selection and arrows.
     pub fn messages(&self) -> Vec<usize> {
         self.payload
             .edges
             .iter()
             .enumerate()
-            .filter(|(_, edge)| edge.kind == EdgeKind::Message)
             .filter(|(_, edge)| self.observes(edge.at))
             .map(|(index, _)| index)
             .collect()
     }
 
-    /// Edge indices of the peer messages the cursor lane sent or received, in time order.
+    /// Edge indices of the messages and spawns the cursor lane sent or received, in time order.
     pub fn lane_messages(&self) -> Vec<usize> {
         let Some(cursor) = self.cursor else {
             return Vec::new();
@@ -573,8 +574,13 @@ impl App {
         match self.selected_message() {
             Some(edge) => {
                 let (sender, receiver) = self.message_parties(edge);
+                let verb = match edge.kind {
+                    EdgeKind::Message => "",
+                    EdgeKind::Spawn => " · spawned",
+                    EdgeKind::Resume => " · resumed",
+                };
                 format!(
-                    "{metadata} · {} · {sender} → {receiver}: {}",
+                    "{metadata} · {} · {sender} → {receiver}{verb}: {}",
                     super::clock::short_time(self.payload.timestamp(edge.at)),
                     first_line(&edge.snippet)
                 )
@@ -686,11 +692,11 @@ mod tests {
                     kind: EdgeKind::Message,
                 },
                 Edge {
-                    at: 120.0,
+                    at: 480.0,
                     from: None,
                     to: 1,
                     token: "tx-assistant".into(),
-                    snippet: String::new(),
+                    snippet: "build the thing".into(),
                     kind: EdgeKind::Spawn,
                 },
                 Edge {
@@ -742,9 +748,10 @@ mod tests {
     }
 
     #[test]
-    fn messages_skip_spawns_and_cycle_by_time() {
+    fn messages_include_spawns_and_cycle_by_time() {
         let mut app = app();
-        assert_eq!(app.messages(), vec![0, 2]);
+        assert_eq!(app.messages(), vec![0, 1, 2]);
+        // lane "one" neither sent nor received the spawn
         assert_eq!(app.lane_messages(), vec![0, 2]);
         app.handle_key(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.message, Some(2));
@@ -753,6 +760,12 @@ mod tests {
         app.handle_key(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.message, Some(0));
         assert!(app.status_line().ends_with("one → two: ping"));
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.message, Some(1));
+        assert!(
+            app.status_line()
+                .ends_with("tx-assistant → two · spawned: build the thing")
+        );
     }
 
     #[test]
