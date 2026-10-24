@@ -102,7 +102,7 @@ fn fail(exit: ParseExit) -> Result<i32, BoxError> {
 
 // ----- tx artifact ----------------------------------------------------------------------------
 
-const HELP_ROWS: [(&str, &str); 8] = [
+const HELP_ROWS: [(&str, &str); 10] = [
     (
         "create <file> [--title T] [--group G]",
         "register a new artifact from a file",
@@ -116,8 +116,13 @@ const HELP_ROWS: [(&str, &str); 8] = [
         "read or set the effort-group override",
     ),
     (
-        "ls [--session S]",
-        "list artifacts (--session: what a session touched)",
+        "archive <id>",
+        "hide a finished artifact from prefix+a and ls (history kept)",
+    ),
+    ("unarchive <id>", "bring an archived artifact back"),
+    (
+        "ls [--session S] [--archived]",
+        "list artifacts (--session: what a session touched; --archived: include hidden)",
     ),
     ("show <id>", "metadata + the full touch/version log"),
     (
@@ -161,6 +166,8 @@ impl Command for ArtifactCmd {
             "create" => self.create(rest),
             "modify" => self.modify(rest),
             "group" => self.group(rest),
+            "archive" => self.set_archived(rest, true),
+            "unarchive" => self.set_archived(rest, false),
             "ls" => self.ls(rest),
             "show" => self.show(rest),
             "diff" => self.diff(rest),
@@ -291,6 +298,29 @@ impl ArtifactCmd {
         Ok(0)
     }
 
+    fn set_archived(&self, argv: &[String], archived: bool) -> Result<i32, BoxError> {
+        let sub = if archived { "archive" } else { "unarchive" };
+        let parser = sub_parser(sub).arg(Arg::positional("id"));
+        let args = match parse(&parser, argv) {
+            Ok(args) => args,
+            Err(code) => return Ok(code),
+        };
+        let artifact_id = self.resolve(&args)?;
+        let artifact = self
+            .artifacts
+            .set_archived(&artifact_id, &self.actor(), archived)?;
+        let title = artifact
+            .title
+            .as_deref()
+            .unwrap_or(artifact.filename.as_str());
+        if archived {
+            println!("Archived artifact {artifact_id} ({title}) — hidden from prefix+a and ls");
+        } else {
+            println!("Unarchived artifact {artifact_id} ({title})");
+        }
+        Ok(0)
+    }
+
     fn modify(&self, argv: &[String]) -> Result<i32, BoxError> {
         let parser = sub_parser("modify")
             .arg(Arg::positional("id"))
@@ -357,15 +387,34 @@ impl ArtifactCmd {
 
     fn ls(&self, argv: &[String]) -> Result<i32, BoxError> {
         let parser = sub_parser("ls")
-            .arg(Arg::option("--session").help("only artifacts this session created or touched"));
+            .arg(Arg::option("--session").help("only artifacts this session created or touched"))
+            .arg(
+                Arg::option("--archived")
+                    .flag()
+                    .help("include archived artifacts (hidden by default)"),
+            );
         let args = match parse(&parser, argv) {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
-        let artifacts = match args.get_one("session") {
-            Some(session) => self.artifacts.artifacts_for_session(session),
+        let include_archived = args.get_flag("archived");
+        let artifacts: Vec<Artifact> = match args.get_one("session") {
+            Some(session) => self
+                .artifacts
+                .all()
+                .into_iter()
+                .filter(|artifact| {
+                    artifact
+                        .history()
+                        .iter()
+                        .any(|touch| touch.session_id == session)
+                })
+                .collect(),
             None => self.artifacts.all(),
-        };
+        }
+        .into_iter()
+        .filter(|artifact| include_archived || !artifact.is_archived())
+        .collect();
         let names = self.service.store().names_for(
             artifacts
                 .iter()

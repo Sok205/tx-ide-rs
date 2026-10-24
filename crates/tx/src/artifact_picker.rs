@@ -4,7 +4,9 @@
 //! terminal layer. Enter attaches the cursor's row in the pane and a digit attaches that row;
 //! f (focus the pane already showing it) and p (open it in a popup) arm the operation instead,
 //! and the next digit or Enter applies it to that row — so `f 3` focuses the third row, as does
-//! `f ↓ ↓ Enter`. Rows past the ninth take choose-tree's keys: `M-a`…`M-z`, then `M-A`…`M-Z`.
+//! `f ↓ ↓ Enter`. d asks about the cursor's row (kill a session, archive an artifact), as the tx
+//! picker's C-d does: the question takes the notice line, `y` fires it, any other key cancels.
+//! Rows past the ninth take choose-tree's keys: `M-a`…`M-z`, then `M-A`…`M-Z`.
 //! Esc disarms, then closes (q too). A pick the caller declines (a focus with nothing to focus)
 //! becomes a notice line and the list stays open.
 
@@ -13,7 +15,7 @@ use std::io;
 use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, RESET, SELECTION_BG, WARN_ANSI};
 use crate::session_editor::{Decoder, Key, Terminal, read_key, write_all};
 
-pub const HINT: &str = "Enter/key attach here   f focus its pane   p popup   Esc close";
+pub const HINT: &str = "Enter/key attach here   f focus its pane   p popup   d delete   Esc close";
 
 /// The key that picks row `index` (0-based), as choose-tree labels them: `1`…`9`, then `M-a`…
 /// `M-z`, then `M-A`…`M-Z`; `None` past those.
@@ -51,6 +53,8 @@ pub enum Pick {
     Focus(usize),
     /// Open the row's view nest-attached in a popup over the terminal.
     Popup(usize),
+    /// Kill the row's session, or archive the row's artifact (confirmed with `y`).
+    Delete(usize),
 }
 
 /// What f / p arm: the operation the next digit or Enter applies.
@@ -105,7 +109,10 @@ pub struct Picker<'a> {
     /// The operation f / p armed; Enter and digits (rows are numbered from 1) apply it.
     /// `Attach` when nothing is armed.
     operation: Operation,
-    /// A one-line message under the rows (a declined pick); the next key clears it.
+    /// The row d asked about, awaiting `y` (the caller puts its question in the notice).
+    confirm: Option<usize>,
+    /// A one-line message under the rows (a declined pick, a confirm text, an outcome); the
+    /// next key clears it.
     notice: Option<String>,
 }
 
@@ -120,6 +127,7 @@ impl<'a> Picker<'a> {
                 .count(),
             cursor: 0,
             operation: Operation::Attach,
+            confirm: None,
             notice: None,
         }
     }
@@ -128,9 +136,17 @@ impl<'a> Picker<'a> {
         self.notice = Some(text);
     }
 
+    /// The row d asked about and `y` has not yet confirmed.
+    pub fn pending_delete(&self) -> Option<usize> {
+        self.confirm
+    }
+
     /// `Some(Some(pick))` chooses, `Some(None)` cancels, `None` keeps going.
     pub fn handle(&mut self, key: Key) -> Option<Option<Pick>> {
         self.notice = None;
+        if let Some(index) = self.confirm.take() {
+            return matches!(key, Key::Char('y')).then_some(Some(Pick::Delete(index)));
+        }
         match key {
             Key::Up | Key::Char('k') => self.cursor = self.cursor.saturating_sub(1),
             Key::Down | Key::Char('j') => {
@@ -141,6 +157,10 @@ impl<'a> Picker<'a> {
             }
             Key::Char('f') => self.operation = Operation::Focus,
             Key::Char('p') => self.operation = Operation::Popup,
+            Key::Char('d') => {
+                self.disarm();
+                self.confirm = self.row();
+            }
             Key::Char('1'..='9') | Key::Alt(_) => {
                 if let Some(index) = row_index(key).filter(|index| *index < self.rows) {
                     return Some(Some(self.disarm().pick(index)));
@@ -164,8 +184,8 @@ impl<'a> Picker<'a> {
         std::mem::replace(&mut self.operation, Operation::Attach)
     }
 
-    /// The screen: header, sections and rows (the cursor's row on the selection background), the
-    /// hint last.
+    /// The screen: header, sections and rows (the cursor's row on the selection background), a
+    /// notice, the hint last — unless d's question is showing, which takes the hint's line alone.
     pub fn render(&self, height: usize, width: usize) -> String {
         let mut out = String::from("\x1b[0m\x1b[H\x1b[2J");
         let mut screen_row = 0;
@@ -195,14 +215,15 @@ impl<'a> Picker<'a> {
             }
         }
         if height > self.items.len() + 3 {
-            if let Some(notice) = &self.notice {
-                out += &format!("\x1b[{};1H{WARN_ANSI}{notice}{RESET}", height - 1);
-            }
-            out += &format!(
-                "\x1b[{};1H{DIM_FG_ANSI}{}{RESET}",
-                height,
-                self.operation.hint()
-            );
+            let last = if self.confirm.is_some() {
+                format!("{WARN_ANSI}{}", self.notice.as_deref().unwrap_or_default())
+            } else {
+                if let Some(notice) = &self.notice {
+                    out += &format!("\x1b[{};1H{WARN_ANSI}{notice}{RESET}", height - 1);
+                }
+                format!("{DIM_FG_ANSI}{}", self.operation.hint())
+            };
+            out += &format!("\x1b[{};1H{last}{RESET}", height);
         }
         out
     }
@@ -226,15 +247,23 @@ pub fn visible_width(text: &str) -> usize {
     width
 }
 
-/// Run the picker on the controlling terminal; `None` on Esc / q / Ctrl-C. `decline` vets a pick:
+/// Run the picker on the controlling terminal, which the caller holds open (a [`Terminal`]) so
+/// that successive rounds never leave the alternate screen; `None` on Esc / q / Ctrl-C. `notice`
+/// opens the list with a message under the rows (the previous round's failure). `decline` vets a pick:
 /// `Some(message)` shows it as the notice and keeps the list open, `None` accepts the pick.
-pub fn pick(
+/// `confirm_text` is the question d shows for the cursor's row, before `y` fires the delete.
+pub(crate) fn pick(
+    _terminal: &Terminal,
     header: &str,
     items: &[Item],
+    notice: Option<String>,
     mut decline: impl FnMut(Pick) -> Option<String>,
+    confirm_text: impl Fn(usize) -> String,
 ) -> io::Result<Option<Pick>> {
-    let _terminal = Terminal::open()?;
     let mut picker = Picker::new(header, items);
+    if let Some(notice) = notice {
+        picker.notice(notice);
+    }
     let mut decoder = Decoder::default();
     loop {
         let (height, width) = Terminal::size();
@@ -246,7 +275,11 @@ pub fn pick(
                 None => return Ok(Some(chosen)),
             },
             Some(None) => return Ok(None),
-            None => {}
+            None => {
+                if let Some(index) = picker.pending_delete() {
+                    picker.notice(confirm_text(index));
+                }
+            }
         }
     }
 }
@@ -293,6 +326,51 @@ mod tests {
         assert_eq!(picker.handle(Key::Char('\x1b')), None);
         assert!(picker.render(10, 40).contains(HINT));
         assert_eq!(picker.handle(Key::Char('\x1b')), Some(None));
+    }
+
+    #[test]
+    fn d_asks_about_the_cursor_row_and_y_deletes_it() {
+        let items = vec![
+            Item::Row("a".to_owned()),
+            Item::Row("b".to_owned()),
+            Item::Row("c".to_owned()),
+        ];
+        let mut picker = Picker::new("H", &items);
+        // d asks at once; the caller supplies the question as the notice.
+        assert_eq!(picker.handle(Key::Down), None);
+        assert_eq!(picker.handle(Key::Char('d')), None);
+        assert_eq!(picker.pending_delete(), Some(1));
+        picker.notice("Kill \"b\"? [y/N]".into());
+        // The question takes the hint's line, nothing under it.
+        let screen = picker.render(10, 40);
+        assert!(
+            screen.contains(&format!("\x1b[10;1H{WARN_ANSI}Kill \"b\"? [y/N]")),
+            "{screen:?}"
+        );
+        assert!(!screen.contains(HINT));
+        // Anything but y cancels, back to the plain list; the question is gone.
+        assert_eq!(picker.handle(Key::Char('n')), None);
+        assert_eq!(picker.pending_delete(), None);
+        let screen = picker.render(10, 40);
+        assert!(!screen.contains("Kill"));
+        assert!(screen.contains(HINT));
+        assert_eq!(picker.handle(Key::Enter), Some(Some(Pick::Attach(1))));
+        // y fires on the cursor's row.
+        assert_eq!(picker.handle(Key::Down), None);
+        assert_eq!(picker.handle(Key::Char('d')), None);
+        assert_eq!(picker.handle(Key::Char('y')), Some(Some(Pick::Delete(2))));
+        assert_eq!(picker.pending_delete(), None);
+        // d drops an armed f / p; Esc while asking cancels the delete, it does not close.
+        assert_eq!(picker.handle(Key::Char('f')), None);
+        assert_eq!(picker.handle(Key::Char('d')), None);
+        assert_eq!(picker.handle(Key::Char('\x1b')), None);
+        assert!(picker.render(10, 40).contains(HINT));
+        assert_eq!(picker.handle(Key::Char('\x1b')), Some(None));
+        // Nothing to ask about on an empty list.
+        let empty: Vec<Item> = Vec::new();
+        let mut picker = Picker::new("H", &empty);
+        assert_eq!(picker.handle(Key::Char('d')), None);
+        assert_eq!(picker.pending_delete(), None);
     }
 
     #[test]

@@ -8,7 +8,9 @@
 //! the tx picker's rows. Enter (or a digit) re-hosts the pane on the
 //! chosen view (the llm session keeps running detached); f then a digit or Enter moves the
 //! terminal to the pane already showing it; p then a digit or Enter nest-attaches it in a popup
-//! over the terminal, leaving the panes as they are.
+//! over the terminal, leaving the panes as they are; d asks about the cursor's row and y deletes
+//! it — a session is killed, an artifact is archived (hidden from the picker and `tx artifact
+//! ls`, history kept) and its live view closed — and the list redraws without it.
 //! In an nvim view the key goes back to the controlling session — the artifact's most recent live
 //! non-`user` toucher (else its creator), or the companion's `parent` — focusing the pane still
 //! showing it, else re-hosting this pane on it.
@@ -25,6 +27,7 @@ use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ans
 use crate::render::{LOCATION_W, actor_label, location_text};
 use crate::service::SessionService;
 use crate::session::{Session, SessionKind};
+use crate::session_editor::Terminal;
 use crate::shlex::shlex_join;
 use crate::spawn::SpawnSpec;
 use crate::storage::Home;
@@ -81,7 +84,8 @@ impl Command for ArtifactPick {
     }
     fn summary(&self) -> &'static str {
         "Internal: the picker inside prefix+a's popup — Enter attaches the row's view in the pane; \
-         f / p then a digit or Enter focus the pane already showing it / open it in a popup. \
+         f / p then a digit or Enter focus the pane already showing it / open it in a popup; d \
+         then y kills the cursor's session or archives its artifact. \
          Usage: _artifact-pick SESSION CLIENT"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
@@ -232,33 +236,69 @@ impl ArtifactNav {
 
     /// Inside the popup: run the list (a focus on a view no pane shows is declined with a notice),
     /// then hand the choice to a background `_artifact-go` so the popup is gone before the pane
-    /// it sits on is re-hosted.
+    /// it sits on is re-hosted. A delete is done here and now and the list comes back without
+    /// the row (a failure is reported under it); the popup closes when nothing is left to list.
     fn pick(&self, session: &str, client: &str) -> Result<i32, BoxError> {
         let Some(record) = self.record(session, client)? else {
             return Ok(1);
         };
-        let listing = self.listing(&record, client)?;
-        // A focus needs a pane to go to: declined in place when nothing shows the row's view.
-        let decline = |pick: Pick| match pick {
-            Pick::Attach(_) | Pick::Popup(_) => None,
-            Pick::Focus(index) => {
-                let target = &listing.targets[index];
-                let hosted = self.hosting_session(target).is_some_and(|tmux_name| {
+        // One terminal for every round: a delete redraws the list without leaving the alternate
+        // screen (which would flash the popup's primary screen and whatever stderr put there).
+        let terminal = Terminal::open()?;
+        let mut failure: Option<String> = None;
+        let (listing, mode, index) = loop {
+            let listing = self.listing(&record, client)?;
+            if listing.targets.is_empty() {
+                if let Some(failure) = failure {
                     self.service
                         .tmux()
-                        .pane_for_session(&tmux_name, "")
-                        .is_some()
-                });
-                (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
+                        .display_status(client, &format!("prefix+a: {failure}"));
+                }
+                return Ok(0);
             }
-        };
-        let Some(pick) = artifact_picker::pick(&listing.header, &listing.items, decline)? else {
-            return Ok(0);
-        };
-        let (mode, index) = match pick {
-            Pick::Attach(index) => (Mode::Attach, index),
-            Pick::Focus(index) => (Mode::Focus, index),
-            Pick::Popup(index) => (Mode::Popup, index),
+            // A focus needs a pane to go to: declined in place when nothing shows the row's view.
+            let decline = |pick: Pick| match pick {
+                Pick::Attach(_) | Pick::Popup(_) | Pick::Delete(_) => None,
+                Pick::Focus(index) => {
+                    let target = &listing.targets[index];
+                    let hosted = self.hosting_session(target).is_some_and(|tmux_name| {
+                        self.service
+                            .tmux()
+                            .pane_for_session(&tmux_name, "")
+                            .is_some()
+                    });
+                    (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
+                }
+            };
+            let confirm_text = |index: usize| match listing.targets[index].kind {
+                "session" => format!("⚠  Kill \"{}\"? [y/N]", listing.names[index]),
+                _ => format!(
+                    "⚠  Archive \"{}\" and close its view? [y/N]",
+                    listing.names[index]
+                ),
+            };
+            let Some(pick) = artifact_picker::pick(
+                &terminal,
+                &listing.header,
+                &listing.items,
+                failure.take(),
+                decline,
+                confirm_text,
+            )?
+            else {
+                return Ok(0);
+            };
+            match pick {
+                Pick::Attach(index) => break (listing, Mode::Attach, index),
+                Pick::Focus(index) => break (listing, Mode::Focus, index),
+                Pick::Popup(index) => break (listing, Mode::Popup, index),
+                Pick::Delete(index) => {
+                    failure = self
+                        .delete(&record, &listing.targets[index])
+                        .err()
+                        .map(|error| format!("\"{}\": {error}", listing.names[index]));
+                }
+            }
         };
         let target = &listing.targets[index];
         let command = self.tx_command(&[
@@ -273,6 +313,34 @@ impl ArtifactNav {
             .tmux()
             .run_shell_background(&format!("{command} || true"))?;
         Ok(0)
+    }
+
+    /// A confirmed delete: a session is killed; an artifact has its live views killed and is
+    /// archived, the llm session the key fired in being the actor.
+    fn delete(&self, record: &Session, target: &Target) -> Result<(), BoxError> {
+        match target.kind {
+            "session" => {
+                self.service.kill(&target.id)?;
+                Ok(())
+            }
+            _ => self.archive_artifact(record, &target.id),
+        }
+    }
+
+    fn archive_artifact(&self, record: &Session, artifact_id: &str) -> Result<(), BoxError> {
+        let views = self
+            .service
+            .live_sessions()?
+            .into_iter()
+            .filter(|candidate| {
+                matches!(&candidate.kind, SessionKind::Other(other)
+                if other.artifact_id.as_deref() == Some(artifact_id))
+            });
+        for view in views {
+            self.service.kill(&view.id)?;
+        }
+        self.artifacts.set_archived(artifact_id, &record.id, true)?;
+        Ok(())
     }
 
     fn client_width(&self, client: &str) -> usize {
@@ -583,7 +651,10 @@ fn popup_title(view: &Session, owner: Option<&Session>) -> String {
         title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
     }
     if let Some(owner) = owner {
-        title.push_str(&format!("#[fg={DIM_FG_HEX},nobold]◂ {}#[default] ", owner.name));
+        title.push_str(&format!(
+            "#[fg={DIM_FG_HEX},nobold]◂ {}#[default] ",
+            owner.name
+        ));
     }
     title
 }

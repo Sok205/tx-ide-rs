@@ -146,7 +146,7 @@ const VERBS: &[(&str, &str, Visibility, Run)] = &[
     ),
     (
         "migrate",
-        "Upgrade $TX_IDE_HOME records to the current schemas (sessions v3→v6, artifacts v1→v2).",
+        "Upgrade $TX_IDE_HOME records to the current schemas (sessions v3→v6, artifacts v1→v3).",
         Visibility::Public,
         migrate,
     ),

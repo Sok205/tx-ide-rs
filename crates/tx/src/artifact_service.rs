@@ -200,6 +200,26 @@ impl ArtifactService {
         Ok(artifact)
     }
 
+    /// Archive (hide from pickers and default listings, history kept) or unarchive — metadata
+    /// only, one log line.
+    pub fn set_archived(
+        &self,
+        artifact_id: &str,
+        session_id: &str,
+        archived: bool,
+    ) -> Result<Artifact> {
+        let mut artifact = self.require(artifact_id)?;
+        artifact.archived_at = archived.then(|| float(events::now()));
+        self.save(&artifact)?;
+        let type_ = if archived {
+            "artifact-archive"
+        } else {
+            "artifact-unarchive"
+        };
+        self.append(type_, &artifact.id, session_id)?;
+        Ok(artifact)
+    }
+
     /// Claim `revs/<rev>` exclusively; a taken slot is always a conflict, never overwritten.
     fn claim(&self, artifact: &Artifact, rev: u64, content: &[u8]) -> Result<()> {
         match self.files.claim_rev(artifact, rev, content) {
@@ -336,13 +356,14 @@ impl ArtifactService {
         Ok(current != self.last_snapshot(artifact)?)
     }
 
-    /// Every artifact `session_id` created or touched (a query, never denormalized).
+    /// Every unarchived artifact `session_id` created or touched (a query, never denormalized).
     pub fn artifacts_for_session(&self, session_id: &str) -> Vec<Artifact> {
         self.scan(self.store.query(|artifact| {
-            artifact
-                .history()
-                .iter()
-                .any(|touch| touch.session_id == session_id)
+            !artifact.is_archived()
+                && artifact
+                    .history()
+                    .iter()
+                    .any(|touch| touch.session_id == session_id)
         }))
     }
 
@@ -598,6 +619,26 @@ mod tests {
             service.resolve_id(""),
             Err(ArtifactError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn archiving_hides_from_the_session_query_and_is_reversible() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let service = service(&home);
+        let artifact = service
+            .create("s1", b"a\n", None, Some("p.md".into()), None)
+            .unwrap();
+        assert_eq!(service.artifacts_for_session("s1").len(), 1);
+        let archived = service.set_archived(&artifact.id, "s1", true).unwrap();
+        assert!(archived.is_archived());
+        assert!(service.artifacts_for_session("s1").is_empty());
+        assert!(service.require(&artifact.id).unwrap().is_archived());
+        assert_eq!(service.all().len(), 1);
+        let back = service.set_archived(&artifact.id, "s1", false).unwrap();
+        assert!(!back.is_archived());
+        assert_eq!(service.artifacts_for_session("s1").len(), 1);
+        assert!(service.doctor().unwrap().is_empty());
     }
 
     #[test]

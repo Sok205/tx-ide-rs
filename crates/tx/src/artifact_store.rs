@@ -360,7 +360,7 @@ mod tests {
         f.store.save(&a).unwrap();
         let path = f.store.record_path("a");
         let bytes = fs::read_to_string(&path).unwrap();
-        assert!(bytes.starts_with("{\n  \"artifact_schema_version\": 2,\n  \"id\": \"a\","));
+        assert!(bytes.starts_with("{\n  \"artifact_schema_version\": 3,\n  \"id\": \"a\","));
         assert!(!bytes.ends_with('\n'));
         // python3.14: mkstemp + os.replace leaves the record at 0o100600.
         let mode = fs::metadata(&path).unwrap().permissions().mode();
@@ -383,7 +383,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("record artifact_schema_version=1 is unsupported (expected 2)")
+                .contains("record artifact_schema_version=1 is unsupported (expected 3)")
         );
     }
 
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(
             warnings[1],
             "tx: skipping unreadable artifact old.json: record artifact_schema_version=1 is \
-             unsupported (expected 2); tx-ide does not back-migrate older artifact records"
+             unsupported (expected 3); tx-ide does not back-migrate older artifact records"
         );
 
         let only_good = f.store.query(|a| a.id == "good");

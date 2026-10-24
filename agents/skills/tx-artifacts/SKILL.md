@@ -13,5 +13,8 @@ Subcommand syntax is in `tx artifact --help`. The workflow:
   recorded automatically.
 - `tx artifact open <id>` opens the working copy in an nvim view already bound to the artifact —
   use it instead of hand-spawning an nvim companion on the file.
+- A finished deliverable that clutters the prefix+a picker: `tx artifact archive <id>` hides it
+  from the picker and `tx artifact ls` (history kept; `unarchive` restores). In the picker, `d` on
+  the row, then `y`, does the same and closes the artifact's view.
 - Revisions are immutable and live under `$TX_IDE_HOME/artifacts/` — never write there by hand; a
   direct edit desyncs the history from disk.

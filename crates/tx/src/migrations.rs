@@ -6,7 +6,8 @@
 //!   `engine`/`chats`/`last_activity`) and defaults the new ones (`group`, `turn_started_at`,
 //!   `artifact_id`). A v3 VIEW record leaves the store: its live tmux session (matched by the
 //!   exact name, Q27) is stamped `@tx_view`, then the record file is deleted.
-//! - Artifacts v1 → v2: `group` defaults to null, then the strict loader re-validates.
+//! - Artifacts v1 / v2 → v3: `group` and `archived_at` default to null, then the strict loader
+//!   re-validates.
 //!
 //! A file that cannot be migrated is skipped with the reason the reference prints
 //! (`<ExceptionName>: <message>`, including CPython's `json` decoder texts); nothing aborts the
@@ -25,7 +26,7 @@ use crate::store::{IgnoreSkips, SessionStore, StoreError};
 use crate::tmux::{Tmux, TmuxError};
 
 const UPGRADABLE_FROM: [u64; 3] = [3, 4, 5];
-const ARTIFACT_UPGRADABLE_FROM: [u64; 1] = [1];
+const ARTIFACT_UPGRADABLE_FROM: [u64; 2] = [1, 2];
 const VIEW_KIND: &str = "view";
 
 /// The outcome of [`migrate_sessions`], in file-name order.
@@ -148,7 +149,8 @@ fn migrate_session(path: &Path, store: &SessionStore, tmux: &Tmux) -> Result<Ste
     Ok(Step::Migrated)
 }
 
-/// Upgrade artifact records in place (v1 → v2 adds a null `group`).
+/// Upgrade artifact records in place (v1 → v2 adds a null `group`, v2 → v3 a null
+/// `archived_at`).
 pub fn migrate_artifacts(directory: &Path) -> ArtifactsReport {
     let store = ArtifactStore::at(directory);
     let mut report = ArtifactsReport::default();
@@ -182,8 +184,10 @@ fn migrate_artifact(path: &Path, store: &ArtifactStore) -> Result<Option<String>
         "artifact_schema_version".into(),
         Value::from(ARTIFACT_SCHEMA_VERSION),
     );
-    let group = data.get("group").cloned().unwrap_or(Value::Null);
-    upgraded.insert("group".into(), group);
+    for added in ["group", "archived_at"] {
+        let value = data.get(added).cloned().unwrap_or(Value::Null);
+        upgraded.insert(added.into(), value);
+    }
     let artifact = Artifact::from_value(&Value::Object(upgraded))
         .map_err(|error| Skip::new("UnsupportedArtifactError", error.to_string()))?;
     let target = store.record_path(&artifact.id);
@@ -604,11 +608,15 @@ mod tests {
             "a2.json",
             r#"{"artifact_schema_version": 1.0, "id": "a2", "group": "g", "title": null, "filename": "t.md", "created_at": 1, "history": [{"session_id": "s", "at": 1, "rev": 0, "changes": null}, {"session_id": "u", "at": 2.5, "rev": 1, "changes": "c"}]}"#,
         ),
-        ("a3.json", r#"{"artifact_schema_version": 3}"#),
+        ("a3.json", r#"{"artifact_schema_version": 4}"#),
         ("a4.json", r#"[1]"#),
         (
             "a5.json",
             r#"{"artifact_schema_version": 1, "id": "a5", "title": "T", "filename": "t.md", "created_at": 1.0, "history": [{"session_id": "s", "at": 1.0, "rev": 1, "changes": null}]}"#,
+        ),
+        (
+            "a6.json",
+            r#"{"artifact_schema_version": 2, "id": "a6", "title": "T", "filename": "t.md", "created_at": 1.0, "group": "g", "history": [{"session_id": "s", "at": 1.0, "rev": 0, "changes": null}]}"#,
         ),
     ];
     const EXPECTED_V3LLM: &str = r#"{
@@ -721,12 +729,13 @@ mod tests {
   "turn_started_at": 7
 }"#;
     const EXPECTED_A1: &str = r#"{
-  "artifact_schema_version": 2,
+  "artifact_schema_version": 3,
   "id": "a1",
   "title": "T",
   "filename": "t.md",
   "created_at": 1.0,
   "group": null,
+  "archived_at": null,
   "history": [
     {
       "session_id": "s",
@@ -737,12 +746,13 @@ mod tests {
   ]
 }"#;
     const EXPECTED_A2: &str = r#"{
-  "artifact_schema_version": 2,
+  "artifact_schema_version": 3,
   "id": "a2",
   "title": null,
   "filename": "t.md",
   "created_at": 1,
   "group": "g",
+  "archived_at": null,
   "history": [
     {
       "session_id": "s",
@@ -921,13 +931,13 @@ mod tests {
             std::fs::write(dir.path().join(name), content).unwrap();
         }
         let report = migrate_artifacts(dir.path());
-        assert_eq!(report.migrated, ["a1.json", "a2.json"]);
+        assert_eq!(report.migrated, ["a1.json", "a2.json", "a6.json"]);
         assert_eq!(
             report.skipped,
             skipped(&[
                 (
                     "a3.json",
-                    "not an upgradable artifact record (artifact_schema_version=3)"
+                    "not an upgradable artifact record (artifact_schema_version=4)"
                 ),
                 (
                     "a4.json",
@@ -943,6 +953,12 @@ mod tests {
         let read = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
         assert_eq!(read("a1.json"), EXPECTED_A1);
         assert_eq!(read("a2.json"), EXPECTED_A2);
+        assert_eq!(
+            read("a6.json"),
+            EXPECTED_A1
+                .replace("\"a1\"", "\"a6\"")
+                .replace("\"group\": null", "\"group\": \"g\"")
+        );
         assert!(migrate_artifacts(dir.path()).migrated.is_empty());
     }
 
