@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tx-core structure</title>
+<style>
+/*__FONTS__*/
+/* rustdoc's light theme as defaults; the embedding page replaces them with its current theme. */
+:root {
+  --main-background-color: white; --main-color: black; --sidebar-background-color: #f5f5f5;
+  --sidebar-background-color-hover: #e0e0e0; --border-color: #e0e0e0; --headings-border-bottom-color: #ddd;
+  --code-block-background-color: #f5f5f5; --button-background-color: #fff; --right-side-color: grey;
+  --link-color: #3873ad; --mod-link-color: #3873ad; --type-link-color: #ad378a; --trait-link-color: #6e4fc9;
+  --function-link-color: #ad7c37; --target-background-color: #fdffd3; --target-border-color: #ad7c37;
+  --warning-border-color: #ff8e00; --search-input-focused-border-color: #66afe9;
+  --scrollbar-track-background-color: #dcdcdc; --scrollbar-thumb-background-color: rgba(36,37,39,.6);
+  --ui-font: "Fira Sans", Arial, NanumBarunGothic, sans-serif; --code-font: "Source Code Pro", monospace;
+}
+* { box-sizing: border-box; }
+html.waiting body { visibility: hidden; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--main-background-color); color: var(--main-color); font: 15px/1.5 var(--ui-font); }
+
+#graph { position: relative; height: 100vh; }
+#svg { width: 100%; height: 100%; display: block; cursor: grab; user-select: none; }
+#svg.panning { cursor: grabbing; }
+
+button { font: 14px var(--ui-font); color: var(--main-color); cursor: pointer; }
+.segmented { display: flex; overflow: hidden; background: var(--main-background-color); border: 1px solid var(--border-color); border-radius: 4px; }
+.segmented button { flex: 1; background: none; border: 0; padding: 2px 11px; }
+.segmented button.on { background: var(--sidebar-background-color-hover); font-weight: 500; }
+.segmented button:disabled { opacity: .4; cursor: default; }
+.button { background: var(--main-background-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 2px 9px; }
+.button:hover { border-color: var(--right-side-color); }
+
+#top-left { position: absolute; top: 8px; left: 10px; z-index: 3; display: flex; gap: 6px; }
+#settings-button { position: absolute; top: 8px; right: 10px; z-index: 3; width: 30px; height: 30px; padding: 0; border: 1px solid var(--border-color); border-radius: 4px; background: var(--main-background-color); color: var(--right-side-color); font-size: 18px; line-height: 28px; }
+#settings-button:hover, #settings-button.on { color: var(--main-color); border-color: var(--right-side-color); }
+#settings { display: none; position: absolute; top: 44px; right: 10px; z-index: 4; width: 270px; padding: 10px 14px 12px; background: var(--main-background-color); border: 1px solid var(--border-color); border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 14px; }
+#settings.open { display: block; }
+#settings h3 { font-weight: 500; font-size: 15px; margin: 10px 0 5px; }
+#settings h3:first-child { margin-top: 0; }
+#settings .row { display: flex; flex-wrap: wrap; gap: 6px; }
+#settings .toggles { display: flex; flex-direction: column; }
+#settings .toggles label { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+#settings .toggles input { accent-color: var(--link-color); margin: 0; }
+.legend-row { display: flex; align-items: center; gap: 10px; line-height: 1.75; font-size: 13.5px; }
+.legend-row svg { flex: none; overflow: visible; }
+.legend-pill { fill: var(--main-background-color); stroke: var(--border-color); }
+.legend-name { font: 9.5px var(--code-font); fill: var(--main-color); }
+.legend-count { font: 600 10px var(--ui-font); fill: var(--main-color); paint-order: stroke; stroke: var(--main-background-color); stroke-width: 3px; }
+
+#tip { position: absolute; pointer-events: none; display: none; max-width: 360px; z-index: 5; padding: 6px 10px; background: var(--main-background-color); border: 1px solid var(--border-color); border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+#tip .title { font: 500 14px var(--ui-font); }
+#tip .lines { color: var(--right-side-color); font: 13px var(--code-font); }
+
+.mod-box { fill: var(--main-background-color); stroke: var(--border-color); stroke-width: 1; }
+.mod.sel .mod-box { stroke: var(--link-color); stroke-width: 2; }
+.mod-head { cursor: pointer; }
+.mod-name { fill: #1e1e1e; font: 600 13px var(--ui-font); }
+.mod-sub { fill: var(--right-side-color); font: 12px var(--ui-font); }
+.mod-toggle { fill: #1e1e1e; font: 600 15px var(--ui-font); }
+.item { cursor: pointer; }
+.item rect.pill { fill: var(--main-background-color); stroke: var(--border-color); stroke-width: 1; }
+.item:hover rect.pill { fill: var(--sidebar-background-color-hover); }
+.item.sel rect.pill { fill: var(--target-background-color); }
+.item .hidden-mark { fill: var(--warning-border-color); }
+.item text.name { font: 13px var(--code-font); }
+.item text.kind-struct, .item text.kind-enum, .item text.kind-type { fill: var(--type-link-color); }
+.item text.kind-trait { fill: var(--trait-link-color); }
+.item text.kind-fn { fill: var(--function-link-color); }
+.item text.kind-const { fill: var(--link-color); }
+.item.not-public text.name { font-style: italic; opacity: .75; }
+.item text.badge { font: 700 9.5px var(--code-font); fill: #1e1e1e; }
+.edge path.line { fill: none; }
+.edge path.hit { fill: none; stroke: transparent; stroke-width: 12; }
+.edge text { fill: var(--main-color); stroke: var(--main-background-color); font: 12px var(--ui-font); paint-order: stroke; stroke-width: 3px; pointer-events: none; }
+svg.focused .edge:not(.hot) path.line { opacity: .06 !important; }
+svg.focused .edge:not(.hot) text { opacity: 0; }
+svg.focused .item:not(.nb):not(.sel) { opacity: .5; }
+.edge.hot path.line { opacity: 1 !important; }
+/* Hovering an object (or a module) isolates its connections, without redrawing. */
+svg.hovering .edge:not(.hover-hot) path.line { opacity: .06 !important; }
+svg.hovering .edge:not(.hover-hot) text { opacity: 0; }
+svg.hovering .edge.hover-hot path.line { opacity: 1 !important; }
+svg.hovering .item:not(.hover-self):not(.hover-nb) { opacity: .3; }
+svg.hovering .mod:not(.hover-self):not(.hover-nb) .mod-head { opacity: .45; }
+svg.hovering .item.hover-self rect.pill { stroke-width: 2; }
+</style>
+<script>if (window.parent !== window) document.documentElement.classList.add("waiting");</script>
+</head>
+<body>
+<div id="graph">
+  <div id="top-left">
+    <div class="segmented" id="mode"><button data-mode="modules" title="Modules and how they relate">Modules</button><button data-mode="focus" title="This object and its relations">Focus</button></div>
+    <button class="button" id="fit" title="Fit the graph (f)">Fit</button>
+  </div>
+  <button id="settings-button" title="Graph settings">⚙</button>
+  <div id="settings">
+    <h3>View</h3><div class="row"><div class="segmented" id="views"><button data-view="internal">Internal</button><button data-view="public">Public</button></div></div>
+    <h3>Show</h3><div class="toggles" id="toggles"></div>
+    <h3>Layout</h3><div class="row"><button class="button" id="expand-all">Expand all</button><button class="button" id="collapse-all">Collapse all</button></div>
+    <h3>Edges</h3><div id="legend"></div>
+  </div>
+  <svg id="svg"><defs id="defs"></defs><g id="viewport"></g></svg>
+  <div id="tip"></div>
+</div>
+
+<script>
+// The structure graph inside a rustdoc page. Two levels: the module map (modules expand into their
+// items) and focus (one object with what uses it and what it uses). Clicking an item asks the page
+// to open its rustdoc page; the page tells this frame which item is on screen.
+const DATA = /*__DATA__*/;
+const VIEW = DATA.view, INTERNAL = VIEW === "internal";
+const PARAMS = new URLSearchParams(location.search);
+const ROWS = DATA.rows, MODULE_COLORS = DATA.colors, moduleNames = ROWS.flat();
+const cards = new Map(DATA.cards.map((card) => [card.id, card]));
+const pageToId = new Map(Object.entries(DATA.urls).map(([id, url]) => [url, id]));
+const otherPages = new Set(DATA.otherPages);
+const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+const isPublic = (card) => card.visibility === "public";
+const isError = (card) => /Error$/.test(card.name);
+const notPublic = (card) => INTERNAL ? card.visibility === "private" || card.visibility === "crate" : card.visibility !== "public";
+
+// ---------- settings ------------------------------------------------------------------------------------
+const TOGGLES = INTERNAL ? [
+  ["showHas", "fields", true, "A holds B in a field or enum variant"],
+  ["showCalls", "calls", true, "a function of A calls into B"],
+  ["showUses", "signatures", false, "A's declaration or a method signature mentions B"],
+  ["showErrors", "error types", false, "edges to *Error types"],
+  ["showConsts", "constants", false, "show constants as nodes"],
+  ["showImports", "imports", true, "module-level use crate::… with no item-level link"],
+] : [
+  ["showHas", "fields", true, "A holds B in a public field or enum variant"],
+  ["showUses", "signatures", true, "A's declaration or a public method signature mentions B"],
+  ["showErrors", "error types", false, "edges to *Error types (every operation returns CoreError)"],
+  ["showModulePath", "module-path items", false, "pub items reachable only through a pub module path"],
+  ["showImports", "imports", true, "module-level use crate::… with no item-level link"],
+];
+const state = { mode: "modules", focusId: null, selected: null, expanded: new Set(), showCalls: false, showConsts: false,
+                showModulePath: false, zoom: 1, panX: 0, panY: 0, layout: null };
+for (const [key, , initial] of TOGGLES) state[key] = initial;
+// Every page load is a new frame: expanded modules and toggles persist per view.
+const SETTINGS_KEY = "tx-structure-" + VIEW, VIEW_KEY = "tx-structure-view-" + VIEW;
+const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+if (savedSettings) {
+  state.expanded = new Set(savedSettings.expanded);
+  for (const [key] of TOGGLES) state[key] = savedSettings.toggles[key];
+}
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ expanded: [...state.expanded], toggles: Object.fromEntries(TOGGLES.map(([key]) => [key, state[key]])) }));
+}
+
+// ---------- module map ----------------------------------------------------------------------------------
+function visibleItems(module) {
+  const order = ["trait", "struct", "enum", "type", "fn", "const"];
+  return DATA.cards.filter((card) => card.kind !== "method" && card.module === module
+    && (INTERNAL ? (state.showConsts || card.kind !== "const")
+                 : (isPublic(card) || state.showModulePath) && (state.showModulePath || card.kind !== "const")))
+    .sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.name.localeCompare(b.name));
+}
+
+// A module is drawn as a table: a coloured tag row carrying its name, then one row per item, no gaps.
+const PILL_W = 200, PILL_H = 24, HEAD = 20, COLLAPSED_W = 180, COLLAPSED_H = HEAD + PILL_H;
+function mapLayout() {
+  const modules = new Map(), items = new Map();
+  let y = 0;
+  for (const row of ROWS) {
+    const boxes = row.map((module) => {
+      const list = visibleItems(module);
+      if (!state.expanded.has(module) || !list.length) return { module, list, w: COLLAPSED_W, h: COLLAPSED_H, expanded: false };
+      const columns = list.length <= 4 ? 1 : list.length <= 10 ? 2 : 3;
+      const rows = Math.ceil(list.length / columns);
+      return { module, list, columns, w: columns * PILL_W, h: HEAD + rows * PILL_H, expanded: true };
+    });
+    const gap = 56;
+    let x = -(boxes.reduce((sum, box) => sum + box.w, 0) + gap * (boxes.length - 1)) / 2;
+    const height = Math.max(...boxes.map((box) => box.h));
+    for (const box of boxes) {
+      const placed = { ...box, x, y: y + (height - box.h) / 2 };
+      modules.set(box.module, placed);
+      if (box.expanded) {
+        const perColumn = Math.ceil(box.list.length / box.columns);
+        box.list.forEach((card, index) => items.set(card.id, {
+          card, x: placed.x + Math.floor(index / perColumn) * PILL_W, y: placed.y + HEAD + (index % perColumn) * PILL_H, w: PILL_W, h: PILL_H,
+        }));
+      }
+      x += box.w + gap;
+    }
+    y += height + 84;
+  }
+  return { modules, items };
+}
+
+// One rule for both levels: an edge is drawn when its kind is switched on. Error types and constants
+// are hidden by default, except the focused object's own edges.
+function edgeShown(edge) {
+  const source = cards.get(edge.source), target = cards.get(edge.target);
+  const selected = cards.get(state.selected);
+  const focus = selected && (selected.owner || selected.id);
+  const own = edge.source === focus || edge.target === focus;
+  if (!state[{ has: "showHas", calls: "showCalls", uses: "showUses" }[edge.kind]]) return false;
+  if (!own && !state.showErrors && (isError(target) || isError(source))) return false;
+  if (!INTERNAL && !state.showModulePath && (!isPublic(source) || !isPublic(target))) return false;
+  if (!own && !state.showConsts && (source.kind === "const" || target.kind === "const")) return false;
+  return true;
+}
+
+// Item edges collapse onto their module while it is collapsed; across modules, an expanded module's
+// edges leave and enter at its border, lined up with the item.
+function mapEdges(layout) {
+  const representative = (id) => layout.items.has(id)
+    ? { key: id, box: layout.items.get(id), item: layout.items.get(id), module: cards.get(id).module }
+    : { key: "module/" + cards.get(id).module, box: layout.modules.get(cards.get(id).module), module: cards.get(id).module };
+  const aggregated = new Map();
+  for (const edge of DATA.edges) {
+    if (!edgeShown(edge)) continue;
+    const a = representative(edge.source), b = representative(edge.target);
+    if (a.key === b.key) continue;
+    const key = a.key + ">" + b.key;
+    if (!aggregated.has(key)) {
+      const intra = a.module === b.module;
+      const outer = (end) => intra || !end.item ? end : { ...end, box: layout.modules.get(end.module), align: end.item };
+      aggregated.set(key, { key, a: outer(a), b: outer(b), edges: [], kind: "item", kinds: new Set(), intra });
+    }
+    aggregated.get(key).edges.push(edge);
+    aggregated.get(key).kinds.add(edge.kind);
+  }
+  const list = [...aggregated.values()];
+  if (state.showImports) {
+    const linked = new Set(list.map((edge) => edge.a.module + ">" + edge.b.module));
+    for (const edge of DATA.imports) {
+      if (linked.has(edge.source + ">" + edge.target)) continue;
+      list.push({ key: "import:" + edge.source + ">" + edge.target, kind: "import", edges: [], kinds: new Set(),
+        a: { key: "module/" + edge.source, box: layout.modules.get(edge.source), module: edge.source },
+        b: { key: "module/" + edge.target, box: layout.modules.get(edge.target), module: edge.target } });
+    }
+  }
+  return list;
+}
+
+// Anchor points spread along a box side, so parallel edges don't stack.
+function mapRoute(edges) {
+  const slots = new Map();
+  for (const edge of edges) {
+    const a = edge.a.box, b = edge.b.box;
+    [edge.from, edge.to] = b.y >= a.y + a.h - 4 ? ["bottom", "top"] : b.y + b.h <= a.y + 4 ? ["top", "bottom"] : b.x > a.x ? ["right", "left"] : ["left", "right"];
+    for (const [key, which, other] of [[edge.a.key + ":" + edge.from, "fromIndex", edge.b], [edge.b.key + ":" + edge.to, "toIndex", edge.a]]) {
+      if (!slots.has(key)) slots.set(key, []);
+      slots.get(key).push({ edge, which, other });
+    }
+  }
+  for (const list of slots.values()) {
+    list.sort((p, q) => (p.other.box.x + p.other.box.w / 2) - (q.other.box.x + q.other.box.w / 2) || (p.other.box.y - q.other.box.y));
+    list.forEach((slot, index) => { slot.edge[slot.which] = [index, list.length]; });
+  }
+  const point = (box, side, [index, count], align) => {
+    if (align) {
+      const spread = (index - (count - 1) / 2) * 4;
+      if (side === "bottom" || side === "top") return [Math.max(box.x + 8, Math.min(box.x + box.w - 8, align.x + align.w / 2 + spread)), side === "bottom" ? box.y + box.h : box.y];
+      return [side === "right" ? box.x + box.w : box.x, align.y + align.h / 2 + spread];
+    }
+    const t = (index + 1) / (count + 1);
+    if (side === "bottom") return [box.x + box.w * (0.15 + 0.7 * t), box.y + box.h];
+    if (side === "top") return [box.x + box.w * (0.15 + 0.7 * t), box.y];
+    if (side === "right") return [box.x + box.w, box.y + box.h * (0.2 + 0.6 * t)];
+    return [box.x, box.y + box.h * (0.2 + 0.6 * t)];
+  };
+  for (const edge of edges) {
+    const [x1, y1] = point(edge.a.box, edge.from, edge.fromIndex, edge.a.align), [x2, y2] = point(edge.b.box, edge.to, edge.toIndex, edge.b.align);
+    if (edge.from === "bottom" || edge.from === "top") {
+      const bend = Math.max(40, Math.abs(y2 - y1) * 0.45) * (edge.from === "bottom" ? 1 : -1);
+      edge.path = `M${x1},${y1} C${x1},${y1 + bend} ${x2},${y2 - bend} ${x2},${y2}`;
+    } else {
+      const bend = Math.max(40, Math.abs(x2 - x1) * 0.4) * (edge.from === "right" ? 1 : -1);
+      edge.path = `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`;
+    }
+    edge.mid = [(x1 + x2) / 2, (y1 + y2) / 2];
+  }
+}
+
+// ---------- drawing ---------------------------------------------------------------------------------------
+const svg = document.getElementById("svg"), viewport = document.getElementById("viewport"), tip = document.getElementById("tip");
+document.getElementById("defs").innerHTML = Object.entries({ ...MODULE_COLORS, grey: "#8a8a8a" }).map(([name, color]) =>
+  `<marker id="arrow-${name}" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${color}"/></marker>` +
+  `<marker id="diamond-${name}" viewBox="0 0 12 12" refX="1" refY="6" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M1,6 L6,2 L11,6 L6,10 z" fill="${color}"/></marker>`).join("");
+let currentEdges = [];
+
+function edgeSvg(edge, index, hot, showWeight) {
+  const isImport = edge.kind === "import";
+  const weight = edge.edges.length;
+  const color = isImport ? "grey" : edge.a.module;
+  const holds = edge.kinds.has("has");
+  const signatureOnly = !isImport && !holds && !edge.kinds.has("calls");
+  const width = isImport ? 1.1 : (holds ? 1.6 : 1.1) + Math.log2(1 + weight) * 0.9;
+  const dash = isImport ? 'stroke-dasharray="2 5"' : signatureOnly ? 'stroke-dasharray="6 4"' : "";
+  return `<g class="edge${hot ? " hot" : ""}" data-edge="${index}">
+    <path class="line" d="${edge.path}" stroke="${isImport ? "#8a8a8a" : MODULE_COLORS[edge.a.module]}" stroke-width="${width}" ${dash} opacity="${isImport ? 0.45 : 0.7}" marker-end="url(#arrow-${color})" ${holds ? `marker-start="url(#diamond-${color})"` : ""}/>
+    <path class="hit" d="${edge.path}"/>
+    ${showWeight && weight > 1 ? `<text x="${edge.mid[0]}" y="${edge.mid[1] + 4}" text-anchor="middle">${weight}</text>` : ""}</g>`;
+}
+const pillLabel = (card) => card.kind === "method" ? cards.get(card.owner).name + "::" + card.name : card.name;
+const BADGE_COLORS = { struct: "#ffcb6b", enum: "#f78c6c", trait: "#4fd1e8", fn: "#82aaff", const: "#9a9a9a", type: "#c3e88d", method: "#c3a6ff" };
+function pillSvg(id, pill, classes) {
+  const card = pill.card, label = pillLabel(card);
+  return `<g class="item${classes}${notPublic(card) ? " not-public" : ""}${INTERNAL && card.visibility === "hidden" ? " hidden" : ""}" data-id="${escapeHtml(id)}">
+    <rect class="pill" x="${pill.x}" y="${pill.y}" width="${pill.w}" height="${pill.h}"/>
+    ${INTERNAL && card.visibility === "hidden" ? `<rect class="hidden-mark" x="${pill.x}" y="${pill.y}" width="3" height="${pill.h}"/>` : ""}
+    <rect x="${pill.x + 8}" y="${pill.y + 5}" width="15" height="14" rx="3" fill="${BADGE_COLORS[card.kind]}"/>
+    <text class="badge" x="${pill.x + 15.5}" y="${pill.y + 15.5}" text-anchor="middle">${card.kind[0].toUpperCase()}</text>
+    <text class="name kind-${card.kind === "method" ? "fn" : card.kind}" x="${pill.x + 30}" y="${pill.y + 16.5}">${escapeHtml(label.length > 22 ? label.slice(0, 21) + "…" : label)}</text></g>`;
+}
+// [frame, tag]: the tag row (name, item count, toggle) is drawn above the edges, so edges never cross it.
+function moduleSvg(module, box, classes, subtitle, toggle) {
+  const frame = `<g class="mod${classes}" data-module="${module}"><rect class="mod-box" x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="4"/></g>`;
+  const tag = `<g class="mod mod-label${classes}" data-module="${module}"><g class="mod-head" data-module="${module}">
+    <path class="mod-tag" d="M${box.x},${box.y + HEAD} V${box.y + 4} Q${box.x},${box.y} ${box.x + 4},${box.y} H${box.x + box.w - 4} Q${box.x + box.w},${box.y} ${box.x + box.w},${box.y + 4} V${box.y + HEAD} Z" fill="${MODULE_COLORS[module]}"/>
+    <text class="mod-name" x="${box.x + 8}" y="${box.y + 14.5}">${module}</text>
+    ${toggle ? `<text class="mod-toggle" x="${box.x + box.w - 16}" y="${box.y + 15}">${box.expanded ? "−" : "+"}</text>` : ""}
+    ${box.expanded ? "" : `<text class="mod-sub" x="${box.x + 8}" y="${box.y + HEAD + 16}">${subtitle}</text>`}
+  </g></g>`;
+  return [frame, tag];
+}
+
+function render() {
+  saveSettings();
+  if (state.mode === "focus") renderFocus(); else renderMap();
+  hovered = null;
+  svg.classList.remove("hovering");
+  applyTransform();
+}
+
+function renderMap() {
+  const layout = state.layout = mapLayout();
+  currentEdges = mapEdges(layout);
+  mapRoute(currentEdges);
+  // The selected object, or its module while that is collapsed.
+  const selectedCard = cards.get(state.selected);
+  const base = selectedCard && (selectedCard.owner ? cards.get(selectedCard.owner) : selectedCard);
+  const selectedKey = !state.selected ? null : base ? (layout.items.has(base.id) ? base.id : "module/" + base.module) : state.selected;
+  const neighbours = new Set();
+  let html = "", edgesHtml = "", labelsHtml = "", itemsHtml = "";
+  for (const module of moduleNames) {
+    const box = layout.modules.get(module);
+    const count = visibleItems(module).length;
+    const [body, label] = moduleSvg(module, box, selectedKey === "module/" + module ? " sel" : "",
+      count ? `${count} ${INTERNAL ? "item" : "interface"}${count > 1 ? "s" : ""}` : "internal only", count > 0);
+    html += body;
+    labelsHtml += label;
+  }
+  currentEdges.forEach((edge, index) => {
+    const hot = selectedKey && (edge.a.key === selectedKey || edge.b.key === selectedKey);
+    if (hot) { neighbours.add(edge.a.key); neighbours.add(edge.b.key); }
+    if (!edge.intra || hot) edgesHtml += edgeSvg(edge, index, hot, true);
+  });
+  for (const [id, pill] of layout.items) itemsHtml += pillSvg(id, pill, `${id === selectedKey ? " sel" : ""}${neighbours.has(id) && id !== selectedKey ? " nb" : ""}`);
+  viewport.innerHTML = html + edgesHtml + labelsHtml + itemsHtml;
+  svg.classList.toggle("focused", Boolean(selectedKey));
+  for (const module of moduleNames) {
+    if (neighbours.has("module/" + module) && selectedKey !== "module/" + module) viewport.querySelector(`.mod[data-module="${module}"] .mod-box`).style.stroke = MODULE_COLORS[module];
+  }
+}
+
+// ---------- focus --------------------------------------------------------------------------------------------
+// What an object uses and what uses it: item edges, or for a method its calls, callers and signature types.
+function focusModel(id) {
+  const card = cards.get(id);
+  const uses = new Map(), usedBy = new Map();
+  const add = (links, other, edge) => { if (!links.has(other)) links.set(other, []); links.get(other).push(edge); };
+  if (card.kind === "method") {
+    for (const edge of DATA.callEdges) {
+      if (edge.source === id) add(uses, edge.target, { ...edge, kind: "calls", via: [] });
+      if (edge.target === id) add(usedBy, edge.source, { ...edge, kind: "calls", via: [] });
+    }
+    for (const other of card.mentions) add(uses, other, { source: id, target: other, kind: "uses", via: [] });
+  } else {
+    for (const edge of DATA.edges) {
+      if (!edgeShown(edge)) continue;
+      if (edge.source === id) add(uses, edge.target, edge);
+      if (edge.target === id) add(usedBy, edge.source, edge);
+    }
+  }
+  return { card, uses, usedBy };
+}
+
+// One box per module. The object's box sits in the middle and also holds its neighbours from the same
+// module; every other module goes above (mostly users of the object) or below (mostly things it uses).
+// Each band is split into as many side-by-side columns as make the graph fill the frame best.
+const FOCUS_GAP = 10, FOCUS_COLUMN_GAP = 48, FOCUS_BAND_GAP = 70, FOCUS_MAX_ZOOM = 1.25, MAP_MAX_ZOOM = 1.4;
+const groupHeight = (group) => HEAD + group.list.length * PILL_H;
+const columnHeight = (column) => column.reduce((sum, group) => sum + groupHeight(group), 0) + FOCUS_GAP * Math.max(0, column.length - 1);
+function packColumns(groups, columnCount) {
+  const target = groups.reduce((sum, group) => sum + groupHeight(group) + FOCUS_GAP, 0) / columnCount;
+  const columns = [[]];
+  let filled = 0;
+  for (const group of groups) {
+    if (filled > 0 && filled + groupHeight(group) / 2 > target && columns.length < columnCount) { columns.push([]); filled = 0; }
+    columns[columns.length - 1].push(group);
+    filled += groupHeight(group) + FOCUS_GAP;
+  }
+  return columns;
+}
+function renderFocus() {
+  const model = focusModel(state.focusId);
+  const center = model.card;
+  const byModule = new Map();
+  for (const id of new Set([...model.uses.keys(), ...model.usedBy.keys()])) {
+    const card = cards.get(id);
+    if (!byModule.has(card.module)) byModule.set(card.module, { module: card.module, list: [], uses: 0, usedBy: 0 });
+    const group = byModule.get(card.module);
+    group.list.push(card);
+    if (model.uses.has(id)) group.uses += 1; else group.usedBy += 1;
+  }
+  const byLabel = (a, b) => pillLabel(a).localeCompare(pillLabel(b));
+  const centerGroup = { module: center.module, list: [center, ...(byModule.get(center.module)?.list || []).sort(byLabel)] };
+  byModule.delete(center.module);
+  const groups = [...byModule.values()].sort((a, b) => moduleNames.indexOf(a.module) - moduleNames.indexOf(b.module));
+  for (const group of groups) group.list.sort(byLabel);
+  const bands = { top: groups.filter((group) => group.usedBy > group.uses), bottom: groups.filter((group) => group.usedBy <= group.uses) };
+  // Try every column count per band and keep the one that lets the graph be drawn largest.
+  const rect = svg.getBoundingClientRect();
+  const bandWidth = (columns) => columns.length * PILL_W + Math.max(0, columns.length - 1) * FOCUS_COLUMN_GAP;
+  const bandHeight = (columns) => columns.length ? Math.max(...columns.map(columnHeight)) + FOCUS_BAND_GAP : 0;
+  const counts = (list) => list.length ? Array.from({ length: Math.min(6, list.length) }, (_, index) => index + 1) : [0];
+  let best = null;
+  for (const topCount of counts(bands.top)) {
+    for (const bottomCount of counts(bands.bottom)) {
+      const top = topCount ? packColumns(bands.top, topCount) : [], bottom = bottomCount ? packColumns(bands.bottom, bottomCount) : [];
+      const width = Math.max(PILL_W, bandWidth(top), bandWidth(bottom)) + 2 * FOCUS_COLUMN_GAP;
+      const height = bandHeight(top) + groupHeight(centerGroup) + bandHeight(bottom);
+      const zoom = Math.min(FOCUS_MAX_ZOOM, (rect.width - 24) / width, (rect.height - 60) / height);
+      if (!best || zoom > best.zoom + 0.001) best = { zoom, top, bottom };
+    }
+  }
+  const modules = new Map(), items = new Map();
+  const place = (column, x, y) => {
+    for (const group of column) {
+      const box = { module: group.module, x, y, w: PILL_W, h: groupHeight(group), expanded: true };
+      modules.set(group.module, box);
+      group.list.forEach((card, row) => items.set(card.id, { card, x, y: y + HEAD + row * PILL_H, w: PILL_W, h: PILL_H, box }));
+      y += box.h + FOCUS_GAP;
+    }
+  };
+  // Columns above hang from the band's bottom edge, columns below from its top edge: both hug the object.
+  const centerHeight = groupHeight(centerGroup);
+  place([centerGroup], -PILL_W / 2, -centerHeight / 2);
+  const columnX = (columns, index) => -bandWidth(columns) / 2 + index * (PILL_W + FOCUS_COLUMN_GAP);
+  best.top.forEach((column, index) => place(column, columnX(best.top, index), -centerHeight / 2 - FOCUS_BAND_GAP - columnHeight(column)));
+  best.bottom.forEach((column, index) => place(column, columnX(best.bottom, index), centerHeight / 2 + FOCUS_BAND_GAP));
+  state.layout = { modules, items };
+  const endpoint = (id) => ({ key: id, box: items.get(id), module: cards.get(id).module });
+  const link = (source, target, edges) => ({ key: source + ">" + target, a: endpoint(source), b: endpoint(target), edges, kinds: new Set(edges.map((edge) => edge.kind)), kind: "item" });
+  currentEdges = [...[...model.uses].map(([other, edges]) => link(center.id, other, edges)),
+                  ...[...model.usedBy].map(([other, edges]) => link(other, center.id, edges))];
+  focusRoute(currentEdges, center.id);
+  const parts = [...modules.values()].map((box) => moduleSvg(box.module, box, "", "", false));
+  viewport.innerHTML = parts.map(([frame]) => frame).join("")
+    + currentEdges.map((edge, index) => edgeSvg(edge, index, true, false)).join("")
+    + [...items].map(([id, pill]) => pillSvg(id, pill, id === center.id ? " sel" : " nb")).join("")
+    + parts.map(([, tag]) => tag).join("");
+  svg.classList.remove("focused");
+}
+
+// Focus edges join rows at their sides, so a table's rows stay contiguous: the object's row on the side
+// facing the other row, the other row on the side facing the object. Rows straight above or below, and
+// rows in the object's own box, are joined on the left by a loop. Edges fan out along the object's row.
+function focusRoute(edges, centerId) {
+  const centerPill = state.layout.items.get(centerId);
+  const centerX = centerPill.x + centerPill.w / 2;
+  const fan = { left: [], right: [] };
+  for (const edge of edges) {
+    const other = edge.a.key === centerId ? edge.b.box : edge.a.box;
+    const offset = other.x + other.w / 2 - centerX;
+    edge.centerSide = offset > 0 ? "right" : "left";
+    edge.otherSide = offset > 0 ? "left" : offset < 0 ? "right" : "left";
+    edge.otherPill = other;
+    fan[edge.centerSide].push(edge);
+  }
+  for (const list of Object.values(fan)) {
+    list.sort((p, q) => p.otherPill.y - q.otherPill.y);
+    const step = Math.min(3, (centerPill.h - 6) / Math.max(1, list.length));
+    list.forEach((edge, index) => { edge.fanOffset = (index - (list.length - 1) / 2) * step; });
+  }
+  for (const edge of edges) {
+    const end = (pill) => {
+      const side = pill === centerPill ? edge.centerSide : edge.otherSide;
+      return { x: side === "right" ? pill.x + pill.w : pill.x, y: pill.y + pill.h / 2 + (pill === centerPill ? edge.fanOffset : 0), direction: side === "right" ? 1 : -1 };
+    };
+    const from = end(edge.a.box), to = end(edge.b.box);
+    const loop = from.direction === to.direction;
+    const bend = loop ? 36 + Math.abs(to.y - from.y) * 0.12 : Math.max(40, Math.abs(to.x - from.x) * 0.45);
+    edge.path = `M${from.x},${from.y} C${from.x + from.direction * bend},${from.y} ${to.x + to.direction * bend},${to.y} ${to.x},${to.y}`;
+    edge.mid = [(from.x + to.x) / 2, (from.y + to.y) / 2];
+  }
+}
+
+// ---------- view: modes, zoom, pan ---------------------------------------------------------------------
+// The module map keeps its zoom and pan across pages; the focus graph is framed anew for each object.
+function saveMapView() {
+  if (state.mode === "modules") localStorage.setItem(VIEW_KEY, JSON.stringify({ zoom: state.zoom, panX: state.panX, panY: state.panY }));
+}
+function restoreMapView() {
+  const saved = JSON.parse(localStorage.getItem(VIEW_KEY) || "null");
+  if (saved) { Object.assign(state, saved); applyTransform(); } else fit();
+}
+function setMode(mode) {
+  state.mode = mode;
+  render();
+  if (mode === "focus") fit(FOCUS_MAX_ZOOM); else restoreMapView();
+  for (const button of document.querySelectorAll("#mode button")) {
+    button.classList.toggle("on", button.dataset.mode === mode);
+    button.disabled = button.dataset.mode === "focus" && !state.focusId;
+  }
+}
+function applyTransform() {
+  const rect = svg.getBoundingClientRect();
+  viewport.setAttribute("transform", `translate(${rect.width / 2 - state.panX * state.zoom},${rect.height / 2 - state.panY * state.zoom}) scale(${state.zoom})`);
+}
+function fit(maxZoom = MAP_MAX_ZOOM) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const box of state.layout.modules.values()) { minX = Math.min(minX, box.x); minY = Math.min(minY, box.y); maxX = Math.max(maxX, box.x + box.w); maxY = Math.max(maxY, box.y + box.h); }
+  const rect = svg.getBoundingClientRect();
+  state.zoom = Math.min(maxZoom, (rect.width - 24) / (maxX - minX), (rect.height - 60) / (maxY - minY));
+  state.panX = (minX + maxX) / 2; state.panY = (minY + maxY) / 2 - 18 / state.zoom;
+  applyTransform();
+}
+
+// A drag can start anywhere and pans; it never turns into a click.
+let drag = null, dragged = false;
+svg.addEventListener("mousedown", (event) => { drag = { x: event.clientX, y: event.clientY, panX: state.panX, panY: state.panY, moved: false }; });
+window.addEventListener("mousemove", (event) => {
+  if (!drag) return;
+  if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 4) return;
+  drag.moved = true;
+  svg.classList.add("panning");
+  state.panX = drag.panX - (event.clientX - drag.x) / state.zoom;
+  state.panY = drag.panY - (event.clientY - drag.y) / state.zoom;
+  applyTransform();
+});
+window.addEventListener("mouseup", () => {
+  dragged = Boolean(drag && drag.moved);
+  if (dragged) saveMapView();
+  drag = null;
+  svg.classList.remove("panning");
+});
+svg.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const rect = svg.getBoundingClientRect();
+  const mouseX = event.clientX - rect.left - rect.width / 2, mouseY = event.clientY - rect.top - rect.height / 2;
+  const worldX = state.panX + mouseX / state.zoom, worldY = state.panY + mouseY / state.zoom;
+  state.zoom = Math.max(0.2, Math.min(3, state.zoom * Math.exp(-event.deltaY * 0.0015)));
+  state.panX = worldX - mouseX / state.zoom; state.panY = worldY - mouseY / state.zoom;
+  applyTransform();
+  saveMapView();
+}, { passive: false });
+new ResizeObserver(() => applyTransform()).observe(svg);
+
+// ---------- interaction -------------------------------------------------------------------------------------
+svg.addEventListener("click", (event) => {
+  if (dragged) { dragged = false; return; }
+  const head = event.target.closest(".mod-head");
+  if (head) {
+    // A header expands or collapses its module on the map; from focus it opens the map with the module expanded.
+    const module = head.dataset.module;
+    if (state.mode === "focus") { state.expanded.add(module); setMode("modules"); return; }
+    if (visibleItems(module).length) { if (state.expanded.has(module)) state.expanded.delete(module); else state.expanded.add(module); }
+    render();
+    return;
+  }
+  const item = event.target.closest(".item");
+  if (item) openPage(item.dataset.id);
+});
+
+const nameOfKey = (key) => key.startsWith("module/") ? key.slice(7) : pillLabel(cards.get(key));
+svg.addEventListener("mousemove", (event) => {
+  const edgeElement = event.target.closest(".edge");
+  if (!edgeElement) { tip.style.display = "none"; return; }
+  const edge = currentEdges[+edgeElement.dataset.edge];
+  const verb = { has: "holds", calls: "calls", uses: "mentions" };
+  tip.innerHTML = edge.kind === "import"
+    ? `<div class="title">${edge.a.module} → ${edge.b.module}</div><div class="lines">use crate::${edge.b.module} (no item-level link)</div>`
+    : `<div class="title">${escapeHtml(nameOfKey(edge.a.key))} → ${escapeHtml(nameOfKey(edge.b.key))}</div><div class="lines">${edge.edges.slice(0, 8).map((link) =>
+        `${escapeHtml(pillLabel(cards.get(link.source)))} <b>${verb[link.kind]}</b> ${escapeHtml(pillLabel(cards.get(link.target)))}${link.via.length ? ` · ${escapeHtml(link.via.slice(0, 2).join(", "))}${link.via.length > 2 ? "…" : ""}` : ""}`).join("<br>")}${edge.edges.length > 8 ? `<br>… ${edge.edges.length - 8} more` : ""}</div>`;
+  tip.style.display = "block";
+  tip.style.left = Math.min(innerWidth - 370, event.clientX + 14) + "px";
+  tip.style.top = (event.clientY + 14) + "px";
+});
+svg.addEventListener("mouseleave", () => { tip.style.display = "none"; setHover(null); });
+
+// Hovering an object (or a module) isolates its connections, without redrawing.
+let hovered = null;
+function setHover(element) {
+  if (element === hovered) return;
+  hovered = element;
+  for (const marked of viewport.querySelectorAll(".hover-self, .hover-nb, .hover-hot")) marked.classList.remove("hover-self", "hover-nb", "hover-hot");
+  svg.classList.toggle("hovering", Boolean(element));
+  if (!element) return;
+  element.classList.add("hover-self");
+  // A module is drawn in two layers (box and label): mark both.
+  if (!element.classList.contains("item")) for (const part of viewport.querySelectorAll(`.mod[data-module="${element.dataset.module}"]`)) part.classList.add("hover-self");
+  const itemKey = element.classList.contains("item") ? element.dataset.id : null;
+  const module = element.dataset.module;
+  const markEnd = (end) => {
+    if (end.key.startsWith("module/")) for (const part of viewport.querySelectorAll(`.mod[data-module="${end.module}"]`)) part.classList.add("hover-nb");
+    else viewport.querySelector(`.item[data-id="${CSS.escape(end.key)}"]`).classList.add("hover-nb");
+  };
+  for (const edgeElement of viewport.querySelectorAll(".edge")) {
+    const edge = currentEdges[+edgeElement.dataset.edge];
+    if (itemKey ? edge.a.key !== itemKey && edge.b.key !== itemKey : edge.a.module !== module && edge.b.module !== module) continue;
+    edgeElement.classList.add("hover-hot");
+    markEnd(edge.a);
+    markEnd(edge.b);
+  }
+}
+svg.addEventListener("mouseover", (event) => {
+  if (drag && drag.moved) return;
+  setHover(event.target.closest(".item") || event.target.closest(".mod"));
+});
+
+// A link hovered in the rustdoc page: light the item if it is drawn; on the map, fall back to its module.
+function hoverPage(page) {
+  const id = page && (pageToId.get(page) || pageToId.get(page.split("#")[0]));
+  const card = id && cards.get(id);
+  let element = null;
+  if (id && id.startsWith("module/")) element = viewport.querySelector(`.mod[data-module="${id.slice(7)}"]`);
+  else if (card) element = viewport.querySelector(`.item[data-id="${CSS.escape(id)}"]`)
+    || (state.mode === "modules" && card.kind !== "method" ? viewport.querySelector(`.mod[data-module="${card.module}"]`) : null);
+  setHover(element);
+}
+
+// ---------- the rustdoc page ----------------------------------------------------------------------------------
+function openPage(id) {
+  if (DATA.urls[id]) parent.postMessage({ type: "tx-open", url: DATA.urls[id] }, "*");
+}
+// An object page focuses that object; a module page or the crate root shows the module map.
+function focusPage(page) {
+  const id = pageToId.get(page) || pageToId.get(page.split("#")[0]) || null;
+  const card = id && cards.get(id);
+  state.selected = id;
+  state.focusId = card ? id : null;
+  setMode(card ? "focus" : "modules");
+}
+function switchView(view) {
+  const page = PARAMS.get("page") || "tx_core/index.html";
+  parent.postMessage({ type: "tx-open", url: `../${view}/${otherPages.has(page.split("#")[0]) ? page : "tx_core/index.html"}` }, "*");
+}
+window.addEventListener("message", (event) => {
+  if (event.source !== parent) return;
+  if (event.data.type === "tx-theme") {
+    for (const [name, value] of Object.entries(event.data.variables)) document.documentElement.style.setProperty(name, value);
+    document.documentElement.classList.remove("waiting");
+  }
+  if (event.data.type === "tx-hover") hoverPage(event.data.page);
+  if (event.data.type === "tx-page") { PARAMS.set("page", event.data.page); focusPage(event.data.page); }
+});
+
+// ---------- settings popover ---------------------------------------------------------------------------------
+const settings = document.getElementById("settings"), settingsButton = document.getElementById("settings-button");
+const setSettingsOpen = (isOpen) => { settings.classList.toggle("open", isOpen); settingsButton.classList.toggle("on", isOpen); };
+settingsButton.onclick = () => setSettingsOpen(!settings.classList.contains("open"));
+document.addEventListener("click", (event) => { if (!event.target.closest("#settings, #settings-button")) setSettingsOpen(false); });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setSettingsOpen(false);
+  if (event.key === "f" && !event.metaKey && !event.ctrlKey) fit(state.mode === "focus" ? FOCUS_MAX_ZOOM : MAP_MAX_ZOOM);
+});
+document.getElementById("toggles").innerHTML = TOGGLES.map(([key, label, , title]) =>
+  `<label title="${escapeHtml(title)}"><input type="checkbox" data-toggle="${key}" ${state[key] ? "checked" : ""}> ${label}</label>`).join("");
+// Settings redraw at once and keep the current zoom and pan; only Fit moves the view.
+for (const input of document.querySelectorAll("[data-toggle]")) input.onchange = () => { state[input.dataset.toggle] = input.checked; render(); };
+document.getElementById("expand-all").onclick = () => { moduleNames.forEach((module) => state.expanded.add(module)); render(); };
+document.getElementById("collapse-all").onclick = () => { state.expanded.clear(); render(); };
+document.getElementById("fit").onclick = () => { fit(state.mode === "focus" ? FOCUS_MAX_ZOOM : MAP_MAX_ZOOM); saveMapView(); };
+for (const button of document.querySelectorAll("#mode button")) button.onclick = () => setMode(button.dataset.mode);
+for (const button of document.querySelectorAll("#views button")) {
+  button.classList.toggle("on", button.dataset.view === VIEW);
+  button.onclick = () => { if (button.dataset.view !== VIEW) switchView(button.dataset.view); };
+}
+// The legend draws each edge and item style exactly as the graph does.
+const LEGEND_SAMPLE = {
+  holds: `<path d="M3,7 H42" stroke="#8a8a8a" stroke-width="1.8" marker-start="url(#diamond-grey)" marker-end="url(#arrow-grey)"/>`,
+  calls: `<path d="M3,7 H42" stroke="#8a8a8a" stroke-width="1.6" marker-end="url(#arrow-grey)"/>`,
+  signature: `<path d="M3,7 H42" stroke="#8a8a8a" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow-grey)"/>`,
+  imports: `<path d="M3,7 H42" stroke="#8a8a8a" stroke-width="1.1" stroke-dasharray="2 5" opacity=".7" marker-end="url(#arrow-grey)"/>`,
+  count: `<path d="M3,7 H42" stroke="#8a8a8a" stroke-width="2.6"/><text class="legend-count" x="22.5" y="11" text-anchor="middle">3</text>`,
+  private: `<rect class="legend-pill" x="1" y="0.5" width="44" height="13"/><text class="legend-name" x="6" y="10" font-style="italic">name</text>`,
+  hidden: `<rect class="legend-pill" x="1" y="0.5" width="44" height="13"/><rect x="1" y="0.5" width="3" height="13" fill="var(--warning-border-color)"/><text class="legend-name" x="7" y="10">name</text>`,
+};
+const legendRow = (sample, label) => `<div class="legend-row"><svg width="46" height="14">${LEGEND_SAMPLE[sample]}</svg><span>${label}</span></div>`;
+document.getElementById("legend").innerHTML = INTERNAL
+  ? legendRow("holds", "A holds B in a field") + legendRow("calls", "A calls into B") + legendRow("signature", "A's signature mentions B")
+    + legendRow("imports", "import only") + legendRow("count", "number of item links")
+    + legendRow("private", "private / pub(crate)") + legendRow("hidden", "#[doc(hidden)]")
+  : legendRow("holds", "A holds B in a public field") + legendRow("signature", "A's public signatures mention B")
+    + legendRow("imports", "import only") + legendRow("count", "number of item links")
+    + legendRow("private", "pub via module path only");
+
+focusPage(PARAMS.get("page") || "");
+</script>
+</body>
+</html>
