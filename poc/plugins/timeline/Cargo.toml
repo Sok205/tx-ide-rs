@@ -1,0 +1,22 @@
+[package]
+name = "tx-timeline"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "tx-core plugin: swimlanes of session activity in the terminal (ratatui), prefix+T."
+
+[dependencies]
+tx-core.workspace = true
+tx-ui.workspace = true
+tx-chat = { path = "../chat" }
+serde_json.workspace = true
+ratatui = "0.30"
+regex = "1"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,47 @@
+[package]
+name = "tx-core-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "txc: a thin command-line surface over tx-core."
+
+[[bin]]
+name = "txc"
+path = "src/main.rs"
+
+[dependencies]
+tx-core.workspace = true
+tx-engine-claude = { path = "../plugins/engine-claude" }
+tx-engine-codex = { path = "../plugins/engine-codex" }
+tx-hooks = { path = "../plugins/hooks" }
+tx-chat = { path = "../plugins/chat" }
+tx-ide = { path = "../plugins/ide" }
+tx-labels = { path = "../plugins/labels" }
+tx-kill = { path = "../plugins/kill" }
+tx-picker = { path = "../plugins/picker" }
+tx-edit = { path = "../plugins/edit" }
+tx-spawn = { path = "../plugins/spawn" }
+tx-assistant = { path = "../plugins/assistant" }
+tx-mockup = { path = "../plugins/mockup" }
+tx-tutor = { path = "../plugins/tutor" }
+tx-artifacts = { path = "../plugins/artifacts" }
+tx-timeline = { path = "../plugins/timeline" }
+tx-menu = { path = "../plugins/menu" }
+serde.workspace = true
+serde_json.workspace = true
+serde_norway = "0.9"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Heavy property/fuzz suites (many cases, real tmux servers): `cargo test --workspace --features fuzz`.
+fuzz = []
+
+[[test]]
+name = "fuzz_cli"
+required-features = ["fuzz"]

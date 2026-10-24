@@ -1,0 +1,12 @@
+{"type":"session_meta","timestamp":"2026-10-11T10:10:05Z","payload":{"id":"c-worker"}}
+{"type":"event_msg","timestamp":"2026-10-11T10:10:10Z","payload":{"type":"task_started"}}
+{"type":"response_item","timestamp":"2026-10-11T10:10:10Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<from-agent session=\"lead\">start step 1</from-agent>"}]}}
+{"type":"turn_context","timestamp":"2026-10-11T10:10:20Z","payload":{"model":"gpt-5","effort":"high"}}
+{"type":"response_item","timestamp":"2026-10-11T10:11:00Z","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"bash\",\"-lc\",\"gh pr ready 12\"]}"}}
+{"type":"event_msg","timestamp":"2026-10-11T10:12:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":20000},"model_context_window":200000}}}
+{"type":"response_item","timestamp":"2026-10-11T10:40:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"step 1 done"}]}}
+{"type":"event_msg","timestamp":"2026-10-11T10:40:01Z","payload":{"type":"task_complete"}}
+{"type":"event_msg","timestamp":"2026-10-11T11:20:00Z","payload":{"type":"task_started"}}
+{"type":"response_item","timestamp":"2026-10-11T11:20:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}}
+{"type":"response_item","timestamp":"2026-10-11T11:29:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"finished"}]}}
+{"type":"event_msg","timestamp":"2026-10-11T11:29:01Z","payload":{"type":"task_complete"}}

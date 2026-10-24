@@ -1,0 +1,12 @@
+{"type":"user","timestamp":"2026-10-10T20:00:10Z","uuid":"r1","message":{"role":"user","content":"review the PR"}}
+{"type":"user","timestamp":"2026-10-10T20:00:20Z","uuid":"r2","message":{"role":"user","content":"r1"}}
+{"type":"user","timestamp":"2026-10-10T20:00:30Z","uuid":"r3","message":{"role":"user","content":"r2"}}
+{"type":"user","timestamp":"2026-10-10T20:00:40Z","uuid":"r4","message":{"role":"user","content":"r3"}}
+{"type":"user","timestamp":"2026-10-10T20:00:50Z","uuid":"r5","message":{"role":"user","content":"r4"}}
+{"type":"user","timestamp":"2026-10-10T20:00:55Z","uuid":"r6","message":{"role":"user","content":"r5"}}
+{"type":"assistant","timestamp":"2026-10-10T20:05:00Z","uuid":"r7","message":{"role":"assistant","model":"claude-sonnet-4","stop_reason":"end_turn","content":[{"type":"text","text":"LGTM"}]}}
+{"type":"user","timestamp":"2026-10-11T08:00:30Z","uuid":"r8","message":{"role":"user","content":"<command-name>/resume</command-name>"}}
+{"type":"assistant","timestamp":"2026-10-11T08:01:00Z","uuid":"r9","message":{"role":"assistant","model":"claude-sonnet-4","stop_reason":"end_turn","content":[{"type":"text","text":"Resumed."}]}}
+{"type":"user","timestamp":"2026-10-11T08:20:00Z","uuid":"r10","message":{"role":"user","content":"look at this"}}
+{"type":"user","timestamp":"2026-10-11T08:20:00Z","uuid":"r11","message":{"role":"user","content":[{"type":"text","text":"[Image: source: /tmp/x.png]"}]}}
+{"type":"assistant","timestamp":"2026-10-11T08:21:00Z","uuid":"r12","message":{"role":"assistant","model":"claude-sonnet-4","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}]}}

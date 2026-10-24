@@ -91,6 +91,7 @@ return {
       { "<leader>gf", function_history, desc = "File history (enclosing function/class)" },
       { "<leader>gv", "<cmd>DiffviewFileHistory %<cr>", desc = "File history (current file)" },
       { "<leader>gH", "<cmd>DiffviewFileHistory<cr>", desc = "File history (branch)" },
+      { "<leader>go", "<cmd>DiffviewOpen<cr>", desc = "Diff working tree (uncommitted changes)" },
       -- the return to the origin tab is an autocmd, not this key: see
       -- lua/config/diffview-return.lua
       { "<leader>gq", "<cmd>DiffviewClose<cr>", desc = "Close diffview (returns to origin tab)" },

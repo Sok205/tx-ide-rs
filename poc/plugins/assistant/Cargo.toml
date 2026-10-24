@@ -1,0 +1,17 @@
+[package]
+name = "tx-assistant"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "tx-core plugin: the tx-assistant agent session (`assistant warm`); ships the TX-ASSISTANT role."
+
+[dependencies]
+tx-core.workspace = true
+tx-ui.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
