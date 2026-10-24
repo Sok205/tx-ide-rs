@@ -552,7 +552,7 @@ impl Command for Attach {
                 Arg::option("--hide")
                     .default("")
                     .metavar("ROLE[,ROLE...]")
-                    .help("start with these roles hidden (llm, nvim, shell, other); TAB toggles them in the picker"),
+                    .help("hide these roles (llm, nvim, shell, other) instead of the remembered set; TAB toggles them in the picker"),
             );
         let args = match parse(&parser, argv) {
             Ok(args) => args,
@@ -589,18 +589,17 @@ impl Command for Attach {
             .rand_bytes(8)
             .tempfile_in(temp_dir(&self.0.env))?
             .into_temp_path();
-        // The roles panel's hide-state file, seeded from --hide; removed (drop) whenever we leave.
-        let hide_file = tempfile::Builder::new()
-            .prefix("tx-picker-hide.")
-            .rand_bytes(8)
-            .tempfile_in(temp_dir(&self.0.env))?
-            .into_temp_path();
-        let hidden = picker_filter::parse_hidden(args.get_one("hide").unwrap_or_default());
-        picker_filter::write_hidden(&hide_file, &hidden)?;
+        // The roles panel's state lives in the home so the next picker starts where this one
+        // left off; an explicit --hide replaces it.
+        let hide_file = self.0.home.picker_hidden_roles_path();
+        let hide = args.get_one("hide").unwrap_or_default();
+        if !hide.is_empty() {
+            picker_filter::write_hidden(&hide_file, &picker_filter::parse_hidden(hide))?;
+        }
         let query = args.get_one("query").unwrap_or_default();
         let picker = Picker {
             deps: &self.0,
-            opts: self.fzf_opts(namew, query),
+            opts: self.fzf_opts(namew, query, &picker_filter::read_hidden(&hide_file)?),
             namew,
             arm_file: &arm_file,
             hide_file: &hide_file,
@@ -631,7 +630,7 @@ impl Attach {
 
     /// The fzf argv (a 1:1 port of the bash `opts` array); `{1}` / `{2}` / `$TX_ARM_FILE` /
     /// `$FZF_PORT` stay literal for fzf and its child shell.
-    fn fzf_opts(&self, namew: i64, query: &str) -> Vec<String> {
+    fn fzf_opts(&self, namew: i64, query: &str, hidden: &[Role]) -> Vec<String> {
         use palette::{
             ACCENT_ANSI, ACCENT_HEX, BOLD, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET, SELECTION_BG,
             WARN_ANSI,
@@ -674,7 +673,7 @@ impl Attach {
             "--listen".to_owned(),
             "--track".to_owned(),
             format!("--color={color}"),
-            format!("--header={}\n{header_cols}", picker_filter::chips_line(&[])),
+            format!("--header={}\n{header_cols}", picker_filter::chips_line(hidden)),
             format!("--query={query}"),
             format!(
                 "--bind=start:execute-silent(( while sleep 1; do curl -fsS -XPOST \

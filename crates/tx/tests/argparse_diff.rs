@@ -116,7 +116,7 @@ fn specs() -> Vec<Json> {
             {"flags": ["-j", "--jump"], "action": "store_true", "help": "Enter focuses the existing pane hosting the session instead of nest-attaching here (popup-friendly)"},
             {"flags": ["--host"], "nargs": "?", "const": "personal", "metavar": "ALIAS", "help": "attach a session on remote ssh ALIAS (default 'personal') by running that host's own tx picker over ssh"},
             {"flags": ["--all"], "dest": "mix", "action": "store_true", "help": "(unsupported) merged local+remote picker — use --host ALIAS"},
-            {"flags": ["--hide"], "default": "", "metavar": "ROLE[,ROLE...]", "help": "start with these roles hidden (llm, nvim, shell, other); TAB toggles them in the picker"},
+            {"flags": ["--hide"], "default": "", "metavar": "ROLE[,ROLE...]", "help": "hide these roles (llm, nvim, shell, other) instead of the remembered set; TAB toggles them in the picker"},
         ]}),
         json!({"prog": "tx fork", "description": "Fork a session's chat into a NEW session that starts with the full history (§4).", "args": [
             {"name": "source", "help": "the session to fork (id or name)"},
