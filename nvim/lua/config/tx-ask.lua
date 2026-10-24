@@ -153,6 +153,12 @@ local function replace_queue(questions)
   end
 end
 
+-- Snacks.input can return several lines; nvim_buf_set_lines rejects a newline in a line.
+local function flatten(text)
+  return (vim.trim(text):gsub("%s*\n%s*", " "))
+end
+
+-- splitting on %S+ already drops newlines, so the preview's virt_lines are safe
 local function wrap_question(question, width)
   local lines = {}
   local line = ""
@@ -170,6 +176,7 @@ local function wrap_question(question, width)
 end
 
 local function truncate_text(text, width)
+  text = flatten(text)
   if vim.fn.strdisplaywidth(text) <= width then
     return text
   end
@@ -271,7 +278,7 @@ vim.keymap.set({ "n", "x" }, "<leader>aQ", function()
     if question == nil then
       return
     end
-    question = vim.trim(question)
+    question = flatten(question)
     if question == "" then
       return
     end
