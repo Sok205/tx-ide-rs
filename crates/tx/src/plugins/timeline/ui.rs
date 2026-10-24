@@ -140,14 +140,20 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
     draw_now_column(app, buffer, day_row, rule_row + 1, true);
 }
 
+/// The now line sits on the right boundary of the present column — one past `column_of(now)`,
+/// which in follow mode is the spare column right of the canvas — so whatever happened this
+/// minute (a bar end, a fresh spawn arrow) stays visible left of it instead of under it. A
+/// working lane's `▸` marker already occupies that cell and keeps it.
 fn draw_now_column(app: &App, buffer: &mut Buffer, top: u16, bottom: u16, label: bool) {
-    let column = app.column_of(app.now);
-    if !app.on_canvas(column) {
+    let column = app.column_of(app.now) + 1;
+    if column < 0 || column > i64::from(app.geometry.canvas.width) {
         return;
     }
     let x = app.geometry.canvas.x + column as u16;
     for y in top..bottom {
-        put(buffer, x, y, "┃", Style::new().fg(NOW));
+        if symbol_at(buffer, x, y) != "▸" {
+            put(buffer, x, y, "┃", Style::new().fg(NOW));
+        }
     }
     if label {
         // "now HH:MM", right-aligned against the now column
