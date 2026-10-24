@@ -247,18 +247,19 @@ pub fn visible_width(text: &str) -> usize {
     width
 }
 
-/// Run the picker on the controlling terminal; `None` on Esc / q / Ctrl-C. `notice` opens the
-/// list with a message under the rows (the previous round's outcome). `decline` vets a pick:
+/// Run the picker on the controlling terminal, which the caller holds open (a [`Terminal`]) so
+/// that successive rounds never leave the alternate screen; `None` on Esc / q / Ctrl-C. `notice`
+/// opens the list with a message under the rows (the previous round's failure). `decline` vets a pick:
 /// `Some(message)` shows it as the notice and keeps the list open, `None` accepts the pick.
 /// `confirm_text` is the question d shows for the cursor's row, before `y` fires the delete.
-pub fn pick(
+pub(crate) fn pick(
+    _terminal: &Terminal,
     header: &str,
     items: &[Item],
     notice: Option<String>,
     mut decline: impl FnMut(Pick) -> Option<String>,
     confirm_text: impl Fn(usize) -> String,
 ) -> io::Result<Option<Pick>> {
-    let _terminal = Terminal::open()?;
     let mut picker = Picker::new(header, items);
     if let Some(notice) = notice {
         picker.notice(notice);

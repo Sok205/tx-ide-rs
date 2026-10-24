@@ -27,6 +27,7 @@ use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ans
 use crate::render::{LOCATION_W, actor_label, location_text};
 use crate::service::SessionService;
 use crate::session::{Session, SessionKind};
+use crate::session_editor::Terminal;
 use crate::shlex::shlex_join;
 use crate::spawn::SpawnSpec;
 use crate::storage::Home;
@@ -241,6 +242,9 @@ impl ArtifactNav {
         let Some(record) = self.record(session, client)? else {
             return Ok(1);
         };
+        // One terminal for every round: a delete redraws the list without leaving the alternate
+        // screen (which would flash the popup's primary screen and whatever stderr put there).
+        let terminal = Terminal::open()?;
         let mut failure: Option<String> = None;
         let (listing, mode, index) = loop {
             let listing = self.listing(&record, client)?;
@@ -274,6 +278,7 @@ impl ArtifactNav {
                 ),
             };
             let Some(pick) = artifact_picker::pick(
+                &terminal,
                 &listing.header,
                 &listing.items,
                 failure.take(),
