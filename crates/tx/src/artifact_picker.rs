@@ -16,7 +16,6 @@ use crate::palette::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, RESET, SELECTION_BG, WARN_A
 use crate::session_editor::{Decoder, Key, Terminal, read_key, write_all};
 
 pub const HINT: &str = "Enter/key attach here   f focus its pane   p popup   d delete   Esc close";
-const CONFIRM_HINT: &str = "y confirm   any other key cancel";
 
 /// The key that picks row `index` (0-based), as choose-tree labels them: `1`…`9`, then `M-a`…
 /// `M-z`, then `M-A`…`M-Z`; `None` past those.
@@ -186,7 +185,7 @@ impl<'a> Picker<'a> {
     }
 
     /// The screen: header, sections and rows (the cursor's row on the selection background), the
-    /// hint last.
+    /// hint last — unless d's question is showing, which stands alone.
     pub fn render(&self, height: usize, width: usize) -> String {
         let mut out = String::from("\x1b[0m\x1b[H\x1b[2J");
         let mut screen_row = 0;
@@ -219,12 +218,13 @@ impl<'a> Picker<'a> {
             if let Some(notice) = &self.notice {
                 out += &format!("\x1b[{};1H{WARN_ANSI}{notice}{RESET}", height - 1);
             }
-            let hint = if self.confirm.is_some() {
-                CONFIRM_HINT
-            } else {
-                self.operation.hint()
-            };
-            out += &format!("\x1b[{};1H{DIM_FG_ANSI}{hint}{RESET}", height);
+            if self.confirm.is_none() {
+                out += &format!(
+                    "\x1b[{};1H{DIM_FG_ANSI}{}{RESET}",
+                    height,
+                    self.operation.hint()
+                );
+            }
         }
         out
     }
@@ -341,9 +341,10 @@ mod tests {
         assert_eq!(picker.handle(Key::Char('d')), None);
         assert_eq!(picker.pending_delete(), Some(1));
         picker.notice("Kill \"b\"? [y/N]".into());
+        // The question stands alone: no hint line under it.
         let screen = picker.render(10, 40);
         assert!(screen.contains("Kill \"b\"? [y/N]"));
-        assert!(screen.contains(CONFIRM_HINT));
+        assert!(!screen.contains(HINT));
         // Anything but y cancels, back to the plain list; the question is gone.
         assert_eq!(picker.handle(Key::Char('n')), None);
         assert_eq!(picker.pending_delete(), None);
