@@ -703,12 +703,16 @@ impl SessionService {
             let name = session.name.clone();
             let llm = session.llm_mut().ok_or(ServiceError::NotAnLlm(name))?;
             llm.turn_started_at.clone_from(&now);
-            llm.last_activity.clone_from(&now);
         }
         if new_state.is_terminal() {
             session.ended_at = now;
             session.attached_to.clear();
         } else {
+            // Every live transition is activity, so `last_activity` is "since the state changed":
+            // the age a resting session shows on its border and in the picker's IDLE column.
+            if let Some(llm) = session.llm_mut() {
+                llm.last_activity.clone_from(&now);
+            }
             session.attached_to = self.tmux.attached_to(session.tmux_name());
         }
         self.store.save(&session)?;
