@@ -8,9 +8,9 @@
 //! the tx picker's rows. Enter (or a digit) re-hosts the pane on the
 //! chosen view (the llm session keeps running detached); f then a digit or Enter moves the
 //! terminal to the pane already showing it; p then a digit or Enter nest-attaches it in a popup
-//! over the terminal, leaving the panes as they are; d then a digit or Enter, confirmed with y,
-//! deletes the row — a session is killed, an artifact is archived (hidden from the picker and
-//! `tx artifact ls`, history kept) and its live view closed — and the list redraws without it.
+//! over the terminal, leaving the panes as they are; d asks about the cursor's row and y deletes
+//! it — a session is killed, an artifact is archived (hidden from the picker and `tx artifact
+//! ls`, history kept) and its live view closed — and the list redraws without it.
 //! In an nvim view the key goes back to the controlling session — the artifact's most recent live
 //! non-`user` toucher (else its creator), or the companion's `parent` — focusing the pane still
 //! showing it, else re-hosting this pane on it.
@@ -84,7 +84,7 @@ impl Command for ArtifactPick {
     fn summary(&self) -> &'static str {
         "Internal: the picker inside prefix+a's popup — Enter attaches the row's view in the pane; \
          f / p then a digit or Enter focus the pane already showing it / open it in a popup; d \
-         then a digit or Enter, then y, kills the session or archives the artifact. \
+         then y kills the cursor's session or archives its artifact. \
          Usage: _artifact-pick SESSION CLIENT"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
@@ -267,10 +267,9 @@ impl ArtifactNav {
                 }
             };
             let confirm_text = |index: usize| match listing.targets[index].kind {
-                "session" => format!("⚠  Kill \"{}\"?", listing.names[index]),
+                "session" => format!("⚠  Kill \"{}\"? [y/N]", listing.names[index]),
                 _ => format!(
-                    "⚠  Archive \"{}\"? Hides it from prefix+a and closes its view; \
-                     `tx artifact unarchive` restores",
+                    "⚠  Archive \"{}\" and close its view? [y/N]",
                     listing.names[index]
                 ),
             };
