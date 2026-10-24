@@ -20,6 +20,7 @@ use crate::events::{self, EventLog};
 use crate::grouping::GroupResolver;
 use crate::history::{History, IngestMode};
 use crate::migrations::{migrate_artifacts, migrate_sessions};
+use crate::render::reltime;
 use crate::roles::{RoleError, load_role_priming};
 use crate::service::{Revival, ServiceError, SessionService};
 use crate::session::{
@@ -819,8 +820,8 @@ fn focus_envelope(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, B
     Ok(0)
 }
 
-/// The pane border's single read: line 1 the display name, line 2 the tags; both empty for an
-/// absent or unreadable record (a bad record never breaks the border).
+/// The pane border's single read: name, tags, state, resting age (`0m`, `2h`; empty while working),
+/// one per line; all empty for an absent or unreadable record so a bad record never breaks the border.
 fn pane_info(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxError> {
     let parser = parser.arg(Arg::positional("session_id"));
     let matches = parse!(parser, argv);
@@ -831,10 +832,30 @@ fn pane_info(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxErr
         deps.service.store().load(session_id).ok().flatten()
     };
     match record {
-        Some(record) => println!("{}\n{}", record.name, record.tags.join(",")),
-        None => println!("\n"),
+        Some(record) => println!(
+            "{}\n{}\n{}\n{}",
+            record.name,
+            record.tags.join(","),
+            record.state.as_str(),
+            resting_age(&record, events::now())
+        ),
+        None => println!("\n\n\n"),
     }
     Ok(0)
+}
+
+/// The compact age since a resting llm session last changed state; `0m` for the first minute.
+fn resting_age(record: &Session, now: f64) -> String {
+    let Some(llm) = record.llm() else {
+        return String::new();
+    };
+    let resting = matches!(record.state, State::Waiting | State::Idle);
+    let since = llm.last_activity.as_ref().and_then(Number::as_f64);
+    match since {
+        Some(since) if resting && now - since < 60.0 => "0m".to_owned(),
+        Some(_) if resting => reltime(llm.last_activity.as_ref(), now),
+        _ => String::new(),
+    }
 }
 
 /// A name/id → its live tmux target; empty (exit 0) when no live record matches.

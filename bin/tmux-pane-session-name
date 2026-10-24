@@ -32,25 +32,38 @@ fi
 # `_pane-info` read — a single Python launch on the ~1 Hz (status-interval) render path. `$1` is the
 # inner session's tmux name (an id for a PROCESS, a human name for a VIEW), used ONLY to resolve
 # @tx_id → the record. Falls back to that raw tmux name when the pane hosts an untracked session (no
-# @tx_id) or its record is absent, so the border never goes blank. Two read -r's (not `mapfile`,
-# which macOS bash 3.2 lacks); `_pane-info` always emits exactly two lines (name, tags).
+# @tx_id) or its record is absent, so the border never goes blank. `_pane-info` emits four lines:
+# name, tags, state, resting age (four read -r's; macOS bash 3.2 has no `mapfile`).
+#
+# State mark at the border's right end: a green four-cell bar while WORKING, the resting age
+# (`0m`, `14m`, `2h`) between spaces otherwise, nothing for non-llm panes.
+WORKING_HEX='#9ece6a'
+WORKING_BAR='🬋🬋🬋🬋'  # the width of " 1h ": the bar fills the slot the age and its spaces take
+state_bar() {
+  case "$1" in
+    working) printf '#[align=right]#[fg=%s]%s#[default]' "$WORKING_HEX" "$WORKING_BAR" ;;
+    waiting | idle) [[ -n "$2" ]] && printf '#[align=right] #[fg=%s]%s#[default] ' "$DIM_FG_HEX" "$2" ;;
+  esac
+  return 0
+}
+
 render_inner() {
-  local session="$1" id name="" tag="" part color
+  local session="$1" id name="" tag="" state="" age="" part color
   local -a parts
   id=$(tmux show-options -vqt "$session" @tx_id 2>/dev/null) || id=""
   if [[ -z "$id" ]]; then
     printf '#[bold]%s#[default]' "$session"
     return 0
   fi
-  { IFS= read -r name; IFS= read -r tag; } < <("$TX" _pane-info "$id" 2>/dev/null) || true
+  { IFS= read -r name; IFS= read -r tag; IFS= read -r state; IFS= read -r age; } < <("$TX" _pane-info "$id" 2>/dev/null) || true
   printf '#[bold]%s#[default]' "${name:-$session}"
-  [[ -z "$tag" ]] && return 0
   IFS=',' read -ra parts <<<"$tag"
   for part in "${parts[@]}"; do
     [[ -z "$part" ]] && continue
     color=$(tag_hex "$part")
     printf ' #[fg=%s,#{?pane_active,bold,nobold}][%s]#[default]' "$color" "$part"
   done
+  state_bar "$state" "$age"
 }
 
 pane_tty=$(tmux display-message -p -t "$pane_id" '#{pane_tty}' 2>/dev/null) || exit 0
