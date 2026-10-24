@@ -296,8 +296,6 @@ fn number(value: &Option<serde_json::Number>) -> Option<f64> {
     value.as_ref().and_then(serde_json::Number::as_f64)
 }
 
-/// The body of a spawn / resume edge: the first thing the human (or `tx spawn --prompt`) said in
-/// the record created at `created` epoch seconds — `rows` is the lane's time-sorted row list.
 fn spawn_prompt(rows: &[Row], created: f64) -> String {
     rows.iter()
         .find(|row| row.kind == Kind::User && row.at >= created)
