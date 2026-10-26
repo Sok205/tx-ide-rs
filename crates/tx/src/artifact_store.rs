@@ -1,18 +1,15 @@
-//! Port of lib/tx/artifact_store.py — record persistence (`ArtifactStore`) and the content files
-//! beside it (`ArtifactContent`).
+//! Record persistence (`ArtifactStore`) and the content directory beside it (`ArtifactContent`).
 //!
 //! `artifacts/<id>.json` is written atomically (temp file + rename) and is authoritative: the
-//! service writes it LAST. `artifacts/<id>/current<ext>` is the working copy (atomic, last write
-//! wins); `artifacts/<id>/revs/<n><ext>` are immutable snapshots claimed by staging a temp file in
-//! `revs/` and hard-linking it onto the slot, so `EEXIST` means a lost race and a crash can only
-//! leave a stray `.tmp`.
+//! service writes it LAST. `artifacts/<id>/` holds the artifact's files, named as they are; a
+//! file written by tx goes through the same temp + rename, so a reader never sees a partial one.
 
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use crate::artifact::{Artifact, UnsupportedArtifactError, py_suffix};
+use crate::artifact::{Artifact, UnsupportedArtifactError};
 use crate::pyjson::dumps_pretty;
 use crate::storage::Home;
 
@@ -74,7 +71,7 @@ impl ArtifactStore {
     }
 
     /// Persist the record atomically: `.<id>.*.tmp` in the store dir, then rename. No trailing
-    /// newline (Python `json.dumps(indent=2)`).
+    /// newline.
     pub fn save(&self, artifact: &Artifact) -> io::Result<()> {
         fs::create_dir_all(&self.directory)?;
         let payload = dumps_pretty(&artifact.to_value());
@@ -142,16 +139,7 @@ fn read_record(path: &Path) -> Result<Artifact, ArtifactStoreError> {
     Ok(Artifact::from_value(&data)?)
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ClaimRevError {
-    /// The slot already exists: this write lost (a concurrent write or a crash orphan).
-    #[error("rev {0} is already claimed")]
-    Taken(u64),
-    #[error(transparent)]
-    Io(#[from] io::Error),
-}
-
-/// Working copy + revision file I/O under `artifacts/<id>/`; bytes-clean.
+/// The files under `artifacts/<id>/`; bytes-clean.
 #[derive(Clone, Debug)]
 pub struct ArtifactContent {
     directory: PathBuf,
@@ -172,118 +160,37 @@ impl ArtifactContent {
         self.directory.join(&artifact.id)
     }
 
-    pub fn revs_dir(&self, artifact: &Artifact) -> PathBuf {
-        self.content_dir(artifact).join("revs")
+    pub fn file_path(&self, artifact: &Artifact, name: &str) -> PathBuf {
+        self.content_dir(artifact).join(name)
     }
 
-    pub fn current_path(&self, artifact: &Artifact) -> PathBuf {
-        self.content_dir(artifact)
-            .join(format!("current{}", artifact.extension()))
-    }
-
-    pub fn rev_path(&self, artifact: &Artifact, rev: u64) -> PathBuf {
-        self.revs_dir(artifact)
-            .join(format!("{rev}{}", artifact.extension()))
-    }
-
-    pub fn read_current(&self, artifact: &Artifact) -> io::Result<Vec<u8>> {
-        fs::read(self.current_path(artifact))
-    }
-
-    pub fn read_rev(&self, artifact: &Artifact, rev: u64) -> io::Result<Vec<u8>> {
-        fs::read(self.rev_path(artifact, rev))
-    }
-
-    /// Refresh the working copy atomically (last write wins between writers).
-    pub fn write_current(&self, artifact: &Artifact, content: &[u8]) -> io::Result<()> {
+    /// Write `{dir}/<name>` atomically (last write wins between writers).
+    pub fn write_file(&self, artifact: &Artifact, name: &str, content: &[u8]) -> io::Result<()> {
         let dir = self.content_dir(artifact);
         fs::create_dir_all(&dir)?;
-        let path = self.current_path(artifact);
-        let prefix = format!(".{}.", file_name(&path));
-        atomic_write(&dir, &prefix, content, &path)
+        atomic_write(&dir, &format!(".{name}."), content, &dir.join(name))
     }
 
-    /// Exclusively claim `revs/<rev><ext>`: stage the full content in `revs/.<rev>.*.tmp`, then
-    /// hard-link it onto the slot. An existing slot is never overwritten (`Taken`); the staging
-    /// file is always removed.
-    pub fn claim_rev(
-        &self,
-        artifact: &Artifact,
-        rev: u64,
-        content: &[u8],
-    ) -> Result<(), ClaimRevError> {
-        let revs = self.revs_dir(artifact);
-        fs::create_dir_all(&revs)?;
-        let target = self.rev_path(artifact, rev);
-        let mut staged = tempfile::Builder::new()
-            .prefix(&format!(".{rev}."))
-            .suffix(".tmp")
-            .tempfile_in(&revs)?;
-        staged.write_all(content)?;
-        staged.flush()?;
-        match fs::hard_link(staged.path(), &target) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                Err(ClaimRevError::Taken(rev))
-            }
-            Err(error) => Err(error.into()),
-        }
-        // `staged` drops here, unlinking the staging file.
+    /// Copy `source` into the directory under its own file name; returns that name.
+    pub fn copy_in(&self, artifact: &Artifact, source: &Path) -> io::Result<String> {
+        let name = source
+            .file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?
+            .to_string_lossy()
+            .into_owned();
+        self.write_file(artifact, &name, &fs::read(source)?)?;
+        Ok(name)
     }
-
-    /// Unlink a rev file (orphan repair only); a missing file is fine.
-    pub fn remove_rev(&self, artifact: &Artifact, rev: u64) -> io::Result<()> {
-        match fs::remove_file(self.rev_path(artifact, rev)) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        }
-    }
-
-    /// Rev files on disk the history does not reference (crash orphans), ascending.
-    pub fn orphan_revs(&self, artifact: &Artifact) -> io::Result<Vec<u64>> {
-        let revs = self.revs_dir(artifact);
-        if !revs.exists() {
-            return Ok(Vec::new());
-        }
-        let recorded: Vec<u64> = artifact.history().iter().map(|touch| touch.rev).collect();
-        let mut found = Vec::new();
-        for entry in fs::read_dir(&revs)? {
-            let name = entry?.file_name();
-            if let Some(rev) = rev_number(&name.to_string_lossy())
-                && !recorded.contains(&rev)
-            {
-                found.push(rev);
-            }
-        }
-        found.sort_unstable();
-        Ok(found)
-    }
-
-    /// History revs with no file on disk, in history order.
-    pub fn missing_revs(&self, artifact: &Artifact) -> Vec<u64> {
-        artifact
-            .history()
-            .iter()
-            .map(|touch| touch.rev)
-            .filter(|&rev| !self.rev_path(artifact, rev).exists())
-            .collect()
-    }
-
-    /// Whether the working copy differs from the latest rev (un-snapshotted edits).
-    pub fn current_is_dirty(&self, artifact: &Artifact) -> io::Result<bool> {
-        Ok(self.read_current(artifact)? != self.read_rev(artifact, artifact.latest_rev())?)
-    }
-}
-
-fn file_name(path: &Path) -> String {
-    path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 /// Write `content` to a `<prefix>*.tmp` file in `dir` (mode 0600, like `mkstemp`), then rename it
 /// onto `target`. The temp file is removed on any failure.
-fn atomic_write(dir: &Path, prefix: &str, content: &[u8], target: &Path) -> io::Result<()> {
+pub(crate) fn atomic_write(
+    dir: &Path,
+    prefix: &str,
+    content: &[u8],
+    target: &Path,
+) -> io::Result<()> {
     let mut temp = tempfile::Builder::new()
         .prefix(prefix)
         .suffix(".tmp")
@@ -294,23 +201,10 @@ fn atomic_write(dir: &Path, prefix: &str, content: &[u8], target: &Path) -> io::
     Ok(())
 }
 
-/// The rev a `revs/<n><ext>` file name encodes: `None` for a staging temp (leading dot) or a
-/// name whose stem (Python `Path.stem`) is not all ASCII digits.
-fn rev_number(name: &str) -> Option<u64> {
-    if name.starts_with('.') {
-        return None;
-    }
-    let stem = &name[..name.len() - py_suffix(name).len()];
-    if stem.is_empty() || !stem.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    stem.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::USER_ACTOR;
+    use crate::artifact::Kind;
     use serde_json::Number;
     use std::os::unix::fs::PermissionsExt;
 
@@ -330,14 +224,13 @@ mod tests {
         }
     }
 
-    fn artifact(id: &str, filename: &str) -> Artifact {
+    fn artifact(id: &str, file: &str) -> Artifact {
         Artifact::new(
             id.into(),
-            None,
-            filename.into(),
-            Number::from_f64(1.5).unwrap(),
-            None,
+            Kind::Document { file: file.into() },
+            "T".into(),
             "s1".into(),
+            Number::from_f64(1.5).unwrap(),
         )
     }
 
@@ -360,9 +253,8 @@ mod tests {
         f.store.save(&a).unwrap();
         let path = f.store.record_path("a");
         let bytes = fs::read_to_string(&path).unwrap();
-        assert!(bytes.starts_with("{\n  \"artifact_schema_version\": 3,\n  \"id\": \"a\","));
+        assert!(bytes.starts_with("{\n  \"artifact_schema_version\": 4,\n  \"id\": \"a\","));
         assert!(!bytes.ends_with('\n'));
-        // python3.14: mkstemp + os.replace leaves the record at 0o100600.
         let mode = fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         assert!(tmp_files(f.store.directory()).is_empty());
@@ -376,20 +268,19 @@ mod tests {
         fs::create_dir_all(f.store.directory()).unwrap();
         write(
             f.store.record_path("old"),
-            r#"{"artifact_schema_version": 1, "id": "old", "foo": 1}"#,
+            r#"{"artifact_schema_version": 3, "id": "old", "foo": 1}"#,
         );
         let error = f.store.load("old").unwrap_err();
         assert!(matches!(error, ArtifactStoreError::Unsupported(_)));
         assert!(
             error
                 .to_string()
-                .contains("record artifact_schema_version=1 is unsupported (expected 3)")
+                .contains("record artifact_schema_version=3 is unsupported (expected 4)")
         );
     }
 
     #[test]
     fn scan_is_tolerant_and_sorted() {
-        // T-ART-06 store.
         let f = fixture();
         let dir = f.store.directory().to_path_buf();
         f.store.save(&artifact("good", "plan.md")).unwrap();
@@ -397,7 +288,7 @@ mod tests {
         write(dir.join("bad.json"), "{");
         write(
             dir.join("old.json"),
-            r#"{"artifact_schema_version": 1, "id": "old"}"#,
+            r#"{"artifact_schema_version": 3, "id": "old"}"#,
         );
         fs::create_dir(dir.join("x")).unwrap();
         write(dir.join(".good.abc.tmp"), "{}");
@@ -411,8 +302,8 @@ mod tests {
         assert!(warnings[0].starts_with("tx: skipping unreadable artifact bad.json: "));
         assert_eq!(
             warnings[1],
-            "tx: skipping unreadable artifact old.json: record artifact_schema_version=1 is \
-             unsupported (expected 3); tx-ide does not back-migrate older artifact records"
+            "tx: skipping unreadable artifact old.json: record artifact_schema_version=3 is \
+             unsupported (expected 4); run `tx migrate` to upgrade older artifact records"
         );
 
         let only_good = f.store.query(|a| a.id == "good");
@@ -428,41 +319,17 @@ mod tests {
     }
 
     #[test]
-    fn content_layout() {
+    fn content_layout_and_atomic_write() {
         let f = fixture();
         let a = artifact("id", "plan.md");
         let dir = f.store.directory().join("id");
-        assert_eq!(f.content.current_path(&a), dir.join("current.md"));
-        assert_eq!(f.content.rev_path(&a, 3), dir.join("revs/3.md"));
-        let bare = artifact("bare", "artifact");
-        f.content.claim_rev(&bare, 0, b"b").unwrap();
-        f.content.write_current(&bare, b"b").unwrap();
-        let bare_dir = f.store.directory().join("bare");
-        let mut names: Vec<String> = fs::read_dir(&bare_dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        assert_eq!(names, ["current", "revs"]);
-        assert!(bare_dir.join("revs/0").is_file());
-    }
-
-    #[test]
-    fn claim_rev_is_exclusive() {
-        // T-ART-08: a pre-existing slot is never overwritten and no staging file survives.
-        let f = fixture();
-        let a = artifact("id", "v0.md");
-        f.content.claim_rev(&a, 0, b"v0").unwrap();
-        f.content.write_current(&a, b"v0").unwrap();
-        write(f.content.rev_path(&a, 1), "other");
-        let error = f.content.claim_rev(&a, 1, b"new").unwrap_err();
-        assert!(matches!(error, ClaimRevError::Taken(1)));
-        assert_eq!(fs::read(f.content.rev_path(&a, 1)).unwrap(), b"other");
-        assert_eq!(f.content.read_rev(&a, 0).unwrap(), b"v0");
-        assert_eq!(f.content.read_current(&a).unwrap(), b"v0");
-        assert!(tmp_files(&f.content.revs_dir(&a)).is_empty());
-        assert!(tmp_files(&f.content.content_dir(&a)).is_empty());
-        let mode = fs::metadata(f.content.rev_path(&a, 0))
+        assert_eq!(f.content.content_dir(&a), dir);
+        assert_eq!(f.content.file_path(&a, "plan.md"), dir.join("plan.md"));
+        f.content.write_file(&a, "plan.md", b"one").unwrap();
+        f.content.write_file(&a, "plan.md", b"two").unwrap();
+        assert_eq!(fs::read(dir.join("plan.md")).unwrap(), b"two");
+        assert!(tmp_files(&dir).is_empty());
+        let mode = fs::metadata(dir.join("plan.md"))
             .unwrap()
             .permissions()
             .mode();
@@ -470,56 +337,17 @@ mod tests {
     }
 
     #[test]
-    fn orphan_missing_dirty_detection() {
-        // T-ART-09.
+    fn copy_in_uses_the_source_name() {
         let f = fixture();
-        let mut a = artifact("id", "p.md");
-        assert_eq!(f.content.orphan_revs(&a).unwrap(), Vec::<u64>::new());
-        f.content.claim_rev(&a, 0, b"p0").unwrap();
-        let rev = a.record_touch(USER_ACTOR.into(), Number::from(2), None);
-        f.content.claim_rev(&a, rev, b"p1").unwrap();
-        f.content.write_current(&a, b"p1").unwrap();
-        let revs = f.content.revs_dir(&a);
-        for (name, body) in [
-            (".1.xyz.tmp", "stage"),
-            ("7.md", "orphan"),
-            ("notes.txt", "foreign"),
-            ("12.txt", "other ext"),
-            ("1.5.md", "not a rev"),
-        ] {
-            write(revs.join(name), body);
-        }
-        assert_eq!(f.content.orphan_revs(&a).unwrap(), [7, 12]);
-        assert!(f.content.missing_revs(&a).is_empty());
-        assert!(!f.content.current_is_dirty(&a).unwrap());
-
-        write(f.content.current_path(&a), "c");
-        assert!(f.content.current_is_dirty(&a).unwrap());
-
-        fs::remove_file(f.content.rev_path(&a, 1)).unwrap();
-        assert_eq!(f.content.missing_revs(&a), [1]);
-        assert!(f.content.current_is_dirty(&a).is_err());
-
-        f.content.remove_rev(&a, 7).unwrap();
-        f.content.remove_rev(&a, 7).unwrap();
-        assert_eq!(f.content.orphan_revs(&a).unwrap(), [12]);
-    }
-
-    #[test]
-    fn rev_number_matches_python() {
-        // Expected values from python3.14 `artifact_store._rev_number`.
-        let cases = [
-            ("7.md", Some(7)),
-            (".1.x.tmp", None),
-            ("notes.txt", None),
-            ("007.md", Some(7)),
-            ("3", Some(3)),
-            ("1.5.md", None),
-            ("12", Some(12)),
-            ("x.7", None),
-        ];
-        for (name, rev) in cases {
-            assert_eq!(rev_number(name), rev, "{name}");
-        }
+        let a = artifact("id", "notes.md");
+        let source = f._root.path().join("scratch").join("notes.md");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        write(source.clone(), "body");
+        assert_eq!(f.content.copy_in(&a, &source).unwrap(), "notes.md");
+        assert_eq!(
+            fs::read(f.content.file_path(&a, "notes.md")).unwrap(),
+            b"body"
+        );
+        assert!(f.content.copy_in(&a, Path::new("/")).is_err());
     }
 }

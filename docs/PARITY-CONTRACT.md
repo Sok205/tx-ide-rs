@@ -50,6 +50,11 @@ tmux targets (`=name`).
 - `Storage` S3 stub beyond what SYNC pins; Python-only import side effects (engine registry
   self-registration becomes explicit plugin loading).
 - Improvements beyond the FIX list go to `docs/FOLLOW-UPS.md`, never into a parity commit.
+- The T-ART area (artifact schema v2: `filename`, `group`, `history`, `revs/<n>` snapshots,
+  `tx artifact diff|group`). This binary moved to artifact schema v4 — one owner, no history,
+  three kinds (`document`, `diff`, `tour`) with per-kind behaviour, an `archived_at` stamp — and
+  migrates v1/v2/v3 records once (`tx migrate`). The kit's T-ART cases pin v2 and are retired
+  for this binary.
 
 ## Bash entry points
 

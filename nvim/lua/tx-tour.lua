@@ -1,3 +1,8 @@
+-- tx-tour: a code tour as session-local diagnostics plus ordered quickfix navigation.
+-- `require("tx-tour")(stops_path)` loads a Lua file returning the ordered stops
+-- ({file, line, label, message, severity}) and opens at stop 1. Spawned by
+-- `tx artifact open` on a tour artifact, or applied into a running nvim over RPC
+-- by the tx-code-tours skill's apply_tour.py.
 return function(stops_path)
   local tour_stops = dofile(stops_path)
   local namespace = vim.api.nvim_create_namespace("tx_code_tour")
@@ -72,7 +77,17 @@ return function(stops_path)
     tour_state.index = index
     local stop = tour_state.stops[index]
     vim.cmd("noswapfile edit " .. vim.fn.fnameescape(stop.file))
-    vim.api.nvim_win_set_cursor(0, { stop.line, 0 })
+    -- A stale stop past the end of the file lands on the last line instead of failing.
+    local last_line = vim.api.nvim_buf_line_count(0)
+    local line = stop.line
+    if line > last_line then
+      vim.notify(
+        string.format("Tour stop %s points past the end of %s (line %d of %d)", stop.label, stop.file, stop.line, last_line),
+        vim.log.levels.WARN
+      )
+      line = last_line
+    end
+    vim.api.nvim_win_set_cursor(0, { line, 0 })
     vim.cmd("normal! zz")
   end
 

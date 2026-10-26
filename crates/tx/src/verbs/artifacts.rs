@@ -2,32 +2,32 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use cordis::{BoxError, Component, Ctx};
 
 use crate::app::{COMMANDS, Command, ENV, EVENTS, Env, HOME, SERVICE, Visibility};
 use crate::argparse::{Arg, Matches, ParseExit, Parser};
-use crate::artifact::{Artifact, USER_ACTOR};
+use crate::artifact::{Artifact, Kind, USER_ACTOR};
+use crate::artifact_kinds::{Opened, view_suffix};
 use crate::artifact_service::ArtifactService;
 use crate::events;
 use crate::grouping::GroupResolver;
-use crate::render::{render_artifact_show, render_artifacts, title_or_filename};
+use crate::render::{render_artifact_show, render_artifacts};
 use crate::service::SessionService;
 use crate::session::Session;
-use crate::spawn::SpawnSpec;
 use crate::storage::{
     Config, ConfigError, Home, LocalStorage, RemoteSpec, Storage, StorageError, expand_user,
 };
 use crate::sync::{self, SyncError, SyncResult};
 use crate::verbs::artifact_menu::{ArtifactGo, ArtifactMenu, ArtifactNav, ArtifactPick};
-use crate::verbs::common::{group_value, split_tags};
+use crate::verbs::common::split_tags;
 
-/// The display name of an artifact's nvim view: the artifact's title (its filename when
-/// untitled), with a short id appended only when a live session already holds that name.
+/// The display name of an artifact's nvim view: the artifact's title (`-diff` / `-tour` suffixed
+/// for those kinds), with a short id appended only when a live session already holds that name.
 pub(crate) fn view_name(service: &SessionService, artifact: &Artifact) -> Result<String, BoxError> {
-    let title = title_or_filename(artifact).to_owned();
+    let title = format!("{}{}", artifact.title, view_suffix(&artifact.kind));
     if service.is_live_name(&title)? {
         let short_id: String = artifact.id.chars().take(8).collect();
         return Ok(format!("{title} ({short_id})"));
@@ -102,42 +102,42 @@ fn fail(exit: ParseExit) -> Result<i32, BoxError> {
 
 // ----- tx artifact ----------------------------------------------------------------------------
 
-const HELP_ROWS: [(&str, &str); 10] = [
+const HELP_ROWS: [(&str, &str); 11] = [
     (
-        "create <file> [--title T] [--group G]",
-        "register a new artifact from a file",
+        "create <file> --title T [--kind document|tour]",
+        "a document (default) or tour from a file",
     ),
     (
-        "modify <id> [<file>] [--changes ...]",
-        "snapshot a new revision (no file = the working copy)",
+        "create --kind diff --title T [--cwd W] [--base SHA]",
+        "a diff of worktree W (default: cwd) against SHA (default: merge-base)",
     ),
     (
-        "group <id> [<group> | --clear]",
-        "read or set the effort-group override",
+        "modify <id> [<file>]",
+        "stamp modified_at; diff: rewrite the patch; file: replace a document/tour's file",
     ),
+    ("open <id> [--tag T]", "open in a bound nvim view"),
+    (
+        "close <id>",
+        "run a pending close step now (a diff's temp worktree)",
+    ),
+    ("path <id>", "print the artifact directory"),
     (
         "archive <id>",
-        "hide a finished artifact from prefix+a and ls (history kept)",
+        "hide a finished artifact from prefix+a and ls (content kept)",
     ),
     ("unarchive <id>", "bring an archived artifact back"),
     (
-        "ls [--session S] [--archived]",
-        "list artifacts (--session: what a session touched; --archived: include hidden)",
+        "ls [--session S] [--kind K] [--archived]",
+        "list artifacts (--session: what a session owns; --archived: include hidden)",
     ),
-    ("show <id>", "metadata + the full touch/version log"),
-    (
-        "diff <id> [<revA> <revB>]",
-        "difflib diff between two revisions (default: last two)",
-    ),
-    (
-        "open <id> [--tag T] [--cwd D]",
-        "open the working copy in an nvim view bound to the artifact",
-    ),
+    ("show <id>", "metadata + the kind's subfield"),
     (
         "doctor [--repair]",
-        "check store invariants; --repair removes orphan rev files",
+        "check store invariants; --repair runs close steps of ended views",
     ),
 ];
+
+const KIND_CHOICES: [&str; 3] = ["document", "diff", "tour"];
 
 struct ArtifactCmd {
     service: Rc<SessionService>,
@@ -150,7 +150,7 @@ impl Command for ArtifactCmd {
         "artifact"
     }
     fn summary(&self) -> &'static str {
-        "Create / modify / inspect durable versioned artifacts (tx artifact <subcommand>)."
+        "Create / modify / open durable artifacts — documents, diffs, tours (tx artifact <subcommand>)."
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let Some(sub) = argv.first() else {
@@ -165,13 +165,13 @@ impl Command for ArtifactCmd {
             }
             "create" => self.create(rest),
             "modify" => self.modify(rest),
-            "group" => self.group(rest),
+            "open" => self.open(rest),
+            "close" => self.close(rest),
+            "path" => self.path(rest),
             "archive" => self.set_archived(rest, true),
             "unarchive" => self.set_archived(rest, false),
             "ls" => self.ls(rest),
             "show" => self.show(rest),
-            "diff" => self.diff(rest),
-            "open" => self.open(rest),
             "doctor" => self.doctor(rest),
             other => {
                 eprintln!("tx artifact: unknown subcommand '{other}'");
@@ -185,7 +185,7 @@ impl Command for ArtifactCmd {
 fn print_help() {
     let mut out = String::from("usage: tx artifact <subcommand> [args]\n\nsubcommands:\n");
     for (usage, summary) in HELP_ROWS {
-        out.push_str(&format!("  {usage:<40} {summary}\n"));
+        out.push_str(&format!("  {usage:<52} {summary}\n"));
     }
     print!("{out}");
 }
@@ -219,82 +219,104 @@ impl ArtifactCmd {
 
     fn create(&self, argv: &[String]) -> Result<i32, BoxError> {
         let parser = sub_parser("create")
-            .arg(Arg::positional("file"))
-            .arg(Arg::option("--title"))
             .arg(
-                Arg::option("--group")
-                    .value_parser(group_value)
-                    .help("explicit effort-group override (default: derived from the creator)"),
-            );
+                Arg::positional("file")
+                    .optional()
+                    .help("the document or tour stops file (not for --kind diff)"),
+            )
+            .arg(Arg::option("--title").help("the artifact's title (required)"))
+            .arg(
+                Arg::option("--kind")
+                    .choices(&KIND_CHOICES)
+                    .default("document")
+                    .help("what the artifact is (default: document)"),
+            )
+            .arg(
+                Arg::option("--cwd")
+                    .help("diff/tour: the worktree the artifact points into (default: cwd)"),
+            )
+            .arg(Arg::option("--base").help("diff: the pinned base commit (default: merge-base)"));
         let args = match parse(&parser, argv) {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
-        let file = args.get_one("file").unwrap_or_default();
-        let path = Path::new(file);
-        if !path.is_file() {
-            return fail(parser.error(&format!("no such file: {file}")));
+        let title = args.get_one("title").unwrap_or_default();
+        if title.is_empty() {
+            return fail(parser.error("--title is required"));
         }
-        let content = read_file(path)?;
-        let filename = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
-        let artifact = self.artifacts.create(
-            &self.actor(),
-            &content,
-            args.get_one("title").map(str::to_owned),
-            filename,
-            args.get_one("group").map(str::to_owned),
-        )?;
-        println!("Created artifact {} ({})", artifact.id, artifact.filename);
+        let kind_name = args.get_one("kind").unwrap_or("document");
+        let file = args.get_one("file").filter(|file| !file.is_empty());
+        let worktree = match args.get_one("cwd").filter(|cwd| !cwd.is_empty()) {
+            Some(cwd) => PathBuf::from(cwd),
+            None => std::env::current_dir()?,
+        };
+        let (kind, source) = match kind_name {
+            "diff" => {
+                if file.is_some() {
+                    return fail(parser.error("a diff takes no file — pass --cwd and --base"));
+                }
+                let kind = Kind::Diff {
+                    worktree,
+                    base: args.get_one("base").unwrap_or_default().to_owned(),
+                };
+                (kind, None)
+            }
+            _ => {
+                let Some(file) = file else {
+                    return fail(parser.error(&format!("a {kind_name} is created from a file")));
+                };
+                let path = Path::new(file);
+                if !path.is_file() {
+                    return fail(parser.error(&format!("no such file: {file}")));
+                }
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let kind = if kind_name == "tour" {
+                    Kind::Tour {
+                        worktree,
+                        stops: name,
+                    }
+                } else {
+                    Kind::Document { file: name }
+                };
+                (kind, Some(path))
+            }
+        };
+        let artifact = self
+            .artifacts
+            .create(&self.actor(), kind, title.to_owned(), source)?;
+        println!(
+            "Created {} artifact {} ({})",
+            artifact.kind.name(),
+            artifact.id,
+            artifact.title
+        );
         Ok(0)
     }
 
-    fn group(&self, argv: &[String]) -> Result<i32, BoxError> {
-        let parser = sub_parser("group")
-            .arg(Arg::positional("id"))
-            .arg(
-                Arg::positional("group")
-                    .optional()
-                    .help("the explicit group to set"),
-            )
-            .arg(
-                Arg::option("--clear")
-                    .flag()
-                    .help("drop the override — back to derived"),
-            );
+    fn modify(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let parser = sub_parser("modify").arg(Arg::positional("id")).arg(
+            Arg::positional("file")
+                .optional()
+                .help("replace the document's or tour's file with this one"),
+        );
         let args = match parse(&parser, argv) {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
-        let clear = args.get_flag("clear");
-        let group = args.get_one("group");
-        if clear && group.is_some() {
-            return fail(parser.error("give a group or --clear, not both"));
-        }
-        if group == Some("") {
-            return fail(
-                parser.error("a group cannot be empty — use --clear to drop the override"),
-            );
-        }
         let artifact_id = self.resolve(&args)?;
-        if clear {
-            self.artifacts
-                .set_group(&artifact_id, &self.actor(), None)?;
-            println!("Cleared group override on artifact {artifact_id} (back to derived)");
-            return Ok(0);
+        let file = args.get_one("file").filter(|file| !file.is_empty());
+        if let Some(file) = file
+            && !Path::new(file).is_file()
+        {
+            return fail(parser.error(&format!("no such file: {file}")));
         }
-        if let Some(group) = group {
-            self.artifacts
-                .set_group(&artifact_id, &self.actor(), Some(group.to_owned()))?;
-            println!("Grouped artifact {artifact_id} (group={group})");
-            return Ok(0);
-        }
-        let artifact = self.artifacts.require(&artifact_id)?;
-        let (sessions, artifacts) = self.sessions_and_artifacts();
-        let resolver = GroupResolver::new(&sessions, &artifacts);
-        println!("own:      {}", artifact.group.as_deref().unwrap_or("—"));
-        println!("resolved: {}", resolver.artifact_group(&artifact));
+        let artifact = self
+            .artifacts
+            .modify(&artifact_id, &self.actor(), file.map(Path::new))?;
+        println!("Modified {} artifact {}", artifact.kind.name(), artifact.id);
         Ok(0)
     }
 
@@ -309,85 +331,48 @@ impl ArtifactCmd {
         let artifact = self
             .artifacts
             .set_archived(&artifact_id, &self.actor(), archived)?;
-        let title = artifact
-            .title
-            .as_deref()
-            .unwrap_or(artifact.filename.as_str());
         if archived {
-            println!("Archived artifact {artifact_id} ({title}) — hidden from prefix+a and ls");
+            println!(
+                "Archived artifact {artifact_id} ({}) — hidden from prefix+a and ls",
+                artifact.title
+            );
         } else {
-            println!("Unarchived artifact {artifact_id} ({title})");
+            println!("Unarchived artifact {artifact_id} ({})", artifact.title);
         }
         Ok(0)
     }
 
-    fn modify(&self, argv: &[String]) -> Result<i32, BoxError> {
-        let parser = sub_parser("modify")
-            .arg(Arg::positional("id"))
-            .arg(Arg::positional("file").optional())
-            .arg(Arg::option("--changes"));
+    fn close(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let parser = sub_parser("close").arg(Arg::positional("id"));
         let args = match parse(&parser, argv) {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
         let artifact_id = self.resolve(&args)?;
-        let before = self.artifacts.require(&artifact_id)?.latest_rev();
-        let changes = args.get_one("changes").map(str::to_owned);
-        let file = args.get_one("file");
-        let artifact = match file {
-            Some(file) => {
-                let path = Path::new(file);
-                if !path.is_file() {
-                    return fail(parser.error(&format!("no such file: {file}")));
-                }
-                let content = read_file(path)?;
-                self.artifacts
-                    .modify(&artifact_id, &self.actor(), &content, changes)?
-            }
-            None => self
-                .artifacts
-                .snapshot_current(&artifact_id, &self.actor(), changes)?,
-        };
-        if artifact.latest_rev() != before {
-            println!(
-                "Modified artifact {} → rev {}",
-                artifact.id,
-                artifact.latest_rev()
-            );
-            return Ok(0);
-        }
-        println!("{}", self.no_op_notice(&artifact, before, file.is_some())?);
+        let ran = self.artifacts.close_all(&artifact_id)?;
+        println!("Closed artifact {artifact_id}: {ran} close step(s) run");
         Ok(0)
     }
 
-    /// E3: a supplied-file no-op states the real comparison and flags a dirty working copy.
-    fn no_op_notice(
-        &self,
-        artifact: &Artifact,
-        last_rev: u64,
-        from_file: bool,
-    ) -> Result<String, BoxError> {
-        if !from_file {
-            return Ok(format!(
-                "No change — the working copy is identical to rev {last_rev}; nothing to snapshot."
-            ));
-        }
-        let mut notice = format!(
-            "No change — the supplied file is identical to rev {last_rev}; nothing snapshotted."
-        );
-        if self.artifacts.current_is_dirty(artifact)? {
-            notice.push_str(&format!(
-                " NOTE: the working copy still has unsnapshotted edits — run \
-                 `tx artifact modify {}` (no file) to snapshot them.",
-                artifact.id
-            ));
-        }
-        Ok(notice)
+    fn path(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let parser = sub_parser("path").arg(Arg::positional("id"));
+        let args = match parse(&parser, argv) {
+            Ok(args) => args,
+            Err(code) => return Ok(code),
+        };
+        let artifact_id = self.resolve(&args)?;
+        println!("{}", self.artifacts.dir(&artifact_id)?.display());
+        Ok(0)
     }
 
     fn ls(&self, argv: &[String]) -> Result<i32, BoxError> {
         let parser = sub_parser("ls")
-            .arg(Arg::option("--session").help("only artifacts this session created or touched"))
+            .arg(Arg::option("--session").help("only artifacts this session owns"))
+            .arg(
+                Arg::option("--kind")
+                    .choices(&KIND_CHOICES)
+                    .help("only artifacts of this kind"),
+            )
             .arg(
                 Arg::option("--archived")
                     .flag()
@@ -398,29 +383,22 @@ impl ArtifactCmd {
             Err(code) => return Ok(code),
         };
         let include_archived = args.get_flag("archived");
-        let artifacts: Vec<Artifact> = match args.get_one("session") {
-            Some(session) => self
-                .artifacts
-                .all()
-                .into_iter()
-                .filter(|artifact| {
-                    artifact
-                        .history()
-                        .iter()
-                        .any(|touch| touch.session_id == session)
-                })
-                .collect(),
-            None => self.artifacts.all(),
-        }
-        .into_iter()
-        .filter(|artifact| include_archived || !artifact.is_archived())
-        .collect();
-        let names = self.service.store().names_for(
-            artifacts
-                .iter()
-                .flat_map(|artifact| artifact.history())
-                .map(|touch| touch.session_id.as_str()),
-        );
+        let session = args.get_one("session");
+        let kind = args.get_one("kind");
+        let artifacts: Vec<Artifact> = self
+            .artifacts
+            .all()
+            .into_iter()
+            .filter(|artifact| {
+                (include_archived || !artifact.is_archived())
+                    && session.is_none_or(|session| artifact.owner == session)
+                    && kind.is_none_or(|kind| artifact.kind.name() == kind)
+            })
+            .collect();
+        let names = self
+            .service
+            .store()
+            .names_for(artifacts.iter().map(|artifact| artifact.owner.as_str()));
         println!("{}", render_artifacts(&artifacts, &names, events::now()));
         Ok(0)
     }
@@ -432,82 +410,54 @@ impl ArtifactCmd {
             Err(code) => return Ok(code),
         };
         let artifact = self.artifacts.require(&self.resolve(&args)?)?;
-        let dirty = self.artifacts.current_is_dirty(&artifact)?;
-        let names = self.service.store().names_for(
-            artifact
-                .history()
-                .iter()
-                .map(|touch| touch.session_id.as_str()),
-        );
+        let names = self
+            .service
+            .store()
+            .names_for(std::iter::once(artifact.owner.as_str()));
         let (sessions, artifacts) = self.sessions_and_artifacts();
         let resolved = GroupResolver::new(&sessions, &artifacts).artifact_group(&artifact);
+        let worktree_present = artifact.kind.worktree().map(Path::is_dir);
         println!(
             "{}",
-            render_artifact_show(&artifact, dirty, &names, events::now(), Some(&resolved))
+            render_artifact_show(
+                &artifact,
+                &names,
+                events::now(),
+                &resolved,
+                worktree_present
+            )
         );
-        Ok(0)
-    }
-
-    fn diff(&self, argv: &[String]) -> Result<i32, BoxError> {
-        let parser = sub_parser("diff")
-            .arg(Arg::positional("id"))
-            .arg(Arg::positional("rev_a").optional().int())
-            .arg(Arg::positional("rev_b").optional().int());
-        let args = match parse(&parser, argv) {
-            Ok(args) => args,
-            Err(code) => return Ok(code),
-        };
-        let revs = match (args.get_int("rev_a"), args.get_int("rev_b")) {
-            (Some(a), Some(b)) => Some((a, b)),
-            (None, None) => None,
-            _ => return fail(parser.error("give both revs or neither (default: the last two)")),
-        };
-        let artifact_id = self.resolve(&args)?;
-        let out = self.artifacts.diff(&artifact_id, revs)?;
-        if out.is_empty() {
-            println!("(no differences)");
-        } else {
-            print!("{out}");
-        }
         Ok(0)
     }
 
     fn open(&self, argv: &[String]) -> Result<i32, BoxError> {
-        let parser = sub_parser("open")
-            .arg(Arg::positional("id"))
-            .arg(Arg::option("--tag").help("tags for the nvim view (overrides the invoker's tags)"))
-            .arg(
-                Arg::option("--cwd")
-                    .help("working directory for the view (default: the artifact's dir)"),
-            );
+        let parser = sub_parser("open").arg(Arg::positional("id")).arg(
+            Arg::option("--tag").help("tags for the nvim view (overrides the invoker's tags)"),
+        );
         let args = match parse(&parser, argv) {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
         let artifact_id = self.resolve(&args)?;
         let artifact = self.artifacts.require(&artifact_id)?;
-        let content_path = self.artifacts.content_path(&artifact_id)?;
-        let content_path = content_path.to_string_lossy();
         let tags = self.open_tags(args.get_one("tag"))?;
         if tags.is_empty() {
             return fail(parser.error("--tag requires at least one value"));
         }
-        let cwd = match args.get_one("cwd").filter(|cwd| !cwd.is_empty()) {
-            Some(cwd) => cwd.to_owned(),
-            None => self
-                .artifacts
-                .files()
-                .content_dir(&artifact)
-                .to_string_lossy()
-                .into_owned(),
-        };
         let name = view_name(&self.service, &artifact)?;
-        let spec = SpawnSpec::for_nvim(name, tags, cwd, None, Some(&content_path));
+        let Opened { spec, cleanup } =
+            self.artifacts
+                .open(&artifact_id, &self.actor(), name, tags)?;
+        let cwd = spec.cwd.clone();
         let session = self.service.spawn_nvim(spec)?;
         self.service.bind_artifact(&session.id, &artifact_id)?;
-        self.artifacts.opened(&artifact_id, &self.actor())?;
+        if let Some(cleanup) = cleanup {
+            self.artifacts
+                .record_cleanup(&artifact_id, &session.id, cleanup)?;
+        }
         println!(
-            "Opened artifact {artifact_id} in nvim view '{}' ({content_path})",
+            "Opened {} artifact {artifact_id} in nvim view '{}' (cwd {cwd})",
+            artifact.kind.name(),
             session.name
         );
         Ok(0)
@@ -529,19 +479,29 @@ impl ArtifactCmd {
     }
 
     fn doctor(&self, argv: &[String]) -> Result<i32, BoxError> {
-        let parser = sub_parser("doctor").arg(Arg::option("--repair").flag().help(
-            "remove orphan rev files so a retried modify can claim the slot (run when quiescent)",
-        ));
+        let parser = sub_parser("doctor").arg(
+            Arg::option("--repair")
+                .flag()
+                .help("run the close steps of views that have ended"),
+        );
         let args = match parse(&parser, argv) {
             Ok(args) => args,
             Err(code) => return Ok(code),
         };
+        let view_is_alive = |view: &str| {
+            self.service
+                .store()
+                .load(view)
+                .ok()
+                .flatten()
+                .is_some_and(|session| session.is_alive())
+        };
         if args.get_flag("repair") {
-            for line in self.artifacts.repair_orphans()? {
+            for line in self.artifacts.repair(&view_is_alive)? {
                 println!("  {line}");
             }
         }
-        let problems = self.artifacts.doctor()?;
+        let problems = self.artifacts.doctor(&view_is_alive)?;
         if problems.is_empty() {
             println!("artifacts: clean");
             return Ok(0);
@@ -552,10 +512,6 @@ impl ArtifactCmd {
         println!("artifacts: {} problem(s)", problems.len());
         Ok(1)
     }
-}
-
-fn read_file(path: &Path) -> Result<Vec<u8>, BoxError> {
-    std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()).into())
 }
 
 // ----- tx sync --------------------------------------------------------------------------------

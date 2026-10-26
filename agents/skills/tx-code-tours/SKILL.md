@@ -1,11 +1,12 @@
 ---
 name: tx-code-tours
-description: Use when the user asks for a tour or walkthrough of code. Investigate the code, then annotate an operator's live nvim with session-local vim.diagnostic notes and ordered quickfix navigation. Never offer a tour unprompted.
+description: Use when the user asks for a tour or walkthrough of code. Investigate the code, then annotate nvim with session-local vim.diagnostic notes and ordered quickfix navigation — as a tour artifact the user opens, or applied into an operator's live nvim. Never offer a tour unprompted.
 ---
 
 # Code tours with nvim diagnostics
 
-Show reasoning on the code using the bundled `scripts/apply_tour.py` runtime. Do not inline the runtime or use the JSON/`:TourApply` workflow.
+Show reasoning on the code using the shipped `tx-tour` runtime (`nvim/lua/tx-tour.lua` in the
+tx-ide nvim config). Do not inline the runtime or use the JSON/`:TourApply` workflow.
 
 ## Build the tour
 
@@ -27,9 +28,22 @@ Its result controls every downstream match.]],
 }
 ```
 
-## Apply the tour
+## Deliver the tour as an artifact
 
-Use an existing nvim companion. If none exists, read the `tx-sessions` skill and create one through `tx`. Never create or mutate sessions with raw tmux.
+The usual way: a tour artifact the user opens whenever they want, in a bound nvim view:
+
+```bash
+tx artifact create /tmp/code-tour/stops.lua --kind tour --title "<topic> tour" --cwd <worktree>
+tx artifact open <id>
+```
+
+The view starts nvim in the worktree at stop 1. To revise the tour, edit the stops file under
+`tx artifact path <id>` in place and run `tx artifact modify <id>`.
+
+## Or apply it into a running nvim
+
+When the operator already has an nvim companion open, apply the tour there over RPC instead.
+If none exists, read the `tx-sessions` skill and create one through `tx`. Never create or mutate sessions with raw tmux.
 
 Resolve the companion's live tx record UUID, then inspect its pane read-only to find the nvim socket:
 
@@ -45,6 +59,8 @@ Run the bundled helper with the socket and stop-data file:
 python3 <skill-directory>/scripts/apply_tour.py "$socket_path" /tmp/code-tour/stops.lua
 ```
 
-Apply it yourself. It opens at stop 1. Tell the operator: `]n` / `[n` navigate, `<leader>cn` opens the note. `<leader>cN` restarts, `<leader>cl` lists stops, and `:TourClear` clears the tour.
+## Navigating
+
+Either way it opens at stop 1. Tell the operator: `]n` / `[n` navigate, `<leader>cn` opens the note. `<leader>cN` restarts, `<leader>cl` lists stops, and `:TourClear` clears the tour.
 
 Keep all effects session-local. Never write repository files through RPC or globally reconfigure LSP diagnostics. Tours disappear on nvim restart.

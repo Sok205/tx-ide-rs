@@ -6,14 +6,13 @@
 //!                      ?? the bound artifact's group (nvim views from `tx artifact open`)
 //!                      ?? tags[0]
 //!                      ?? session.name
-//! resolved(artifact) = artifact.group
-//!                      ?? resolved(creator = history[0].session_id)
-//!                      ?? newest surviving toucher's resolved group
+//! resolved(artifact) = resolved(owner)
 //!                      ?? "ungrouped"
 //! ```
 //!
-//! The two cascades recurse into each other; the cycle through artifacts is guarded by the set of
-//! artifact ids under resolution. Build one resolver per read over full store snapshots.
+//! The two cascades recurse into each other (a view → its artifact → the owner → …); the cycle
+//! through artifacts is guarded by the set of artifact ids under resolution. Build one resolver
+//! per read over full store snapshots.
 
 use std::collections::{HashMap, HashSet};
 
@@ -113,28 +112,19 @@ impl<'a> GroupResolver<'a> {
         }
     }
 
-    /// Own override, else the creator's full resolution, else the newest surviving toucher's.
+    /// The owner's full resolution; none when the owner was the bare terminal or is unknown.
     fn artifact_override(
         &self,
         artifact: &'a Artifact,
         resolving: &HashSet<&'a str>,
     ) -> Option<String> {
-        if let Some(group) = set(&artifact.group) {
-            return Some(group.to_owned());
+        if artifact.owner == USER_ACTOR {
+            return None;
         }
+        let owner = self.sessions_by_id.get(artifact.owner.as_str())?;
         let mut resolving = resolving.clone();
         resolving.insert(&artifact.id);
-        let history = artifact.history();
-        let creator_first = history.iter().take(1).chain(history.iter().skip(1).rev());
-        for touch in creator_first {
-            if touch.session_id == USER_ACTOR {
-                continue;
-            }
-            if let Some(author) = self.sessions_by_id.get(touch.session_id.as_str()) {
-                return Some(self.session_group_guarded(author, &resolving));
-            }
-        }
-        None
+        Some(self.session_group_guarded(owner, &resolving))
     }
 
     /// A `parent` value as a record: by id, else by display name (legacy shape). Name matches are
@@ -209,15 +199,11 @@ mod tests {
         Session::from_value(&record).unwrap()
     }
 
-    fn artifact(id: &str, group: Option<&str>, authors: &[&str]) -> Artifact {
-        let history: Vec<Value> = authors
-            .iter()
-            .enumerate()
-            .map(|(rev, author)| json!({"session_id": author, "at": 1000.0, "rev": rev, "changes": null}))
-            .collect();
+    fn artifact(id: &str, owner: &str) -> Artifact {
         Artifact::from_value(&json!({
-            "artifact_schema_version": 3, "id": id, "title": null, "filename": "f.md",
-            "created_at": 1000.0, "group": group, "archived_at": null, "history": history,
+            "artifact_schema_version": 4, "id": id, "kind": "document", "title": "f.md",
+            "owner": owner, "created_at": 1000.0, "modified_at": 1000.0, "archived_at": null,
+            "document": {"file": "f.md"},
         }))
         .unwrap()
     }
@@ -298,17 +284,17 @@ mod tests {
     #[test]
     fn artifact_cascade_and_recursion_guard() {
         let sessions = fixture_g(None, None);
-        let resolve = |authors: &[&str], group: Option<&str>| {
-            let artifacts = [artifact("art", group, authors)];
+        let resolve = |owner: &str| {
+            let artifacts = [artifact("art", owner)];
             GroupResolver::new(&sessions, &artifacts).artifact_group(&artifacts[0])
         };
-        assert_eq!(resolve(&["user", "c1", "b1"], None), "feat-x");
-        assert_eq!(resolve(&["user", "gone", "user"], None), UNGROUPED);
-        assert_eq!(resolve(&["c1", "b1"], None), "child");
-        assert_eq!(resolve(&["user", "b1"], Some("g")), "g");
+        assert_eq!(resolve("b1"), "feat-x");
+        assert_eq!(resolve("user"), UNGROUPED);
+        assert_eq!(resolve("gone"), UNGROUPED);
+        assert_eq!(resolve("c1"), "child");
 
         let sessions = [view("v1", "view", "art3")];
-        let artifacts = [artifact("art3", None, &["v1"])];
+        let artifacts = [artifact("art3", "v1")];
         let resolver = GroupResolver::new(&sessions, &artifacts);
         assert_eq!(resolver.session_group(&sessions[0]), "view");
         assert_eq!(resolver.artifact_group(&artifacts[0]), "view");

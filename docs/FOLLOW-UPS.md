@@ -3,7 +3,14 @@
 - messages.rs hand-writes Python's regexes and `datetime.fromisoformat` (no regex/chrono dep):
   1.3k lines vs 339 in the reference. Revisit with `regex` / `jiff` once parity holds.
 - render.rs approximates `unicodedata` width / `str.isprintable` with hand tables.
-- artifact.rs rejects float revs such as `1.0`, which Python accepted (narrowing on corrupt data).
+- Artifact schema v4 (`document` / `diff` / `tour`, single owner, no revisions, `archived_at`)
+  replaces the reference's v2 store and this port's own v3 (v2 + `archived_at`); the port-tests
+  T-ART area is retired (PARITY-CONTRACT.md, "Deliberately not ported"). The `argparse_diff`
+  specs for `tx artifact` describe the v4 parsers, which the Python reference does not have.
+- A diff artifact whose worktree is gone needs a sibling checkout of the repository (tx keeps a
+  repository's worktrees side by side) to rebuild a temp worktree at its base; with none, the
+  patch opens as text. Recording the repository's common git dir at create time would remove
+  that dependency.
 - argparse `int()` accepts ASCII digits / i64 only (Python: any Unicode digit, unbounded).
 - Kit fixes to propose upstream: see the end of BASELINE.md.
 - Installer scripts call `tx` hidden verbs through a scratch `TX_IDE_HOME` because the core creates
