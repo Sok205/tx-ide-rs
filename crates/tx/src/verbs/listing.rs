@@ -21,9 +21,11 @@ use crate::engines::EngineRegistry;
 use crate::grouping::GroupResolver;
 use crate::palette;
 use crate::picker_filter::{self, HIDE_FILE_ENV};
+use crate::picker_keys::{self, DIGITS_FILE_ENV, KeyState, NORMAL_KEYS};
 use crate::pyjson::dumps_pretty;
 use crate::render::{
-    LOCATION_W, ROLE_W, picker_display_rows, picker_namew, render_chats, render_history, render_ls,
+    LOCATION_W, PICKER_NUMBER_W, ROLE_W, picker_namew, picker_numbered_rows, render_chats,
+    render_history, render_ls,
 };
 use crate::service::SessionService;
 use crate::session::{Role, Session, State};
@@ -134,6 +136,7 @@ impl Component for ListingVerbs {
         table.register(ctx, Visibility::Hidden, Roles(d()));
         table.register(ctx, Visibility::Hidden, RolesPanel(d()));
         table.register(ctx, Visibility::Hidden, ToggleHide(d()));
+        table.register(ctx, Visibility::Hidden, PickerKey(d()));
         Ok(())
     }
 }
@@ -186,7 +189,7 @@ impl Command for List {
         let live = visible_sessions(self.0.service.live_sessions()?, &hidden);
         println!(
             "{}",
-            picker_display_rows(&live, env_namew(&self.0.env), now())
+            picker_numbered_rows(&live, env_namew(&self.0.env), now())
         );
         Ok(0)
     }
@@ -581,11 +584,20 @@ impl Command for Attach {
             .map(|session| session.name.chars().count() as i64)
             .max()
             .unwrap_or(0);
-        let namew = picker_namew(detect_term_cols(&self.0.env) as i64, longest);
+        // The row-number column comes out of the NAME headroom.
+        let cols = detect_term_cols(&self.0.env) as i64 - PICKER_NUMBER_W as i64 - 1;
+        let namew = picker_namew(cols, longest);
 
-        // The two-press Ctrl-D kill's arm file; removed (drop) whenever we leave.
+        // The two-press `d` kill's arm file; removed (drop) whenever we leave.
         let arm_file = tempfile::Builder::new()
             .prefix("tx-kill-arm.")
+            .rand_bytes(8)
+            .tempfile_in(temp_dir(&self.0.env))?
+            .into_temp_path();
+        // Normal mode's digit buffer (`picker_keys`); removed on drop, which also ends the
+        // auto-reload loop.
+        let digits_file = tempfile::Builder::new()
+            .prefix("tx-picker-digits.")
             .rand_bytes(8)
             .tempfile_in(temp_dir(&self.0.env))?
             .into_temp_path();
@@ -602,6 +614,7 @@ impl Command for Attach {
             opts: self.fzf_opts(namew, query, &picker_filter::read_hidden(&hide_file)?),
             namew,
             arm_file: &arm_file,
+            digits_file: &digits_file,
             hide_file: &hide_file,
         };
         picker.run(args.get_flag("jump"))
@@ -645,9 +658,10 @@ impl Attach {
         let roles_panel = format!("{bin_tx} _roles-panel");
         let chips = format!("{bin_tx} _roles --chips");
         let header_cols = format!(
-            "{:<namew$}   {:<LOCATION_W$} {:<7} {:<6} {:<ROLE_W$} TAGS",
-            "NAME", "LOCATION", "STARTED", "IDLE", "ROLE"
+            "{:>PICKER_NUMBER_W$} {:<namew$}   {:<LOCATION_W$} {:<7} {:<6} {:<ROLE_W$} TAGS",
+            "#", "NAME", "LOCATION", "STARTED", "IDLE", "ROLE"
         );
+        let picker_key = |key: &str| format!("transform({bin_tx} _picker-key {key})");
         let focus_cmd = format!(
             "printf '{ACCENT_ANSI}{BOLD}%s{RESET} {FG_ANSI}{BOLD}%s{RESET}\\n' {{1}} {{2}}; {chips}; \
              printf '%s' '{header_cols}'"
@@ -661,7 +675,23 @@ impl Attach {
              bg+:{SELECTION_BG}:regular,hl:{ACCENT_HEX},hl+:{ACCENT_HEX},\
              header:{DIM_FG_HEX},footer:{DIM_FG_HEX},prompt:{DIM_FG_HEX},query:{FG_HEX}"
         );
-        [
+        // Normal mode unless a query was passed in: hidden input would hide it.
+        let (start_mode, footer) = if query.is_empty() {
+            ("hide-input".to_owned(), picker_keys::normal_footer("", ""))
+        } else {
+            (
+                format!("unbind({NORMAL_KEYS})"),
+                picker_keys::search_footer(),
+            )
+        };
+        let enter_search = format!(
+            "show-input+unbind({NORMAL_KEYS})+unbind(y,n)+execute-silent(: >\"$TX_ARM_FILE\"; : \
+             >\"${DIGITS_FILE_ENV}\")+transform-header({focus_cmd})+change-footer:{}",
+            picker_keys::search_footer()
+        );
+        let edit_tag_bind =
+            format!("execute(tmux display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}");
+        let mut opts: Vec<String> = [
             "fzf".to_owned(),
             "--exact".to_owned(),
             "--ansi".to_owned(),
@@ -672,22 +702,27 @@ impl Attach {
             "--with-nth=5..".to_owned(),
             "--listen".to_owned(),
             "--track".to_owned(),
+            // The binds' shell snippets are POSIX; don't inherit zsh's glob errors from $SHELL.
+            "--with-shell=sh -c".to_owned(),
             format!("--color={color}"),
             format!("--header={}\n{header_cols}", picker_filter::chips_line(hidden)),
+            format!("--footer={footer}"),
             format!("--query={query}"),
+            // The auto-reload skips a tick while a row number is being typed or jumped to, so
+            // the rows cannot renumber under the user.
             format!(
-                "--bind=start:execute-silent(( while sleep 1; do curl -fsS -XPOST \
-                 \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || exit 0; done ) \
-                 &)+unbind(y,n)"
+                "--bind=start:execute-silent(( while sleep 1; do [ -s \"${DIGITS_FILE_ENV}\" ] || \
+                 curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || \
+                 exit 0; done ) &)+unbind(y,n)+unbind(result)+{start_mode}"
             ),
             format!("--bind=ctrl-r:{reload}"),
+            format!("--bind=r:{reload}"),
             format!(
                 "--bind=focus:transform-header({focus_cmd})+execute-silent(: \
                  >\"$TX_ARM_FILE\")+unbind(y,n)"
             ),
-            format!(
-                "--bind=ctrl-t:execute(tmux display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}"
-            ),
+            format!("--bind=ctrl-t:{edit_tag_bind}"),
+            format!("--bind=t:{edit_tag_bind}"),
             // The roles panel runs in the picker's own terminal (fzf hands it over for the
             // duration): a tmux popup cannot nest inside the prefix+t picker popup.
             format!("--bind=tab:execute({roles_panel})+{reload}+transform-header({focus_cmd})"),
@@ -696,7 +731,7 @@ impl Attach {
                  \"$FZF_CLICK_HEADER_WORD\")+{reload}+transform-header({focus_cmd})"
             ),
             format!(
-                "--bind=ctrl-d:execute-silent(printf '%s' {{1}} \
+                "--bind=d:execute-silent(printf '%s' {{1}} \
                  >\"$TX_ARM_FILE\")+transform-header({arm_cmd})+rebind(y,n)"
             ),
             format!(
@@ -707,8 +742,19 @@ impl Attach {
                 "--bind=n:transform-header({focus_cmd})+execute-silent(: \
                  >\"$TX_ARM_FILE\")+unbind(y,n)"
             ),
+            "--bind=j:down,k:up,g:first,G:last,q:abort".to_owned(),
+            "--bind=ctrl-d:half-page-down,ctrl-u:half-page-up".to_owned(),
+            format!("--bind=/:{enter_search}"),
+            format!("--bind=i:{enter_search}"),
+            format!("--bind=esc:{}", picker_key("esc")),
+            format!("--bind=enter:{}", picker_key("enter")),
+            format!("--bind=result:{}", picker_key("result")),
         ]
-        .into()
+        .into();
+        opts.extend(
+            (0..=9).map(|digit| format!("--bind={digit}:{}", picker_key(&digit.to_string()))),
+        );
+        opts
     }
 }
 
@@ -718,6 +764,7 @@ struct Picker<'a> {
     opts: Vec<String>,
     namew: i64,
     arm_file: &'a Path,
+    digits_file: &'a Path,
     hide_file: &'a Path,
 }
 
@@ -754,12 +801,13 @@ impl Picker<'_> {
     fn select(&self) -> Result<Option<String>, BoxError> {
         let hidden = picker_filter::read_hidden(self.hide_file)?;
         let live = visible_sessions(self.deps.service.live_sessions()?, &hidden);
-        let feed = picker_display_rows(&live, self.namew, now());
+        let feed = picker_numbered_rows(&live, self.namew, now());
         let _ = std::io::stdout().flush();
         let mut child = Process::new(&self.opts[0])
             .args(&self.opts[1..])
             .env("NAMEW", self.namew.to_string())
             .env("TX_ARM_FILE", self.arm_file)
+            .env(DIGITS_FILE_ENV, self.digits_file)
             .env(HIDE_FILE_ENV, self.hide_file)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1042,6 +1090,51 @@ impl Command for ToggleHide {
         } else if let Ok(role) = word.parse::<Role>() {
             picker_filter::toggle(&path, role)?;
         }
+        Ok(0)
+    }
+}
+
+struct PickerKey(Rc<Deps>);
+
+impl Command for PickerKey {
+    fn name(&self) -> &'static str {
+        "_picker-key"
+    }
+    fn summary(&self) -> &'static str {
+        "Internal: the picker's normal-mode key handler (esc, enter, result, 0-9): prints fzf actions."
+    }
+    fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let env = &self.0.env;
+        let path = match env.var(DIGITS_FILE_ENV).filter(|path| !path.is_empty()) {
+            Some(path) => PathBuf::from(path),
+            None => {
+                return Err(format!(
+                    "{DIGITS_FILE_ENV} is not set (run from the tx attach picker)"
+                )
+                .into());
+            }
+        };
+        let key = argv.first().map(String::as_str).unwrap_or_default();
+        let digits = std::fs::read_to_string(&path)?;
+        let state = KeyState {
+            searching: env.var("FZF_INPUT_STATE") == Some("enabled"),
+            query: env.var("FZF_QUERY").unwrap_or_default(),
+            matched: env
+                .var("FZF_MATCH_COUNT")
+                .and_then(|count| count.parse().ok())
+                .unwrap_or_default(),
+            total: env
+                .var("FZF_TOTAL_COUNT")
+                .and_then(|count| count.parse().ok())
+                .unwrap_or_default(),
+            digits: digits.trim(),
+        };
+        let Some(reply) = picker_keys::press(key, &state) else {
+            eprintln!("tx _picker-key: unknown key '{key}'");
+            return Ok(2);
+        };
+        std::fs::write(&path, reply.digits)?;
+        println!("{}", reply.actions);
         Ok(0)
     }
 }

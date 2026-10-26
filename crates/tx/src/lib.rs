@@ -17,6 +17,7 @@ pub mod messages;
 pub mod migrations;
 pub mod palette;
 pub mod picker_filter;
+pub mod picker_keys;
 pub mod playground;
 pub mod plugins;
 pub mod pyjson;
