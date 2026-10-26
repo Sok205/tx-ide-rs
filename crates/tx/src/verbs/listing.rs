@@ -797,6 +797,10 @@ impl Picker<'_> {
                 Some(selection) => (true, selection),
                 None => (false, output.as_str()),
             };
+            // p on an empty list prints only the popup line: nothing picked, as with Enter.
+            if selection.trim().is_empty() {
+                return Ok(0);
+            }
             let fields: Vec<&str> = selection.trim_end_matches('\n').split('\t').collect();
             let name = fields[0];
             // Field 4 is the row's tmux target (D7); fall back to name resolution.
