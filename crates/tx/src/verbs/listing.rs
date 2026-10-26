@@ -24,8 +24,8 @@ use crate::picker_filter::{self, HIDE_FILE_ENV};
 use crate::picker_keys::{self, DIGITS_FILE_ENV, KeyState, NORMAL_PROMPT, SEARCH_PROMPT};
 use crate::pyjson::dumps_pretty;
 use crate::render::{
-    LOCATION_W, PICKER_NUMBER_W, ROLE_W, picker_namew, picker_numbered_rows, render_chats,
-    render_history, render_ls,
+    LOCATION_W, PICKER_NUMBER_W, ROLE_W, picker_matches, picker_namew, picker_numbered_rows,
+    render_chats, render_history, render_ls,
 };
 use crate::service::SessionService;
 use crate::session::{Role, Session, State};
@@ -181,18 +181,26 @@ impl Command for List {
         "_list"
     }
     fn summary(&self) -> &'static str {
-        "Internal: ANSI fzf picker feed (the initial paint + each reload-sync of `tx attach`)."
+        "Internal: ANSI fzf picker feed, filtered by QUERY (each reload of `tx attach`)."
     }
-    fn run(&self, _argv: &[String]) -> Result<i32, BoxError> {
+    fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         // Lenient on argv: the picker is the only caller.
         let hidden = hidden_roles(&self.0.env)?;
         let live = visible_sessions(self.0.service.live_sessions()?, &hidden);
-        println!(
-            "{}",
-            picker_numbered_rows(&live, env_namew(&self.0.env), now())
-        );
+        let query = argv.first().map(String::as_str).unwrap_or_default();
+        println!("{}", picker_feed(&live, query, env_namew(&self.0.env)));
         Ok(0)
     }
+}
+
+/// The sessions matching `query`, numbered 1..n.
+fn picker_feed(sessions: &[Session], query: &str, namew: i64) -> String {
+    let matching: Vec<Session> = sessions
+        .iter()
+        .filter(|session| picker_matches(session, query))
+        .cloned()
+        .collect();
+    picker_numbered_rows(&matching, namew, now())
 }
 
 struct Show(Rc<Deps>);
@@ -612,6 +620,7 @@ impl Command for Attach {
         let picker = Picker {
             deps: &self.0,
             opts: self.fzf_opts(namew, query, &picker_filter::read_hidden(&hide_file)?),
+            query,
             namew,
             arm_file: &arm_file,
             digits_file: &digits_file,
@@ -651,7 +660,10 @@ impl Attach {
         let namew = namew.max(0) as usize;
         let bin_tx = self.0.bin_tx();
         let bin_tx = bin_tx.display();
-        let reload = format!("reload-sync({bin_tx} _list)");
+        let reload = format!("reload-sync({bin_tx} _list {{q}})");
+        // The auto-reload POSTs its action to fzf, which fills in `{q}` when it runs it; the
+        // `""` keeps fzf from filling it in when it starts the loop.
+        let posted_reload = format!("reload-sync({bin_tx} _list {{\"\"q}})");
         // `display-popup` runs in the server's environment: bake the home into the command.
         let home = self.0.home.root().display();
         let edit_tag = format!("env TX_IDE_HOME={home} {bin_tx} _edit-tag {{1}}");
@@ -695,7 +707,8 @@ impl Attach {
             format!("execute(tmux display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}");
         let mut opts: Vec<String> = [
             "fzf".to_owned(),
-            "--exact".to_owned(),
+            // tx filters and renumbers the rows itself (`_list QUERY`).
+            "--disabled".to_owned(),
             "--ansi".to_owned(),
             format!("--prompt={prompt}"),
             "--height=100%".to_owned(),
@@ -714,9 +727,10 @@ impl Attach {
             // the rows cannot renumber under the user.
             format!(
                 "--bind=start:execute-silent(( while sleep 1; do [ -s \"${DIGITS_FILE_ENV}\" ] || \
-                 curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || \
-                 exit 0; done ) &)+unbind(result){start_mode}"
+                 curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{posted_reload}\" >/dev/null 2>&1 \
+                 || exit 0; done ) &){start_mode}"
             ),
+            format!("--bind=change:reload({bin_tx} _list {{q}})+first"),
             format!("--bind=ctrl-r:{reload}"),
             format!("--bind=r:{reload}"),
             format!(
@@ -751,7 +765,6 @@ impl Attach {
             format!("--bind=i:{enter_search}"),
             format!("--bind=esc:{}", picker_key("esc")),
             format!("--bind=enter:{}", picker_key("enter")),
-            format!("--bind=result:{}", picker_key("result")),
         ]
         .into();
         opts.extend(
@@ -771,6 +784,7 @@ impl Attach {
 struct Picker<'a> {
     deps: &'a Deps,
     opts: Vec<String>,
+    query: &'a str,
     namew: i64,
     arm_file: &'a Path,
     digits_file: &'a Path,
@@ -810,7 +824,7 @@ impl Picker<'_> {
     fn select(&self) -> Result<Option<String>, BoxError> {
         let hidden = picker_filter::read_hidden(self.hide_file)?;
         let live = visible_sessions(self.deps.service.live_sessions()?, &hidden);
-        let feed = picker_numbered_rows(&live, self.namew, now());
+        let feed = picker_feed(&live, self.query, self.namew);
         let _ = std::io::stdout().flush();
         let mut child = Process::new(&self.opts[0])
             .args(&self.opts[1..])
@@ -1110,7 +1124,7 @@ impl Command for PickerKey {
         "_picker-key"
     }
     fn summary(&self) -> &'static str {
-        "Internal: the picker's normal-mode key handler (esc, enter, result, 0-9): prints fzf actions."
+        "Internal: the picker's normal-mode key handler (esc, enter, 0-9): prints fzf actions."
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let env = &self.0.env;
@@ -1127,10 +1141,6 @@ impl Command for PickerKey {
         let digits = std::fs::read_to_string(&path)?;
         let state = KeyState {
             searching: env.var("FZF_PROMPT") == Some(SEARCH_PROMPT),
-            matched: env
-                .var("FZF_MATCH_COUNT")
-                .and_then(|count| count.parse().ok())
-                .unwrap_or_default(),
             total: env
                 .var("FZF_TOTAL_COUNT")
                 .and_then(|count| count.parse().ok())
