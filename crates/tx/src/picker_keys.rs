@@ -1,30 +1,19 @@
-//! The `tx attach` picker's vim-style normal mode: the keys it claims, its prompt and footer, and
-//! the fzf actions `tx _picker-key` hands back for the keys that need state (Esc, Enter, the
-//! digits).
-//!
-//! The input line stays visible in both modes. Normal mode binds its own keys (`j`, `k`, the
-//! digits, ...) and every other printable key to `ignore`, so nothing types into the query; `i`
-//! or `/` unbinds them all and the query takes keys again. The prompt tells the modes apart, for
-//! the user and for the Esc handler. tx filters the rows itself and numbers the matches 1..n, so
-//! row N is fzf's `pos(N)`. A digit buffer lives in the file `$TX_DIGITS_FILE`: a number commits
-//! as soon as no further digit could extend it to a row, or on Enter.
+//! The `tx attach` picker's vim-style normal mode and the stateful key handler behind
+//! `tx _picker-key` (Esc, Enter, the row-number digits).
 
 use crate::palette::{ACCENT_ANSI, BOLD, RESET};
 
-/// Env var naming the picker's digit-buffer file: the row number being typed. The picker's
-/// auto-reload pauses while it is non-empty.
+/// The digit buffer; the picker's auto-reload pauses while it is non-empty.
 pub const DIGITS_FILE_ENV: &str = "TX_DIGITS_FILE";
 
 pub const NORMAL_PROMPT: &str = "  ❯ ";
 pub const SEARCH_PROMPT: &str = "  / ";
 
-/// The keys normal mode binds to its own actions.
 const ACTION_KEYS: [&str; 24] = [
     "j", "k", "g", "G", "ctrl-d", "ctrl-u", "/", "i", "d", "t", "r", "q", "y", "n", "0", "1", "2",
     "3", "4", "5", "6", "7", "8", "9",
 ];
 
-/// The printable keys normal mode swallows (bound to `ignore`).
 pub fn ignored_keys() -> Vec<String> {
     (b'!'..=b'~')
         .map(|byte| char::from(byte).to_string())
@@ -33,8 +22,7 @@ pub fn ignored_keys() -> Vec<String> {
         .collect()
 }
 
-/// `unbind` or `rebind` of every normal-mode key. `(` and `)` go in a `[...]` argument, since
-/// they would end a `(...)` one.
+/// `(` and `)` go in a `[...]` argument: they would end a `(...)` one.
 pub fn toggle_normal_keys(action: &str) -> String {
     let (parens, rest): (Vec<String>, Vec<String>) = ACTION_KEYS
         .iter()
@@ -44,15 +32,12 @@ pub fn toggle_normal_keys(action: &str) -> String {
     format!("{action}({})+{action}[{}]", rest.join(","), parens.join(","))
 }
 
-/// What fzf reports when a key handler runs (`$FZF_PROMPT`, `$FZF_TOTAL_COUNT`), plus the
-/// digit buffer.
 pub struct KeyState<'a> {
     pub searching: bool,
     pub total: usize,
     pub digits: &'a str,
 }
 
-/// The reply to one key: the digit buffer to store, and the fzf actions to run.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Reply {
     pub digits: String,
@@ -74,7 +59,6 @@ pub fn search_footer() -> String {
     format!("{ACCENT_ANSI}{BOLD} SEARCH{RESET}  esc normal mode · enter open")
 }
 
-/// The actions that leave search mode, keeping the query.
 fn enter_normal() -> String {
     format!(
         "change-prompt({NORMAL_PROMPT})+{}+change-footer:{}",
@@ -83,7 +67,6 @@ fn enter_normal() -> String {
     )
 }
 
-/// The fzf actions for `key` (`esc`, `enter`, or a digit); `None` for any other key.
 pub fn press(key: &str, state: &KeyState<'_>) -> Option<Reply> {
     let cleared = |actions: String| Reply {
         digits: String::new(),

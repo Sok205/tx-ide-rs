@@ -193,7 +193,6 @@ impl Command for List {
     }
 }
 
-/// The sessions matching `query`, numbered 1..n.
 fn picker_feed(sessions: &[Session], query: &str, namew: i64) -> String {
     let matching: Vec<Session> = sessions
         .iter()
@@ -592,7 +591,6 @@ impl Command for Attach {
             .map(|session| session.name.chars().count() as i64)
             .max()
             .unwrap_or(0);
-        // The row-number column comes out of the NAME headroom.
         let cols = detect_term_cols(&self.0.env) as i64 - PICKER_NUMBER_W as i64 - 1;
         let namew = picker_namew(cols, longest);
 
@@ -602,8 +600,6 @@ impl Command for Attach {
             .rand_bytes(8)
             .tempfile_in(temp_dir(&self.0.env))?
             .into_temp_path();
-        // Normal mode's digit buffer (`picker_keys`); removed on drop, which also ends the
-        // auto-reload loop.
         let digits_file = tempfile::Builder::new()
             .prefix("tx-picker-digits.")
             .rand_bytes(8)
@@ -661,8 +657,7 @@ impl Attach {
         let bin_tx = self.0.bin_tx();
         let bin_tx = bin_tx.display();
         let reload = format!("reload-sync({bin_tx} _list {{q}})");
-        // The auto-reload POSTs its action to fzf, which fills in `{q}` when it runs it; the
-        // `""` keeps fzf from filling it in when it starts the loop.
+        // `{""q}`: fzf fills in the query when the POSTed reload runs, not when the loop starts.
         let posted_reload = format!("reload-sync({bin_tx} _list {{\"\"q}})");
         // `display-popup` runs in the server's environment: bake the home into the command.
         let home = self.0.home.root().display();
@@ -687,7 +682,6 @@ impl Attach {
              bg+:{SELECTION_BG}:regular,hl:{ACCENT_HEX},hl+:{ACCENT_HEX},\
              header:{DIM_FG_HEX},footer:{DIM_FG_HEX},prompt:{DIM_FG_HEX},query:{FG_HEX}"
         );
-        // Normal mode, unless a query was passed in: then the user is searching.
         let unbind_normal = picker_keys::toggle_normal_keys("unbind");
         let (prompt, start_mode, footer) = if query.is_empty() {
             (NORMAL_PROMPT, String::new(), picker_keys::normal_footer(""))
@@ -707,7 +701,6 @@ impl Attach {
             format!("execute(tmux display-popup -E -h 4 -w 60% \"{edit_tag}\")+{reload}");
         let mut opts: Vec<String> = [
             "fzf".to_owned(),
-            // tx filters and renumbers the rows itself (`_list QUERY`).
             "--disabled".to_owned(),
             "--ansi".to_owned(),
             format!("--prompt={prompt}"),
@@ -717,14 +710,11 @@ impl Attach {
             "--with-nth=5..".to_owned(),
             "--listen".to_owned(),
             "--track".to_owned(),
-            // The binds' shell snippets are POSIX; don't inherit zsh's glob errors from $SHELL.
             "--with-shell=sh -c".to_owned(),
             format!("--color={color}"),
             format!("--header={}\n{header_cols}", picker_filter::chips_line(hidden)),
             format!("--footer={footer}"),
             format!("--query={query}"),
-            // The auto-reload skips a tick while a row number is being typed or jumped to, so
-            // the rows cannot renumber under the user.
             format!(
                 "--bind=start:execute-silent(( while sleep 1; do [ -s \"${DIGITS_FILE_ENV}\" ] || \
                  curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{posted_reload}\" >/dev/null 2>&1 \
@@ -750,8 +740,7 @@ impl Attach {
                 "--bind=d:execute-silent(printf '%s' {{1}} \
                  >\"$TX_ARM_FILE\")+transform-header({arm_cmd})"
             ),
-            // `y` and `n` stay bound in normal mode (a free key would type into the query), so
-            // `y` kills only while `d` has armed the file.
+            // `y` stays bound in normal mode (an unbound key would type), so it checks the arm.
             format!(
                 "--bind=y:execute-silent([ -s \"$TX_ARM_FILE\" ] && {bin_tx} kill {{1}} >/dev/null \
                  2>&1; : >\"$TX_ARM_FILE\")+{reload}"
@@ -770,7 +759,6 @@ impl Attach {
         opts.extend(
             (0..=9).map(|digit| format!("--bind={digit}:{}", picker_key(&digit.to_string()))),
         );
-        // Every other printable key does nothing in normal mode instead of typing.
         opts.extend(
             picker_keys::ignored_keys()
                 .iter()

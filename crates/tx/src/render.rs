@@ -157,9 +157,7 @@ pub fn picker_display_rows(sessions: &[Session], namew: i64, now: f64) -> String
         .join("\n")
 }
 
-/// The picker's own matching (fzf runs `--disabled` so the rows can be renumbered): every
-/// whitespace-separated term of `query` appears, case-insensitively, in the row's name, tags,
-/// location or role.
+/// Every whitespace-separated term of `query` appears, case-insensitively, in the row.
 pub fn picker_matches(session: &Session, query: &str) -> bool {
     let haystack = format!(
         "{}{} {} {}",
@@ -175,12 +173,8 @@ pub fn picker_matches(session: &Session, query: &str) -> bool {
         .all(|term| haystack.contains(term))
 }
 
-/// Width of the picker's row-number column (the number, then one space before NAME).
 pub const PICKER_NUMBER_W: usize = 2;
 
-/// The picker feed with each row's 1-based position in front of its visual column: the number
-/// a digit key selects in the picker's normal mode. The caller filters first, so the numbers
-/// run 1..n over exactly the rows on screen.
 pub fn picker_numbered_rows(sessions: &[Session], namew: i64, now: f64) -> String {
     sorted_desc(sessions, Session::activity_at)
         .into_iter()
