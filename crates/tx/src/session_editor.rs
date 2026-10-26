@@ -389,14 +389,9 @@ impl Form {
             tags.chars().collect(),
             group.chars().collect(),
         ];
-        // Normal mode: the cursor rests on the last character, as vim's would.
-        let positions = [
-            values[0].len().saturating_sub(1),
-            values[1].len().saturating_sub(1),
-            values[2].len().saturating_sub(1),
-        ];
+        // The cursor starts on each field's first character, as vim's does on a freshly opened buffer.
         Self {
-            positions,
+            positions: [0, 0, 0],
             values,
             offsets: [0, 0, 0],
             active: 0,
@@ -911,8 +906,8 @@ mod tests {
         assert_eq!(rows[5], "    Group:  auto");
         assert_eq!(rows[6], "            Automatic · type to override");
         assert_eq!(rows[8], NORMAL);
-        // Normal mode: the cursor rests on the last character.
-        assert_eq!(cursor(&mut form), Some((1, 14)));
+        // The cursor starts on the first character.
+        assert_eq!(cursor(&mut form), Some((1, 12)));
     }
 
     #[test]
@@ -924,19 +919,19 @@ mod tests {
 
         keys(&mut form, &typed("iX"));
         assert_eq!(form.mode(), Mode::Insert);
-        assert_eq!(rows(&mut form)[1], "  › Name:   abXc");
+        assert_eq!(rows(&mut form)[1], "  › Name:   Xabc");
         assert_eq!(rows(&mut form)[8], INSERT);
 
         let mut form = Form::new("abc", "t", "", "auto");
         keys(&mut form, &typed("aX"));
+        assert_eq!(rows(&mut form)[1], "  › Name:   aXbc");
+
+        let mut form = Form::new("abc", "t", "", "auto");
+        keys(&mut form, &typed("AX"));
         assert_eq!(rows(&mut form)[1], "  › Name:   abcX");
 
         let mut form = Form::new("abc", "t", "", "auto");
-        keys(&mut form, &typed("0AX"));
-        assert_eq!(rows(&mut form)[1], "  › Name:   abcX");
-
-        let mut form = Form::new("abc", "t", "", "auto");
-        keys(&mut form, &typed("IX"));
+        keys(&mut form, &typed("$IX"));
         assert_eq!(rows(&mut form)[1], "  › Name:   Xabc");
     }
 
@@ -992,7 +987,7 @@ mod tests {
     #[test]
     fn x_deletes_under_the_cursor() {
         let mut form = Form::new("abc", "t", "", "auto");
-        keys(&mut form, &typed("x"));
+        keys(&mut form, &typed("$x"));
         assert_eq!(rows(&mut form)[1], "  › Name:   ab");
         assert_eq!(cursor(&mut form), Some((1, 13)));
         keys(&mut form, &typed("0xxx"));
