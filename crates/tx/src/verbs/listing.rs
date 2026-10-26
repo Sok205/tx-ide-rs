@@ -40,7 +40,7 @@ use crate::verbs::common::{
 
 /// The pause before the picker re-runs after a vanished session / a failed jump.
 const RETRY_PAUSE: Duration = Duration::from_millis(1200);
-/// What alt-p has fzf print ahead of the selection.
+/// What p / alt-p have fzf print ahead of the selection.
 const POPUP_LINE: &str = "popup\n";
 
 /// The `ServiceError`s cli.py raises itself (printed `tx <verb>: <text>`, exit 1).
@@ -727,6 +727,8 @@ impl Attach {
             format!("--bind=change:reload({bin_tx} _list {{q}})+first"),
             format!("--bind=ctrl-r:{reload}"),
             format!("--bind=r:{reload}"),
+            // `p` is normal mode's; alt-p also works while searching, where `p` types.
+            format!("--bind=p:print({})+accept", POPUP_LINE.trim_end()),
             format!("--bind=alt-p:print({})+accept", POPUP_LINE.trim_end()),
             format!(
                 "--bind=focus:transform-header({focus_cmd})+execute-silent(: \
@@ -879,7 +881,7 @@ impl Picker<'_> {
         Ok(true)
     }
 
-    /// alt-p: nest-attach the session in a popup over this terminal. A background job opens it
+    /// p / alt-p: nest-attach the session in a popup over this terminal. A background job opens it
     /// once the picker has exited — tmux drops a popup opened while the picker's own is still up,
     /// so the job waits for that one to close. False = the session vanished / no tmux (re-loop).
     fn open_popup(&self, name: &str, target: &str) -> Result<bool, BoxError> {
@@ -968,7 +970,7 @@ impl Command for PopupAttach {
         "_popup-attach"
     }
     fn summary(&self) -> &'static str {
-        "Internal: the picker's alt-p — nest-attach SESSION in a popup over CLIENT's terminal. \
+        "Internal: the picker's p / alt-p — nest-attach SESSION in a popup over CLIENT's terminal. \
          Usage: _popup-attach CLIENT SESSION"
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {

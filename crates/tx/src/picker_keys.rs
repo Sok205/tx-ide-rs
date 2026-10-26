@@ -9,9 +9,9 @@ pub const DIGITS_FILE_ENV: &str = "TX_DIGITS_FILE";
 pub const NORMAL_PROMPT: &str = "  ❯ ";
 pub const SEARCH_PROMPT: &str = "  / ";
 
-const ACTION_KEYS: [&str; 24] = [
-    "j", "k", "g", "G", "ctrl-d", "ctrl-u", "/", "i", "d", "t", "r", "q", "y", "n", "0", "1", "2",
-    "3", "4", "5", "6", "7", "8", "9",
+const ACTION_KEYS: [&str; 25] = [
+    "j", "k", "g", "G", "ctrl-d", "ctrl-u", "/", "i", "d", "t", "r", "q", "y", "n", "p", "0", "1",
+    "2", "3", "4", "5", "6", "7", "8", "9",
 ];
 
 pub fn ignored_keys() -> Vec<String> {
@@ -51,7 +51,7 @@ pub fn normal_footer(digits: &str) -> String {
         format!("  {ACCENT_ANSI}{BOLD}{digits}_{RESET}")
     };
     format!(
-        "{ACCENT_ANSI}{BOLD} NORMAL{RESET}  j/k move · 1-9 open · i or / search · d kill · t tags · q quit{digits}"
+        "{ACCENT_ANSI}{BOLD} NORMAL{RESET}  j/k move · 1-9 open · p popup · i or / search · d kill · t tags · q quit{digits}"
     )
 }
 
