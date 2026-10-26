@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use serde_json::Number;
 
 use crate::artifact::{Artifact, USER_ACTOR};
-use crate::palette::{RESET_FG, WARN_ANSI, tag_ansi};
+use crate::palette::{ACCENT_ANSI, RESET_FG, WARN_ANSI, tag_ansi};
 use crate::session::{Location, Session};
 
 /// LOCATION column width, shared with the picker header and `tx ls`.
@@ -153,6 +153,38 @@ pub fn picker_display_rows(sessions: &[Session], namew: i64, now: f64) -> String
     sorted_desc(sessions, Session::activity_at)
         .into_iter()
         .map(|session| picker_row(session, namew, now))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every whitespace-separated term of `query` appears, case-insensitively, in the row.
+pub fn picker_matches(session: &Session, query: &str) -> bool {
+    let haystack = format!(
+        "{}{} {} {}",
+        session.name,
+        chips(&session.tags),
+        location_text(&session.attached_to),
+        session.role().as_str()
+    )
+    .to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|term| haystack.contains(term))
+}
+
+pub const PICKER_NUMBER_W: usize = 2;
+
+pub fn picker_numbered_rows(sessions: &[Session], namew: i64, now: f64) -> String {
+    sorted_desc(sessions, Session::activity_at)
+        .into_iter()
+        .enumerate()
+        .map(|(index, session)| {
+            let row = picker_row(session, namew, now);
+            let (fields, visual) = row.rsplit_once('\t').expect("a picker row has five fields");
+            let number = index + 1;
+            format!("{fields}\t{ACCENT_ANSI}{number:>PICKER_NUMBER_W$}{RESET_FG} {visual}")
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
