@@ -89,10 +89,6 @@ impl Plugin for SpawnPlugin {
             include_bytes!("../../../../agents/skills/tx-code-tours/SKILL.md"),
         )?;
         r.resource(
-            "agents/skills/tx-code-tours/scripts/apply_tour.lua",
-            include_bytes!("../../../../agents/skills/tx-code-tours/scripts/apply_tour.lua"),
-        )?;
-        r.resource(
             "agents/skills/tx-code-tours/scripts/apply_tour.py",
             include_bytes!("../../../../agents/skills/tx-code-tours/scripts/apply_tour.py"),
         )

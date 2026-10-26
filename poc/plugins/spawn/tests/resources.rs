@@ -54,7 +54,6 @@ fn the_shipped_roles_and_their_skills_are_resources() {
             "agents/DEVELOPER.md",
             "agents/skills/tx-artifacts/SKILL.md",
             "agents/skills/tx-code-tours/SKILL.md",
-            "agents/skills/tx-code-tours/scripts/apply_tour.lua",
             "agents/skills/tx-code-tours/scripts/apply_tour.py",
             "agents/skills/tx-diff-review/SKILL.md",
             "agents/skills/tx-sessions/SKILL.md",
