@@ -146,7 +146,7 @@ const VERBS: &[(&str, &str, Visibility, Run)] = &[
     ),
     (
         "migrate",
-        "Upgrade $TX_IDE_HOME records to the current schemas (sessions v3→v6, artifacts v1→v3).",
+        "Upgrade $TX_IDE_HOME records to the current schemas (sessions v3→v6, artifacts v1/v2/v3→v4).",
         Visibility::Public,
         migrate,
     ),
@@ -792,7 +792,7 @@ fn migrate(deps: &Deps, parser: Parser, argv: &[String]) -> Result<i32, BoxError
         sessions.views_removed.len(),
         sessions.skipped.len()
     );
-    let artifacts = migrate_artifacts(&deps.home.artifacts_dir());
+    let artifacts = migrate_artifacts(&deps.home.artifacts_dir(), &deps.events, deps.env.actor());
     for name in &artifacts.migrated {
         println!("  migrated {name} → artifact v{ARTIFACT_SCHEMA_VERSION}");
     }

@@ -1,96 +1,156 @@
-//! Port of lib/tx/artifact.py — the artifact record (`Artifact`) and its history entries (`Touch`).
+//! The artifact record (`Artifact`): a durable deliverable of one of three kinds.
 //!
-//! The record is read through a strict boundary: `artifact_schema_version` must be 2, the key sets
-//! must be exact, the history non-empty with revs contiguous from 0. `updated_at` is derived from
-//! the last touch, never stored.
+//! The record is read through a strict boundary: `artifact_schema_version` must be 4, the key
+//! set is the eight base keys plus exactly the one kind key named by `kind`, and that kind's
+//! subfield has its own exact key set. No history, no revisions: `modified_at` is stamped by tx on
+//! every tx-side content mutation; `archived_at` only by archive / unarchive.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Number, Value};
 
 use crate::pyjson::float_repr;
 
-pub const ARTIFACT_SCHEMA_VERSION: u64 = 3;
+pub const ARTIFACT_SCHEMA_VERSION: u64 = 4;
 
-/// Actor for a touch made outside any tx session (a manual edit, or a plain-terminal call).
+/// Owner of an artifact created outside any tx session (a plain-terminal call).
 pub const USER_ACTOR: &str = "user";
 
-const ARTIFACT_KEYS: [&str; 8] = [
+const BASE_KEYS: [&str; 8] = [
     "artifact_schema_version",
     "id",
+    "kind",
     "title",
-    "filename",
+    "owner",
     "created_at",
-    "group",
+    "modified_at",
     "archived_at",
-    "history",
 ];
-const TOUCH_KEYS: [&str; 4] = ["session_id", "at", "rev", "changes"];
+const DOCUMENT_KEYS: [&str; 1] = ["file"];
+const DIFF_KEYS: [&str; 2] = ["worktree", "base"];
+const TOUR_KEYS: [&str; 2] = ["worktree", "stops"];
 
-/// A persisted record is not a current-version artifact record. The message is the Python text.
+/// A persisted record is not a current-version artifact record.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct UnsupportedArtifactError(String);
 
-/// One `history` entry: who touched the artifact, when, and which `revs/<rev>` it produced.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Touch {
-    pub session_id: String,
-    pub at: Number,
-    pub rev: u64,
-    pub changes: Option<String>,
+/// What an artifact is, with the structured facts its kind needs. tx derives the open and close
+/// behaviour from this in code; the record carries no shell commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kind {
+    /// A hand-edited file under the artifact's directory.
+    Document { file: String },
+    /// `git diff <base>` of a repository checkout, pinned at `base`.
+    Diff { worktree: PathBuf, base: String },
+    /// A code tour: a stops file under the artifact's directory whose stops point into `worktree`.
+    Tour { worktree: PathBuf, stops: String },
 }
 
-impl Touch {
+impl Kind {
+    /// The kind's name: the `kind` value and the name of its subfield key.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Document { .. } => "document",
+            Self::Diff { .. } => "diff",
+            Self::Tour { .. } => "tour",
+        }
+    }
+
+    pub fn is_diff(&self) -> bool {
+        matches!(self, Self::Diff { .. })
+    }
+
+    /// The checkout the kind points into (`None` for a document).
+    pub fn worktree(&self) -> Option<&Path> {
+        match self {
+            Self::Document { .. } => None,
+            Self::Diff { worktree, .. } | Self::Tour { worktree, .. } => Some(worktree),
+        }
+    }
+
+    /// The subfield, with its exact key set in order.
     pub fn to_value(&self) -> Value {
         let mut map = Map::new();
-        map.insert("session_id".into(), Value::String(self.session_id.clone()));
-        map.insert("at".into(), Value::Number(self.at.clone()));
-        map.insert("rev".into(), Value::from(self.rev));
-        map.insert("changes".into(), opt_str(self.changes.as_deref()));
+        match self {
+            Self::Document { file } => {
+                map.insert("file".into(), Value::String(file.clone()));
+            }
+            Self::Diff { worktree, base } => {
+                map.insert("worktree".into(), path_value(worktree));
+                map.insert("base".into(), Value::String(base.clone()));
+            }
+            Self::Tour { worktree, stops } => {
+                map.insert("worktree".into(), path_value(worktree));
+                map.insert("stops".into(), Value::String(stops.clone()));
+            }
+        }
         Value::Object(map)
+    }
+
+    fn from_value(
+        name: &str,
+        data: &Value,
+        id_repr: &str,
+    ) -> Result<Self, UnsupportedArtifactError> {
+        let Value::Object(map) = data else {
+            return Err(invalid(id_repr, name, data));
+        };
+        let what = format!("artifact {id_repr} {name}");
+        match name {
+            "document" => {
+                require_exact_keys(map, &DOCUMENT_KEYS, &what)?;
+                Ok(Self::Document {
+                    file: req_str(map, "file", id_repr)?,
+                })
+            }
+            "diff" => {
+                require_exact_keys(map, &DIFF_KEYS, &what)?;
+                Ok(Self::Diff {
+                    worktree: PathBuf::from(req_str(map, "worktree", id_repr)?),
+                    base: req_str(map, "base", id_repr)?,
+                })
+            }
+            "tour" => {
+                require_exact_keys(map, &TOUR_KEYS, &what)?;
+                Ok(Self::Tour {
+                    worktree: PathBuf::from(req_str(map, "worktree", id_repr)?),
+                    stops: req_str(map, "stops", id_repr)?,
+                })
+            }
+            _ => unreachable!("kind names are validated before the subfield is read"),
+        }
     }
 }
 
-/// A durable, versioned deliverable (the record half; files live under `artifacts/<id>/`).
-///
-/// `history` is private so it stays non-empty with revs `0..len`; extend it with `record_touch`.
+const KIND_NAMES: [&str; 3] = ["document", "diff", "tour"];
+
+/// A durable deliverable (the record half; files live under `artifacts/<id>/`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Artifact {
     pub id: String,
-    pub title: Option<String>,
-    pub filename: String,
+    pub kind: Kind,
+    pub title: String,
+    /// The session that created the artifact (or [`USER_ACTOR`]).
+    pub owner: String,
     pub created_at: Number,
-    pub group: Option<String>,
-    /// When the artifact was archived — hidden from pickers and default listings, history kept.
+    pub modified_at: Number,
+    /// When the artifact was archived — hidden from pickers and default listings, content kept.
     pub archived_at: Option<Number>,
-    history: Vec<Touch>,
 }
 
 impl Artifact {
-    /// A fresh artifact whose history is the single create touch (rev 0) at `created_at`.
-    pub fn new(
-        id: String,
-        title: Option<String>,
-        filename: String,
-        created_at: Number,
-        group: Option<String>,
-        session_id: String,
-    ) -> Self {
-        let create = Touch {
-            session_id,
-            at: created_at.clone(),
-            rev: 0,
-            changes: None,
-        };
+    /// A fresh artifact, modified when created.
+    pub fn new(id: String, kind: Kind, title: String, owner: String, created_at: Number) -> Self {
         Self {
             id,
+            kind,
             title,
-            filename,
+            owner,
+            modified_at: created_at.clone(),
             created_at,
-            group,
             archived_at: None,
-            history: vec![create],
         }
     }
 
@@ -98,49 +158,7 @@ impl Artifact {
         self.archived_at.is_some()
     }
 
-    pub fn history(&self) -> &[Touch] {
-        &self.history
-    }
-
-    fn last_touch(&self) -> &Touch {
-        // Invariant: `new` seeds one touch, `from_value` rejects an empty history, and history is
-        // only ever appended to.
-        self.history.last().expect("artifact history is non-empty")
-    }
-
-    /// Last-touched time, derived from the final history entry (never stored).
-    pub fn updated_at(&self) -> &Number {
-        &self.last_touch().at
-    }
-
-    /// The rev the working copy last snapshotted from.
-    pub fn latest_rev(&self) -> u64 {
-        self.last_touch().rev
-    }
-
-    /// The rev the next touch will produce.
-    pub fn next_rev(&self) -> u64 {
-        self.latest_rev() + 1
-    }
-
-    /// Append a touch for `next_rev()` and return that rev.
-    pub fn record_touch(&mut self, session_id: String, at: Number, changes: Option<String>) -> u64 {
-        let rev = self.next_rev();
-        self.history.push(Touch {
-            session_id,
-            at,
-            rev,
-            changes,
-        });
-        rev
-    }
-
-    /// `Path(filename).suffix` (Python 3.14 semantics): reused for every rev and `current`.
-    pub fn extension(&self) -> &str {
-        py_suffix(py_name(&self.filename))
-    }
-
-    /// The on-disk shape, in canonical key order; `updated_at` is absent (derived).
+    /// The on-disk shape, in canonical key order: the base keys, then the one kind key.
     pub fn to_value(&self) -> Value {
         let mut map = Map::new();
         map.insert(
@@ -148,24 +166,24 @@ impl Artifact {
             Value::from(ARTIFACT_SCHEMA_VERSION),
         );
         map.insert("id".into(), Value::String(self.id.clone()));
-        map.insert("title".into(), opt_str(self.title.as_deref()));
-        map.insert("filename".into(), Value::String(self.filename.clone()));
+        map.insert("kind".into(), Value::String(self.kind.name().to_owned()));
+        map.insert("title".into(), Value::String(self.title.clone()));
+        map.insert("owner".into(), Value::String(self.owner.clone()));
         map.insert("created_at".into(), Value::Number(self.created_at.clone()));
-        map.insert("group".into(), opt_str(self.group.as_deref()));
+        map.insert(
+            "modified_at".into(),
+            Value::Number(self.modified_at.clone()),
+        );
         map.insert(
             "archived_at".into(),
             self.archived_at.clone().map_or(Value::Null, Value::Number),
         );
-        map.insert(
-            "history".into(),
-            Value::Array(self.history.iter().map(Touch::to_value).collect()),
-        );
+        map.insert(self.kind.name().into(), self.kind.to_value());
         Value::Object(map)
     }
 
-    /// Deserialize at the strict boundary, in the reference's check order: version, record key
-    /// set, each entry's key set, non-empty history, contiguous revs. Field types are checked last
-    /// (the reference does not check them at all).
+    /// Deserialize at the strict boundary: version, the kind name, the record key set (base keys
+    /// plus the kind key), the subfield's key set, then field types.
     pub fn from_value(data: &Value) -> Result<Self, UnsupportedArtifactError> {
         let Value::Object(map) = data else {
             return Err(unsupported(format!(
@@ -177,51 +195,45 @@ impl Artifact {
         if version.and_then(Value::as_u64) != Some(ARTIFACT_SCHEMA_VERSION) {
             return Err(unsupported(format!(
                 "record artifact_schema_version={} is unsupported (expected \
-                 {ARTIFACT_SCHEMA_VERSION}); tx-ide does not back-migrate older artifact records",
+                 {ARTIFACT_SCHEMA_VERSION}); run `tx migrate` to upgrade older artifact records",
                 py_repr_opt(version)
             )));
         }
         let id_repr = py_repr_opt(map.get("id"));
-        require_exact_keys(map, &ARTIFACT_KEYS, &format!("artifact {id_repr}"))?;
-
-        let Value::Array(entries) = &map["history"] else {
-            return Err(invalid(&id_repr, "history", &map["history"]));
-        };
-        let mut touch_maps = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let Value::Object(touch) = entry else {
+        let kind_name = match map.get("kind") {
+            Some(Value::String(name)) if KIND_NAMES.contains(&name.as_str()) => name.as_str(),
+            other => {
                 return Err(unsupported(format!(
-                    "a history entry is not an object: {}",
-                    py_repr(entry)
+                    "artifact {id_repr} has an invalid kind: {} (expected one of {})",
+                    py_repr_opt(other),
+                    py_str_list(&KIND_NAMES)
                 )));
-            };
-            require_exact_keys(touch, &TOUCH_KEYS, "a history entry")?;
-            touch_maps.push(touch);
+            }
+        };
+        let mut expected: Vec<&str> = BASE_KEYS.to_vec();
+        expected.push(kind_name);
+        require_exact_keys(map, &expected, &format!("artifact {id_repr}"))?;
+        let kind = Kind::from_value(kind_name, &map[kind_name], &id_repr)?;
+        let title = req_str(map, "title", &id_repr)?;
+        if title.is_empty() {
+            return Err(unsupported(format!(
+                "artifact {id_repr} has an empty title"
+            )));
         }
-        validate_history(&touch_maps, &id_repr)?;
-
-        let history = touch_maps
-            .iter()
-            .zip(0u64..)
-            .map(|(touch, rev)| {
-                Ok(Touch {
-                    session_id: req_str(touch, "session_id", &id_repr)?,
-                    at: req_num(touch, "at", &id_repr)?,
-                    rev,
-                    changes: opt_str_field(touch, "changes", &id_repr)?,
-                })
-            })
-            .collect::<Result<_, UnsupportedArtifactError>>()?;
         Ok(Self {
             id: req_str(map, "id", &id_repr)?,
-            title: opt_str_field(map, "title", &id_repr)?,
-            filename: req_str(map, "filename", &id_repr)?,
+            kind,
+            title,
+            owner: req_str(map, "owner", &id_repr)?,
             created_at: req_num(map, "created_at", &id_repr)?,
-            group: opt_str_field(map, "group", &id_repr)?,
-            archived_at: opt_num_field(map, "archived_at", &id_repr)?,
-            history,
+            modified_at: req_num(map, "modified_at", &id_repr)?,
+            archived_at: opt_num(map, "archived_at", &id_repr)?,
         })
     }
+}
+
+fn path_value(path: &Path) -> Value {
+    Value::String(path.to_string_lossy().into_owned())
 }
 
 fn unsupported(message: String) -> UnsupportedArtifactError {
@@ -260,30 +272,6 @@ fn require_exact_keys(
     )))
 }
 
-fn validate_history(
-    touches: &[&Map<String, Value>],
-    id_repr: &str,
-) -> Result<(), UnsupportedArtifactError> {
-    if touches.is_empty() {
-        return Err(unsupported(format!(
-            "artifact {id_repr} has an empty history (entry 0 must be the create)"
-        )));
-    }
-    let contiguous = touches
-        .iter()
-        .zip(0u64..)
-        .all(|(touch, expected)| touch["rev"].as_u64() == Some(expected));
-    if !contiguous {
-        let revs: Vec<String> = touches.iter().map(|touch| py_repr(&touch["rev"])).collect();
-        return Err(unsupported(format!(
-            "artifact {id_repr} has non-contiguous rev numbers [{}] (expected 0..{}, one per touch)",
-            revs.join(", "),
-            touches.len() - 1
-        )));
-    }
-    Ok(())
-}
-
 fn req_str(
     map: &Map<String, Value>,
     field: &str,
@@ -291,18 +279,6 @@ fn req_str(
 ) -> Result<String, UnsupportedArtifactError> {
     match &map[field] {
         Value::String(s) => Ok(s.clone()),
-        other => Err(invalid(id_repr, field, other)),
-    }
-}
-
-fn opt_str_field(
-    map: &Map<String, Value>,
-    field: &str,
-    id_repr: &str,
-) -> Result<Option<String>, UnsupportedArtifactError> {
-    match &map[field] {
-        Value::Null => Ok(None),
-        Value::String(s) => Ok(Some(s.clone())),
         other => Err(invalid(id_repr, field, other)),
     }
 }
@@ -318,7 +294,7 @@ fn req_num(
     }
 }
 
-fn opt_num_field(
+fn opt_num(
     map: &Map<String, Value>,
     field: &str,
     id_repr: &str,
@@ -327,26 +303,6 @@ fn opt_num_field(
         Value::Null => Ok(None),
         Value::Number(n) => Ok(Some(n.clone())),
         other => Err(invalid(id_repr, field, other)),
-    }
-}
-
-fn opt_str(value: Option<&str>) -> Value {
-    value.map_or(Value::Null, |s| Value::String(s.to_owned()))
-}
-
-/// `PurePosixPath(path).name`: the last component, ignoring empty and `.` components.
-pub(crate) fn py_name(path: &str) -> &str {
-    path.rsplit('/')
-        .find(|part| !part.is_empty() && *part != ".")
-        .unwrap_or("")
-}
-
-/// Python 3.14 `PurePath.suffix` of a bare file name: from the last dot, unless the part before
-/// it is empty or all dots (`.bashrc`, `...` have no suffix; `a.` has suffix `.`).
-pub(crate) fn py_suffix(name: &str) -> &str {
-    match name.rfind('.') {
-        Some(i) if !name[..i].trim_start_matches('.').is_empty() => &name[i..],
-        _ => "",
     }
 }
 
@@ -359,8 +315,8 @@ fn py_str_list(items: &[&str]) -> String {
     format!("[{}]", parts.join(", "))
 }
 
-/// Python `repr()` of a `json.load`ed value.
-fn py_repr(value: &Value) -> String {
+/// Python `repr()` of a `json.load`ed value — the texts `doctor` and `ls` print for a bad record.
+pub(crate) fn py_repr(value: &Value) -> String {
     match value {
         Value::Null => "None".into(),
         Value::Bool(true) => "True".into(),
@@ -446,152 +402,170 @@ mod tests {
     use crate::pyjson::dumps_pretty;
     use serde_json::json;
 
-    /// T-ART-01's hand-written record: compact, keys shuffled.
-    const HAND_WRITTEN_A: &str = concat!(
-        r#"{"history":[{"rev":0,"changes":null,"at":1.5,"session_id":"s1"},"#,
-        r#"{"changes":"tweak","session_id":"user","rev":1,"at":2.0}],"group":null,"created_at":1.5,"#,
-        r#""archived_at":null,"filename":"plan.md","title":null,"id":"a","artifact_schema_version":3}"#
-    );
-
-    /// golden/art/01.txt
-    const GOLDEN_01: &str = "{\n  \"artifact_schema_version\": 3,\n  \"id\": \"a\",\n  \"title\": null,\n  \"filename\": \"plan.md\",\n  \"created_at\": 1.5,\n  \"group\": null,\n  \"archived_at\": null,\n  \"history\": [\n    {\n      \"session_id\": \"s1\",\n      \"at\": 1.5,\n      \"rev\": 0,\n      \"changes\": null\n    },\n    {\n      \"session_id\": \"user\",\n      \"at\": 2.0,\n      \"rev\": 1,\n      \"changes\": \"tweak\"\n    }\n  ]\n}";
-
     fn err(data: Value) -> String {
         Artifact::from_value(&data).unwrap_err().to_string()
     }
 
-    fn record(id: &str, revs: &[u64]) -> Value {
-        let history: Vec<Value> = revs
-            .iter()
-            .map(|rev| json!({"session_id": "s1", "at": 1.0, "rev": rev, "changes": null}))
-            .collect();
+    fn document(id: &str) -> Value {
         json!({
-            "artifact_schema_version": 3, "id": id, "title": null, "filename": "plan.md",
-            "created_at": 1.0, "group": null, "archived_at": null, "history": history,
+            "artifact_schema_version": 4, "id": id, "kind": "document", "title": "T",
+            "owner": "s1", "created_at": 1.5, "modified_at": 2.0, "archived_at": null,
+            "document": {"file": "plan.md"},
         })
     }
 
     #[test]
-    fn round_trip_is_canonical_golden() {
-        let data: Value = serde_json::from_str(HAND_WRITTEN_A).unwrap();
-        let artifact = Artifact::from_value(&data).unwrap();
-        assert_eq!(dumps_pretty(&artifact.to_value()), GOLDEN_01);
-        assert_eq!(artifact.updated_at().to_string(), "2.0");
-        assert_eq!(artifact.latest_rev(), 1);
-        assert_eq!(artifact.history()[1].changes.as_deref(), Some("tweak"));
-        assert_eq!(artifact.history()[1].session_id, USER_ACTOR);
-    }
-
-    #[test]
-    fn integer_timestamps_stay_integers() {
-        let mut data = record("i", &[0]);
-        data["created_at"] = json!(7);
-        data["history"][0]["at"] = json!(7);
-        let out = dumps_pretty(&Artifact::from_value(&data).unwrap().to_value());
-        assert!(out.contains("\"created_at\": 7,"), "{out}");
-        assert!(out.contains("\"at\": 7,"), "{out}");
-    }
-
-    #[test]
-    fn version_guard_messages() {
-        let tail =
-            "is unsupported (expected 3); tx-ide does not back-migrate older artifact records";
+    fn document_round_trip_is_canonical() {
+        let shuffled: Value = serde_json::from_str(
+            r#"{"document":{"file":"plan.md"},"archived_at":null,"modified_at":2.0,"owner":"user",
+                "created_at":1.5,"title":"Plan","kind":"document","id":"a","artifact_schema_version":4}"#,
+        )
+        .unwrap();
+        let artifact = Artifact::from_value(&shuffled).unwrap();
         assert_eq!(
-            err(json!({"artifact_schema_version": 1, "id": "old", "foo": 1})),
-            format!("record artifact_schema_version=1 {tail}")
+            artifact.kind,
+            Kind::Document {
+                file: "plan.md".into()
+            }
+        );
+        assert_eq!(artifact.owner, USER_ACTOR);
+        assert_eq!(
+            dumps_pretty(&artifact.to_value()),
+            "{\n  \"artifact_schema_version\": 4,\n  \"id\": \"a\",\n  \"kind\": \"document\",\n  \
+             \"title\": \"Plan\",\n  \"owner\": \"user\",\n  \"created_at\": 1.5,\n  \
+             \"modified_at\": 2.0,\n  \"archived_at\": null,\n  \"document\": {\n    \"file\": \"plan.md\"\n  }\n}"
+        );
+    }
+
+    #[test]
+    fn diff_and_tour_round_trip() {
+        let diff = Artifact::new(
+            "d".into(),
+            Kind::Diff {
+                worktree: PathBuf::from("/w"),
+                base: "abc".into(),
+            },
+            "review".into(),
+            "s1".into(),
+            Number::from(7),
+        );
+        assert_eq!(diff.modified_at, Number::from(7));
+        let back = Artifact::from_value(&diff.to_value()).unwrap();
+        assert_eq!(back, diff);
+        assert_eq!(back.kind.worktree(), Some(Path::new("/w")));
+        assert!(back.kind.is_diff());
+        let tour = Artifact::new(
+            "t".into(),
+            Kind::Tour {
+                worktree: PathBuf::from("/w"),
+                stops: "stops.lua".into(),
+            },
+            "tour".into(),
+            "s1".into(),
+            Number::from_f64(1.5).unwrap(),
+        );
+        let value = tour.to_value();
+        assert_eq!(
+            value["tour"],
+            json!({"worktree": "/w", "stops": "stops.lua"})
+        );
+        assert_eq!(Artifact::from_value(&value).unwrap(), tour);
+    }
+
+    #[test]
+    fn version_and_kind_guards() {
+        let tail =
+            "is unsupported (expected 4); run `tx migrate` to upgrade older artifact records";
+        assert_eq!(
+            err(json!({"artifact_schema_version": 3, "id": "old", "foo": 1})),
+            format!("record artifact_schema_version=3 {tail}")
         );
         assert_eq!(
             err(json!({"id": "nover"})),
             format!("record artifact_schema_version=None {tail}")
         );
         assert_eq!(
-            err(json!({"artifact_schema_version": "3"})),
-            format!("record artifact_schema_version='3' {tail}")
+            err(json!({"artifact_schema_version": 4, "id": "k", "kind": "site"})),
+            "artifact 'k' has an invalid kind: 'site' (expected one of ['document', 'diff', 'tour'])"
+        );
+        assert_eq!(
+            err(json!({"artifact_schema_version": 4, "id": "k"})),
+            "artifact 'k' has an invalid kind: None (expected one of ['document', 'diff', 'tour'])"
         );
     }
 
     #[test]
-    fn exact_key_set_messages() {
-        let mut keys = record("keys", &[0]);
-        keys.as_object_mut().unwrap().remove("group");
-        keys["foo"] = json!(1);
+    fn key_set_messages() {
+        let mut wrong_kind_key = document("a");
+        wrong_kind_key["kind"] = json!("diff");
         assert_eq!(
-            err(keys),
-            "artifact 'keys' has an invalid key set: unexpected ['foo']; missing ['group']"
+            err(wrong_kind_key),
+            "artifact 'a' has an invalid key set: unexpected ['document']; missing ['diff']"
         );
-        let mut touchkeys = record("touchkeys", &[0]);
-        touchkeys["history"][0]["how"] = json!("create");
+        let mut extra = document("b");
+        extra["group"] = json!(null);
         assert_eq!(
-            err(touchkeys),
-            "a history entry has an invalid key set: unexpected ['how']"
+            err(extra),
+            "artifact 'b' has an invalid key set: unexpected ['group']"
         );
+        let mut subfield = document("c");
+        subfield["document"] = json!({"file": "x", "path": "y"});
         assert_eq!(
-            err(json!({"artifact_schema_version": 3, "id": "it's", "z": 1, "a": 2})),
-            "artifact \"it's\" has an invalid key set: unexpected ['a', 'z']; missing \
-             ['archived_at', 'created_at', 'filename', 'group', 'history', 'title']"
+            err(subfield),
+            "artifact 'c' document has an invalid key set: unexpected ['path']"
         );
+        let mut missing_sub = document("d");
+        missing_sub["document"] = json!({});
         assert_eq!(
-            err(json!({"artifact_schema_version": 3, "x": 1})),
-            "artifact None has an invalid key set: unexpected ['x']; missing \
-             ['archived_at', 'created_at', 'filename', 'group', 'history', 'id', 'title']"
+            err(missing_sub),
+            "artifact 'd' document has an invalid key set: missing ['file']"
+        );
+        let mut not_object = document("e");
+        not_object["document"] = json!("plan.md");
+        assert_eq!(
+            err(not_object),
+            "artifact 'e' has an invalid document: 'plan.md'"
         );
     }
 
     #[test]
-    fn history_invariant_messages() {
+    fn field_type_and_title_messages() {
+        let mut empty_title = document("t");
+        empty_title["title"] = json!("");
+        assert_eq!(err(empty_title), "artifact 't' has an empty title");
+        let mut null_title = document("n");
+        null_title["title"] = json!(null);
+        assert_eq!(err(null_title), "artifact 'n' has an invalid title: None");
+        let mut bad_time = document("m");
+        bad_time["modified_at"] = json!("soon");
         assert_eq!(
-            err(record("empty", &[])),
-            "artifact 'empty' has an empty history (entry 0 must be the create)"
+            err(bad_time),
+            "artifact 'm' has an invalid modified_at: 'soon'"
         );
+        let mut bad_archive = document("a");
+        bad_archive["archived_at"] = json!("yesterday");
         assert_eq!(
-            err(record("gap02", &[0, 2])),
-            "artifact 'gap02' has non-contiguous rev numbers [0, 2] (expected 0..1, one per touch)"
+            err(bad_archive),
+            "artifact 'a' has an invalid archived_at: 'yesterday'"
         );
-        assert_eq!(
-            err(record("gap12", &[1, 2])),
-            "artifact 'gap12' has non-contiguous rev numbers [1, 2] (expected 0..1, one per touch)"
-        );
+        let mut bad_file = document("f");
+        bad_file["document"]["file"] = json!(1);
+        assert_eq!(err(bad_file), "artifact 'f' has an invalid file: 1");
     }
 
     #[test]
-    fn record_touch_appends_next_rev() {
-        let mut artifact = Artifact::new(
-            "id".into(),
-            None,
-            "plan.md".into(),
-            Number::from(1),
-            None,
-            "s1".into(),
-        );
-        assert_eq!(artifact.next_rev(), 1);
-        let rev = artifact.record_touch(USER_ACTOR.into(), Number::from(2), Some("c".into()));
-        assert_eq!((rev, artifact.latest_rev()), (1, 1));
-        assert_eq!(artifact.updated_at(), &Number::from(2));
-        let back = Artifact::from_value(&artifact.to_value()).unwrap();
-        assert_eq!(back, artifact);
-    }
-
-    #[test]
-    fn extension_matches_python_suffix() {
-        // Expected values from python3.14 `Path(n).suffix`.
-        let cases = [
-            ("plan.md", ".md"),
-            ("artifact", ""),
-            ("a.", "."),
-            (".bashrc", ""),
-            ("a.tar.gz", ".gz"),
-            ("..", ""),
-            ("x/.md", ""),
-            ("dir/plan.md", ".md"),
-            ("a..b", ".b"),
-            (".a.b", ".b"),
-            ("...", ""),
-            ("a. b", ". b"),
-            ("plan.md/", ".md"),
-        ];
-        for (name, suffix) in cases {
-            assert_eq!(py_suffix(py_name(name)), suffix, "{name}");
-        }
+    fn integer_timestamps_stay_integers() {
+        let mut data = document("i");
+        data["created_at"] = json!(7);
+        data["modified_at"] = json!(8);
+        let out = dumps_pretty(&Artifact::from_value(&data).unwrap().to_value());
+        assert!(out.contains("\"created_at\": 7,"), "{out}");
+        assert!(out.contains("\"modified_at\": 8,"), "{out}");
+        data["archived_at"] = json!(9);
+        let archived = Artifact::from_value(&data).unwrap();
+        assert!(archived.is_archived());
+        let out = dumps_pretty(&archived.to_value());
+        assert!(out.contains("\"archived_at\": 9,"), "{out}");
     }
 
     #[test]

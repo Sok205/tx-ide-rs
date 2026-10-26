@@ -1,21 +1,19 @@
-//! Port of lib/tx/artifact_service.py — the artifact use-case core.
+//! The artifact use-case core.
 //!
-//! Composes `ArtifactStore` (records) + `ArtifactContent` (files) + `EventLog`; every mutation
-//! logs exactly one line, reads (`content`, `diff`, `opened`) log a read-visibility line, and the
-//! cross-store queries (`artifacts_for_session`, `doctor`) do not log.
+//! Composes `ArtifactStore` (records) + `ArtifactContent` (the directory) + `EventLog`; every
+//! mutation logs exactly one line, a content mutation stamps `modified_at` (archive stamps
+//! `archived_at` instead), `open` logs a read-visibility line,
+//! and the cross-store queries (`artifacts_for_session`, `doctor`) do not log.
 
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use serde_json::{Number, Value};
+use serde_json::Number;
 
-use crate::artifact::Artifact;
-use crate::artifact_store::{
-    ArtifactContent, ArtifactStore, ArtifactStoreError, ClaimRevError, Scan,
-};
-use crate::difflib;
+use crate::artifact::{Artifact, Kind};
+use crate::artifact_store::{ArtifactContent, ArtifactStore, ArtifactStoreError, Scan};
 use crate::events::{self, EventLog};
 use crate::storage::Home;
 
@@ -24,21 +22,15 @@ use crate::storage::Home;
 pub enum ArtifactError {
     #[error("artifact '{0}' not found")]
     NotFound(String),
-    /// A `modify` lost the linearity race (or a crash orphan holds the slot).
-    #[error(
-        "artifact {id}: rev {rev} is already claimed — the artifact moved on (a concurrent write), \
-         or a crashed write left an orphan (`tx artifact doctor --repair` clears an orphan). \
-         Re-read and retry."
-    )]
-    Conflict { id: String, rev: u64 },
     #[error("artifact id prefix '{token}' is ambiguous ({count} matches) — use more characters")]
     Ambiguous { token: String, count: usize },
-    #[error("artifact {0} has only one revision — nothing to diff")]
-    SingleRevision(String),
-    #[error("artifact {id} has no revision {rev}")]
-    NoRevision { id: String, rev: i64 },
-    #[error("artifact {id} revision {rev} is not utf-8 text — cannot diff")]
-    NotText { id: String, rev: i64 },
+    /// `modify <file>` on a diff: its content is derived from the worktree, never hand-edited.
+    #[error(
+        "artifact {0} is a diff — its patch is rewritten from the worktree; `modify` takes no file"
+    )]
+    NotEditable(String),
+    #[error("artifact kind '{0}' is not supported yet")]
+    UnsupportedKind(&'static str),
     #[error(transparent)]
     Store(#[from] ArtifactStoreError),
     #[error("{}: {source}", path.display())]
@@ -105,109 +97,78 @@ impl ArtifactService {
 
     // ----- mutations -----------------------------------------------------------------------
 
-    /// Register a new artifact: `revs/0<ext>` + `current<ext>`, the record, one log line.
+    /// Register a new artifact: its directory with the kind's content, the record, one log line.
+    /// `source` is the file a document or tour is created from.
     pub fn create(
         &self,
-        session_id: &str,
-        content: &[u8],
-        title: Option<String>,
-        filename: Option<String>,
-        group: Option<String>,
+        owner: &str,
+        kind: Kind,
+        title: String,
+        source: Option<&Path>,
     ) -> Result<Artifact> {
         let artifact = Artifact::new(
             uuid::Uuid::new_v4().to_string(),
+            kind,
             title,
-            filename.unwrap_or_else(|| "artifact".to_owned()),
+            owner.to_owned(),
             float(events::now()),
-            group,
-            session_id.to_owned(),
         );
-        self.claim(&artifact, 0, content)?;
-        self.write_current(&artifact, content)?;
+        let dir = self.files.content_dir(&artifact);
+        std::fs::create_dir_all(&dir).map_err(io_at(&dir))?;
+        match (&artifact.kind, source) {
+            (Kind::Document { .. }, Some(source)) => {
+                self.files
+                    .copy_in(&artifact, source)
+                    .map_err(io_at(source))?;
+            }
+            (Kind::Document { .. }, None) => {
+                unreachable!("a document is always created from a file")
+            }
+            (other, _) => return Err(ArtifactError::UnsupportedKind(other.name())),
+        }
         self.save(&artifact)?;
         self.append(
             "artifact-create",
-            &format!("{} {}", artifact.id, artifact.filename),
-            session_id,
+            &format!(
+                "{} {} {}",
+                artifact.id,
+                artifact.kind.name(),
+                artifact.title
+            ),
+            owner,
         )?;
         Ok(artifact)
     }
 
-    /// Snapshot `content` as the next revision; identical to the last rev is a no-op (E3).
-    pub fn modify(
-        &self,
-        artifact_id: &str,
-        session_id: &str,
-        content: &[u8],
-        changes: Option<String>,
-    ) -> Result<Artifact> {
-        let artifact = self.require(artifact_id)?;
-        self.apply_modify(artifact, session_id, content, changes)
-    }
-
-    /// Snapshot the working copy (read without a read-log line) as the next revision.
-    pub fn snapshot_current(
-        &self,
-        artifact_id: &str,
-        session_id: &str,
-        changes: Option<String>,
-    ) -> Result<Artifact> {
-        let artifact = self.require(artifact_id)?;
-        let path = self.files.current_path(&artifact);
-        let content = self.files.read_current(&artifact).map_err(io_at(&path))?;
-        self.apply_modify(artifact, session_id, &content, changes)
-    }
-
-    fn apply_modify(
-        &self,
-        mut artifact: Artifact,
-        session_id: &str,
-        content: &[u8],
-        changes: Option<String>,
-    ) -> Result<Artifact> {
-        if content == self.last_snapshot(&artifact)?.as_slice() {
-            return Ok(artifact);
-        }
-        let next_rev = artifact.next_rev();
-        self.claim(&artifact, next_rev, content)?;
-        self.write_current(&artifact, content)?;
-        artifact.record_touch(session_id.to_owned(), float(events::now()), changes);
-        self.save(&artifact)?;
-        self.append(
-            "artifact-modify",
-            &format!("{} rev{next_rev}", artifact.id),
-            session_id,
-        )?;
-        Ok(artifact)
-    }
-
-    /// Set (or with `None` clear) the explicit group override — metadata only, one log line.
-    pub fn set_group(
-        &self,
-        artifact_id: &str,
-        session_id: &str,
-        group: Option<String>,
-    ) -> Result<Artifact> {
+    /// Stamp `modified_at` (the agent's "a meaningful revision happened"); with `file`, replace a
+    /// document's or tour's file first. A diff's patch is rewritten instead.
+    pub fn modify(&self, artifact_id: &str, actor: &str, file: Option<&Path>) -> Result<Artifact> {
         let mut artifact = self.require(artifact_id)?;
-        artifact.group = group;
+        match (&artifact.kind, file) {
+            (Kind::Diff { .. }, Some(_)) => {
+                return Err(ArtifactError::NotEditable(artifact.id));
+            }
+            (Kind::Diff { .. }, None) => {
+                return Err(ArtifactError::UnsupportedKind("diff"));
+            }
+            (Kind::Document { file: name } | Kind::Tour { stops: name, .. }, Some(source)) => {
+                let content = std::fs::read(source).map_err(io_at(source))?;
+                let target = self.files.file_path(&artifact, name);
+                self.files
+                    .write_file(&artifact, name, &content)
+                    .map_err(io_at(&target))?;
+            }
+            (_, None) => {}
+        }
+        artifact.modified_at = float(events::now());
         self.save(&artifact)?;
-        let shown = artifact.group.as_deref().unwrap_or("(cleared)");
-        self.append(
-            "artifact-group",
-            &format!("{} {shown}", artifact.id),
-            session_id,
-        )?;
+        self.append("artifact-modify", &artifact.id, actor)?;
         Ok(artifact)
     }
 
-    /// Archive (hide from pickers and default listings, history kept) or unarchive — metadata
-    /// only, one log line.
-    pub fn set_archived(
-        &self,
-        artifact_id: &str,
-        session_id: &str,
-        archived: bool,
-    ) -> Result<Artifact> {
+    /// Archive (hide from pickers and default listings, content kept) or unarchive — metadata
+    /// only, `modified_at` untouched, one log line.
+    pub fn set_archived(&self, artifact_id: &str, actor: &str, archived: bool) -> Result<Artifact> {
         let mut artifact = self.require(artifact_id)?;
         artifact.archived_at = archived.then(|| float(events::now()));
         self.save(&artifact)?;
@@ -216,29 +177,8 @@ impl ArtifactService {
         } else {
             "artifact-unarchive"
         };
-        self.append(type_, &artifact.id, session_id)?;
+        self.append(type_, &artifact.id, actor)?;
         Ok(artifact)
-    }
-
-    /// Claim `revs/<rev>` exclusively; a taken slot is always a conflict, never overwritten.
-    fn claim(&self, artifact: &Artifact, rev: u64, content: &[u8]) -> Result<()> {
-        match self.files.claim_rev(artifact, rev, content) {
-            Ok(()) => Ok(()),
-            Err(ClaimRevError::Taken(rev)) => Err(ArtifactError::Conflict {
-                id: artifact.id.clone(),
-                rev,
-            }),
-            Err(ClaimRevError::Io(source)) => Err(ArtifactError::Io {
-                path: self.files.rev_path(artifact, rev),
-                source,
-            }),
-        }
-    }
-
-    fn write_current(&self, artifact: &Artifact, content: &[u8]) -> Result<()> {
-        self.files
-            .write_current(artifact, content)
-            .map_err(io_at(&self.files.current_path(artifact)))
     }
 
     fn save(&self, artifact: &Artifact) -> Result<()> {
@@ -247,40 +187,22 @@ impl ArtifactService {
             .map_err(io_at(&self.store.record_path(&artifact.id)))
     }
 
-    fn last_snapshot(&self, artifact: &Artifact) -> Result<Vec<u8>> {
-        let latest = artifact.latest_rev();
-        self.files
-            .read_rev(artifact, latest)
-            .map_err(io_at(&self.files.rev_path(artifact, latest)))
-    }
-
     // ----- reads ---------------------------------------------------------------------------
 
-    /// The working copy (default) or one snapshot; logs a read-visibility line.
-    pub fn content(&self, artifact_id: &str, rev: Option<i64>) -> Result<Vec<u8>> {
-        let artifact = self.require(artifact_id)?;
-        let data = match rev {
-            None => {
-                let path = self.files.current_path(&artifact);
-                self.files.read_current(&artifact).map_err(io_at(&path))?
-            }
-            Some(rev) => self.read_rev(&artifact, rev)?,
-        };
-        let which = rev.map_or_else(|| "current".to_owned(), |rev| format!("rev{rev}"));
-        self.append(
-            "artifact-read",
-            &format!("{artifact_id} {which}"),
-            &self.env_actor,
-        )?;
-        Ok(data)
+    /// The artifact's directory; neither reads nor logs.
+    pub fn dir(&self, artifact_id: &str) -> Result<PathBuf> {
+        Ok(self.files.content_dir(&self.require(artifact_id)?))
     }
 
-    /// The `current<ext>` path `tx artifact open` hands nvim; neither reads nor logs.
-    pub fn content_path(&self, artifact_id: &str) -> Result<PathBuf> {
-        Ok(self.files.current_path(&self.require(artifact_id)?))
+    /// The file a document's view opens.
+    pub fn document_path(&self, artifact: &Artifact) -> Result<PathBuf> {
+        match &artifact.kind {
+            Kind::Document { file } => Ok(self.files.file_path(artifact, file)),
+            other => Err(ArtifactError::UnsupportedKind(other.name())),
+        }
     }
 
-    /// Record that a session opened the artifact's view (read-visibility, not history).
+    /// Record that a session opened the artifact's view (read-visibility, not a mutation).
     pub fn opened(&self, artifact_id: &str, session_id: &str) -> Result<()> {
         self.append(
             "artifact-open",
@@ -289,116 +211,39 @@ impl ArtifactService {
         )
     }
 
-    /// A unified diff between two revisions (default: the last two); both must be utf-8.
-    pub fn diff(&self, artifact_id: &str, revs: Option<(i64, i64)>) -> Result<String> {
-        let artifact = self.require(artifact_id)?;
-        let (left_rev, right_rev) = match revs {
-            Some(pair) => pair,
-            None => {
-                let latest = artifact.latest_rev();
-                if latest == 0 {
-                    return Err(ArtifactError::SingleRevision(artifact.id));
-                }
-                // History length bounds `latest`; it is far below i64::MAX.
-                let latest = i64::try_from(latest).unwrap_or(i64::MAX);
-                (latest - 1, latest)
-            }
-        };
-        let left = self.decoded_rev(&artifact, left_rev)?;
-        let right = self.decoded_rev(&artifact, right_rev)?;
-        self.append(
-            "artifact-diff",
-            &format!("{artifact_id} rev{left_rev}..rev{right_rev}"),
-            &self.env_actor,
-        )?;
-        Ok(difflib::unified_diff(
-            &difflib::splitlines_keepends(&left),
-            &difflib::splitlines_keepends(&right),
-            &format!("rev{left_rev}"),
-            &format!("rev{right_rev}"),
-        ))
-    }
-
-    /// A rev by a Python int: a negative rev names a file that never exists.
-    fn read_rev(&self, artifact: &Artifact, rev: i64) -> Result<Vec<u8>> {
-        let not_found = || ArtifactError::NoRevision {
-            id: artifact.id.clone(),
-            rev,
-        };
-        let Ok(unsigned) = u64::try_from(rev) else {
-            return Err(not_found());
-        };
-        match self.files.read_rev(artifact, unsigned) {
-            Ok(data) => Ok(data),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(not_found()),
-            Err(source) => Err(ArtifactError::Io {
-                path: self.files.rev_path(artifact, unsigned),
-                source,
-            }),
-        }
-    }
-
-    fn decoded_rev(&self, artifact: &Artifact, rev: i64) -> Result<String> {
-        String::from_utf8(self.read_rev(artifact, rev)?).map_err(|_| ArtifactError::NotText {
-            id: artifact.id.clone(),
-            rev,
-        })
-    }
-
-    /// Whether the working copy differs from the last snapshot. An unreadable file is an error
-    /// naming its path (the reference leaked a traceback — Q26).
-    pub fn current_is_dirty(&self, artifact: &Artifact) -> Result<bool> {
-        let current_path = self.files.current_path(artifact);
-        let current = self
-            .files
-            .read_current(artifact)
-            .map_err(io_at(&current_path))?;
-        Ok(current != self.last_snapshot(artifact)?)
-    }
-
-    /// Every unarchived artifact `session_id` created or touched (a query, never denormalized).
+    /// Every unarchived artifact `session_id` owns.
     pub fn artifacts_for_session(&self, session_id: &str) -> Vec<Artifact> {
-        self.scan(self.store.query(|artifact| {
-            !artifact.is_archived()
-                && artifact
-                    .history()
-                    .iter()
-                    .any(|touch| touch.session_id == session_id)
-        }))
+        self.scan(
+            self.store
+                .query(|artifact| !artifact.is_archived() && artifact.owner == session_id),
+        )
     }
 
     // ----- diagnostics ---------------------------------------------------------------------
 
-    /// Invariant check across the store (read-only); an empty list means clean.
+    /// Invariant check across the store (read-only); an empty list means clean. Every record has
+    /// its directory and its kind's file; every directory has a record.
     pub fn doctor(&self) -> Result<Vec<String>> {
         let mut problems = Vec::new();
         let artifacts = self.all();
         let record_ids: HashSet<&str> = artifacts.iter().map(|a| a.id.as_str()).collect();
-        let logged = self.logged_mutations()?;
         for artifact in &artifacts {
-            for rev in self.orphan_revs(artifact)? {
-                problems.push(format!(
-                    "{}: orphan rev file {rev} not in history (crash debris — ignored on read; \
-                     blocks that slot until `doctor --repair`)",
-                    artifact.id
-                ));
+            let dir = self.files.content_dir(artifact);
+            if !dir.is_dir() {
+                problems.push(format!("{}: content directory is missing", artifact.id));
+                continue;
             }
-            let missing = self.files.missing_revs(artifact);
-            for rev in &missing {
+            let file = match &artifact.kind {
+                Kind::Document { file } => file.as_str(),
+                Kind::Diff { .. } => "diff.patch",
+                Kind::Tour { stops, .. } => stops.as_str(),
+            };
+            if !dir.join(file).is_file() {
                 problems.push(format!(
-                    "{}: history rev {rev} has no file on disk",
-                    artifact.id
+                    "{}: {} file {file} is missing",
+                    artifact.id,
+                    artifact.kind.name()
                 ));
-            }
-            problems.extend(self.current_health(artifact, &missing)?);
-            for touch in artifact.history() {
-                if !logged.contains(&signature(&artifact.id, touch.rev)) {
-                    problems.push(format!(
-                        "{}: rev {} touch has no matching EventLog mutation line (suspected \
-                         out-of-band write — a truncated log is also possible)",
-                        artifact.id, touch.rev
-                    ));
-                }
             }
         }
         let directory = self.store.directory();
@@ -424,69 +269,9 @@ impl ArtifactService {
         Ok(problems)
     }
 
-    /// Remove every orphan rev file (run when quiescent); returns the removed lines.
-    pub fn repair_orphans(&self) -> Result<Vec<String>> {
-        let mut removed = Vec::new();
-        for artifact in self.all() {
-            for rev in self.orphan_revs(&artifact)? {
-                self.files
-                    .remove_rev(&artifact, rev)
-                    .map_err(io_at(&self.files.rev_path(&artifact, rev)))?;
-                removed.push(format!("{}: removed orphan rev file {rev}", artifact.id));
-            }
-        }
-        Ok(removed)
-    }
-
-    fn orphan_revs(&self, artifact: &Artifact) -> Result<Vec<u64>> {
-        self.files
-            .orphan_revs(artifact)
-            .map_err(io_at(&self.files.revs_dir(artifact)))
-    }
-
-    /// The mutation signatures present in the log; unparsable lines are skipped.
-    fn logged_mutations(&self) -> Result<HashSet<Signature>> {
-        let mut signatures = HashSet::new();
-        let path = self.log.path();
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(signatures),
-            Err(source) => return Err(io_at(path)(source)),
-        };
-        for line in String::from_utf8_lossy(&bytes).lines() {
-            if let Some(signature) = parse_signature(line) {
-                signatures.insert(signature);
-            }
-        }
-        Ok(signatures)
-    }
-
-    fn current_health(&self, artifact: &Artifact, missing_revs: &[u64]) -> Result<Vec<String>> {
-        if missing_revs.contains(&artifact.latest_rev()) {
-            return Ok(Vec::new());
-        }
-        if !self.files.current_path(artifact).exists() {
-            return Ok(vec![format!(
-                "{}: working copy current{} is missing",
-                artifact.id,
-                artifact.extension()
-            )]);
-        }
-        if self.current_is_dirty(artifact)? {
-            return Ok(vec![format!(
-                "{}: working copy differs from last rev {} (dirty — un-snapshotted edits; close \
-                 with `tx artifact modify`)",
-                artifact.id,
-                artifact.latest_rev()
-            )]);
-        }
-        Ok(Vec::new())
-    }
-
     // ----- resolution ----------------------------------------------------------------------
 
-    /// A full id or a unique id prefix → the full id. The empty token never resolves (the
-    /// reference matched every record by the empty prefix — Q26 FIX leg T-ART-22).
+    /// A full id or a unique id prefix → the full id. The empty token never resolves.
     pub fn resolve_id(&self, token: &str) -> Result<String> {
         if token.is_empty() {
             return Err(ArtifactError::NotFound(String::new()));
@@ -516,57 +301,11 @@ impl ArtifactService {
             .load(artifact_id)?
             .ok_or_else(|| ArtifactError::NotFound(artifact_id.to_owned()))
     }
-}
 
-/// The log signature a touch should carry: a create (rev 0) or a modify (rev n).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Signature {
-    Create(String),
-    Modify(String, i64),
-}
-
-fn signature(artifact_id: &str, rev: u64) -> Signature {
-    if rev == 0 {
-        Signature::Create(artifact_id.to_owned())
-    } else {
-        Signature::Modify(artifact_id.to_owned(), i64::try_from(rev).unwrap_or(-1))
+    /// The actor of read lines when the caller has no session of its own.
+    pub fn env_actor(&self) -> &str {
+        &self.env_actor
     }
-}
-
-/// One log line → its mutation signature, if any. Mirrors the reference's tolerance: a line that
-/// is not JSON is skipped; `msg` split on whitespace; `rev<n>` parsed as a Python int.
-fn parse_signature(line: &str) -> Option<Signature> {
-    let entry: Value = serde_json::from_str(line).ok()?;
-    let entry = entry.as_object()?;
-    let kind = entry.get("type").and_then(Value::as_str);
-    let msg = entry.get("msg").and_then(Value::as_str).unwrap_or("");
-    let fields: Vec<&str> = msg.split_whitespace().collect();
-    match (kind, fields.as_slice()) {
-        (Some("artifact-create"), [id, ..]) => Some(Signature::Create((*id).to_owned())),
-        (Some("artifact-modify"), [id, rev, ..]) => {
-            let rev = rev.strip_prefix("rev")?;
-            Some(Signature::Modify((*id).to_owned(), py_int(rev)?))
-        }
-        _ => None,
-    }
-}
-
-/// `int(text)` for a whitespace-free token: optional sign, `_` between digits.
-fn py_int(text: &str) -> Option<i64> {
-    let (negative, digits) = match text.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, text.strip_prefix('+').unwrap_or(text)),
-    };
-    if digits.is_empty()
-        || digits.starts_with('_')
-        || digits.ends_with('_')
-        || digits.contains("__")
-        || !digits.chars().all(|c| c.is_ascii_digit() || c == '_')
-    {
-        return None;
-    }
-    let value: i64 = digits.replace('_', "").parse().ok()?;
-    Some(if negative { -value } else { value })
 }
 
 fn float(value: f64) -> Number {
@@ -588,30 +327,37 @@ mod tests {
     }
 
     #[test]
-    fn create_modify_diff_and_doctor_round_trip() {
+    fn create_modify_and_doctor_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path());
         let service = service(&home);
+        let source = dir.path().join("p.md");
+        std::fs::write(&source, "a\nb\n").unwrap();
         let artifact = service
-            .create("s1", b"a\nb\n", None, Some("p.md".into()), None)
+            .create(
+                "s1",
+                Kind::Document {
+                    file: "p.md".into(),
+                },
+                "Plan".into(),
+                Some(&source),
+            )
             .unwrap();
-        let same = service.modify(&artifact.id, "s1", b"a\nb\n", None).unwrap();
-        assert_eq!(same.latest_rev(), 0);
-        let next = service
-            .modify(&artifact.id, "s2", b"a\nc\n", Some("x".into()))
-            .unwrap();
-        assert_eq!(next.latest_rev(), 1);
-        assert_eq!(
-            service.diff(&artifact.id, None).unwrap(),
-            "--- rev0\n+++ rev1\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n"
-        );
-        assert!(matches!(
-            service.diff(&artifact.id, Some((-1, 0))),
-            Err(ArtifactError::NoRevision { rev: -1, .. })
-        ));
+        assert_eq!(artifact.owner, "s1");
+        assert_eq!(artifact.created_at, artifact.modified_at);
+        let path = service.document_path(&artifact).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\nb\n");
         assert!(service.doctor().unwrap().is_empty());
+
+        std::fs::write(&source, "a\nc\n").unwrap();
+        let modified = service.modify(&artifact.id, "s2", Some(&source)).unwrap();
+        assert!(modified.modified_at.as_f64() >= artifact.modified_at.as_f64());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\nc\n");
+        assert_eq!(service.artifacts_for_session("s1").len(), 1);
+        assert!(service.artifacts_for_session("s2").is_empty());
+
         assert!(matches!(
-            service.modify(&artifact.id[..4], "s1", b"z", None),
+            service.modify(&artifact.id[..4], "s1", None),
             Err(ArtifactError::NotFound(_))
         ));
         assert_eq!(service.resolve_id(&artifact.id[..4]).unwrap(), artifact.id);
@@ -619,6 +365,13 @@ mod tests {
             service.resolve_id(""),
             Err(ArtifactError::NotFound(_))
         ));
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(home.artifacts_dir().join("stray")).unwrap();
+        let problems = service.doctor().unwrap();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].ends_with("document file p.md is missing"));
+        assert!(problems[1].starts_with("stray: content directory"));
     }
 
     #[test]
@@ -626,12 +379,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path());
         let service = service(&home);
+        let source = dir.path().join("p.md");
+        std::fs::write(&source, "a\n").unwrap();
         let artifact = service
-            .create("s1", b"a\n", None, Some("p.md".into()), None)
+            .create(
+                "s1",
+                Kind::Document {
+                    file: "p.md".into(),
+                },
+                "Plan".into(),
+                Some(&source),
+            )
             .unwrap();
         assert_eq!(service.artifacts_for_session("s1").len(), 1);
         let archived = service.set_archived(&artifact.id, "s1", true).unwrap();
         assert!(archived.is_archived());
+        assert_eq!(archived.modified_at, artifact.modified_at);
         assert!(service.artifacts_for_session("s1").is_empty());
         assert!(service.require(&artifact.id).unwrap().is_archived());
         assert_eq!(service.all().len(), 1);
@@ -639,21 +402,5 @@ mod tests {
         assert!(!back.is_archived());
         assert_eq!(service.artifacts_for_session("s1").len(), 1);
         assert!(service.doctor().unwrap().is_empty());
-    }
-
-    #[test]
-    fn signatures_follow_the_reference_parse() {
-        let line = |kind: &str, msg: &str| format!(r#"{{"type":"{kind}","msg":"{msg}"}}"#);
-        assert_eq!(
-            parse_signature(&line("artifact-create", "a plan.md")),
-            Some(Signature::Create("a".into()))
-        );
-        assert_eq!(
-            parse_signature(&line("artifact-modify", "a rev1_0")),
-            Some(Signature::Modify("a".into(), 10))
-        );
-        assert_eq!(parse_signature(&line("artifact-modify", "x")), None);
-        assert_eq!(parse_signature(&line("artifact-modify", "a revx")), None);
-        assert_eq!(parse_signature("not json"), None);
     }
 }

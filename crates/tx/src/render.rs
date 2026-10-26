@@ -5,10 +5,11 @@
 //! widths it needs; nothing reads the clock or the environment.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde_json::Number;
 
-use crate::artifact::{Artifact, USER_ACTOR};
+use crate::artifact::{Artifact, Kind, USER_ACTOR};
 use crate::palette::{ACCENT_ANSI, RESET_FG, WARN_ANSI, tag_ansi};
 use crate::session::{Location, Session};
 
@@ -246,18 +247,7 @@ pub fn render_chats(session: &Session, now: f64) -> String {
     lines.join("\n")
 }
 
-/// Distinct touch authors in first-touch order.
-fn distinct_authors(artifact: &Artifact) -> Vec<&str> {
-    let mut authors: Vec<&str> = Vec::new();
-    for touch in artifact.history() {
-        if !authors.contains(&touch.session_id.as_str()) {
-            authors.push(&touch.session_id);
-        }
-    }
-    authors
-}
-
-/// A touch author's display label: the live session name, `user` verbatim, else a short id.
+/// A session's display label: the live session name, `user` verbatim, else a short id.
 pub fn actor_label(session_id: &str, names: &HashMap<String, String>) -> String {
     if session_id == USER_ACTOR {
         return USER_ACTOR.into();
@@ -268,20 +258,11 @@ pub fn actor_label(session_id: &str, names: &HashMap<String, String>) -> String 
     }
 }
 
-/// An artifact's display name: its title, or the filename when it has none.
-pub fn title_or_filename(artifact: &Artifact) -> &str {
-    artifact
-        .title
-        .as_deref()
-        .filter(|title| !title.is_empty())
-        .unwrap_or(&artifact.filename)
+fn modified_at(artifact: &Artifact) -> f64 {
+    artifact.modified_at.as_f64().unwrap_or(0.0)
 }
 
-fn updated_at(artifact: &Artifact) -> f64 {
-    artifact.updated_at().as_f64().unwrap_or(0.0)
-}
-
-/// `tx artifact ls`: newest-touched first; `names` is the caller-resolved id→name map.
+/// `tx artifact ls`: newest-modified first; `names` is the caller-resolved id→name map.
 pub fn render_artifacts(
     artifacts: &[Artifact],
     names: &HashMap<String, String>,
@@ -291,73 +272,75 @@ pub fn render_artifacts(
         return "ARTIFACTS\n  (none)".into();
     }
     let mut lines = vec!["ARTIFACTS".to_owned()];
-    for artifact in sorted_desc(artifacts, updated_at) {
-        let labels: Vec<String> = distinct_authors(artifact)
-            .into_iter()
-            .map(|author| actor_label(author, names))
-            .collect();
+    for artifact in sorted_desc(artifacts, modified_at) {
         lines.push(format!(
-            "  {:<8}  {:>3}r  {:>5}  {:<28}{}",
+            "  {:<8}  {:<8}  {:>5}  {:<28}{}",
             py_prefix(&artifact.id, 8),
-            artifact.history().len(),
-            reltime(Some(artifact.updated_at()), now),
-            trunc(title_or_filename(artifact), 28),
-            chips(&labels),
+            artifact.kind.name(),
+            reltime(Some(&artifact.modified_at), now),
+            trunc(&artifact.title, 28),
+            chips(&[actor_label(&artifact.owner, names)]),
         ));
     }
     lines.join("\n")
 }
 
-/// `tx artifact show`: metadata + the full touch log. `dirty` and `resolved_group` are computed by
-/// the caller; a `None` resolved group prints as Python's `None`.
+/// The kind's subfield on one line; `worktree_present` is the caller's check of the checkout a
+/// diff or tour points into (`None` for a document).
+pub fn describe_kind(kind: &Kind, worktree_present: Option<bool>) -> String {
+    let worktree = |path: &Path| {
+        let missing = if worktree_present == Some(false) {
+            " (missing)"
+        } else {
+            ""
+        };
+        format!("worktree={}{missing}", path.display())
+    };
+    match kind {
+        Kind::Document { file } => format!("file={file}"),
+        Kind::Diff {
+            worktree: path,
+            base,
+        } => format!("{}  base={base}", worktree(path)),
+        Kind::Tour {
+            worktree: path,
+            stops,
+        } => format!("{}  stops={stops}", worktree(path)),
+    }
+}
+
+/// `tx artifact show`: the record's metadata and its kind's subfield. `resolved_group` and
+/// `worktree_present` are computed by the caller.
 pub fn render_artifact_show(
     artifact: &Artifact,
-    dirty: bool,
     names: &HashMap<String, String>,
     now: f64,
-    resolved_group: Option<&str>,
+    resolved_group: &str,
+    worktree_present: Option<bool>,
 ) -> String {
-    let working = if dirty {
-        "dirty — un-snapshotted edits (close with `tx artifact modify`)"
-    } else {
-        "clean"
-    };
-    let group = match &artifact.group {
-        Some(group) => group.clone(),
-        None => format!("derived: {}", resolved_group.unwrap_or("None")),
-    };
     let mut lines = vec![
-        format!("{}  ({})", title_or_filename(artifact), artifact.id),
-        format!("  filename:   {}", artifact.filename),
+        format!("{}  ({})", artifact.title, artifact.id),
+        format!("  kind:       {}", artifact.kind.name()),
+        format!("  owner:      {}", actor_label(&artifact.owner, names)),
         format!(
             "  created:    {} ago",
             reltime(Some(&artifact.created_at), now)
         ),
         format!(
-            "  updated:    {} ago",
-            reltime(Some(artifact.updated_at()), now)
+            "  modified:   {} ago",
+            reltime(Some(&artifact.modified_at), now)
         ),
-        format!("  group:      {group}"),
-        format!("  revisions:  {}", artifact.history().len()),
-        format!("  working:    {working}"),
+        format!("  group:      derived: {resolved_group}"),
+        format!(
+            "  {:<11} {}",
+            format!("{}:", artifact.kind.name()),
+            describe_kind(&artifact.kind, worktree_present)
+        ),
     ];
     if let Some(archived_at) = &artifact.archived_at {
         lines.push(format!(
             "  archived:   {} ago (hidden from pickers; `tx artifact unarchive` restores)",
             reltime(Some(archived_at), now)
-        ));
-    }
-    lines.push("  history:".into());
-    for touch in artifact.history() {
-        let note = match touch.changes.as_deref() {
-            Some(changes) if !changes.is_empty() => format!("  {changes}"),
-            _ => String::new(),
-        };
-        lines.push(format!(
-            "    rev {:<3} {:>5} ago  {:<20}{note}",
-            touch.rev,
-            reltime(Some(&touch.at), now),
-            actor_label(&touch.session_id, names),
         ));
     }
     lines.join("\n")
@@ -843,119 +826,69 @@ mod tests {
  ],
  "artifacts": [
   {
-   "artifact_schema_version": 3,
+   "artifact_schema_version": 4,
    "id": "art1",
+   "kind": "document",
    "title": "Rust port plan",
-   "filename": "plan.md",
+   "owner": "b1",
    "created_at": 999100.0,
-   "group": null,
+   "modified_at": 999910.0,
    "archived_at": null,
-   "history": [
-    {
-     "session_id": "b1",
-     "at": 999100.0,
-     "rev": 0,
-     "changes": null
-    },
-    {
-     "session_id": "user",
-     "at": 999700.0,
-     "rev": 1,
-     "changes": "typo fix"
-    },
-    {
-     "session_id": "b1",
-     "at": 999910.0,
-     "rev": 2,
-     "changes": null
-    }
-   ]
+   "document": {
+    "file": "plan.md"
+   }
   },
   {
-   "artifact_schema_version": 3,
+   "artifact_schema_version": 4,
    "id": "art2",
-   "title": "",
-   "filename": "a-very-long-file-name-that-overflows.txt",
+   "kind": "document",
+   "title": "a-very-long-file-name-that-overflows.txt",
+   "owner": "user",
    "created_at": 999100.0,
-   "group": null,
+   "modified_at": 999910.0,
    "archived_at": null,
-   "history": [
-    {
-     "session_id": "user",
-     "at": 999100.0,
-     "rev": 0,
-     "changes": null
-    },
-    {
-     "session_id": "gone-1234-5678",
-     "at": 999910.0,
-     "rev": 1,
-     "changes": null
-    },
-    {
-     "session_id": "c1",
-     "at": 999910.0,
-     "rev": 2,
-     "changes": null
-    }
-   ]
+   "document": {
+    "file": "a-very-long-file-name-that-overflows.txt"
+   }
   },
   {
-   "artifact_schema_version": 3,
+   "artifact_schema_version": 4,
    "id": "art3",
-   "title": null,
-   "filename": "f.md",
+   "kind": "document",
+   "title": "f.md",
+   "owner": "v2",
    "created_at": 1000,
-   "group": null,
+   "modified_at": 1000,
    "archived_at": null,
-   "history": [
-    {
-     "session_id": "v2",
-     "at": 1000,
-     "rev": 0,
-     "changes": null
-    }
-   ]
+   "document": {
+    "file": "f.md"
+   }
   },
   {
-   "artifact_schema_version": 3,
+   "artifact_schema_version": 4,
    "id": "art4",
-   "title": null,
-   "filename": "f.md",
+   "kind": "document",
+   "title": "f.md",
+   "owner": "user",
    "created_at": 1000,
-   "group": "g",
+   "modified_at": 1100,
    "archived_at": null,
-   "history": [
-    {
-     "session_id": "user",
-     "at": 1000,
-     "rev": 0,
-     "changes": null
-    },
-    {
-     "session_id": "gone",
-     "at": 1100,
-     "rev": 1,
-     "changes": ""
-    }
-   ]
+   "document": {
+    "file": "f.md"
+   }
   },
   {
-   "artifact_schema_version": 3,
+   "artifact_schema_version": 4,
    "id": "art5",
+   "kind": "document",
    "title": "日本語タイトルはとても長いのでここで切り詰められるはずです",
-   "filename": "f.md",
+   "owner": "m1",
    "created_at": 999910.0,
-   "group": null,
+   "modified_at": 999910.0,
    "archived_at": null,
-   "history": [
-    {
-     "session_id": "m1",
-     "at": 999910.0,
-     "rev": 0,
-     "changes": null
-    }
-   ]
+   "document": {
+    "file": "f.md"
+   }
   }
  ],
  "out": {
@@ -985,15 +918,6 @@ mod tests {
    "Q — 0 chat(s)\n  (none)",
    " — 0 chat(s)\n  (none)"
   ],
-  "artifacts": "ARTIFACTS\n  art1        3r     1m  Rust port plan               [worker] [user]\n  art2        3r     1m  a-very-long-file-name-that-… [user] [gone-123] [child-with-a-rather-long-name-日本]\n  art5        1r     1m  日本語タイトルはとても長いのでここで切り詰められるはず… [m1]\n  art4        2r    11d  f.md                         [user] [gone]\n  art3        1r    11d  f.md                         [loop]",
-  "artifacts_empty": "ARTIFACTS\n  (none)",
-  "show": [
-   "Rust port plan  (art1)\n  filename:   plan.md\n  created:    15m ago\n  updated:    1m ago\n  group:      derived: feat-x\n  revisions:  3\n  working:    dirty — un-snapshotted edits (close with `tx artifact modify`)\n  history:\n    rev 0     15m ago  worker              \n    rev 1      5m ago  user                  typo fix\n    rev 2      1m ago  worker              ",
-   "a-very-long-file-name-that-overflows.txt  (art2)\n  filename:   a-very-long-file-name-that-overflows.txt\n  created:    15m ago\n  updated:    1m ago\n  group:      derived: child-with-a-rather-long-name-日本\n  revisions:  3\n  working:    clean\n  history:\n    rev 0     15m ago  user                \n    rev 1      1m ago  gone-123            \n    rev 2      1m ago  child-with-a-rather-long-name-日本",
-   "f.md  (art3)\n  filename:   f.md\n  created:    11d ago\n  updated:    11d ago\n  group:      derived: None\n  revisions:  1\n  working:    dirty — un-snapshotted edits (close with `tx artifact modify`)\n  history:\n    rev 0     11d ago  loop                ",
-   "f.md  (art4)\n  filename:   f.md\n  created:    11d ago\n  updated:    11d ago\n  group:      g\n  revisions:  2\n  working:    clean\n  history:\n    rev 0     11d ago  user                \n    rev 1     11d ago  gone                ",
-   "日本語タイトルはとても長いのでここで切り詰められるはずです  (art5)\n  filename:   f.md\n  created:    1m ago\n  updated:    1m ago\n  group:      derived: \n  revisions:  1\n  working:    dirty — un-snapshotted edits (close with `tx artifact modify`)\n  history:\n    rev 0      1m ago  m1                  "
-  ],
   "session_groups": [
    "docs",
    "feat-x",
@@ -1016,9 +940,9 @@ mod tests {
   ],
   "artifact_groups": [
    "feat-x",
-   "child-with-a-rather-long-name-日本",
+   "ungrouped",
    "loop",
-   "g",
+   "ungrouped",
    ""
   ],
   "namew": [
@@ -1356,31 +1280,65 @@ mod tests {
     }
 
     #[test]
-    fn artifact_tables_match_python_bytes() {
+    fn artifact_tables() {
         let Corpus {
             sessions,
             artifacts,
-            out,
+            ..
         } = corpus();
         let names: HashMap<String, String> = sessions
             .iter()
             .map(|session| (session.id.clone(), session.name.clone()))
             .collect();
-        let resolver = GroupResolver::new(&sessions, &artifacts);
         assert_eq!(
             render_artifacts(&artifacts, &names, NOW),
-            expected(&out, "artifacts")
+            "ARTIFACTS\n  \
+             art1      document     1m  Rust port plan               [worker]\n  \
+             art2      document     1m  a-very-long-file-name-that-… [user]\n  \
+             art5      document     1m  日本語タイトルはとても長いのでここで切り詰められるはず… [m1]\n  \
+             art4      document    11d  f.md                         [user]\n  \
+             art3      document    11d  f.md                         [loop]"
+        );
+        assert_eq!(render_artifacts(&[], &names, NOW), "ARTIFACTS\n  (none)");
+        assert_eq!(
+            render_artifact_show(&artifacts[0], &names, NOW, "feat-x", None),
+            "Rust port plan  (art1)\n  kind:       document\n  owner:      worker\n  \
+             created:    15m ago\n  modified:   1m ago\n  group:      derived: feat-x\n  \
+             document:   file=plan.md"
+        );
+        let diff = Artifact::new(
+            "d1".into(),
+            Kind::Diff {
+                worktree: "/w/tree".into(),
+                base: "abc".into(),
+            },
+            "review".into(),
+            "gone".into(),
+            serde_json::Number::from(1000),
         );
         assert_eq!(
-            render_artifacts(&[], &names, NOW),
-            expected(&out, "artifacts_empty")
+            render_artifact_show(&diff, &names, NOW, "ungrouped", Some(false)),
+            "review  (d1)\n  kind:       diff\n  owner:      gone\n  created:    11d ago\n  \
+             modified:   11d ago\n  group:      derived: ungrouped\n  \
+             diff:       worktree=/w/tree (missing)  base=abc"
         );
-        let shows = out["show"].as_array().unwrap();
-        for (index, (artifact, want)) in artifacts.iter().zip(shows).enumerate() {
-            let group = (index != 2).then(|| resolver.artifact_group(artifact));
-            let got = render_artifact_show(artifact, index % 2 == 0, &names, NOW, group.as_deref());
-            assert_eq!(got, want.as_str().unwrap());
-        }
+        let mut archived = diff.clone();
+        archived.archived_at = Some(serde_json::Number::from(1000));
+        assert!(
+            render_artifact_show(&archived, &names, NOW, "ungrouped", Some(true)).ends_with(
+                "\n  archived:   11d ago (hidden from pickers; `tx artifact unarchive` restores)"
+            )
+        );
+        assert_eq!(
+            describe_kind(
+                &Kind::Tour {
+                    worktree: "/w".into(),
+                    stops: "stops.lua".into()
+                },
+                Some(true)
+            ),
+            "worktree=/w  stops=stops.lua"
+        );
     }
 
     #[test]
@@ -1512,32 +1470,7 @@ mod tests {
         cases.push(("09", render_history(&history, now)));
         cases.push(("10", render_chats(&history[0], now)));
 
-        let touch = |sid: &str, at: f64, rev: u64, changes: Value| json!({"session_id": sid, "at": at, "rev": rev, "changes": changes});
-        let artifacts = [
-            Artifact::from_value(&json!({
-                "artifact_schema_version": 3, "id": "abcdef01-2345-4678-8abc-000000000001",
-                "title": "Rust port plan", "filename": "plan.md", "created_at": now - 900.0,
-                "group": null, "archived_at": null, "history": [
-                    touch("sess-aaaaaaaa-1", now - 900.0, 0, Value::Null),
-                    touch("user", now - 300.0, 1, json!("typo fix")),
-                    touch("sess-aaaaaaaa-1", now - 90.0, 2, Value::Null),
-                ],
-            }))
-            .unwrap(),
-            Artifact::from_value(&json!({
-                "artifact_schema_version": 3, "id": "ffffffff-0000-4000-8000-000000000002",
-                "title": null, "filename": "a-very-long-file-name-that-overflows.txt",
-                "created_at": now - 900.0, "group": "g1", "archived_at": null,
-                "history": [touch("gone-1234-5678", now - 900.0, 0, Value::Null)],
-            }))
-            .unwrap(),
-        ];
-        let names = HashMap::from([("sess-aaaaaaaa-1".to_owned(), "worker-1".to_owned())]);
-        cases.push(("12", render_artifacts(&artifacts, &names, now)));
-        cases.push((
-            "13",
-            render_artifact_show(&artifacts[0], true, &names, now, Some("derived-g")),
-        ));
+        // Goldens 12 and 13 pinned the v2 artifact tables; the v3 tables are tested above.
         for (name, got) in cases {
             if let Some(want) = golden(name) {
                 assert_eq!(got + "\n", want, "golden render/{name}");

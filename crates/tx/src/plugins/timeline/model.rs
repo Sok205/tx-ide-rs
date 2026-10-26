@@ -463,16 +463,11 @@ impl Builder {
         let mut created: HashMap<&str, Vec<(f64, &str)>> = HashMap::new();
         let mut titles: HashMap<&str, &str> = HashMap::new();
         for artifact in &artifacts {
-            titles.insert(
+            titles.insert(artifact.id.as_str(), artifact.title.as_str());
+            created.entry(artifact.owner.as_str()).or_default().push((
+                artifact.created_at.as_f64().unwrap_or(0.0),
                 artifact.id.as_str(),
-                artifact.title.as_deref().unwrap_or(&artifact.filename),
-            );
-            if let Some(first) = artifact.history().first() {
-                created
-                    .entry(first.session_id.as_str())
-                    .or_default()
-                    .push((first.at.as_f64().unwrap_or(0.0), artifact.id.as_str()));
-            }
+            ));
         }
 
         let mut lanes: Vec<Lane> = Vec::new();

@@ -10,10 +10,10 @@
 //! terminal to the pane already showing it; p then a digit or Enter nest-attaches it in a popup
 //! over the terminal, leaving the panes as they are; d asks about the cursor's row and y deletes
 //! it — a session is killed, an artifact is archived (hidden from the picker and `tx artifact
-//! ls`, history kept) and its live view closed — and the list redraws without it.
-//! In an nvim view the key goes back to the controlling session — the artifact's most recent live
-//! non-`user` toucher (else its creator), or the companion's `parent` — focusing the pane still
-//! showing it, else re-hosting this pane on it.
+//! ls`, content kept) and its live view closed — and the list redraws without it.
+//! In an nvim view the key goes back to the controlling session — the artifact's owner while it
+//! is alive, or the companion's `parent` — focusing the pane still showing it, else re-hosting
+//! this pane on it.
 
 use std::rc::Rc;
 
@@ -352,14 +352,12 @@ impl ArtifactNav {
 
     fn listing(&self, record: &Session, client: &str) -> Result<Listing, BoxError> {
         let mut artifacts = self.artifacts.artifacts_for_session(&record.id);
-        artifacts.sort_by(|a, b| updated_at(b).total_cmp(&updated_at(a)));
+        artifacts.sort_by(|a, b| modified_at(b).total_cmp(&modified_at(a)));
         let live = self.service.live_sessions()?;
-        let names = self.service.store().names_for(
-            artifacts
-                .iter()
-                .flat_map(|artifact| artifact.history())
-                .map(|touch| touch.session_id.as_str()),
-        );
+        let names = self
+            .service
+            .store()
+            .names_for(artifacts.iter().map(|artifact| artifact.owner.as_str()));
 
         // (section title, rows) in display order; rows are numbered across sections.
         let mut sections: Vec<(&str, Vec<Row>)> = Vec::new();
@@ -370,18 +368,12 @@ impl ArtifactNav {
                 matches!(&candidate.kind, SessionKind::Other(other)
                     if other.artifact_id.as_deref() == Some(artifact.id.as_str()))
             });
-            let mut chips = Vec::new();
-            for touch in artifact.history() {
-                let author = actor_label(&touch.session_id, &names);
-                if !chips.contains(&author) {
-                    chips.push(author);
-                }
-            }
+            let chips = vec![
+                actor_label(&artifact.owner, &names),
+                artifact.kind.name().to_owned(),
+            ];
             rows.push(Row {
-                name: artifact
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| artifact.filename.clone()),
+                name: artifact.title.clone(),
                 location: view
                     .map_or_else(|| "—".to_owned(), |view| location_text(&view.attached_to)),
                 chips,
@@ -501,7 +493,7 @@ impl ArtifactNav {
     /// `tx artifact open` without the CLI: a bound nvim view whose `parent` is the opener.
     fn open_view(&self, opener: &Session, artifact_id: &str) -> Result<Session, BoxError> {
         let artifact = self.artifacts.require(artifact_id)?;
-        let content_path = self.artifacts.content_path(artifact_id)?;
+        let content_path = self.artifacts.document_path(&artifact)?;
         let cwd = self.artifacts.files().content_dir(&artifact);
         let tags = if opener.tags.is_empty() {
             vec!["artifact".to_owned()]
@@ -618,29 +610,22 @@ impl ArtifactNav {
         Ok(0)
     }
 
-    /// The artifact's most recent live non-`user` toucher, else its creator (`None` when the
-    /// creator was the bare terminal).
+    /// The artifact's owner while it is alive (`None` when the owner was the bare terminal or
+    /// has ended).
     fn controlling_session(&self, artifact: &Artifact) -> Result<Option<String>, BoxError> {
-        let history = artifact.history();
-        for touch in history.iter().rev() {
-            if touch.session_id == USER_ACTOR {
-                continue;
-            }
-            if self
-                .service
-                .get(&touch.session_id)?
-                .is_some_and(|session| session.is_alive())
-            {
-                return Ok(Some(touch.session_id.clone()));
-            }
+        if artifact.owner == USER_ACTOR {
+            return Ok(None);
         }
-        let creator = &history[0].session_id;
-        Ok((creator != USER_ACTOR).then(|| creator.clone()))
+        let alive = self
+            .service
+            .get(&artifact.owner)?
+            .is_some_and(|session| session.is_alive());
+        Ok(alive.then(|| artifact.owner.clone()))
     }
 }
 
-fn updated_at(artifact: &Artifact) -> f64 {
-    artifact.updated_at().as_f64().unwrap_or(0.0)
+fn modified_at(artifact: &Artifact) -> f64 {
+    artifact.modified_at.as_f64().unwrap_or(0.0)
 }
 
 /// The popup's title, as the picker shows a row: the view's name, then its tags as chips, then

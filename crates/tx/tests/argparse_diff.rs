@@ -138,7 +138,7 @@ fn specs() -> Vec<Json> {
         json!({"prog": "tx _chat-op-finish", "description": "Internal: complete a handover/rollover from its op-spec (idempotent, CHD5).", "args": [
             {"name": "op_id"},
         ]}),
-        json!({"prog": "tx migrate", "description": "Upgrade $TX_IDE_HOME records to the current schemas (sessions v3→v6, artifacts v1→v2).", "args": []}),
+        json!({"prog": "tx migrate", "description": "Upgrade $TX_IDE_HOME records to the current schemas (sessions v3→v6, artifacts v1/v2/v3→v4).", "args": []}),
         // Synthetic stress parser: a very long prog forces the "prog on its own line" usage branch.
         json!({"prog": "tx a-deliberately-very-long-program-name-for-wrapping", "description": "Word-wrap stress: hyphenated-compound-words, em--dashes, a-b-c, x--y, supercalifragilisticexpialidocious-and-then-some-more-text, ____, 12-34, don't.", "args": [
             {"name": "alpha", "help": "supercalifragilisticexpialidocioussupercalifragilisticexpialidocious long token"},

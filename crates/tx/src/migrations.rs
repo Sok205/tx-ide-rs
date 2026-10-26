@@ -6,8 +6,10 @@
 //!   `engine`/`chats`/`last_activity`) and defaults the new ones (`group`, `turn_started_at`,
 //!   `artifact_id`). A v3 VIEW record leaves the store: its live tmux session (matched by the
 //!   exact name, Q27) is stamped `@tx_view`, then the record file is deleted.
-//! - Artifacts v1 / v2 → v3: `group` and `archived_at` default to null, then the strict loader
-//!   re-validates.
+//! - Artifacts v1 / v2 / v3 → v4: the record keeps `title` (else the filename), the creator as
+//!   `owner`, the last touch as `modified_at` and v3's `archived_at` (else null); the `group`
+//!   override is dropped (a v4 artifact groups with its owner); the working copy `current<ext>`
+//!   becomes `<filename>` and `revs/` is deleted. Every migrated record logs one `artifact-migrate` line.
 //!
 //! A file that cannot be migrated is skipped with the reason the reference prints
 //! (`<ExceptionName>: <message>`, including CPython's `json` decoder texts); nothing aborts the
@@ -17,16 +19,17 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
-use crate::artifact::{ARTIFACT_SCHEMA_VERSION, Artifact};
+use crate::artifact::{ARTIFACT_SCHEMA_VERSION, Artifact, Kind};
 use crate::artifact_store::ArtifactStore;
+use crate::events::EventLog;
 use crate::session::{RecordError, SCHEMA_VERSION, Session, py_repr};
 use crate::store::{IgnoreSkips, SessionStore, StoreError};
 use crate::tmux::{Tmux, TmuxError};
 
 const UPGRADABLE_FROM: [u64; 3] = [3, 4, 5];
-const ARTIFACT_UPGRADABLE_FROM: [u64; 2] = [1, 2];
+const ARTIFACT_UPGRADABLE_FROM: [u64; 3] = [1, 2, 3];
 const VIEW_KIND: &str = "view";
 
 /// The outcome of [`migrate_sessions`], in file-name order.
@@ -149,9 +152,9 @@ fn migrate_session(path: &Path, store: &SessionStore, tmux: &Tmux) -> Result<Ste
     Ok(Step::Migrated)
 }
 
-/// Upgrade artifact records in place (v1 → v2 adds a null `group`, v2 → v3 a null
-/// `archived_at`).
-pub fn migrate_artifacts(directory: &Path) -> ArtifactsReport {
+/// Upgrade artifact records in place (v1 / v2 / v3 → v4); each migrated record logs one
+/// `artifact-migrate <id>` line as `actor`.
+pub fn migrate_artifacts(directory: &Path, log: &EventLog, actor: &str) -> ArtifactsReport {
     let store = ArtifactStore::at(directory);
     let mut report = ArtifactsReport::default();
     for (name, path) in json_files(directory) {
@@ -159,6 +162,14 @@ pub fn migrate_artifacts(directory: &Path) -> ArtifactsReport {
             Ok(None) => report.migrated.push(name),
             Ok(Some(reason)) => report.skipped.push((name, reason)),
             Err(skip) => report.skipped.push((name, skip.reason())),
+        }
+    }
+    for name in &report.migrated {
+        let id = name.trim_end_matches(".json");
+        if let Err(error) = log.append("artifact-migrate", id, actor) {
+            report
+                .skipped
+                .push((name.clone(), os_error(&error, log.path()).reason()));
         }
     }
     report
@@ -179,22 +190,93 @@ fn migrate_artifact(path: &Path, store: &ArtifactStore) -> Result<Option<String>
             )
         }));
     }
-    let mut upgraded = data.clone();
-    upgraded.insert(
-        "artifact_schema_version".into(),
-        Value::from(ARTIFACT_SCHEMA_VERSION),
-    );
-    for added in ["group", "archived_at"] {
-        let value = data.get(added).cloned().unwrap_or(Value::Null);
-        upgraded.insert(added.into(), value);
+    let id = string_field(data, "id")?;
+    let filename = string_field(data, "filename")?;
+    let title = match data.get("title") {
+        Some(Value::String(title)) if !title.is_empty() => title.clone(),
+        _ => filename.clone(),
+    };
+    let history = match data.get("history") {
+        Some(Value::Array(entries)) if !entries.is_empty() => entries,
+        _ => return Err(Skip::new("KeyError", "'history'")),
+    };
+    let owner = match history[0].get("session_id") {
+        Some(Value::String(owner)) => owner.clone(),
+        _ => return Err(Skip::new("KeyError", "'session_id'")),
+    };
+    let created_at = number_field(data, "created_at")?;
+    let modified_at = match history[history.len() - 1].get("at") {
+        Some(Value::Number(at)) => at.clone(),
+        _ => return Err(Skip::new("KeyError", "'at'")),
+    };
+    let artifact = Artifact {
+        id: id.clone(),
+        kind: Kind::Document {
+            file: filename.clone(),
+        },
+        title,
+        owner,
+        created_at,
+        modified_at,
+        archived_at: optional_number_field(data, "archived_at")?,
+    };
+    let directory = store.directory().join(&id);
+    let current = directory.join(format!("current{}", py_suffix(py_name(&filename))));
+    let target = directory.join(&filename);
+    if current.exists() && current != target {
+        std::fs::rename(&current, &target).map_err(|error| os_error(&error, &current))?;
     }
-    let artifact = Artifact::from_value(&Value::Object(upgraded))
-        .map_err(|error| Skip::new("UnsupportedArtifactError", error.to_string()))?;
-    let target = store.record_path(&artifact.id);
+    let revs = directory.join("revs");
+    if revs.is_dir() {
+        std::fs::remove_dir_all(&revs).map_err(|error| os_error(&error, &revs))?;
+    }
     store
         .save(&artifact)
-        .map_err(|error| os_error(&error, &target))?;
+        .map_err(|error| os_error(&error, &store.record_path(&id)))?;
     Ok(None)
+}
+
+fn string_field(data: &Map<String, Value>, field: &str) -> Result<String, Skip> {
+    match data.get(field) {
+        Some(Value::String(value)) => Ok(value.clone()),
+        _ => Err(Skip::new("KeyError", format!("'{field}'"))),
+    }
+}
+
+fn number_field(data: &Map<String, Value>, field: &str) -> Result<Number, Skip> {
+    match data.get(field) {
+        Some(Value::Number(value)) => Ok(value.clone()),
+        _ => Err(Skip::new("KeyError", format!("'{field}'"))),
+    }
+}
+
+/// A v3 record's `archived_at`; absent (v1 / v2) reads as null.
+fn optional_number_field(data: &Map<String, Value>, field: &str) -> Result<Option<Number>, Skip> {
+    match data.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(value)) => Ok(Some(value.clone())),
+        Some(other) => Err(Skip::new(
+            "TypeError",
+            format!("{field} is not a number: {}", py_repr(other)),
+        )),
+    }
+}
+
+/// `PurePosixPath(path).name`: the last component, ignoring empty and `.` components.
+fn py_name(path: &str) -> &str {
+    path.rsplit('/')
+        .find(|part| !part.is_empty() && *part != ".")
+        .unwrap_or("")
+}
+
+/// Python `PurePath.suffix` of a bare file name: from the last dot, unless the part before it is
+/// empty or all dots (`.bashrc`, `...` have no suffix; `a.` has suffix `.`). The v2 store named
+/// the working copy `current<suffix>`.
+fn py_suffix(name: &str) -> &str {
+    match name.rfind('.') {
+        Some(i) if !name[..i].trim_start_matches('.').is_empty() => &name[i..],
+        _ => "",
+    }
 }
 
 /// `sorted(directory.glob("*.json"))`: hidden files included; a missing directory is empty.
@@ -602,21 +684,25 @@ mod tests {
     const ARTIFACT_FIXTURES: &[(&str, &str)] = &[
         (
             "a1.json",
-            r#"{"artifact_schema_version": 1, "id": "a1", "title": "T", "filename": "t.md", "created_at": 1.0, "history": [{"session_id": "s", "at": 1.0, "rev": 0, "changes": null}]}"#,
+            r#"{"artifact_schema_version": 2, "id": "a1", "title": "T", "filename": "t.md", "created_at": 1.0, "group": null, "history": [{"session_id": "s", "at": 1.0, "rev": 0, "changes": null}]}"#,
         ),
         (
             "a2.json",
             r#"{"artifact_schema_version": 1.0, "id": "a2", "group": "g", "title": null, "filename": "t.md", "created_at": 1, "history": [{"session_id": "s", "at": 1, "rev": 0, "changes": null}, {"session_id": "u", "at": 2.5, "rev": 1, "changes": "c"}]}"#,
         ),
-        ("a3.json", r#"{"artifact_schema_version": 4}"#),
+        ("a3.json", r#"{"artifact_schema_version": 5}"#),
         ("a4.json", r#"[1]"#),
         (
             "a5.json",
-            r#"{"artifact_schema_version": 1, "id": "a5", "title": "T", "filename": "t.md", "created_at": 1.0, "history": [{"session_id": "s", "at": 1.0, "rev": 1, "changes": null}]}"#,
+            r#"{"artifact_schema_version": 2, "id": "a5", "title": "T", "filename": "t.md", "created_at": 1.0, "group": null, "history": []}"#,
         ),
         (
             "a6.json",
-            r#"{"artifact_schema_version": 2, "id": "a6", "title": "T", "filename": "t.md", "created_at": 1.0, "group": "g", "history": [{"session_id": "s", "at": 1.0, "rev": 0, "changes": null}]}"#,
+            r#"{"artifact_schema_version": 3, "id": "a6", "title": "T", "filename": "t.md", "created_at": 1.0, "group": "g", "archived_at": 3.5, "history": [{"session_id": "s", "at": 1.0, "rev": 0, "changes": null}]}"#,
+        ),
+        (
+            "a7.json",
+            r#"{"artifact_schema_version": 3, "id": "a7", "kind": "document", "title": "T", "owner": "s", "created_at": 1.0, "modified_at": 1.0, "document": {"file": "t.md"}}"#,
         ),
     ];
     const EXPECTED_V3LLM: &str = r#"{
@@ -729,44 +815,30 @@ mod tests {
   "turn_started_at": 7
 }"#;
     const EXPECTED_A1: &str = r#"{
-  "artifact_schema_version": 3,
+  "artifact_schema_version": 4,
   "id": "a1",
+  "kind": "document",
   "title": "T",
-  "filename": "t.md",
+  "owner": "s",
   "created_at": 1.0,
-  "group": null,
+  "modified_at": 1.0,
   "archived_at": null,
-  "history": [
-    {
-      "session_id": "s",
-      "at": 1.0,
-      "rev": 0,
-      "changes": null
-    }
-  ]
+  "document": {
+    "file": "t.md"
+  }
 }"#;
     const EXPECTED_A2: &str = r#"{
-  "artifact_schema_version": 3,
+  "artifact_schema_version": 4,
   "id": "a2",
-  "title": null,
-  "filename": "t.md",
+  "kind": "document",
+  "title": "t.md",
+  "owner": "s",
   "created_at": 1,
-  "group": "g",
+  "modified_at": 2.5,
   "archived_at": null,
-  "history": [
-    {
-      "session_id": "s",
-      "at": 1,
-      "rev": 0,
-      "changes": null
-    },
-    {
-      "session_id": "u",
-      "at": 2.5,
-      "rev": 1,
-      "changes": "c"
-    }
-  ]
+  "document": {
+    "file": "t.md"
+  }
 }"#;
 
     fn no_server() -> Tmux {
@@ -925,29 +997,31 @@ mod tests {
     }
 
     #[test]
-    fn artifacts_match_the_python_migrator() {
+    fn artifacts_migrate_to_v4() {
         let dir = tempfile::tempdir().unwrap();
         for (name, content) in ARTIFACT_FIXTURES {
             std::fs::write(dir.path().join(name), content).unwrap();
         }
-        let report = migrate_artifacts(dir.path());
+        let a1 = dir.path().join("a1");
+        std::fs::create_dir_all(a1.join("revs")).unwrap();
+        std::fs::write(a1.join("current.md"), "working").unwrap();
+        std::fs::write(a1.join("revs/0.md"), "snapshot").unwrap();
+        let log = EventLog::new(dir.path().join("log.jsonl"));
+        let report = migrate_artifacts(dir.path(), &log, "migrator");
         assert_eq!(report.migrated, ["a1.json", "a2.json", "a6.json"]);
         assert_eq!(
             report.skipped,
             skipped(&[
                 (
                     "a3.json",
-                    "not an upgradable artifact record (artifact_schema_version=4)"
+                    "not an upgradable artifact record (artifact_schema_version=5)"
                 ),
                 (
                     "a4.json",
                     "AttributeError: 'list' object has no attribute 'get'"
                 ),
-                (
-                    "a5.json",
-                    "UnsupportedArtifactError: artifact 'a5' has non-contiguous rev numbers [1] \
-                     (expected 0..0, one per touch)"
-                ),
+                ("a5.json", "KeyError: 'history'"),
+                ("a7.json", "KeyError: 'filename'"),
             ])
         );
         let read = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
@@ -957,9 +1031,23 @@ mod tests {
             read("a6.json"),
             EXPECTED_A1
                 .replace("\"a1\"", "\"a6\"")
-                .replace("\"group\": null", "\"group\": \"g\"")
+                .replace("\"archived_at\": null", "\"archived_at\": 3.5")
         );
-        assert!(migrate_artifacts(dir.path()).migrated.is_empty());
+        assert_eq!(read("a1/t.md"), "working");
+        assert!(!a1.join("current.md").exists());
+        assert!(!a1.join("revs").exists());
+        let logged = read("log.jsonl");
+        assert!(
+            logged.contains("artifact-migrate") && logged.contains("\"a1\""),
+            "{logged}"
+        );
+        assert!(logged.contains("migrator"), "{logged}");
+        let again = migrate_artifacts(dir.path(), &log, "migrator");
+        assert!(again.migrated.is_empty());
+        assert_eq!(
+            again.skipped[0],
+            ("a1.json".to_owned(), "already v4".to_owned())
+        );
     }
 
     #[test]
