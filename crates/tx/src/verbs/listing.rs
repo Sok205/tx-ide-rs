@@ -21,7 +21,7 @@ use crate::engines::EngineRegistry;
 use crate::grouping::GroupResolver;
 use crate::palette;
 use crate::picker_filter::{self, HIDE_FILE_ENV};
-use crate::picker_keys::{self, DIGITS_FILE_ENV, KeyState, NORMAL_KEYS};
+use crate::picker_keys::{self, DIGITS_FILE_ENV, KeyState, NORMAL_PROMPT, SEARCH_PROMPT};
 use crate::pyjson::dumps_pretty;
 use crate::render::{
     LOCATION_W, PICKER_NUMBER_W, ROLE_W, picker_namew, picker_numbered_rows, render_chats,
@@ -675,17 +675,19 @@ impl Attach {
              bg+:{SELECTION_BG}:regular,hl:{ACCENT_HEX},hl+:{ACCENT_HEX},\
              header:{DIM_FG_HEX},footer:{DIM_FG_HEX},prompt:{DIM_FG_HEX},query:{FG_HEX}"
         );
-        // Normal mode unless a query was passed in: hidden input would hide it.
-        let (start_mode, footer) = if query.is_empty() {
-            ("hide-input".to_owned(), picker_keys::normal_footer("", ""))
+        // Normal mode, unless a query was passed in: then the user is searching.
+        let unbind_normal = picker_keys::toggle_normal_keys("unbind");
+        let (prompt, start_mode, footer) = if query.is_empty() {
+            (NORMAL_PROMPT, String::new(), picker_keys::normal_footer(""))
         } else {
             (
-                format!("unbind({NORMAL_KEYS})"),
+                SEARCH_PROMPT,
+                format!("+{unbind_normal}"),
                 picker_keys::search_footer(),
             )
         };
         let enter_search = format!(
-            "show-input+unbind({NORMAL_KEYS})+unbind(y,n)+execute-silent(: >\"$TX_ARM_FILE\"; : \
+            "change-prompt({SEARCH_PROMPT})+{unbind_normal}+execute-silent(: >\"$TX_ARM_FILE\"; : \
              >\"${DIGITS_FILE_ENV}\")+transform-header({focus_cmd})+change-footer:{}",
             picker_keys::search_footer()
         );
@@ -695,7 +697,7 @@ impl Attach {
             "fzf".to_owned(),
             "--exact".to_owned(),
             "--ansi".to_owned(),
-            "--prompt=  ❯ ".to_owned(),
+            format!("--prompt={prompt}"),
             "--height=100%".to_owned(),
             "--reverse".to_owned(),
             "--delimiter=\t".to_owned(),
@@ -713,13 +715,13 @@ impl Attach {
             format!(
                 "--bind=start:execute-silent(( while sleep 1; do [ -s \"${DIGITS_FILE_ENV}\" ] || \
                  curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || \
-                 exit 0; done ) &)+unbind(y,n)+unbind(result)+{start_mode}"
+                 exit 0; done ) &)+unbind(result){start_mode}"
             ),
             format!("--bind=ctrl-r:{reload}"),
             format!("--bind=r:{reload}"),
             format!(
                 "--bind=focus:transform-header({focus_cmd})+execute-silent(: \
-                 >\"$TX_ARM_FILE\")+unbind(y,n)"
+                 >\"$TX_ARM_FILE\")"
             ),
             format!("--bind=ctrl-t:{edit_tag_bind}"),
             format!("--bind=t:{edit_tag_bind}"),
@@ -732,15 +734,16 @@ impl Attach {
             ),
             format!(
                 "--bind=d:execute-silent(printf '%s' {{1}} \
-                 >\"$TX_ARM_FILE\")+transform-header({arm_cmd})+rebind(y,n)"
+                 >\"$TX_ARM_FILE\")+transform-header({arm_cmd})"
+            ),
+            // `y` and `n` stay bound in normal mode (a free key would type into the query), so
+            // `y` kills only while `d` has armed the file.
+            format!(
+                "--bind=y:execute-silent([ -s \"$TX_ARM_FILE\" ] && {bin_tx} kill {{1}} >/dev/null \
+                 2>&1; : >\"$TX_ARM_FILE\")+{reload}"
             ),
             format!(
-                "--bind=y:execute-silent({bin_tx} kill {{1}} >/dev/null 2>&1; : \
-                 >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"
-            ),
-            format!(
-                "--bind=n:transform-header({focus_cmd})+execute-silent(: \
-                 >\"$TX_ARM_FILE\")+unbind(y,n)"
+                "--bind=n:transform-header({focus_cmd})+execute-silent(: >\"$TX_ARM_FILE\")"
             ),
             "--bind=j:down,k:up,g:first,G:last,q:abort".to_owned(),
             "--bind=ctrl-d:half-page-down,ctrl-u:half-page-up".to_owned(),
@@ -753,6 +756,12 @@ impl Attach {
         .into();
         opts.extend(
             (0..=9).map(|digit| format!("--bind={digit}:{}", picker_key(&digit.to_string()))),
+        );
+        // Every other printable key does nothing in normal mode instead of typing.
+        opts.extend(
+            picker_keys::ignored_keys()
+                .iter()
+                .map(|key| format!("--bind={key}:ignore")),
         );
         opts
     }
@@ -1117,8 +1126,7 @@ impl Command for PickerKey {
         let key = argv.first().map(String::as_str).unwrap_or_default();
         let digits = std::fs::read_to_string(&path)?;
         let state = KeyState {
-            searching: env.var("FZF_INPUT_STATE") == Some("enabled"),
-            query: env.var("FZF_QUERY").unwrap_or_default(),
+            searching: env.var("FZF_PROMPT") == Some(SEARCH_PROMPT),
             matched: env
                 .var("FZF_MATCH_COUNT")
                 .and_then(|count| count.parse().ok())
