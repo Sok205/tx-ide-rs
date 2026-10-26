@@ -21,7 +21,9 @@ use crate::engines::EngineRegistry;
 use crate::grouping::GroupResolver;
 use crate::palette;
 use crate::picker_filter::{self, HIDE_FILE_ENV};
-use crate::picker_keys::{self, DIGITS_FILE_ENV, KeyState, NORMAL_PROMPT, SEARCH_PROMPT};
+use crate::picker_keys::{
+    self, DIGITS_FILE_ENV, KeyState, NORMAL_PROMPT, POPUP_LINE, POPUP_MARK, SEARCH_PROMPT,
+};
 use crate::pyjson::dumps_pretty;
 use crate::render::{
     LOCATION_W, PICKER_NUMBER_W, ROLE_W, picker_matches, picker_namew, picker_numbered_rows,
@@ -30,11 +32,12 @@ use crate::render::{
 use crate::service::SessionService;
 use crate::session::{Role, Session, State};
 use crate::session_editor::edit_session;
+use crate::shlex::shlex_join;
 use crate::spawn::{SHELL_COMMANDS, SpawnSpec};
 use crate::storage::Home;
 use crate::tmux::Tmux;
 use crate::verbs::common::{
-    default_shell, detect_term_cols, env_namew, nest_attach_command, split_tags,
+    default_shell, detect_term_cols, env_namew, nest_attach_command, popup_session, split_tags,
 };
 
 /// The pause before the picker re-runs after a vanished session / a failed jump.
@@ -137,6 +140,7 @@ impl Component for ListingVerbs {
         table.register(ctx, Visibility::Hidden, RolesPanel(d()));
         table.register(ctx, Visibility::Hidden, ToggleHide(d()));
         table.register(ctx, Visibility::Hidden, PickerKey(d()));
+        table.register(ctx, Visibility::Hidden, PopupAttach(d()));
         Ok(())
     }
 }
@@ -684,7 +688,11 @@ impl Attach {
         );
         let unbind_normal = picker_keys::toggle_normal_keys("unbind");
         let (prompt, start_mode, footer) = if query.is_empty() {
-            (NORMAL_PROMPT, String::new(), picker_keys::normal_footer(""))
+            (
+                NORMAL_PROMPT,
+                String::new(),
+                picker_keys::normal_footer(false, ""),
+            )
         } else {
             (
                 SEARCH_PROMPT,
@@ -723,6 +731,9 @@ impl Attach {
             format!("--bind=change:reload({bin_tx} _list {{q}})+first"),
             format!("--bind=ctrl-r:{reload}"),
             format!("--bind=r:{reload}"),
+            format!("--bind=p:{}", picker_key("p")),
+            // While searching, where `p` types: the row under the cursor, straight to a popup.
+            format!("--bind=alt-p:print({POPUP_LINE})+accept"),
             format!(
                 "--bind=focus:transform-header({focus_cmd})+execute-silent(: \
                  >\"$TX_ARM_FILE\")"
@@ -783,9 +794,18 @@ impl Picker<'_> {
     /// Re-render, run fzf, act — looping only on a recoverable miss (the bash `while :`).
     fn run(&self, jump: bool) -> Result<i32, BoxError> {
         loop {
-            let Some(selection) = self.select()? else {
+            let Some(output) = self.select()? else {
                 return Ok(0);
             };
+            let (popup, selection) = match output.strip_prefix(&format!("{POPUP_LINE}\n")) {
+                Some(selection) => (true, selection),
+                None => (false, output.as_str()),
+            };
+            // A popup pick on an empty list prints only the popup line: nothing picked, as with
+            // Enter.
+            if selection.trim().is_empty() {
+                return Ok(0);
+            }
             let fields: Vec<&str> = selection.trim_end_matches('\n').split('\t').collect();
             let name = fields[0];
             // Field 4 is the row's tmux target (D7); fall back to name resolution.
@@ -793,6 +813,13 @@ impl Picker<'_> {
                 Some(target) => (*target).to_owned(),
                 None => self.tmux_target(name)?,
             };
+            if popup {
+                if self.open_popup(name, &target)? {
+                    return Ok(0);
+                }
+                std::thread::sleep(RETRY_PAUSE);
+                continue;
+            }
             if jump {
                 if self.jump_to_session(name, &target)? {
                     return Ok(0);
@@ -863,6 +890,27 @@ impl Picker<'_> {
         Ok(true)
     }
 
+    /// Popup mode / alt-p: nest-attach the session in a popup over this terminal. A background
+    /// job opens it once the picker has exited — tmux drops a popup opened while the picker's own
+    /// is still up, so the job waits for that one to close. False = the session vanished / no tmux (re-loop).
+    fn open_popup(&self, name: &str, target: &str) -> Result<bool, BoxError> {
+        let tmux = &self.deps.tmux;
+        if !tmux.has_session(target) {
+            eprintln!("tx: session '{name}' does not exist");
+            return Ok(false);
+        }
+        let Some(client) = tmux.current_client_name() else {
+            eprintln!("tx: a popup needs tmux");
+            return Ok(false);
+        };
+        // `run-shell` runs in the server's environment: bake the home into the command.
+        let home = format!("TX_IDE_HOME={}", self.deps.home.root().display());
+        let bin_tx = self.deps.bin_tx().display().to_string();
+        let command = shlex_join(&["env", &home, &bin_tx, "_popup-attach", &client, target]);
+        tmux.run_shell_background(&format!("sleep 0.1; {command}"))?;
+        Ok(true)
+    }
+
     /// `--jump`: focus the pane already hosting the session; then nest-attach, then switch.
     fn jump_to_session(&self, name: &str, target: &str) -> Result<bool, BoxError> {
         let tmux = &self.deps.tmux;
@@ -919,6 +967,33 @@ impl Picker<'_> {
             tmux.attach_session(target)?;
         }
         Ok(())
+    }
+}
+
+// ----- _popup-attach -------------------------------------------------------------------------
+
+struct PopupAttach(Rc<Deps>);
+
+impl Command for PopupAttach {
+    fn name(&self) -> &'static str {
+        "_popup-attach"
+    }
+    fn summary(&self) -> &'static str {
+        "Internal: the picker's popup mode / alt-p — nest-attach SESSION in a popup over \
+         CLIENT's terminal. Usage: _popup-attach CLIENT SESSION"
+    }
+    fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let [client, session] = argv else {
+            eprintln!("usage: tx _popup-attach CLIENT SESSION");
+            return Ok(2);
+        };
+        let tmux = &self.0.tmux;
+        let Some(target) = self.0.service.get(session)? else {
+            tmux.display_status(client, &format!("tx: session {session} not found"));
+            return Ok(1);
+        };
+        popup_session(tmux, client, &target, None)?;
+        Ok(0)
     }
 }
 
@@ -1112,7 +1187,7 @@ impl Command for PickerKey {
         "_picker-key"
     }
     fn summary(&self) -> &'static str {
-        "Internal: the picker's normal-mode key handler (esc, enter, 0-9): prints fzf actions."
+        "Internal: the picker's normal-mode key handler (esc, enter, p, 0-9): prints fzf actions."
     }
     fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
         let env = &self.0.env;
@@ -1126,20 +1201,26 @@ impl Command for PickerKey {
             }
         };
         let key = argv.first().map(String::as_str).unwrap_or_default();
-        let digits = std::fs::read_to_string(&path)?;
+        let pending = std::fs::read_to_string(&path)?;
+        let pending = pending.trim();
+        let (popup, digits) = match pending.strip_prefix(POPUP_MARK) {
+            Some(digits) => (true, digits),
+            None => (false, pending),
+        };
         let state = KeyState {
             searching: env.var("FZF_PROMPT") == Some(SEARCH_PROMPT),
             total: env
                 .var("FZF_TOTAL_COUNT")
                 .and_then(|count| count.parse().ok())
                 .unwrap_or_default(),
-            digits: digits.trim(),
+            popup,
+            digits,
         };
         let Some(reply) = picker_keys::press(key, &state) else {
             eprintln!("tx _picker-key: unknown key '{key}'");
             return Ok(2);
         };
-        std::fs::write(&path, reply.digits)?;
+        std::fs::write(&path, reply.pending())?;
         println!("{}", reply.actions);
         Ok(0)
     }

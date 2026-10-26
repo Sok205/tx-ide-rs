@@ -438,7 +438,9 @@ impl Tmux {
         self.set_session_option(session, "status-format[0]", footer)?;
         let command = format!("TMUX= tmux attach -t {}", shlex_quote(session));
         let shown = self.display_popup(client, "90%", "90%", title, &command);
-        for option in ["status", "status-style", "status-format[0]"] {
+        // The whole `status-format` array: unsetting only `[0]` leaves an empty local array that
+        // blanks the global status line.
+        for option in ["status", "status-style", "status-format"] {
             self.unset_session_option(session, option);
         }
         shown

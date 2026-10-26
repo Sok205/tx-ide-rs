@@ -24,7 +24,7 @@ use crate::artifact::{Artifact, USER_ACTOR};
 use crate::artifact_kinds::{Opened, describe};
 use crate::artifact_picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::artifact_service::ArtifactService;
-use crate::palette::{DIM_FG_ANSI, DIM_FG_HEX, FG_ANSI, FG_HEX, RESET_FG, tag_ansi, tag_hex};
+use crate::palette::{DIM_FG_ANSI, FG_ANSI, RESET_FG, tag_ansi};
 use crate::render::{LOCATION_W, actor_label, location_text};
 use crate::service::SessionService;
 use crate::session::{Session, SessionKind};
@@ -33,7 +33,7 @@ use crate::shlex::shlex_join;
 use crate::storage::Home;
 use crate::verbs::artifacts::view_name;
 
-use super::common::{bin_tx, nest_attach_command};
+use super::common::{bin_tx, nest_attach_command, popup_session};
 
 const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
@@ -570,19 +570,8 @@ impl ArtifactNav {
                 }
             },
             Mode::Popup => {
-                let outer = tmux
-                    .outer_client(client)
-                    .map_or_else(|| client.to_owned(), |(outer, _)| outer);
-                let prefix = tmux
-                    .global_option("prefix")
-                    .unwrap_or_else(|| "C-b".to_owned());
                 let owner = self.service.get(session)?;
-                tmux.popup_attach(
-                    &outer,
-                    &popup_title(target, owner.as_ref()),
-                    &popup_footer(&prefix),
-                    target.tmux_name(),
-                )?;
+                popup_session(tmux, client, target, owner.as_ref())?;
                 Ok(0)
             }
             Mode::Attach => self.rehost(session, client, target),
@@ -622,30 +611,6 @@ impl ArtifactNav {
 
 fn modified_at(artifact: &Artifact) -> f64 {
     artifact.modified_at.as_f64().unwrap_or(0.0)
-}
-
-/// The popup's title, as the picker shows a row: the view's name, then its tags as chips, then
-/// `◂ owner` — the display name of the session the key fired in (none when it is not tx-managed).
-fn popup_title(view: &Session, owner: Option<&Session>) -> String {
-    let mut title = format!(" {} ", view.name);
-    for tag in &view.tags {
-        title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
-    }
-    if let Some(owner) = owner {
-        title.push_str(&format!(
-            "#[fg={DIM_FG_HEX},nobold]◂ {}#[default] ",
-            owner.name
-        ));
-    }
-    title
-}
-
-/// The popup's bottom line: how to leave it.
-fn popup_footer(prefix: &str) -> String {
-    format!(
-        " #[fg={FG_HEX}]{prefix} d#[fg={DIM_FG_HEX}] close, the view keeps running   \
-         #[fg={FG_HEX}]:q#[fg={DIM_FG_HEX}] in nvim ends the view"
-    )
 }
 
 /// One picker line, laid out like a picker row: (n) NAME   LOCATION chips.
