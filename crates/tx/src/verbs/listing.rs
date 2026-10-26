@@ -30,15 +30,18 @@ use crate::render::{
 use crate::service::SessionService;
 use crate::session::{Role, Session, State};
 use crate::session_editor::edit_session;
+use crate::shlex::shlex_join;
 use crate::spawn::{SHELL_COMMANDS, SpawnSpec};
 use crate::storage::Home;
 use crate::tmux::Tmux;
 use crate::verbs::common::{
-    default_shell, detect_term_cols, env_namew, nest_attach_command, split_tags,
+    default_shell, detect_term_cols, env_namew, nest_attach_command, popup_session, split_tags,
 };
 
 /// The pause before the picker re-runs after a vanished session / a failed jump.
 const RETRY_PAUSE: Duration = Duration::from_millis(1200);
+/// What alt-p has fzf print ahead of the selection.
+const POPUP_LINE: &str = "popup\n";
 
 /// The `ServiceError`s cli.py raises itself (printed `tx <verb>: <text>`, exit 1).
 #[derive(Debug, thiserror::Error)]
@@ -137,6 +140,7 @@ impl Component for ListingVerbs {
         table.register(ctx, Visibility::Hidden, RolesPanel(d()));
         table.register(ctx, Visibility::Hidden, ToggleHide(d()));
         table.register(ctx, Visibility::Hidden, PickerKey(d()));
+        table.register(ctx, Visibility::Hidden, PopupAttach(d()));
         Ok(())
     }
 }
@@ -723,6 +727,7 @@ impl Attach {
             format!("--bind=change:reload({bin_tx} _list {{q}})+first"),
             format!("--bind=ctrl-r:{reload}"),
             format!("--bind=r:{reload}"),
+            format!("--bind=alt-p:print({})+accept", POPUP_LINE.trim_end()),
             format!(
                 "--bind=focus:transform-header({focus_cmd})+execute-silent(: \
                  >\"$TX_ARM_FILE\")"
@@ -783,8 +788,12 @@ impl Picker<'_> {
     /// Re-render, run fzf, act — looping only on a recoverable miss (the bash `while :`).
     fn run(&self, jump: bool) -> Result<i32, BoxError> {
         loop {
-            let Some(selection) = self.select()? else {
+            let Some(output) = self.select()? else {
                 return Ok(0);
+            };
+            let (popup, selection) = match output.strip_prefix(POPUP_LINE) {
+                Some(selection) => (true, selection),
+                None => (false, output.as_str()),
             };
             let fields: Vec<&str> = selection.trim_end_matches('\n').split('\t').collect();
             let name = fields[0];
@@ -793,6 +802,13 @@ impl Picker<'_> {
                 Some(target) => (*target).to_owned(),
                 None => self.tmux_target(name)?,
             };
+            if popup {
+                if self.open_popup(name, &target)? {
+                    return Ok(0);
+                }
+                std::thread::sleep(RETRY_PAUSE);
+                continue;
+            }
             if jump {
                 if self.jump_to_session(name, &target)? {
                     return Ok(0);
@@ -863,6 +879,27 @@ impl Picker<'_> {
         Ok(true)
     }
 
+    /// alt-p: nest-attach the session in a popup over this terminal. A background job opens it
+    /// once the picker has exited — tmux drops a popup opened while the picker's own is still up,
+    /// so the job waits for that one to close. False = the session vanished / no tmux (re-loop).
+    fn open_popup(&self, name: &str, target: &str) -> Result<bool, BoxError> {
+        let tmux = &self.deps.tmux;
+        if !tmux.has_session(target) {
+            eprintln!("tx: session '{name}' does not exist");
+            return Ok(false);
+        }
+        let Some(client) = tmux.current_client_name() else {
+            eprintln!("tx: a popup needs tmux");
+            return Ok(false);
+        };
+        // `run-shell` runs in the server's environment: bake the home into the command.
+        let home = format!("TX_IDE_HOME={}", self.deps.home.root().display());
+        let bin_tx = self.deps.bin_tx().display().to_string();
+        let command = shlex_join(&["env", &home, &bin_tx, "_popup-attach", &client, target]);
+        tmux.run_shell_background(&format!("sleep 0.1; {command}"))?;
+        Ok(true)
+    }
+
     /// `--jump`: focus the pane already hosting the session; then nest-attach, then switch.
     fn jump_to_session(&self, name: &str, target: &str) -> Result<bool, BoxError> {
         let tmux = &self.deps.tmux;
@@ -919,6 +956,33 @@ impl Picker<'_> {
             tmux.attach_session(target)?;
         }
         Ok(())
+    }
+}
+
+// ----- _popup-attach -------------------------------------------------------------------------
+
+struct PopupAttach(Rc<Deps>);
+
+impl Command for PopupAttach {
+    fn name(&self) -> &'static str {
+        "_popup-attach"
+    }
+    fn summary(&self) -> &'static str {
+        "Internal: the picker's alt-p — nest-attach SESSION in a popup over CLIENT's terminal. \
+         Usage: _popup-attach CLIENT SESSION"
+    }
+    fn run(&self, argv: &[String]) -> Result<i32, BoxError> {
+        let [client, session] = argv else {
+            eprintln!("usage: tx _popup-attach CLIENT SESSION");
+            return Ok(2);
+        };
+        let tmux = &self.0.tmux;
+        let Some(target) = self.0.service.get(session)? else {
+            tmux.display_status(client, &format!("tx: session {session} not found"));
+            return Ok(1);
+        };
+        popup_session(tmux, client, &target, None)?;
+        Ok(0)
     }
 }
 

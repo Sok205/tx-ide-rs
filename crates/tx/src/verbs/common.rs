@@ -4,8 +4,10 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 
 use crate::app::Env;
+use crate::palette::{DIM_FG_HEX, FG_HEX, tag_hex};
+use crate::session::Session;
 use crate::shlex::shlex_quote;
-use crate::tmux::Tmux;
+use crate::tmux::{Tmux, TmuxError};
 
 /// `_split_tags`: comma-separated, empty parts dropped.
 pub fn split_tags(raw: &str) -> Vec<String> {
@@ -144,4 +146,51 @@ pub fn nest_attach_command(target: &str) -> String {
         shlex_quote(target)
     );
     format!("bash -c {}", shlex_quote(&wrapper))
+}
+
+/// Nest-attach `target` in a popup over the terminal that shows `client` (its outer client when
+/// `client` is nested); the panes stay as they are. `owner` is the session the popup was opened
+/// from, named in the title — `None` when it was not opened from a tx session (the picker).
+pub fn popup_session(
+    tmux: &Tmux,
+    client: &str,
+    target: &Session,
+    owner: Option<&Session>,
+) -> Result<(), TmuxError> {
+    let outer = tmux
+        .outer_client(client)
+        .map_or_else(|| client.to_owned(), |(outer, _)| outer);
+    let prefix = tmux
+        .global_option("prefix")
+        .unwrap_or_else(|| "C-b".to_owned());
+    tmux.popup_attach(
+        &outer,
+        &popup_title(target, owner),
+        &popup_footer(&prefix),
+        target.tmux_name(),
+    )
+}
+
+/// The popup's title, as the picker shows a row: the view's name, then its tags as chips, then
+/// `◂ owner` — the display name of the session it was opened from, when there is one.
+fn popup_title(view: &Session, owner: Option<&Session>) -> String {
+    let mut title = format!(" {} ", view.name);
+    for tag in &view.tags {
+        title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
+    }
+    if let Some(owner) = owner {
+        title.push_str(&format!(
+            "#[fg={DIM_FG_HEX},nobold]◂ {}#[default] ",
+            owner.name
+        ));
+    }
+    title
+}
+
+/// The popup's bottom line: how to leave it.
+fn popup_footer(prefix: &str) -> String {
+    format!(
+        " #[fg={FG_HEX}]{prefix} d#[fg={DIM_FG_HEX}] close, the view keeps running   \
+         #[fg={FG_HEX}]:q#[fg={DIM_FG_HEX}] in nvim ends the view"
+    )
 }
