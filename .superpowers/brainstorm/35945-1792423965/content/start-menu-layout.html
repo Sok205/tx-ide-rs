@@ -1,0 +1,77 @@
+<style>
+.term{background:#0d1117;color:#c9d1d9;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.35;padding:10px;border-radius:6px;white-space:pre;overflow:hidden;min-height:330px}
+.acc{color:#7ee787}.dim{color:#6e7681}.sel{background:#1f6feb;color:#fff}.y{color:#e3b341}.m{color:#d2a8ff}.c{color:#79c0ff}
+@keyframes shim{0%{color:#30363d}50%{color:#7ee787;text-shadow:0 0 6px #7ee787}100%{color:#30363d}}
+.logo span{animation:shim 2.4s infinite}
+.logo span:nth-child(2){animation-delay:.15s}.logo span:nth-child(3){animation-delay:.3s}.logo span:nth-child(4){animation-delay:.45s}.logo span:nth-child(5){animation-delay:.6s}
+@keyframes rain{0%{opacity:0}30%{opacity:1}100%{opacity:0}}
+.rain{animation:rain 1.6s infinite}
+@keyframes blink{50%{opacity:0}} .cur{animation:blink 1s steps(1) infinite}
+</style>
+
+<h2>Start menu — which layout feels right?</h2>
+<p class="subtitle">Rough terminal mockups. The animation here is CSS standing in for what ratatui would draw frame by frame. Click the one closest to what you have in mind, then say what's off in the terminal.</p>
+
+<div class="cards">
+ <div class="card" data-choice="a" onclick="toggleSelect(this)">
+  <div class="card-image"><div class="term"><span class="logo">
+        <span>████████</span> <span>██╗  ██╗</span>
+        <span>   ██   </span> <span>╚██╗██╔╝</span>
+        <span>   ██   </span> <span> ╚███╔╝ </span>
+        <span>   ██   </span> <span> ██╔██╗ </span>
+        <span>   ██   </span> <span>██╔╝ ██╗</span></span>
+                 <span class="dim">tx-ide</span>
+
+   <span class="sel"> ▶ New tx session          n </span>
+     Resume from history       h
+     Attach to running         a
+     Timeline                  t
+     Settings                  s
+     Quit                      q
+
+ <span class="dim">────────── recent ──────────</span>
+ <span class="y">wrangler-p1</span>   <span class="dim">tx-ide-rs · 2h ago</span>
+ <span class="y">auth-review</span>   <span class="dim">api · yesterday</span></div></div>
+  <div class="card-body"><h3>A · Centered splash</h3><p>Big animated logo up top, menu in the middle, a couple of recent sessions underneath. Feels like a game title screen or the nvim dashboard (alpha / dashboard.nvim).</p></div>
+ </div>
+
+ <div class="card" data-choice="b" onclick="toggleSelect(this)">
+  <div class="card-image"><div class="term"><span class="logo"><span>▀█▀</span> <span>▀▄▀</span></span>  <span class="dim">tx-ide</span>       <span class="rain c">⣿⡿⣟⣯⣷⣾⣽⣻⢿⡿</span>
+<span class="logo"><span> █ </span> <span>█ █</span></span>               <span class="rain m">⢿⣻⣽⣾⣷⣯⣟⡿⣿</span>
+<span class="dim">┌ actions ─────┐┌ history ───────────────────┐</span>
+<span class="dim">│</span><span class="sel">▶ New tx      </span><span class="dim">││</span> <span class="sel">wrangler-p1  tx-ide-rs  2h  </span><span class="dim">│</span>
+<span class="dim">│</span>  Resume      <span class="dim">││</span> auth-review  api        1d  <span class="dim">│</span>
+<span class="dim">│</span>  Attach      <span class="dim">││</span> refactor-db  core       3d  <span class="dim">│</span>
+<span class="dim">│</span>  Timeline    <span class="dim">││</span> spike-tui    poc        5d  <span class="dim">│</span>
+<span class="dim">│</span>  Settings    <span class="dim">││</span> docs-pass    docs       1w  <span class="dim">│</span>
+<span class="dim">│</span>  Quit        <span class="dim">││</span>                            <span class="dim">│</span>
+<span class="dim">└──────────────┘└────────────────────────────┘</span>
+<span class="dim">┌ preview ───────────────────────────────────┐</span>
+<span class="dim">│</span> <span class="acc">wrangler-p1</span> · claude · tags: wrangler,p1   <span class="dim">│</span>
+<span class="dim">│</span> last: "split the diff into 3 commits…"     <span class="dim">│</span>
+<span class="dim">└────────────────────────────────────────────┘</span>
+ <span class="dim">tab switch pane · enter go · / filter · q quit</span></div></div>
+  <div class="card-body"><h3>B · Dashboard panes</h3><p>Small logo, actions on the left, full history list on the right with a preview of the picked session. More useful, less showy.</p></div>
+ </div>
+
+ <div class="card" data-choice="c" onclick="toggleSelect(this)">
+  <div class="card-image"><div class="term">
+
+
+
+            <span class="rain acc">░▒▓</span> <span class="acc">tx</span> <span class="rain acc">▓▒░</span>
+         <span class="dim">booting the swarm…</span>
+
+
+ <span class="dim">── then the intro fades into ──</span>
+
+ <span class="c">❯</span> <span class="cur">█</span>
+ <span class="sel"> new tx session               </span>
+   resume wrangler-p1     <span class="dim">2h</span>
+   resume auth-review     <span class="dim">1d</span>
+   attach refactor-db     <span class="dim">live</span>
+   timeline
+   settings</div></div>
+  <div class="card-body"><h3>C · Intro, then command bar</h3><p>A short intro animation plays once, then you land in a fuzzy search box. Actions and history are mixed into one list you narrow by typing, like Raycast or a command palette.</p></div>
+ </div>
+</div>

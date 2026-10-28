@@ -9,7 +9,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
-use tx_ui::tmux::{Ui, shell_quote};
+use tx_ui::tmux::Ui;
 
 use crate::app::DEFAULT_WINDOW_MIN;
 use crate::model::{Builder, DEFAULT_DAYS, chat_sources, is_agent, load_sessions};
@@ -196,25 +196,9 @@ impl Verb for Timeline {
     }
 }
 
-/// `<txc> --state-dir <state> [--socket <socket>] _timeline-resident --last 30m`, shell-quoted.
+/// `<txc> <globals> _timeline-resident --last 30m`, shell-quoted.
 fn resident_command(core: &TxCore) -> Result<String, VerbError> {
-    let exe = std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
-    let config = core.config();
-    let mut words = vec![
-        shell_quote(&exe.to_string_lossy()),
-        "--state-dir".to_owned(),
-        shell_quote(&config.state_dir.to_string_lossy()),
-    ];
-    if let Some(socket) = &config.tmux_socket {
-        words.push("--socket".to_owned());
-        words.push(shell_quote(&socket.to_string_lossy()));
-    }
-    words.extend([
-        RESIDENT_VERB.to_owned(),
-        "--last".to_owned(),
-        RESIDENT_WINDOW.to_owned(),
-    ]);
-    Ok(words.join(" "))
+    tx_ui::txc::shell(core, &[RESIDENT_VERB, "--last", RESIDENT_WINDOW])
 }
 
 /// Starts the resident view unless it is running. Callers hold the popup lock.

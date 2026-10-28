@@ -125,12 +125,9 @@ impl Ingest {
         if core.get_session(&id).is_ok()
             && let Ok(exe) = std::env::current_exe()
         {
-            let _ = detach(
-                &exe,
-                &core.config().state_dir,
-                &["_history-ingest", &id.to_string()],
-                &[],
-            );
+            let id = id.to_string();
+            let command = tx_ui::txc::command(&exe, core.config(), &["_history-ingest", &id]);
+            let _ = detach(command, &[]); // best effort: the Stop hook must never block the agent
         }
         Ok(0)
     }

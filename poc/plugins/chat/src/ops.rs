@@ -433,14 +433,9 @@ impl<'a> Ops<'a> {
         }
     }
 
-    /// `<'exe'> --state-dir <'state'> _chat-op-finish <'op'>`.
+    /// `<txc> <globals> _chat-op-finish <op>`, shell-quoted.
     fn finish_command(&self, op_id: &str) -> String {
-        format!(
-            "{} --state-dir {} {FINISH_VERB} {}",
-            shell_quote(&self.exe.to_string_lossy()),
-            shell_quote(&self.core.config().state_dir.to_string_lossy()),
-            shell_quote(op_id),
-        )
+        tx_ui::txc::shell_line(&self.exe, self.core.config(), &[FINISH_VERB, op_id])
     }
 
     fn detach(&self, verb: &str, op_id: &str) -> Result<(), ChatError> {
@@ -449,13 +444,8 @@ impl<'a> Ops<'a> {
         } else {
             &[]
         };
-        detach(
-            &self.exe,
-            &self.core.config().state_dir,
-            &[verb, op_id],
-            env,
-        )
-        .map_err(io_err(&self.exe))
+        let command = tx_ui::txc::command(&self.exe, self.core.config(), &[verb, op_id]);
+        detach(command, env).map_err(io_err(&self.exe))
     }
 
     fn save_spec(&self, spec: &ChatOpSpec) -> Result<(), ChatError> {

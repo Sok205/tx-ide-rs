@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use tx_core::{TxCore, Verb, VerbError, VerbIo};
-use tx_ui::tmux::{Ui, shell_quote};
+use tx_core::{CoreConfig, TxCore, Verb, VerbError, VerbIo};
+use tx_ui::tmux::Ui;
+use tx_ui::txc;
 
 use crate::data;
 use crate::model::{Action, Menu};
@@ -185,38 +186,28 @@ fn claim_first(ui: &Ui) -> bool {
     ok && out.trim() == "mine"
 }
 
-/// How to run this `txc` against this state dir.
+/// How to run this `txc` against this state dir (and socket).
 struct Txc {
     exe: PathBuf,
-    state: PathBuf,
+    config: CoreConfig,
 }
 
 impl Txc {
     fn current(core: &TxCore) -> Result<Self, VerbError> {
         Ok(Txc {
-            exe: std::env::current_exe().map_err(|e| failed(format!("current_exe: {e}")))?,
-            state: core.config().state_dir.clone(),
+            exe: txc::exe()?,
+            config: core.config().clone(),
         })
     }
 
     /// A shell command line, for popups.
     fn shell(&self, args: &[&str]) -> String {
-        let mut words = vec![
-            shell_quote(&self.exe.to_string_lossy()),
-            "--state-dir".to_owned(),
-            shell_quote(&self.state.to_string_lossy()),
-        ];
-        words.extend(args.iter().map(|arg| shell_quote(arg)));
-        words.join(" ")
+        txc::shell_line(&self.exe, &self.config, args)
     }
 
     fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(&self.exe);
-        command
-            .arg("--state-dir")
-            .arg(&self.state)
-            .args(args)
-            .stdin(Stdio::null());
+        let mut command = txc::command(&self.exe, &self.config, args);
+        command.stdin(Stdio::null());
         command
     }
 }
@@ -509,11 +500,11 @@ mod tests {
     fn popup_commands_are_shell_quoted() {
         let txc = Txc {
             exe: PathBuf::from("/opt/txc"),
-            state: PathBuf::from("/s/state"),
+            config: CoreConfig::new("/s/state"),
         };
         assert_eq!(
             txc.shell(&["_new-agent", "%3", "/dev/ttys001"]),
-            "'/opt/txc' --state-dir '/s/state' '_new-agent' '%3' '/dev/ttys001'"
+            "'/opt/txc' '--state-dir' '/s/state' '_new-agent' '%3' '/dev/ttys001'"
         );
     }
 }

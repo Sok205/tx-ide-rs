@@ -19,7 +19,7 @@ use tx_ui::popup as tm;
 use tx_ui::render::{
     DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, pad, tag_ansi, trunc,
 };
-use tx_ui::tmux::{Ui, shell_quote};
+use tx_ui::tmux::Ui;
 
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::grouping::bound_artifact;
@@ -252,7 +252,7 @@ impl Nav<'_> {
                     &width.to_string(),
                     &height.to_string(),
                     &listing.title,
-                    &self.txc_command(&[PICK_VERB, session, client])?,
+                    &tx_ui::txc::shell(self.core, &[PICK_VERB, session, client])?,
                 )
                 .map_err(failed)?;
                 Ok(0)
@@ -325,14 +325,17 @@ impl Nav<'_> {
             }
         };
         let target = &listing.targets[index];
-        let command = self.txc_command(&[
-            GO_VERB,
-            session,
-            client,
-            mode.name(),
-            target.kind,
-            &target.id,
-        ])?;
+        let command = tx_ui::txc::shell(
+            self.core,
+            &[
+                GO_VERB,
+                session,
+                client,
+                mode.name(),
+                target.kind,
+                &target.id,
+            ],
+        )?;
         self.ui
             .run_shell_background(&format!("{command} || true"))
             .map_err(failed)?;
@@ -418,25 +421,6 @@ impl Nav<'_> {
         self.live()
             .into_iter()
             .find(|candidate| bound_artifact(candidate).as_deref() == Some(artifact_id))
-    }
-
-    /// `<txc> --state-dir <state> [--socket <socket>] argv…`, shell-quoted: `run-shell` and the
-    /// popup run in the server's environment, which knows neither.
-    fn txc_command(&self, argv: &[&str]) -> Result<String, VerbError> {
-        let exe =
-            std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
-        let config = self.core.config();
-        let mut words = vec![
-            shell_quote(&exe.to_string_lossy()),
-            "--state-dir".to_owned(),
-            shell_quote(&config.state_dir.to_string_lossy()),
-        ];
-        if let Some(socket) = &config.tmux_socket {
-            words.push("--socket".to_owned());
-            words.push(shell_quote(&socket.to_string_lossy()));
-        }
-        words.extend(argv.iter().map(|word| shell_quote(word)));
-        Ok(words.join(" "))
     }
 
     pub fn go_artifact(

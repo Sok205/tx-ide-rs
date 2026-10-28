@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tx_core::{CoreError, Session, TxCore, Verb, VerbError, VerbIo};
 use tx_ui::prompt::prompt_with_default;
 use tx_ui::render::{ACCENT_ANSI, BOLD, RESET};
-use tx_ui::tmux::{Ui, shell_quote};
+use tx_ui::tmux::Ui;
 
 use crate::ops::ops;
 
@@ -54,21 +54,10 @@ fn ask(core: &TxCore, pane: &str, client: &str) -> Result<i32, VerbError> {
     let Some(name) = name else {
         return Ok(0);
     };
-    let exe = std::env::current_exe()
-        .map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?
-        .display()
-        .to_string();
-    let state = core.config().state_dir.display().to_string();
     // A nonzero exit would make `run-shell` echo the whole command; the outcome is already on
     // the status line.
-    let command = format!(
-        "{} --state-dir {} _fork-pane {} {} {} || true",
-        shell_quote(&exe),
-        shell_quote(&state),
-        shell_quote(pane),
-        shell_quote(client),
-        shell_quote(name.trim()),
-    );
+    let fork = tx_ui::txc::shell(core, &["_fork-pane", pane, client, name.trim()])?;
+    let command = format!("{fork} || true");
     ui.run_shell_background(&command)
         .map_err(|e| VerbError::Failed(e.to_string()))?;
     Ok(0)

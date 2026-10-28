@@ -70,18 +70,6 @@ fn write_out(io: &mut VerbIo<'_>, text: &str) -> Result<(), VerbError> {
         .map_err(|e| failed(format!("write: {e}")))
 }
 
-/// This binary as `txc --state-dir <state>`, the way the fzf binds and run-shell call it.
-fn tx_command(core: &TxCore) -> Result<String, VerbError> {
-    let bin = std::env::current_exe()
-        .and_then(std::fs::canonicalize)
-        .map_err(|e| failed(format!("current_exe: {e}")))?;
-    Ok(format!(
-        "{} --state-dir {}",
-        bin.display(),
-        core.config().state_dir.display()
-    ))
-}
-
 const DEFAULT_NAMEW: i64 = 18;
 const DEFAULT_COLS: i64 = 80;
 const RETRY_PAUSE: Duration = Duration::from_millis(1200);
@@ -374,7 +362,7 @@ impl Verb for Pick {
             .max()
             .unwrap_or(0);
         let namew = picker_namew(detect_term_cols() - PICKER_NUMBER_W as i64 - 1, longest);
-        let tx = tx_command(core)?;
+        let tx = tx_ui::txc::shell(core, &[])?;
         let temp = |prefix: &str| {
             tempfile::Builder::new()
                 .prefix(prefix)
@@ -680,7 +668,7 @@ impl Verb for RolesPanel {
     }
 
     fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, _argv: &[String]) -> Result<i32, VerbError> {
-        let tx = tx_command(core)?;
+        let tx = tx_ui::txc::shell(core, &[])?;
         let reload = format!("reload-sync({tx} _roles)");
         let toggle = format!("execute-silent({tx} _toggle-hide {{1}})+{reload}");
         let toggle_all = format!("execute-silent({tx} _toggle-hide --all)+{reload}");

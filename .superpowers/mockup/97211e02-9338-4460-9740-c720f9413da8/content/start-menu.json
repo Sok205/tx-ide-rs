@@ -1,0 +1,36 @@
+{"title":"tx-ide start menu — which look?","sub":"Tab = fullscreen one · ←/→ compare · 1-3 pick · Enter confirm","fps":6,
+ "options":[
+  {"id":"a","title":"Title screen","note":"big shimmering logo, menu, a few recent — dashboard.nvim / game vibe",
+   "body":{"col":[
+    {"size":7,"frames":[
+     "[accent]  ████████╗██╗  ██╗[/]\n[accent]  ╚══██╔══╝╚██╗██╔╝[/]\n[dim]     ██║    ╚███╔╝ [/]\n[dim]     ██║    ██╔██╗ [/]\n[dim]     ██║   ██╔╝ ██╗[/]\n[dim]     ╚═╝   ╚═╝  ╚═╝[/]  [dim]ide[/]",
+     "[dim]  ████████╗██╗  ██╗[/]\n[info]  ╚══██╔══╝╚██╗██╔╝[/]\n[accent]     ██║    ╚███╔╝ [/]\n[dim]     ██║    ██╔██╗ [/]\n[dim]     ██║   ██╔╝ ██╗[/]\n[dim]     ╚═╝   ╚═╝  ╚═╝[/]  [dim]ide[/]",
+     "[dim]  ████████╗██╗  ██╗[/]\n[dim]  ╚══██╔══╝╚██╗██╔╝[/]\n[info]     ██║    ╚███╔╝ [/]\n[accent]     ██║    ██╔██╗ [/]\n[dim]     ██║   ██╔╝ ██╗[/]\n[dim]     ╚═╝   ╚═╝  ╚═╝[/]  [dim]ide[/]",
+     "[dim]  ████████╗██╗  ██╗[/]\n[dim]  ╚══██╔══╝╚██╗██╔╝[/]\n[dim]     ██║    ╚███╔╝ [/]\n[info]     ██║    ██╔██╗ [/]\n[accent]     ██║   ██╔╝ ██╗[/]\n[dim]     ╚═╝   ╚═╝  ╚═╝[/]  [dim]ide[/]",
+     "[dim]  ████████╗██╗  ██╗[/]\n[dim]  ╚══██╔══╝╚██╗██╔╝[/]\n[dim]     ██║    ╚███╔╝ [/]\n[dim]     ██║    ██╔██╗ [/]\n[info]     ██║   ██╔╝ ██╗[/]\n[accent]     ╚═╝   ╚═╝  ╚═╝[/]  [bold accent]ide[/]"]},
+    {"size":7,"list":["  New tx session        [dim]n[/]","  Resume from history   [dim]h[/]","  Attach to running     [dim]a[/]","  Timeline              [dim]t[/]","  Tutor                 [dim]?[/]","  Quit                  [dim]q[/]"],"sel":0},
+    {"block":"recent","body":{"text":"[warn]mockup-t5-verbs[/]  [dim]tx-mockup · 11m[/]\n[warn]fixer[/]            [dim]agent · 57m[/]\n[warn]tx-demo-ai[/]       [dim]tx-demo · 1h[/]"}}]}},
+
+  {"id":"b","title":"Dashboard","note":"small logo, actions | full history, preview of the picked session",
+   "body":{"col":[
+    {"size":1,"frames":["[bold accent]▀█▀▄▀ tx-ide[/]  [dim]⠋ 3 live · 11 past[/]","[bold accent]▀█▀▄▀ tx-ide[/]  [dim]⠙ 3 live · 11 past[/]","[bold accent]▀█▀▄▀ tx-ide[/]  [dim]⠹ 3 live · 11 past[/]","[bold accent]▀█▀▄▀ tx-ide[/]  [dim]⠸ 3 live · 11 past[/]","[bold accent]▀█▀▄▀ tx-ide[/]  [dim]⠼ 3 live · 11 past[/]","[bold accent]▀█▀▄▀ tx-ide[/]  [dim]⠴ 3 live · 11 past[/]"]},
+    {"row":[
+     {"size":"34%","block":"actions","body":{"list":["New tx","Resume","Attach","Timeline","Tutor","Quit"],"sel":0}},
+     {"block":"history","body":{"table":[
+       ["[warn]mockup-t5-verbs[/]","tx-mockup","11m"],
+       ["fixer","agent","57m"],
+       ["tx-demo-ai","tx-demo","1h"],
+       ["formal-languages…","flac","1h"]],"head":["name","tag","ago"]}}]},
+    {"size":5,"block":"preview","body":{"text":"[accent]mockup-t5-verbs[/] · claude · [dim]tx-ide-rs worktree[/]\n[dim]last:[/] \"verbs, view lifecycle and client switching\"\n[dim]enter[/] resume  [dim]f[/] fork  [dim]x[/] archive"}}]}},
+
+  {"id":"c","title":"Boot → palette","note":"plays a short boot animation once, then one fuzzy list of actions + history",
+   "body":{"col":[
+    {"size":5,"fps":4,"frames":[
+     "\n        [dim]░[/]\n   [dim]booting the swarm[/]",
+     "\n       [dim]░▒[/][accent]t[/]\n   [dim]booting the swarm ·[/]",
+     "\n      [dim]░▒▓[/][bold accent]tx[/]\n   [dim]booting the swarm · ·[/]",
+     "\n     [dim]░▒▓[/] [bold accent]tx[/] [dim]▓▒░[/]\n   [dim]3 agents live[/]",
+     "\n     [info]░▒▓[/] [bold accent]tx[/] [info]▓▒░[/]\n   [accent]ready[/]"]},
+    {"size":3,"block":"","body":{"text":"[accent]❯[/] res[reverse] [/]"}},
+    {"list":["[accent]resume[/] mockup-t5-verbs   [dim]tx-mockup · 11m[/]","[accent]resume[/] fixer             [dim]agent · 57m[/]","[accent]resume[/] tx-demo-ai        [dim]tx-demo · 1h[/]","[dim]────────────────────────────────[/]","new tx session","attach…","timeline"],"sel":0}]}}
+ ]}

@@ -1,23 +1,13 @@
-//! Re-executes `txc` detached: a new session (`setsid`), stdio on /dev/null, so the child
-//! survives the caller's pane being killed and never sits on the caller's latency path.
+//! Runs a `txc` re-invocation detached: a new session (`setsid`), stdio on /dev/null, so the
+//! child survives the caller's pane being killed and never sits on the caller's latency path.
 
 use std::os::unix::process::CommandExt;
-use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Spawns `exe --state-dir <state_dir> args…` with `env` added to the inherited environment
-/// and returns without waiting.
-pub fn detach(
-    exe: &Path,
-    state_dir: &Path,
-    args: &[&str],
-    env: &[(&str, &str)],
-) -> std::io::Result<()> {
-    let mut command = Command::new(exe);
+/// Spawns `command` (built by `tx_ui::txc::command`) with `env` added to the inherited
+/// environment and returns without waiting.
+pub fn detach(mut command: Command, env: &[(&str, &str)]) -> std::io::Result<()> {
     command
-        .arg("--state-dir")
-        .arg(state_dir)
-        .args(args)
         .envs(env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -56,7 +46,9 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        detach(&script, Path::new("/st"), &["_x", "op1"], &[("MARK", "m")]).unwrap();
+        let config = tx_core::CoreConfig::new("/st");
+        let command = tx_ui::txc::command(&script, &config, &["_x", "op1"]);
+        detach(command, &[("MARK", "m")]).unwrap();
         let mut text = String::new();
         for _ in 0..100 {
             text = std::fs::read_to_string(&out).unwrap_or_default();

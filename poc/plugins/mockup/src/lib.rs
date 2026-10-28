@@ -13,7 +13,7 @@ use tx_core::{
     CoreError, Plugin, PluginError, Registry, SendOptions, Session, SessionId, TxCore, Verb,
     VerbError, VerbIo,
 };
-use tx_ui::tmux::{Ui, UiError, shell_quote};
+use tx_ui::tmux::{Ui, UiError};
 
 pub mod markup;
 pub mod model;
@@ -153,24 +153,9 @@ fn project_of(dir: &Path) -> Result<&Path, VerbError> {
     })
 }
 
-/// `<txc> --state-dir <state> [--socket <socket>] _mockup-view <dir> <view>`, shell-quoted.
+/// `<txc> <globals> _mockup-view <dir> <view>`, shell-quoted.
 fn viewer_command(core: &TxCore, dir: &Path, view: &str) -> Result<String, VerbError> {
-    let exe = std::env::current_exe()
-        .map_err(|error| VerbError::Failed(format!("current exe: {error}")))?;
-    let configuration = core.config();
-    let mut words = vec![
-        shell_quote(&exe.to_string_lossy()),
-        "--state-dir".to_owned(),
-        shell_quote(&configuration.state_dir.to_string_lossy()),
-    ];
-    if let Some(socket) = &configuration.tmux_socket {
-        words.push("--socket".to_owned());
-        words.push(shell_quote(&socket.to_string_lossy()));
-    }
-    words.push(VIEW_VERB.to_owned());
-    words.push(shell_quote(&dir.to_string_lossy()));
-    words.push(shell_quote(view));
-    Ok(words.join(" "))
+    tx_ui::txc::shell(core, &[VIEW_VERB, &dir.to_string_lossy(), view])
 }
 
 /// Creates the view running the viewer unless it is already there, then marks it.
