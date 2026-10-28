@@ -729,12 +729,11 @@ impl TxCore {
             if session.lifecycle.is_terminal() {
                 return Ok((RefreshResult::Unchanged(session), None));
             }
-            Ok(
-                match self.exit_unless_live(session, &self.tmux.list_live()?)? {
-                    (session, None) => (RefreshResult::Unchanged(session), None),
-                    (session, exited) => (RefreshResult::Exited(session), exited),
-                },
-            )
+            let live = self.tmux.list_live()?;
+            Ok(match self.exit_unless_live(session, &live)? {
+                (session, None) => (RefreshResult::Unchanged(session), None),
+                (session, exited @ Some(_)) => (RefreshResult::Exited(session), exited),
+            })
         })
     }
 

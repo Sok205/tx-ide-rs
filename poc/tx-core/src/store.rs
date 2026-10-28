@@ -25,7 +25,7 @@ pub enum ReadError {
 }
 
 impl ReadError {
-    /// The file is gone: a record deleted between a scan and its read.
+    /// The file does not exist (never written, or deleted since a scan).
     fn is_not_found(&self) -> bool {
         matches!(self, Self::Io(error) if error.kind() == io::ErrorKind::NotFound)
     }
