@@ -8,6 +8,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
+use tx_ui::render::{HOOKS_KEY, Hooks};
 use tx_ui::tmux::Ui;
 
 use crate::app::DEFAULT_WINDOW_MIN;
@@ -321,9 +322,7 @@ fn health(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
                 notes.push(format!("ext.{plugin} malformed: {error}"));
             }
         }
-        if session.ext.get("hooks").is_some_and(|hooks| {
-            !hooks.is_object() || hooks.get("state").is_some_and(|state| !state.is_string())
-        }) {
+        if session.ext::<Hooks>(HOOKS_KEY).is_err() {
             problems += 1;
             notes.push("ext.hooks malformed".to_owned());
         }

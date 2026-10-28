@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 use tx_chat::engines::BUNDLE_TRANSCRIPT_NAME;
 use tx_chat::ext::{chat_ext, history_ext};
 use tx_core::{CoreError, Launch, Lifecycle, ListFilter, Session, TxCore};
+use tx_ui::render::{HookState, activity_at, hooks};
 
 use super::cache::TranscriptCache;
 use super::clock;
@@ -106,7 +107,8 @@ pub struct Lane {
     pub meta: String,
     pub metadata: Metadata,
     pub blurb: String,
-    pub state: String,
+    /// `None` once the session is gone.
+    pub state: Option<HookState>,
     pub sys: bool,
     pub live: bool,
     pub kill: Option<f64>,
@@ -120,6 +122,12 @@ pub struct Lane {
     pub events: Vec<Event>,
     /// Every parsed row, time-sorted; epoch seconds.
     pub rows: Vec<Row>,
+}
+
+impl Lane {
+    pub fn state_name(&self) -> &'static str {
+        self.state.map_or("killed", HookState::as_str)
+    }
 }
 
 impl Lane {
@@ -183,7 +191,7 @@ impl Payload {
                     "g": lane.group,
                     "meta": lane.meta,
                     "blurb": lane.blurb,
-                    "state": lane.state,
+                    "state": lane.state_name(),
                     "sys": u8::from(lane.sys),
                     "live": u8::from(lane.live),
                     "kill": lane.kill,
@@ -407,27 +415,9 @@ pub fn is_alive(session: &Session) -> bool {
     session.lifecycle == Lifecycle::Running
 }
 
-fn hooks_field<'a>(session: &'a Session, field: &str) -> Option<&'a Value> {
-    session.ext.get("hooks")?.get(field)
-}
-
-/// The latest sign of life: creation, end, or the last hook state change.
-pub fn activity_at(session: &Session) -> f64 {
-    let since = hooks_field(session, "since")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-    session
-        .created_at
-        .max(session.ended_at.unwrap_or(0.0))
-        .max(since)
-}
-
 /// The agent's state as the `hooks` plugin last recorded it; `idle` before any hook ran.
-pub fn hook_state(session: &Session) -> String {
-    hooks_field(session, "state")
-        .and_then(Value::as_str)
-        .unwrap_or("idle")
-        .to_owned()
+pub fn hook_state(session: &Session) -> HookState {
+    hooks(session).map_or(HookState::Idle, |hooks| hooks.state)
 }
 
 fn group_override(session: &Session) -> Option<&str> {
@@ -787,11 +777,7 @@ impl Builder {
                 .map(|row| row.text.as_str())
                 .unwrap_or("");
             let message_count = rows.iter().filter(|row| row.kind.is_message()).count();
-            let state = if live {
-                hook_state(primary)
-            } else {
-                "killed".to_owned()
-            };
+            let state = live.then(|| hook_state(primary));
             let blurb = cap(first_user, BLURB_CAP);
             let (model, effort) = launch_options(primary);
             let metadata = self
@@ -805,7 +791,11 @@ impl Builder {
                 sid: primary.id.to_string(),
                 name: seed.name.clone(),
                 group: session_group(primary, &by_id),
-                meta: format!("{} · {state} · {message_count} msgs", engines.join("/")),
+                meta: format!(
+                    "{} · {} · {message_count} msgs",
+                    engines.join("/"),
+                    state.map_or("killed", HookState::as_str)
+                ),
                 metadata,
                 blurb: if blurb.is_empty() {
                     "(no user messages recorded)".to_owned()

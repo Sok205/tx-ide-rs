@@ -1,7 +1,7 @@
 //! Picker row rendering: port of main's `render.rs` picker feed and `palette.rs` tag colours.
 //! Pure formatting; every function takes the records and `now`, nothing reads the clock.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use tx_core::{Launch, Session};
 
@@ -126,16 +126,38 @@ pub fn chips(tags: &[String]) -> String {
     tags.iter().map(|tag| format!(" [{tag}]")).collect()
 }
 
-/// The hooks plugin's record: the state (`working`, `waiting`, `idle`) and the epoch it was entered.
-#[derive(Deserialize)]
+/// The `ext` key the hooks plugin owns.
+pub const HOOKS_KEY: &str = "hooks";
+
+/// What an agent is doing, as its engine's hooks last reported it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HookState {
+    Working,
+    Waiting,
+    Idle,
+}
+
+impl HookState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HookState::Working => "working",
+            HookState::Waiting => "waiting",
+            HookState::Idle => "idle",
+        }
+    }
+}
+
+/// The hooks plugin's record: the state and the epoch it was entered.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Hooks {
-    pub state: String,
+    pub state: HookState,
     pub since: f64,
 }
 
 /// `ext["hooks"]`; a missing or malformed record reads as absent.
 pub fn hooks(session: &Session) -> Option<Hooks> {
-    session.ext("hooks").ok().flatten()
+    session.ext(HOOKS_KEY).ok().flatten()
 }
 
 fn hooks_since(session: &Session) -> Option<f64> {
@@ -166,8 +188,12 @@ pub fn role_of(session: &Session) -> &'static str {
     }
 }
 
+/// The latest sign of life of a record: creation, end, or its last hook state change.
 pub fn activity_at(session: &Session) -> f64 {
-    hooks_since(session).unwrap_or(session.created_at)
+    session
+        .created_at
+        .max(session.ended_at.unwrap_or(0.0))
+        .max(hooks_since(session).unwrap_or(0.0))
 }
 
 /// IDLE: the last-turn age for an agent session, `—` for a process (no activity signal).
@@ -529,6 +555,20 @@ mod tests {
         assert_eq!(trunc("", 0), "");
         assert_eq!(pad("日本", 4), "日本  ");
         assert_eq!(pad("abcdef", 2), "abcdef");
+    }
+
+    #[test]
+    fn hook_state_names_match_serde() {
+        for state in [HookState::Working, HookState::Waiting, HookState::Idle] {
+            assert_eq!(serde_json::to_value(state).unwrap(), state.as_str());
+        }
+        let hooks = Hooks {
+            state: HookState::Waiting,
+            since: 1.5,
+        };
+        let value = serde_json::to_value(hooks).unwrap();
+        assert_eq!(value, json!({"state": "waiting", "since": 1.5}));
+        assert_eq!(serde_json::from_value::<Hooks>(value).unwrap(), hooks);
     }
 
     #[test]

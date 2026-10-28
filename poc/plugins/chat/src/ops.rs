@@ -24,6 +24,7 @@ use tx_core::{
     CoreError, CreateOptions, LaunchOptions, Lifecycle, ListFilter, PluginStatus, Session,
     SessionId, TxCore, Verb, VerbError, VerbIo,
 };
+use tx_ui::render::{HookState, hooks};
 use tx_ui::tmux::{Ui, shell_quote};
 
 use crate::detach::detach;
@@ -918,17 +919,12 @@ impl<'a> Ops<'a> {
         })
     }
 
-    /// Wait while `ext.hooks.state == "working"`, bounded by the timeout.
+    /// Wait while the hooks state is working, bounded by the timeout.
     fn wait_until_idle(&self, id: &SessionId) -> Result<(), ChatError> {
         let deadline = Instant::now() + self.timings.timeout;
         loop {
             let session = self.core.get_session(id)?;
-            let working = session
-                .ext
-                .get("hooks")
-                .and_then(|hooks| hooks.get("state"))
-                .and_then(Value::as_str)
-                == Some("working");
+            let working = hooks(&session).is_some_and(|hooks| hooks.state == HookState::Working);
             if !working || Instant::now() >= deadline {
                 return Ok(());
             }

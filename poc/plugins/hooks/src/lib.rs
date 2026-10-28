@@ -13,8 +13,10 @@ use tx_core::{
     CoreConfig, Event, EventSink, EventType, Lifecycle, ListFilter, Plugin, PluginError, Registry,
     TxCore, Verb, VerbError, VerbIo,
 };
+use tx_ui::render::{Hooks, hooks};
 
-pub use state::{PLUGIN_ID, State, read_payload, state_for};
+pub use state::{PLUGIN_ID, read_payload, state_for};
+pub use tx_ui::render::HookState;
 
 pub const DEFAULT_STUCK_AFTER_SECONDS: u64 = 600;
 
@@ -65,12 +67,15 @@ impl EventSink for Seed {
         let Ok(core) = TxCore::open(self.config.clone()) else {
             return;
         };
-        let _ = core.update_ext(&event.id, PLUGIN_ID, |v| *v = record(State::Idle));
+        let _ = core.update_ext(&event.id, PLUGIN_ID, |v| *v = record(HookState::Idle));
     }
 }
 
-fn record(state: State) -> Value {
-    json!({"state": state.as_str(), "since": now()})
+fn record(state: HookState) -> Value {
+    json!(Hooks {
+        state,
+        since: now()
+    })
 }
 
 struct Hook {
@@ -124,7 +129,10 @@ impl Hook {
             return Ok(());
         };
         match core.update_ext(&id, PLUGIN_ID, |v| {
-            if v.get("state").and_then(Value::as_str) != Some(state.as_str()) {
+            let current = serde_json::from_value::<Hooks>(v.clone())
+                .ok()
+                .map(|hooks| hooks.state);
+            if current != Some(state) {
                 *v = record(state);
             }
         }) {
@@ -137,23 +145,16 @@ impl Hook {
         let filter = ListFilter::new().lifecycle(Lifecycle::Running);
         let mut rows = Vec::new();
         for session in core.sessions(&filter)? {
-            let (state, since) = match session.ext.get(PLUGIN_ID) {
-                Some(v) => (
-                    v.get("state")
-                        .and_then(Value::as_str)
-                        .unwrap_or("-")
-                        .to_owned(),
-                    v.get("since").and_then(Value::as_f64),
-                ),
-                None => ("-".to_owned(), None),
+            let hooks = hooks(&session);
+            let shown = match hooks {
+                Some(Hooks {
+                    state: HookState::Working,
+                    since,
+                }) if now() - since >= self.stuck_after as f64 => "stuck",
+                Some(hooks) => hooks.state.as_str(),
+                None => "-",
             };
-            let shown = match (state.as_str(), since) {
-                ("working", Some(since)) if now() - since >= self.stuck_after as f64 => {
-                    "stuck".to_owned()
-                }
-                _ => state,
-            };
-            rows.push((session.name, shown, since));
+            rows.push((session.name, shown, hooks.map(|hooks| hooks.since)));
         }
         rows.sort_by(|a, b| a.0.cmp(&b.0));
         for (name, state, since) in rows {

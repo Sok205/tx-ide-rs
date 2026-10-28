@@ -3,41 +3,25 @@
 use std::io::Read;
 
 use serde_json::{Map, Value};
+use tx_ui::render::HookState;
 
-pub const PLUGIN_ID: &str = "hooks";
+pub const PLUGIN_ID: &str = tx_ui::render::HOOKS_KEY;
 
 /// `Notification` subtypes meaning "the agent yielded — needs you".
 const WAITING_NOTIFICATION_TYPES: [&str; 3] =
     ["idle_prompt", "permission_prompt", "elicitation_dialog"];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum State {
-    Working,
-    Waiting,
-    Idle,
-}
-
-impl State {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            State::Working => "working",
-            State::Waiting => "waiting",
-            State::Idle => "idle",
-        }
-    }
-}
-
 /// `None` is "no transition": an unknown event or a notification that is not a yield.
-pub fn state_for(event: &str, payload: &Value) -> Option<State> {
+pub fn state_for(event: &str, payload: &Value) -> Option<HookState> {
     match event {
-        "prompt-submit" | "working" => Some(State::Working),
-        "stop" => Some(State::Waiting),
-        "session-end" => Some(State::Idle),
+        "prompt-submit" | "working" => Some(HookState::Working),
+        "stop" => Some(HookState::Waiting),
+        "session-end" => Some(HookState::Idle),
         "notification" => payload
             .get("notification_type")
             .and_then(Value::as_str)
             .filter(|kind| WAITING_NOTIFICATION_TYPES.contains(kind))
-            .map(|_| State::Waiting),
+            .map(|_| HookState::Waiting),
         _ => None,
     }
 }
@@ -63,10 +47,10 @@ mod tests {
     #[test]
     fn event_table() {
         let none = json!({});
-        assert_eq!(state_for("prompt-submit", &none), Some(State::Working));
-        assert_eq!(state_for("working", &none), Some(State::Working));
-        assert_eq!(state_for("stop", &none), Some(State::Waiting));
-        assert_eq!(state_for("session-end", &none), Some(State::Idle));
+        assert_eq!(state_for("prompt-submit", &none), Some(HookState::Working));
+        assert_eq!(state_for("working", &none), Some(HookState::Working));
+        assert_eq!(state_for("stop", &none), Some(HookState::Waiting));
+        assert_eq!(state_for("session-end", &none), Some(HookState::Idle));
         for other in ["", "start", "ingest", "STOP"] {
             assert_eq!(state_for(other, &none), None, "{other:?}");
         }
@@ -77,7 +61,7 @@ mod tests {
         for kind in ["idle_prompt", "permission_prompt", "elicitation_dialog"] {
             assert_eq!(
                 state_for("notification", &json!({"notification_type": kind})),
-                Some(State::Waiting)
+                Some(HookState::Waiting)
             );
         }
         assert_eq!(

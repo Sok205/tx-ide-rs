@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 use tx_core::{Launch, Lifecycle, Sender, Session, parse_envelope};
+use tx_ui::render::activity_at;
 
 use crate::engines::BUNDLE_TRANSCRIPT_NAME;
 use crate::ext::history_ext;
@@ -465,20 +466,6 @@ fn read_dir_paths(dir: &Path) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
         .collect()
-}
-
-/// The latest sign of life of a record: creation, end, or its last hook state change.
-fn activity_at(session: &Session) -> f64 {
-    let since = session
-        .ext
-        .get("hooks")
-        .and_then(|hooks| hooks.get("since"))
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-    session
-        .created_at
-        .max(session.ended_at.unwrap_or(0.0))
-        .max(since)
 }
 
 /// name → role of the most recently active record of that name (names are reusable).

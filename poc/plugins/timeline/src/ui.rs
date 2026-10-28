@@ -10,6 +10,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
+use tx_ui::render::HookState;
+
 use super::app::{App, Geometry, RowItem};
 use super::clock;
 
@@ -271,11 +273,11 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
 
     // State marker replaces the group stripe; group headings and bars carry the group color.
     let label_width = usize::from(app.geometry.label_width);
-    let indicator = match (lane.live, lane.state.as_str()) {
+    let indicator = match (lane.live, lane.state) {
+        (true, Some(HookState::Working)) => "●",
+        (true, Some(_)) => "○",
+        (true, None) => "·",
         (false, _) => "×",
-        (true, "working") => "●",
-        (true, "idle" | "waiting") => "○",
-        (true, _) => "·",
     };
     put(
         buffer,
@@ -346,7 +348,7 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     }
     // working marker past the now column; an idle lane shows nothing there
     let now_column = app.column_of(app.now);
-    if lane.live && lane.state == "working" && app.on_canvas(now_column) {
+    if lane.live && lane.state == Some(HookState::Working) && app.on_canvas(now_column) {
         put(
             buffer,
             canvas.x + now_column as u16 + 1,

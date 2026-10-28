@@ -653,7 +653,7 @@ mod tests {
             meta: "claude · alive · 3 msgs".into(),
             metadata: Default::default(),
             blurb: "hello".into(),
-            state: "alive".into(),
+            state: Some(tx_ui::render::HookState::Idle),
             sys: false,
             live: true,
             kill: None,

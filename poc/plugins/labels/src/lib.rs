@@ -12,7 +12,7 @@ use tx_core::{
 
 use tx_core::events::now;
 use tx_ui::render::{
-    ACCENT_HEX, DIM_FG_HEX, Hooks, WARN_HEX, WORKING_HEX, hooks, reltime, tag_hex,
+    ACCENT_HEX, DIM_FG_HEX, HookState, Hooks, WARN_HEX, WORKING_HEX, hooks, reltime, tag_hex,
 };
 use tx_ui::tmux::Ui;
 
@@ -218,23 +218,25 @@ fn nested_label(core: &TxCore, inner: &str, now: f64) -> String {
 /// second, so the frame is the epoch second), WAITING a filled dot in the warn colour, IDLE a
 /// hollow dot; nothing without a hooks state.
 fn state_glyph(hooks: Option<&Hooks>, now: f64) -> String {
-    match hooks.map(|hooks| hooks.state.as_str()) {
-        Some("working") => {
+    match hooks.map(|hooks| hooks.state) {
+        Some(HookState::Working) => {
             let frame = SPINNER[(now as u64 % 4) as usize];
             format!("#[fg={ACCENT_HEX},bold]{frame}#[default] ")
         }
-        Some("waiting") => format!("#[fg={WARN_HEX},bold]\u{25cf}#[default] "),
-        Some("idle") => format!("#[fg={DIM_FG_HEX},nobold]\u{25cb}#[default] "),
-        _ => String::new(),
+        Some(HookState::Waiting) => format!("#[fg={WARN_HEX},bold]\u{25cf}#[default] "),
+        Some(HookState::Idle) => format!("#[fg={DIM_FG_HEX},nobold]\u{25cb}#[default] "),
+        None => String::new(),
     }
 }
 
 /// At the border's right end: a green bar while WORKING, otherwise how long the session has
 /// been resting (`0m` for the first minute, then `14m`, `2h`) between spaces.
 fn state_mark(hooks: Option<&Hooks>, now: f64) -> String {
-    match hooks.map(|hooks| (hooks.state.as_str(), hooks.since)) {
-        Some(("working", _)) => format!("#[align=right]#[fg={WORKING_HEX}]{WORKING_BAR}#[default]"),
-        Some(("waiting" | "idle", since)) => {
+    match hooks.map(|hooks| (hooks.state, hooks.since)) {
+        Some((HookState::Working, _)) => {
+            format!("#[align=right]#[fg={WORKING_HEX}]{WORKING_BAR}#[default]")
+        }
+        Some((HookState::Waiting | HookState::Idle, since)) => {
             let age = if now - since < 60.0 {
                 "0m".to_owned()
             } else {
@@ -242,7 +244,7 @@ fn state_mark(hooks: Option<&Hooks>, now: f64) -> String {
             };
             format!("#[align=right] #[fg={DIM_FG_HEX}]{age}#[default] ")
         }
-        _ => String::new(),
+        None => String::new(),
     }
 }
 
@@ -250,16 +252,16 @@ fn state_mark(hooks: Option<&Hooks>, now: f64) -> String {
 mod tests {
     use super::*;
 
-    fn hooks(state: &str) -> Hooks {
+    fn hooks(state: HookState) -> Hooks {
         Hooks {
-            state: state.to_owned(),
+            state,
             since: 1000.0,
         }
     }
 
     #[test]
     fn state_marks_follow_the_hooks_state() {
-        let working = hooks("working");
+        let working = hooks(HookState::Working);
         assert_eq!(
             state_glyph(Some(&working), 1001.0),
             "#[fg=#7aa2f7,bold]\u{25d3}#[default] "
@@ -270,7 +272,7 @@ mod tests {
         );
         assert!(state_mark(Some(&working), 1001.0).contains(WORKING_BAR));
 
-        let idle = hooks("idle");
+        let idle = hooks(HookState::Idle);
         assert_eq!(
             state_glyph(Some(&idle), 1001.0),
             "#[fg=#a9b1d6,nobold]\u{25cb}#[default] "
@@ -284,7 +286,7 @@ mod tests {
             "#[align=right] #[fg=#a9b1d6]2h#[default] "
         );
 
-        let waiting = hooks("waiting");
+        let waiting = hooks(HookState::Waiting);
         assert_eq!(
             state_glyph(Some(&waiting), 1001.0),
             "#[fg=#e0af68,bold]\u{25cf}#[default] "
@@ -294,9 +296,7 @@ mod tests {
             "#[align=right] #[fg=#a9b1d6]0m#[default] "
         );
 
-        for hooks in [None, Some(&hooks("stuck"))] {
-            assert_eq!(state_glyph(hooks, 1.0), "");
-            assert_eq!(state_mark(hooks, 1.0), "");
-        }
+        assert_eq!(state_glyph(None, 1.0), "");
+        assert_eq!(state_mark(None, 1.0), "");
     }
 }
