@@ -120,6 +120,11 @@ pub(crate) fn escape_trailing_semicolon(arg: &str) -> String {
     format!("{stem}{};", "\\".repeat(backslashes + 1))
 }
 
+/// One shell word: single-quoted, inner quotes closed, escaped and reopened.
+pub fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
 /// Set by tmux in its panes: `<socket>,<pid>,<session>`.
 pub const TMUX_ENV: &str = "TMUX";
 
@@ -349,6 +354,13 @@ mod tests {
 
     fn strs(argv: &[OsString]) -> Vec<&str> {
         argv.iter().map(|a| a.to_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn shell_quote_wraps_and_escapes() {
+        assert_eq!(shell_quote("a'b"), r"'a'\''b'");
+        assert_eq!(shell_quote("plain"), "'plain'");
+        assert_eq!(shell_quote(""), "''");
     }
 
     #[test]

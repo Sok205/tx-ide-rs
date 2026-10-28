@@ -2,12 +2,12 @@
 //! session; the plugin records `ext["hooks"] = {"state", "since"}` on the record. Port of
 //! tx-ide's `hooks.rs` without history ingest and chat-id capture.
 
-pub mod install;
 pub mod state;
 
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+use tx_core::agent_hooks::{Entries, home_dir, install, read_payload, uninstall};
 use tx_core::events::now;
 use tx_core::{
     CoreConfig, Event, EventSink, EventType, Lifecycle, ListFilter, Plugin, PluginError, Registry,
@@ -15,10 +15,23 @@ use tx_core::{
 };
 use tx_ui::render::{Hooks, hooks};
 
-pub use state::{PLUGIN_ID, read_payload, state_for};
+pub use state::{PLUGIN_ID, state_for};
 pub use tx_ui::render::HookState;
 
 pub const DEFAULT_STUCK_AFTER_SECONDS: u64 = 600;
+
+/// Agent hook event → `txc hook <event>`.
+pub const ENTRIES: Entries = Entries {
+    sidecar: ".tx-core-managed.json",
+    events: &[
+        ("UserPromptSubmit", "prompt-submit"),
+        ("Stop", "stop"),
+        ("StopFailure", "stop"),
+        ("Notification", "notification"),
+        ("SessionEnd", "session-end"),
+    ],
+    verb: "hook",
+};
 
 const USAGE: &str = "\
 usage: txc hook <event>               record the agent's state (run by the agent's hooks)
@@ -99,12 +112,12 @@ impl Verb for Hook {
                 let dry_run = argv.len() == 2;
                 let exe = std::env::current_exe()
                     .map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
-                install::install(&home_dir()?, &exe, dry_run, io.stdout)
+                install(&home_dir()?, &exe, &ENTRIES, dry_run, io.stdout)
                     .map_err(VerbError::other)?;
                 Ok(0)
             }
             Some("uninstall") if argv.len() == 1 => {
-                install::uninstall(&home_dir()?, io.stdout).map_err(VerbError::other)?;
+                uninstall(&home_dir()?, &ENTRIES, io.stdout).map_err(VerbError::other)?;
                 Ok(0)
             }
             Some("status" | "install" | "uninstall") => Err(VerbError::usage(USAGE)),
@@ -165,11 +178,4 @@ impl Hook {
         }
         Ok(0)
     }
-}
-
-fn home_dir() -> Result<std::path::PathBuf, VerbError> {
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(std::path::PathBuf::from)
-        .ok_or_else(|| VerbError::Failed("HOME is not set".into()))
 }

@@ -1,21 +1,45 @@
-//! `hook install` / `hook uninstall`: add the `txc hook <event>` commands to the agents' hook
-//! files behind a sidecar that records exactly what was added, so uninstall removes only that.
-//! No foreign keys go into the agents' files (Claude Code validates its settings schema).
+//! Adds a plugin's hook commands to the agents' hook files (Claude Code, Codex) behind a sidecar
+//! that records exactly what was added, so uninstall removes only that. Each plugin passes its own
+//! [`Entries`], so plugins coexist. No foreign keys go into the agents' files (Claude Code
+//! validates its settings schema).
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-/// Agent hook event → our verb event.
-const EVENTS: [(&str, &str); 5] = [
-    ("UserPromptSubmit", "prompt-submit"),
-    ("Stop", "stop"),
-    ("StopFailure", "stop"),
-    ("Notification", "notification"),
-    ("SessionEnd", "session-end"),
-];
-const SIDECAR: &str = ".tx-core-managed.json";
+use crate::plugin::VerbError;
+use crate::tmux::shell_quote;
+
+/// What one plugin registers: the sidecar file recording it, the (agent event, our event)
+/// pairs, and the verb the agent runs. An empty event runs the verb with no argument.
+#[derive(Clone, Copy, Debug)]
+pub struct Entries {
+    pub sidecar: &'static str,
+    pub events: &'static [(&'static str, &'static str)],
+    pub verb: &'static str,
+}
+
+/// The hook payload, tolerantly: `{}` for none / unreadable / bad JSON / non-object. A hook
+/// must never fail the agent over its own input.
+pub fn read_payload(stdin: &mut dyn Read) -> Value {
+    let mut text = String::new();
+    if stdin.read_to_string(&mut text).is_err() {
+        return Value::Object(Map::new());
+    }
+    match serde_json::from_str::<Value>(&text) {
+        Ok(value @ Value::Object(_)) => value,
+        _ => Value::Object(Map::new()),
+    }
+}
+
+/// `$HOME`, where the agents keep their hook files.
+pub fn home_dir() -> Result<PathBuf, VerbError> {
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| VerbError::failed("HOME is not set"))
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
@@ -48,16 +72,16 @@ struct Target {
     label: &'static str,
 }
 
-fn targets(home: &Path, only_existing: bool) -> Vec<Target> {
+fn targets(home: &Path, sidecar: &str, only_existing: bool) -> Vec<Target> {
     let mut out = vec![Target {
         file: home.join(".claude/settings.json"),
-        sidecar: home.join(".claude").join(SIDECAR),
+        sidecar: home.join(".claude").join(sidecar),
         label: "claude",
     }];
     if !only_existing || home.join(".codex").is_dir() {
         out.push(Target {
             file: home.join(".codex/hooks.json"),
-            sidecar: home.join(".codex").join(SIDECAR),
+            sidecar: home.join(".codex").join(sidecar),
             label: "codex",
         });
     }
@@ -94,7 +118,7 @@ fn write_json(path: &Path, value: &Value) -> Result<(), InstallError> {
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let mut text = serde_json::to_string_pretty(value).expect("JSON value");
     text.push('\n');
-    tx_core::write_atomic(&target, text.as_bytes()).map_err(io(&target))
+    crate::fs::write_atomic(&target, text.as_bytes()).map_err(io(&target))
 }
 
 fn backup(path: &Path) -> Result<Option<PathBuf>, InstallError> {
@@ -105,24 +129,34 @@ fn backup(path: &Path) -> Result<Option<PathBuf>, InstallError> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let backup = PathBuf::from(format!("{}.bak.{ts}", path.display()));
+    let mut backup = PathBuf::from(format!("{}.bak.{ts}", path.display()));
+    let mut n = 0;
+    while backup.exists() {
+        n += 1;
+        backup = PathBuf::from(format!("{}.bak.{ts}-{n}", path.display()));
+    }
     std::fs::copy(path, &backup).map_err(io(&backup))?;
     Ok(Some(backup))
 }
 
 /// POSIX single-quoting: safe for any path (spaces, `$`, embedded `'`).
-fn shell_quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "'\\''"))
-}
-
 /// The hook commands. Claude Code reads exit 2 as "block the agent", so a `txc` that cannot
 /// even start (a broken `plugins.yaml`, the plugin disabled, usage) is capped at exit 1: a
 /// non-blocking error, never a blocked prompt or stop.
-fn commands(exe: &Path) -> Vec<(&'static str, String)> {
+fn commands(exe: &Path, entries: &Entries) -> Vec<(&'static str, String)> {
     let exe = shell_quote(&exe.display().to_string());
-    EVENTS
+    entries
+        .events
         .iter()
-        .map(|(event, verb)| (*event, format!("{exe} hook {verb} || exit 1")))
+        .map(|(agent_event, event)| {
+            let verb = entries.verb;
+            let command = if event.is_empty() {
+                format!("{exe} {verb} || exit 1")
+            } else {
+                format!("{exe} {verb} {event} || exit 1")
+            };
+            (*agent_event, command)
+        })
         .collect()
 }
 
@@ -160,13 +194,14 @@ fn has_command(blocks: &[Value], command: &str) -> bool {
 pub fn install(
     home: &Path,
     exe: &Path,
+    entries: &Entries,
     dry_run: bool,
     out: &mut dyn Write,
 ) -> Result<(), InstallError> {
-    for target in targets(home, true) {
+    for target in targets(home, entries.sidecar, true) {
         let mut root = read_json(&target.file)?;
         let mut added = Vec::new();
-        for (event, command) in commands(exe) {
+        for (event, command) in commands(exe, entries) {
             let blocks = blocks(&mut root, event)?;
             if has_command(blocks, &command) {
                 continue;
@@ -215,9 +250,9 @@ pub fn install(
     Ok(())
 }
 
-pub fn uninstall(home: &Path, out: &mut dyn Write) -> Result<(), InstallError> {
+pub fn uninstall(home: &Path, entries: &Entries, out: &mut dyn Write) -> Result<(), InstallError> {
     let mut any = false;
-    for target in targets(home, false) {
+    for target in targets(home, entries.sidecar, false) {
         if !target.sidecar.exists() {
             continue;
         }
@@ -283,7 +318,8 @@ pub fn uninstall(home: &Path, out: &mut dyn Write) -> Result<(), InstallError> {
     if !any {
         let _ = writeln!(
             out,
-            "nothing to do: no tx-core sidecar under {}",
+            "nothing to do: no {} sidecar under {}",
+            entries.sidecar,
             home.display()
         );
     }
@@ -295,6 +331,22 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const CHAT: Entries = Entries {
+        sidecar: ".tx-chat-managed.json",
+        events: &[
+            ("UserPromptSubmit", "prompt-submit"),
+            ("Stop", "stop"),
+            ("StopFailure", "stop"),
+            ("SessionEnd", "session-end"),
+        ],
+        verb: "_chat-hook",
+    };
+    const HISTORY: Entries = Entries {
+        sidecar: ".tx-history-managed.json",
+        events: &[("Stop", ""), ("SessionEnd", "")],
+        verb: "_history-ingest",
+    };
+
     fn home() -> tempfile::TempDir {
         tempfile::Builder::new()
             .prefix("txc-home")
@@ -304,15 +356,52 @@ mod tests {
     fn read(path: &Path) -> serde_json::Value {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
+    fn commands_of(settings: &serde_json::Value, event: &str) -> Vec<String> {
+        settings["hooks"][event]
+            .as_array()
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .flat_map(|b| b["hooks"].as_array().unwrap().clone())
+                    .map(|h| h["command"].as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn payload_degrades_to_empty_object() {
+        for text in ["", "not json", "[1,2]", "\"str\"", "null"] {
+            assert_eq!(read_payload(&mut text.as_bytes()), json!({}), "{text:?}");
+        }
+        assert_eq!(read_payload(&mut r#"{"a":1}"#.as_bytes()), json!({"a": 1}));
+        struct Broken;
+        impl std::io::Read for Broken {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("no"))
+            }
+        }
+        assert_eq!(read_payload(&mut Broken), json!({}));
+    }
 
     #[test]
     fn commands_are_shell_quoted_and_never_exit_2() {
-        let cmds = commands(Path::new("/Users/Jan Kowalski/it's/txc"));
+        let cmds = commands(Path::new("/Users/Jan Kowalski/it's/txc"), &CHAT);
         let (event, stop) = cmds.iter().find(|(e, _)| *e == "Stop").unwrap();
         assert_eq!(event, &"Stop");
         assert_eq!(
             stop,
-            "'/Users/Jan Kowalski/it'\\''s/txc' hook stop || exit 1"
+            "'/Users/Jan Kowalski/it'\\''s/txc' _chat-hook stop || exit 1"
+        );
+    }
+
+    #[test]
+    fn an_empty_event_takes_no_argument() {
+        let cmds = commands(Path::new("/opt/txc"), &HISTORY);
+        assert!(
+            cmds.iter()
+                .all(|(_, c)| c == "'/opt/txc' _history-ingest || exit 1"),
+            "{cmds:?}"
         );
     }
 
@@ -324,10 +413,10 @@ mod tests {
         std::fs::create_dir_all(&claude).unwrap();
         let real = home.path().join("dotfiles-settings.json");
         std::fs::write(&real, "{}").unwrap();
-        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o640)).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::os::unix::fs::symlink(&real, claude.join("settings.json")).unwrap();
         let mut out = Vec::new();
-        install(home.path(), Path::new("/opt/txc"), false, &mut out).unwrap();
+        install(home.path(), Path::new("/opt/txc"), &CHAT, false, &mut out).unwrap();
         assert!(
             claude
                 .join("settings.json")
@@ -339,66 +428,67 @@ mod tests {
         );
         assert_eq!(
             std::fs::metadata(&real).unwrap().permissions().mode() & 0o777,
-            0o640,
+            0o600,
             "mode preserved on the real file"
         );
-        assert!(
-            read(&real)["hooks"]["Stop"].is_array(),
-            "written through the link"
-        );
-    }
-
-    #[test]
-    fn install_leaves_a_foreign_temp_alone_and_no_strays() {
-        let home = home();
-        let claude = home.path().join(".claude");
-        std::fs::create_dir_all(&claude).unwrap();
-        std::fs::write(claude.join("settings.json"), "{}").unwrap();
-        let foreign = claude.join("settings.tmp");
-        std::fs::write(&foreign, "chat plugin in flight").unwrap();
-        install(home.path(), Path::new("/opt/txc"), false, &mut Vec::new()).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&foreign).unwrap(),
-            "chat plugin in flight"
-        );
-        let strays: Vec<_> = std::fs::read_dir(&claude)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with(".settings.json."))
-            .collect();
-        assert!(strays.is_empty(), "{strays:?}");
+        assert!(read(&real)["hooks"]["Stop"].is_array());
     }
 
     #[test]
     fn install_creates_missing_settings() {
         let home = home();
         let mut out = Vec::new();
-        install(home.path(), Path::new("/opt/txc"), false, &mut out).unwrap();
+        install(home.path(), Path::new("/opt/txc"), &CHAT, false, &mut out).unwrap();
         let settings = read(&home.path().join(".claude/settings.json"));
         let stop = &settings["hooks"]["Stop"][0]["hooks"][0];
         assert_eq!(stop["type"], "command");
-        assert_eq!(stop["command"], "'/opt/txc' hook stop || exit 1");
+        assert_eq!(stop["command"], "'/opt/txc' _chat-hook stop || exit 1");
         assert_eq!(
-            settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-            "'/opt/txc' hook prompt-submit || exit 1"
+            commands_of(&settings, "SessionEnd"),
+            ["'/opt/txc' _chat-hook session-end || exit 1"]
         );
         assert_eq!(
-            settings["hooks"]["Notification"][0]["hooks"][0]["command"],
-            "'/opt/txc' hook notification || exit 1"
+            commands_of(&settings, "StopFailure"),
+            ["'/opt/txc' _chat-hook stop || exit 1"]
         );
-        assert_eq!(
-            settings["hooks"]["SessionEnd"][0]["hooks"][0]["command"],
-            "'/opt/txc' hook session-end || exit 1"
-        );
-        assert_eq!(
-            settings["hooks"]["StopFailure"][0]["hooks"][0]["command"],
-            "'/opt/txc' hook stop || exit 1"
-        );
-        assert!(home.path().join(".claude/.tx-core-managed.json").exists());
+        assert!(home.path().join(".claude/.tx-chat-managed.json").exists());
         assert!(
             !home.path().join(".codex").exists(),
             "codex untouched when absent"
         );
+    }
+
+    #[test]
+    fn write_json_uses_its_own_temp_and_keeps_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = home();
+        let claude = home.path().join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        let settings = claude.join("settings.json");
+        std::fs::write(&settings, "{}").unwrap();
+        std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let foreign = claude.join("settings.tmp");
+        std::fs::write(&foreign, "hooks plugin in flight").unwrap();
+        install(
+            home.path(),
+            Path::new("/opt/txc"),
+            &CHAT,
+            false,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&foreign).unwrap(),
+            "hooks plugin in flight"
+        );
+        let mode = std::fs::metadata(&settings).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640);
+        let strays: Vec<_> = std::fs::read_dir(&claude)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".settings.json."))
+            .collect();
+        assert!(strays.is_empty(), "{strays:?}");
     }
 
     #[test]
@@ -409,18 +499,16 @@ mod tests {
         let before = json!({"theme": "dark", "hooks": {"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "say done"}]}]}});
         std::fs::write(claude.join("settings.json"), before.to_string()).unwrap();
         let mut out = Vec::new();
-        install(home.path(), Path::new("/opt/txc"), false, &mut out).unwrap();
-        install(home.path(), Path::new("/opt/txc"), false, &mut out).unwrap();
+        install(home.path(), Path::new("/opt/txc"), &CHAT, false, &mut out).unwrap();
+        install(home.path(), Path::new("/opt/txc"), &CHAT, false, &mut out).unwrap();
         let settings = read(&claude.join("settings.json"));
         assert_eq!(settings["theme"], "dark");
-        let stop_hooks: Vec<_> = settings["hooks"]["Stop"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|b| b["hooks"].as_array().unwrap().clone())
-            .collect();
-        assert_eq!(stop_hooks.len(), 2, "foreign + ours, once: {stop_hooks:?}");
-        let backups: Vec<_> = std::fs::read_dir(&claude)
+        assert_eq!(
+            commands_of(&settings, "Stop"),
+            ["say done", "'/opt/txc' _chat-hook stop || exit 1"],
+            "foreign + ours, once"
+        );
+        let backups = std::fs::read_dir(&claude)
             .unwrap()
             .filter(|e| {
                 e.as_ref()
@@ -429,8 +517,8 @@ mod tests {
                     .to_string_lossy()
                     .starts_with("settings.json.bak.")
             })
-            .collect();
-        assert_eq!(backups.len(), 1, "one backup, taken before the first write");
+            .count();
+        assert_eq!(backups, 1, "one backup, taken before the first write");
     }
 
     #[test]
@@ -441,20 +529,20 @@ mod tests {
         let text = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"Stop\": [{\"matcher\": \"\", \"hooks\": [{\"type\": \"command\", \"command\": \"say done\"}]}]\n  }\n}\n";
         std::fs::write(claude.join("settings.json"), text).unwrap();
         let mut out = Vec::new();
-        install(home.path(), Path::new("/opt/txc"), false, &mut out).unwrap();
-        uninstall(home.path(), &mut out).unwrap();
+        install(home.path(), Path::new("/opt/txc"), &CHAT, false, &mut out).unwrap();
+        uninstall(home.path(), &CHAT, &mut out).unwrap();
         assert_eq!(
             std::fs::read_to_string(claude.join("settings.json")).unwrap(),
             text
         );
-        assert!(!claude.join(".tx-core-managed.json").exists());
+        assert!(!claude.join(".tx-chat-managed.json").exists());
     }
 
     #[test]
     fn uninstall_without_sidecar_is_a_noop() {
         let home = home();
         let mut out = Vec::new();
-        uninstall(home.path(), &mut out).unwrap();
+        uninstall(home.path(), &CHAT, &mut out).unwrap();
         assert!(String::from_utf8(out).unwrap().contains("nothing to do"));
     }
 
@@ -465,7 +553,8 @@ mod tests {
         std::fs::create_dir_all(&claude).unwrap();
         std::fs::write(claude.join("settings.json"), "[1]").unwrap();
         let mut out = Vec::new();
-        let error = install(home.path(), Path::new("/opt/txc"), false, &mut out).unwrap_err();
+        let error =
+            install(home.path(), Path::new("/opt/txc"), &CHAT, false, &mut out).unwrap_err();
         assert!(matches!(error, InstallError::NotObject(_)), "{error}");
         assert_eq!(
             std::fs::read_to_string(claude.join("settings.json")).unwrap(),
@@ -477,9 +566,9 @@ mod tests {
     fn dry_run_writes_nothing() {
         let home = home();
         let mut out = Vec::new();
-        install(home.path(), Path::new("/opt/txc"), true, &mut out).unwrap();
+        install(home.path(), Path::new("/opt/txc"), &CHAT, true, &mut out).unwrap();
         assert!(!home.path().join(".claude").exists());
-        assert!(String::from_utf8(out).unwrap().contains("hook stop"));
+        assert!(String::from_utf8(out).unwrap().contains("_chat-hook stop"));
     }
 
     #[test]
@@ -487,14 +576,45 @@ mod tests {
         let home = home();
         std::fs::create_dir_all(home.path().join(".codex")).unwrap();
         let mut out = Vec::new();
-        install(home.path(), Path::new("/opt/txc"), false, &mut out).unwrap();
+        install(home.path(), Path::new("/opt/txc"), &CHAT, false, &mut out).unwrap();
         let hooks = read(&home.path().join(".codex/hooks.json"));
         assert_eq!(
-            hooks["hooks"]["Stop"][0]["hooks"][0]["command"],
-            "'/opt/txc' hook stop || exit 1"
+            commands_of(&hooks, "Stop"),
+            ["'/opt/txc' _chat-hook stop || exit 1"]
         );
-        uninstall(home.path(), &mut out).unwrap();
-        let hooks = read(&home.path().join(".codex/hooks.json"));
-        assert_eq!(hooks, json!({}));
+        uninstall(home.path(), &CHAT, &mut out).unwrap();
+        assert_eq!(read(&home.path().join(".codex/hooks.json")), json!({}));
+    }
+
+    #[test]
+    fn coexists_with_another_sidecar() {
+        let home = home();
+        let claude = home.path().join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        let mut out = Vec::new();
+        install(home.path(), Path::new("/opt/txc"), &CHAT, false, &mut out).unwrap();
+        install(
+            home.path(),
+            Path::new("/opt/txc"),
+            &HISTORY,
+            false,
+            &mut out,
+        )
+        .unwrap();
+        uninstall(home.path(), &CHAT, &mut out).unwrap();
+        let settings = read(&claude.join("settings.json"));
+        assert_eq!(
+            commands_of(&settings, "Stop"),
+            ["'/opt/txc' _history-ingest || exit 1"]
+        );
+        assert_eq!(
+            commands_of(&settings, "SessionEnd"),
+            ["'/opt/txc' _history-ingest || exit 1"]
+        );
+        assert!(settings["hooks"].get("UserPromptSubmit").is_none());
+        assert!(claude.join(".tx-history-managed.json").exists());
+        assert!(!claude.join(".tx-chat-managed.json").exists());
+        uninstall(home.path(), &HISTORY, &mut out).unwrap();
+        assert_eq!(read(&claude.join("settings.json")), json!({}));
     }
 }

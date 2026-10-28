@@ -1,11 +1,10 @@
 //! The `history` plugin's verbs: `_history-ingest` (run by the agent's own Stop hooks and
 //! re-run detached), `history`, and `history-hooks`.
 
-use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tx_core::events::now;
 use tx_core::say;
 use tx_core::{
@@ -17,8 +16,8 @@ use crate::HISTORY_ID;
 use crate::detach::detach;
 use crate::engines::BUNDLE_TRANSCRIPT_NAME;
 use crate::ext::{HistoryChat, HistoryExt, chat_ext, history_ext, owned_elsewhere};
-use crate::install::{install, uninstall};
 use crate::mirror::{HISTORY_ENTRIES, IngestMode, ingest_session};
+use tx_core::agent_hooks::{home_dir, install, read_payload, uninstall};
 
 const INGEST_USAGE: &str = "usage: txc _history-ingest [--wait] [<session>]\n";
 const HISTORY_USAGE: &str = "\
@@ -35,25 +34,6 @@ pub fn verbs(history_dir: PathBuf) -> Vec<Arc<dyn Verb>> {
         Arc::new(History { history_dir }),
         Arc::new(HistoryHooks),
     ]
-}
-
-/// The hook payload, tolerantly: `{}` for none / unreadable / bad JSON / non-object.
-pub(crate) fn read_payload(stdin: &mut dyn Read) -> Value {
-    let mut text = String::new();
-    if stdin.read_to_string(&mut text).is_err() {
-        return Value::Object(Map::new());
-    }
-    match serde_json::from_str::<Value>(&text) {
-        Ok(value @ Value::Object(_)) => value,
-        _ => Value::Object(Map::new()),
-    }
-}
-
-pub(crate) fn home_dir() -> Result<PathBuf, VerbError> {
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| VerbError::Failed("HOME is not set".into()))
 }
 
 pub(crate) fn resolve(core: &TxCore, token: &str) -> Result<Option<Session>, VerbError> {

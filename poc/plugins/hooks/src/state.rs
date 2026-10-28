@@ -1,8 +1,6 @@
 //! The event → state table (port of tx-ide `hooks.rs`): which agent hook means what.
 
-use std::io::Read;
-
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tx_ui::render::HookState;
 
 pub const PLUGIN_ID: &str = tx_ui::render::HOOKS_KEY;
@@ -23,19 +21,6 @@ pub fn state_for(event: &str, payload: &Value) -> Option<HookState> {
             .filter(|kind| WAITING_NOTIFICATION_TYPES.contains(kind))
             .map(|_| HookState::Waiting),
         _ => None,
-    }
-}
-
-/// The hook payload, tolerantly: `{}` for none / unreadable / bad JSON / non-object. A hook
-/// must never fail the agent over its own input.
-pub fn read_payload(stdin: &mut dyn Read) -> Value {
-    let mut text = String::new();
-    if stdin.read_to_string(&mut text).is_err() {
-        return Value::Object(Map::new());
-    }
-    match serde_json::from_str::<Value>(&text) {
-        Ok(value @ Value::Object(_)) => value,
-        _ => Value::Object(Map::new()),
     }
 }
 
@@ -70,20 +55,5 @@ mod tests {
         );
         assert_eq!(state_for("notification", &json!({})), None);
         assert_eq!(state_for("notification", &json!([1])), None);
-    }
-
-    #[test]
-    fn payload_degrades_to_empty_object() {
-        for text in ["", "not json", "[1,2]", "\"str\"", "null"] {
-            assert_eq!(read_payload(&mut text.as_bytes()), json!({}), "{text:?}");
-        }
-        assert_eq!(read_payload(&mut r#"{"a":1}"#.as_bytes()), json!({"a": 1}));
-        struct Broken;
-        impl std::io::Read for Broken {
-            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::other("no"))
-            }
-        }
-        assert_eq!(read_payload(&mut Broken), json!({}));
     }
 }

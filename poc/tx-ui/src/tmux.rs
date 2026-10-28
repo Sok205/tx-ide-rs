@@ -350,9 +350,7 @@ fn group_attachments(join: Vec<(String, Location)>) -> Vec<(String, Vec<Location
 }
 
 /// POSIX single-quote.
-pub fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
+pub use tx_core::tmux::shell_quote;
 
 #[cfg(test)]
 mod tests {
@@ -448,13 +446,6 @@ mod tests {
         let order: Vec<&str> = map[0].1.iter().map(|l| l.pane_id.as_str()).collect();
         assert_eq!(order, ["%3", "%4", "%2", "%1"]);
         assert_eq!(map[1].0, "t");
-    }
-
-    #[test]
-    fn shell_quote_wraps_and_escapes() {
-        assert_eq!(shell_quote("a'b"), r"'a'\''b'");
-        assert_eq!(shell_quote("plain"), "'plain'");
-        assert_eq!(shell_quote(""), "''");
     }
 
     #[test]

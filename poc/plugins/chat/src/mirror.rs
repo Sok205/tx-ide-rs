@@ -8,6 +8,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+use tx_core::agent_hooks::Entries;
 use tx_core::{Launch, SessionId, TxCore};
 
 use crate::engines::{BUNDLE_TRANSCRIPT_NAME, bundle_sidecars};
@@ -20,7 +21,7 @@ pub const INGEST_LOCK_NAME: &str = ".ingest.lock";
 /// Trailing bytes of the existing copy verified against the source before an offset append.
 const PREFIX_CHECK_BYTES: u64 = 65536;
 
-pub const HISTORY_ENTRIES: crate::install::Entries = crate::install::Entries {
+pub const HISTORY_ENTRIES: Entries = Entries {
     sidecar: ".tx-history-managed.json",
     events: &[("Stop", ""), ("StopFailure", ""), ("SessionEnd", "")],
     verb: "_history-ingest",

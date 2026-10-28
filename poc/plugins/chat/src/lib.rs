@@ -8,7 +8,6 @@ pub mod engines;
 pub mod ext;
 pub mod fork_pane;
 pub mod history_verbs;
-pub mod install;
 pub mod messages;
 pub mod mirror;
 pub mod ops;

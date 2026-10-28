@@ -1,6 +1,7 @@
 //! tx-core: run and manage a swarm of interactive agents, each a process in a detached session
 //! on tx's own tmux server. See `docs/superpowers/specs/2026-10-15-tx-core-design.md`.
 
+pub mod agent_hooks;
 pub mod config;
 pub mod core;
 pub mod engine;

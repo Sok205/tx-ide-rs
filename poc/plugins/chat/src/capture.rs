@@ -10,8 +10,8 @@ use tx_ui::render::reltime;
 
 use crate::ChatError;
 use crate::ext::{ChatExt, ChatRef, HistoryExt, Role, chat_ext, history_ext, owned_elsewhere};
-use crate::history_verbs::{home_dir, read_payload, resolve};
-use crate::install::{Entries, install, uninstall};
+use crate::history_verbs::resolve;
+use tx_core::agent_hooks::{Entries, home_dir, install, read_payload, uninstall};
 use tx_core::say;
 
 pub const CHAT_ENTRIES: Entries = Entries {
