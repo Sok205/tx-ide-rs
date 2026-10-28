@@ -20,7 +20,7 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
   Copies: artifacts/menu.rs `txc_command`, mockup/lib.rs `viewer_command`, timeline/verbs.rs
   `resident_command`, menu/verbs.rs `Txc`, chat/fork_pane.rs, chat/ops.rs `finish_command`,
   chat/detach.rs, picker/lib.rs `tx_command`. Also 13 hand-written `current_exe()` lookups.
-- [ ] **H2.** Listing sessions reads every record twice and handles a vanished record 3 ways.
+- [x] (20bfcb2) **H2.** Listing sessions reads every record twice and handles a vanished record 3 ways.
   Add `TxCore::sessions(&ListFilter) -> Result<Vec<Session>, CoreError>` over `store.all()`.
   13 callers: artifacts verbs/menu/views, picker `running`, labels, hooks status, tutor, chat
   ops (2) / ext / history_verbs, menu data, timeline `load_sessions`.
@@ -147,7 +147,7 @@ missing source file (E7, I11 half).
 - [ ] **T3.** `ext` is read by string key around the owners' types (`ext.edit.group` in
   artifacts and timeline while tx-edit exports `Ext`; spawn kind in tx-ui). Add
   `trait ExtRecord { const KEY }`, `Session::ext_of::<T>()`, `TxCore::update_ext_of::<T>()`.
-- [ ] **O1.** `TxCore::resolve` loads the record(s) then returns only the id; every caller
+- [x] (20bfcb2) **O1.** `TxCore::resolve` loads the record(s) then returns only the id; every caller
   loads again (worst: the once-a-second pane label resolves by name, so `store.all()` + a
   load per pane per second). Add `resolve_session` returning the record.
 - [ ] **O2-O4.** Picker feed reload (every second): the sort deserializes `ext.hooks` per
