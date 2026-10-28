@@ -70,7 +70,7 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
 
 ### MEDIUM
 
-- [ ] **M1.** tx-ui dead or crate-only pub API: delete `popup::focus_hosting_pane`; make
+- [x] (b90bd6e) **M1.** tx-ui dead or crate-only pub API (`focus_hosting_pane` is used by artifacts now, kept); make
   `popup_args`, `popup_attach_command`, `walk_to_outer_client`, `tmux::parse_attachment_join`,
   `editor::{Form, Frame, Draw, Style, Mode, Outcome}` crate-private.
 - [ ] **M2.** The exact tmux target `=name` / `=name:` is hand-built about 25 times; tx-ui
@@ -164,7 +164,7 @@ missing source file (E7, I11 half).
   into one buffer.
 - [ ] **O13.** timeline `lane_data` clones every cached transcript row per lane per build
   (`cache.rows` takes `&mut self`); load all paths first, then borrow.
-- [ ] **E2 behaviour.** artifacts `ArtifactStoreError` carries no path, so load errors print
+- [x] (18fa704) **E2 behaviour.** artifacts `ArtifactStoreError` carries no path, so load errors print
   as bare "Permission denied". Wrap with the record path.
 - [x] (e7cfb6c) **E3.** `VerbError::Failed(String)` drops every typed cause (chat stringifies 16
   variants). Add a boxed `Plugin` source variant; land with H4.
