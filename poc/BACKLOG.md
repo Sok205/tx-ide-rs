@@ -200,8 +200,9 @@ missing source file (E7, I11 half).
   written 3 times (tx-core LaunchOptions, Launch, chat AgentLaunch); one `AgentLaunch` struct.
 - [ ] **T8.** tx-ui popup API takes 5-6 `&str` in a row, sizes as strings, and a `socket`
   that duplicates `Ui`'s; `enum Extent`, socket from `ui`.
-- [ ] **T9.** usage errors hand-written 29 times (drifted from `Verb::usage()`); add
-  `VerbError::Usage`; Registry boxes verbs/engines/sinks itself.
+- [x] (ea3ca7b) **T9.** usage errors hand-written 29 times (drifted from `Verb::usage()`); add
+  `VerbError::Usage`.
+- [ ] **T9b.** Registry boxes verbs/engines/sinks itself.
 - [ ] **E4 behaviour.** io errors without `#[source]` or path: `CoreError::Lock` (no lock
   file named), `UiError::Spawn`, `ReadError::Utf8`, tutor `PackError::Toml` flattened.
 - [ ] **E5.** "io error with path" helper copied in 7 plugins; `VerbError::Io { path, source }`.
@@ -224,8 +225,8 @@ missing source file (E7, I11 half).
 
 ### LOW
 
-- [ ] **E9 behaviour.** stderr writes sometimes `?`-propagated (a closed stderr turns exit 2
-  into 1); core verbs ignore stdout write failures, plugins fail. One policy.
+- [ ] **E9 behaviour.** stderr writes sometimes `?`-propagated (usage paths fixed by T9);
+  core verbs ignore stdout write failures, plugins fail. One policy.
 - [ ] **E10.** unwraps without a stated invariant: mockup model.rs (7 after a presence count),
   viewer.rs, chat/hooks install `expect("JSON value")`, timeline regex literals.
 - [ ] **E11.** mockup's caught viewer panic loses its message; downcast the payload.
