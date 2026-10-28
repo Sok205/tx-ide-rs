@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use tx_ui::render::{chips, reltime};
+use tx_ui::render::{chips, reltime, trunc};
 
 use crate::artifact::{Artifact, Kind, USER_ACTOR};
 
@@ -15,16 +15,6 @@ pub fn actor_label(session_id: &str, names: &HashMap<String, String>) -> String 
     match names.get(session_id) {
         Some(name) if !name.is_empty() => name.clone(),
         _ => session_id.chars().take(8).collect(),
-    }
-}
-
-fn trunc(text: &str, width: usize) -> String {
-    if text.chars().count() > width {
-        let mut out: String = text.chars().take(width - 1).collect();
-        out.push('…');
-        out
-    } else {
-        text.to_owned()
     }
 }
 

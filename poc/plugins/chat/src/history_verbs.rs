@@ -10,7 +10,7 @@ use tx_core::events::now;
 use tx_core::{
     CoreError, Lifecycle, ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
-use tx_ui::render::{chips, reltime};
+use tx_ui::render::{chips, reltime, trunc};
 
 use crate::HISTORY_ID;
 use crate::detach::detach;
@@ -233,14 +233,6 @@ fn ended_or_created(session: &Session) -> f64 {
         .ended_at
         .filter(|ended| *ended != 0.0)
         .unwrap_or(session.created_at)
-}
-
-fn trunc(text: &str, width: usize) -> String {
-    if text.chars().count() > width {
-        text.chars().take(width - 1).collect::<String>() + "…"
-    } else {
-        text.to_owned()
-    }
 }
 
 impl History {

@@ -185,21 +185,29 @@ pub struct Row<'a> {
     pub attached: &'a [Location],
 }
 
-/// Truncate to `width` code points with a trailing `…`.
-fn trunc(text: &str, width: i64) -> String {
-    if text.chars().count() as i64 > width {
-        py_prefix(text, width - 1) + "…"
+/// Truncate to `width` code points, the last one a `…`; never panics (width 0 gives `…`).
+pub fn trunc(text: &str, width: usize) -> String {
+    if text.chars().count() > width {
+        text.chars()
+            .take(width.saturating_sub(1))
+            .chain(['…'])
+            .collect()
     } else {
         text.to_owned()
     }
+}
+
+/// Pad with spaces to `width` code points (no-op when already wider).
+pub fn pad(text: &str, width: usize) -> String {
+    format!("{text:<width$}")
 }
 
 /// The visual (fifth) field of a picker row, before its number.
 fn picker_visual(row: &Row<'_>, namew: i64, now: f64) -> String {
     let session = row.session;
     let role = role_of(session);
-    let name_disp = trunc(&session.name, namew);
-    let pad = " ".repeat((namew - name_disp.chars().count() as i64).max(0) as usize);
+    let namew = namew.max(0) as usize;
+    let name_disp = pad(&trunc(&session.name, namew), namew);
     let colored_chips: String = session
         .tags
         .iter()
@@ -210,7 +218,7 @@ fn picker_visual(row: &Row<'_>, namew: i64, now: f64) -> String {
     let role_cell = format!("{}{role:<ROLE_W$}{RESET_FG}", tag_ansi(role));
     let location = location_text(row.attached);
     format!(
-        "{name_disp}{pad}   {location:<LOCATION_W$} {started:<7} {WARN_ANSI}{idle:<6}{RESET_FG} {role_cell}{colored_chips}"
+        "{name_disp}   {location:<LOCATION_W$} {started:<7} {WARN_ANSI}{idle:<6}{RESET_FG} {role_cell}{colored_chips}"
     )
 }
 
@@ -510,6 +518,17 @@ mod tests {
         assert_eq!(role_of(&agent("a", 1.0)), "llm");
         assert_eq!(idle_cell(&view, NOW), "—");
         assert_eq!(idle_cell(&agent("a", 1.0), NOW), "-");
+    }
+
+    #[test]
+    fn trunc_and_pad_count_code_points_and_never_panic() {
+        assert_eq!(trunc("abcdef", 4), "abc…");
+        assert_eq!(trunc("abc", 3), "abc");
+        assert_eq!(trunc("日本語", 2), "日…");
+        assert_eq!(trunc("abc", 0), "…");
+        assert_eq!(trunc("", 0), "");
+        assert_eq!(pad("日本", 4), "日本  ");
+        assert_eq!(pad("abcdef", 2), "abcdef");
     }
 
     #[test]

@@ -34,13 +34,13 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
   inline. Add `tx_core::say(out, text)` and `VerbError::write(io::Error)`.
 - [ ] **H6.** Plugin data dir `state_dir/plugins/<id>` built 4 times (artifacts, chat, tutor,
   picker); timeline imports chat's just for this. Add `CoreConfig::plugin_dir(plugin)`.
-- [ ] **H7 bug.** Ellipsis truncation copied 5 times; artifacts render/menu and chat
+- [x] **H7 bug.** (fixed) Ellipsis truncation copied 5 times; artifacts render/menu and chat
   history_verbs compute `width - 1` on `usize` and panic at width 0. One `tx_ui::render::trunc`
   (`saturating_sub`) and `pad`. Keep `py_prefix`.
 - [ ] **H8.** `$TX_SESSION_ID` read 5 times, the constant declared 3 times (hooks state.rs,
   chat history_verbs.rs shadow `tx_core::core::SESSION_ID_ENV`). Add
   `tx_ui::env_session_id()`; mockup's `agent_from_env` re-implements `Ui::inside()`.
-- [ ] **H9 bug.** tx-ui popup.rs `run_shell_background` duplicates `Ui::run_shell_background`
+- [x] **H9 bug.** (fixed) tx-ui popup.rs `run_shell_background` duplicates `Ui::run_shell_background`
   without `#` to `##` escaping; a `#` in the state dir is read as a tmux format. Delete it.
 - [ ] **H10.** Atomic file writes implemented 7 times (tx-core store, artifacts store, tutor
   progress/bundle, chat lib/install, hooks install). One `tx_core::fs::write_atomic`, with a

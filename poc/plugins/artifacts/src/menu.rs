@@ -16,7 +16,9 @@
 use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
 use tx_ui::editor::Terminal;
 use tx_ui::popup as tm;
-use tx_ui::render::{DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, tag_ansi};
+use tx_ui::render::{
+    DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, pad, tag_ansi, trunc,
+};
 use tx_ui::tmux::{Ui, shell_quote};
 
 use crate::artifact::{Artifact, USER_ACTOR};
@@ -331,7 +333,9 @@ impl Nav<'_> {
             target.kind,
             &target.id,
         ])?;
-        tm::run_shell_background(&self.ui, &format!("{command} || true")).map_err(failed)?;
+        self.ui
+            .run_shell_background(&format!("{command} || true"))
+            .map_err(failed)?;
         Ok(0)
     }
 
@@ -588,7 +592,7 @@ impl Row {
 
     /// The picker's SGR styling; chips past the layout's chip budget are dropped.
     fn render(&self, index: usize, layout: &Layout) -> String {
-        let name = pad(&truncate(&self.name, layout.namew), layout.namew);
+        let name = pad(&trunc(&self.name, layout.namew), layout.namew);
         let mut line = format!(
             "{DIM_FG_ANSI}{:<label_width$}{FG_ANSI}{name}{RESET_FG}   ",
             row_label(index),
@@ -670,21 +674,6 @@ impl Layout {
         line.push_str(" TAGS");
         line
     }
-}
-
-fn pad(text: &str, width: usize) -> String {
-    let fill = width.saturating_sub(text.chars().count());
-    format!("{text}{}", " ".repeat(fill))
-}
-
-fn truncate(text: &str, width: usize) -> String {
-    let mut characters: Vec<char> = text.chars().collect();
-    if characters.len() <= width {
-        return text.to_owned();
-    }
-    characters.truncate(width - 1);
-    characters.push('…');
-    characters.into_iter().collect()
 }
 
 #[cfg(test)]

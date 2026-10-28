@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Widget};
-use tx_ui::render::reltime;
+use tx_ui::render::{reltime, trunc};
 
 use crate::model::{Item, Menu, View};
 
@@ -93,17 +93,6 @@ fn put(buf: &mut Buffer, area: Rect, x: u16, y: u16, line: &Line<'_>, width: u16
     }
 }
 
-fn truncate(text: &str, width: usize) -> String {
-    if text.chars().count() > width {
-        text.chars()
-            .take(width.saturating_sub(1))
-            .collect::<String>()
-            + "…"
-    } else {
-        text.to_owned()
-    }
-}
-
 pub fn draw(menu: &Menu, frame: usize, area: Rect, buf: &mut Buffer) {
     match menu.view() {
         View::Main => draw_main(menu, frame, area, buf),
@@ -157,7 +146,7 @@ fn recent_lines(menu: &Menu) -> Vec<Line<'static>> {
             };
             Line::from(vec![
                 Span::styled(
-                    format!("{:<namew$}", truncate(&past.name, namew)),
+                    format!("{:<namew$}", trunc(&past.name, namew)),
                     Style::new().fg(WARN),
                 ),
                 Span::raw("  "),
@@ -312,12 +301,12 @@ fn draw_history(menu: &Menu, row: usize, area: Rect, buf: &mut Buffer) {
         .map(|past| {
             Line::from(vec![
                 Span::styled(
-                    format!("{:<NAME_W$}", truncate(&past.name, NAME_W)),
+                    format!("{:<NAME_W$}", trunc(&past.name, NAME_W)),
                     Style::new().fg(WARN),
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    format!("{:<TAG_W$}", truncate(&past.tag, TAG_W)),
+                    format!("{:<TAG_W$}", trunc(&past.tag, TAG_W)),
                     Style::new().fg(FG),
                 ),
                 Span::styled(

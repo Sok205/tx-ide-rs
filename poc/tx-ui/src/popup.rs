@@ -207,11 +207,6 @@ fn popup_footer(prefix: &str) -> String {
     )
 }
 
-/// Runs `command` on the server in the background (`run-shell -b`), outliving the caller.
-pub fn run_shell_background(ui: &Ui, command: &str) -> Result<(), UiError> {
-    ui.run(&["run-shell", "-b", command]).map(drop)
-}
-
 /// Focus the pane hosting `session` for the terminal `client` is shown on. `client` may be a
 /// nested client, so the client to move is its outer one. A pane in the outer client's session is
 /// selected in place; one in another plain session gets the outer client switched to it; one in
