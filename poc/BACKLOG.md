@@ -146,7 +146,7 @@ missing source file (E7, I11 half).
 - [x] (6474588) **I1 / T2.** The hooks state is a string in 6 crates, `ext["hooks"]` parsed 6 ways,
   while plugins/hooks has `State`. One serde `HookState` + `Hooks { state, since }` in tx-ui
   (re-exported by hooks) or tx-core; one shared `activity_at` (chat, timeline copies).
-- [ ] **T3.** `ext` is read by string key around the owners' types (`ext.edit.group` in
+- [x] (a7abb05) **T3.** `ext` is read by string key around the owners' types (`ext.edit.group` in
   artifacts and timeline while tx-edit exports `Ext`; spawn kind in tx-ui). Add
   `trait ExtRecord { const KEY }`, `Session::ext_of::<T>()`, `TxCore::update_ext_of::<T>()`.
 - [x] (20bfcb2) **O1.** `TxCore::resolve` loads the record(s) then returns only the id; every caller
@@ -167,7 +167,7 @@ missing source file (E7, I11 half).
   variants). Add a boxed `Plugin` source variant; land with H4.
 - [ ] **I4.** artifacts `try_outcome!` re-implements `?`; steps return `Result<i32, Outcome>`
   with `From<VerbError> for Outcome`.
-- [ ] **Q3 behaviour.** Two group cascades disagree: timeline ignores `ext.artifacts.group`
+- [x] (a7abb05) **Q3 behaviour.** Two group cascades disagree: timeline ignores `ext.artifacts.group`
   (and its doc still says artifacts have no plugin). One resolver, with a differential test.
 - [ ] **Q4.** Picker key state machine: esc while searching, esc/enter with buffered digits,
   junk pending file untested. Property test over key sequences; extract `parse_pending`.
@@ -188,7 +188,7 @@ missing source file (E7, I11 half).
   fallbacks; `enum KnownEngine` parsed once; engine crates export `pub const ID`.
 - [ ] **I7.** artifacts `Cleanup::to_value` / `from_value` are hand-written serde; derive.
 - [ ] **I8 / T11.** roles are strings (`role_of`, picker `ROLES`, tutor); `enum Role` in tx-ui.
-- [ ] **I9 behaviour.** timeline re-implements the group cascade minus artifacts; artifacts
+- [x] (a7abb05) **I9 behaviour.** timeline re-implements the group cascade minus artifacts; artifacts
   `own_group` reads raw JSON despite typed `Ext`. (Same fix as Q3.)
 - [ ] **I10.** artifacts log event types are string literals and `append` takes three `&str`;
   `enum LogEvent`.
