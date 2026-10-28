@@ -6,11 +6,11 @@ use crate::config::CoreConfig;
 use crate::engine::{EngineAdapter, EngineRegistry, LaunchRequest, apply_workspace};
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
-use crate::locks::Locks;
+use crate::locks::{LockGuard, Locks};
 use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
 use crate::profile::{Profile, Profiles};
 use crate::session::{Effort, Launch, Lifecycle, Session, SessionId, validate_name};
-use crate::store::{SessionStore, StoreError};
+use crate::store::{SessionStore, io_error};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 
 pub const SESSIONS_DIR: &str = "sessions";
@@ -315,12 +315,13 @@ fn event(
     )
 }
 
-fn store_io(path: &Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {
-    move |source| {
-        CoreError::Store(StoreError::Io {
-            path: path.to_owned(),
-            source,
-        })
+/// `"duplicate session"` from tmux means another session already holds `name`.
+fn name_taken_or(error: TmuxError, name: &str) -> CoreError {
+    match error {
+        TmuxError::Failed { stderr, .. } if stderr.starts_with("duplicate session") => {
+            CoreError::NameTaken(name.to_owned())
+        }
+        other => CoreError::Tmux(other),
     }
 }
 
@@ -342,11 +343,11 @@ impl TxCore {
         let state = &config.state_dir;
         for sub in [SESSIONS_DIR, LOCKS_DIR, PROFILES_DIR] {
             let dir = state.join(sub);
-            std::fs::create_dir_all(&dir).map_err(store_io(&dir))?;
+            std::fs::create_dir_all(&dir).map_err(io_error(&dir))?;
         }
         let conf = config.tmux_conf_path();
         if !conf.exists() {
-            std::fs::write(&conf, DEFAULT_TMUX_CONF).map_err(store_io(&conf))?;
+            std::fs::write(&conf, DEFAULT_TMUX_CONF).map_err(io_error(&conf))?;
         }
         Ok(Self {
             store: SessionStore::new(state.join(SESSIONS_DIR)),
@@ -385,17 +386,44 @@ impl TxCore {
     /// The log line first (the file never lags the sinks), then every sink in order. Runs only
     /// once the operation has released its locks, so a sink may use another core on the same
     /// state dir. A sink that panics is contained; the operation already happened.
-    fn emit(&self, events: Vec<Event>) {
-        for event in &events {
+    fn emit(&self, events: impl IntoIterator<Item = Event>) {
+        for event in events {
             // The log is an operation trail, not the record; a failed append must not fail the
             // operation that already happened.
-            let _ = self.events.append(event);
+            let _ = self.events.append(&event);
             for sink in &self.sinks {
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    sink.on_event(event);
+                    sink.on_event(&event);
                 }));
             }
         }
+    }
+
+    /// Runs `op` (which takes and drops its own locks), then emits the events it returned.
+    fn emitting<T, E: IntoIterator<Item = Event>>(
+        &self,
+        op: impl FnOnce() -> Result<(T, E), CoreError>,
+    ) -> Result<T, CoreError> {
+        let (value, events) = op()?;
+        self.emit(events);
+        Ok(value)
+    }
+
+    /// The process-wide create lock (names are unique across sessions).
+    fn lock_create(&self) -> Result<LockGuard, CoreError> {
+        self.locks.create().map_err(CoreError::Lock)
+    }
+
+    fn lock_session(&self, id: &SessionId) -> Result<LockGuard, CoreError> {
+        self.locks.session(id).map_err(CoreError::Lock)
+    }
+
+    /// `<state>/profiles/<id>.md`, the resolved profile an agent session launches with.
+    fn profile_path(&self, id: &SessionId) -> PathBuf {
+        self.config
+            .state_dir
+            .join(PROFILES_DIR)
+            .join(format!("{id}.md"))
     }
 
     // ----- reads: stored snapshots, never tmux ------------------------------------------------
@@ -423,30 +451,24 @@ impl TxCore {
         {
             return Ok(id);
         }
-        let mut named: Vec<Session> = self
-            .store
-            .all()?
-            .into_iter()
-            .filter(|session| session.name == name_or_id)
-            .collect();
-        if let Some(running) = named
-            .iter()
-            .find(|session| session.lifecycle == Lifecycle::Running)
-        {
-            return Ok(running.id.clone());
+        // `all()` is created-order, so the last match is the most recently created.
+        let mut newest = None;
+        for session in self.store.all()? {
+            if session.name != name_or_id {
+                continue;
+            }
+            if session.lifecycle == Lifecycle::Running {
+                return Ok(session.id);
+            }
+            newest = Some(session.id);
         }
-        named
-            .pop()
-            .map(|session| session.id)
-            .ok_or_else(|| CoreError::NotFound(name_or_id.to_owned()))
+        newest.ok_or_else(|| CoreError::NotFound(name_or_id.to_owned()))
     }
 
     // ----- create ------------------------------------------------------------------------------
 
     pub fn create_session(&self, opts: CreateOptions) -> Result<SessionId, CoreError> {
-        let (id, events) = self.create_locked(opts)?;
-        self.emit(events);
-        Ok(id)
+        self.emitting(|| self.create_locked(opts))
     }
 
     fn create_locked(&self, opts: CreateOptions) -> Result<(SessionId, Vec<Event>), CoreError> {
@@ -456,7 +478,7 @@ impl TxCore {
             return Err(CoreError::NotADirectory(opts.cwd));
         }
         // The process runs in the real directory; the record and every workspace path say so.
-        let cwd = std::fs::canonicalize(&opts.cwd).map_err(store_io(&opts.cwd))?;
+        let cwd = std::fs::canonicalize(&opts.cwd).map_err(io_error(&opts.cwd))?;
         let opts = CreateOptions { cwd, ..opts };
         // Pure checks before the lock: an unknown engine or role never touches state.
         let (engine, roles) = match &opts.launch {
@@ -478,20 +500,14 @@ impl TxCore {
                 }
                 (None, Vec::new())
             }
-            #[allow(unreachable_patterns)]
-            _ => unreachable!("LaunchOptions variants are all handled"),
         };
 
-        let _create = self.locks.create().map_err(CoreError::Lock)?;
+        let _create = self.lock_create()?;
         if self.name_in_use(&opts.name, None)? {
             return Err(CoreError::NameTaken(opts.name));
         }
         let id = SessionId::mint();
-        let profile_file = self
-            .config
-            .state_dir
-            .join(PROFILES_DIR)
-            .join(format!("{id}.md"));
+        let profile_file = self.profile_path(&id);
         let cleanup_profile = || {
             let _ = std::fs::remove_file(&profile_file);
         };
@@ -523,7 +539,7 @@ impl TxCore {
                 Some((adapter, resolved)),
             ) => {
                 let profile =
-                    Profile::write(resolved, &profile_file).map_err(store_io(&profile_file))?;
+                    Profile::write(resolved, &profile_file).map_err(io_error(&profile_file))?;
                 let request = LaunchRequest {
                     cwd: &opts.cwd,
                     profile: &profile,
@@ -570,12 +586,7 @@ impl TxCore {
             .new_session(&opts.name, &opts.cwd, &program, &args, &env)
         {
             cleanup_profile();
-            return Err(match error {
-                TmuxError::Failed { stderr, .. } if stderr.starts_with("duplicate session") => {
-                    CoreError::NameTaken(opts.name)
-                }
-                other => CoreError::Tmux(other),
-            });
+            return Err(name_taken_or(error, &opts.name));
         }
         let undo = |error: CoreError| {
             let _ = self.tmux.kill_session(&exact(&opts.name));
@@ -634,22 +645,20 @@ impl TxCore {
     // ----- mutations -------------------------------------------------------------------------
 
     pub fn rename_session(&self, id: &SessionId, name: &str) -> Result<Session, CoreError> {
-        let (session, events) = self.rename_locked(id, name)?;
-        self.emit(events);
-        Ok(session)
+        self.emitting(|| self.rename_locked(id, name))
     }
 
     fn rename_locked(
         &self,
         id: &SessionId,
         name: &str,
-    ) -> Result<(Session, Vec<Event>), CoreError> {
+    ) -> Result<(Session, Option<Event>), CoreError> {
         validate_name(name)?;
-        let _create = self.locks.create().map_err(CoreError::Lock)?;
-        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+        let _create = self.lock_create()?;
+        let _session = self.lock_session(id)?;
         let mut session = self.get_session(id)?;
         if session.name == name {
-            return Ok((session, Vec::new()));
+            return Ok((session, None));
         }
         if self.name_in_use(name, Some(id))? {
             return Err(CoreError::NameTaken(name.to_owned()));
@@ -657,15 +666,9 @@ impl TxCore {
         if session.lifecycle == Lifecycle::Running
             && let Some(live) = self.tmux.is_live(id)?
         {
-            match self.tmux.rename_session(&live.session_target, name) {
-                Ok(()) => {}
-                Err(TmuxError::Failed { stderr, .. })
-                    if stderr.starts_with("duplicate session") =>
-                {
-                    return Err(CoreError::NameTaken(name.to_owned()));
-                }
-                Err(error) => return Err(CoreError::Tmux(error)),
-            }
+            self.tmux
+                .rename_session(&live.session_target, name)
+                .map_err(|error| name_taken_or(error, name))?;
         }
         let old = std::mem::replace(&mut session.name, name.to_owned());
         self.store.save(&session)?;
@@ -675,7 +678,7 @@ impl TxCore {
             None,
             format!("{old} -> {name}"),
         );
-        Ok((session, vec![renamed]))
+        Ok((session, Some(renamed)))
     }
 
     /// Runs `f` on `ext[plugin]` (`Null` when absent) under the session lock and saves the
@@ -687,21 +690,16 @@ impl TxCore {
         plugin: &str,
         f: impl FnOnce(&mut serde_json::Value),
     ) -> Result<bool, CoreError> {
-        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+        let _session = self.lock_session(id)?;
         let mut session = self.get_session(id)?;
-        let before = session
-            .ext
-            .get(plugin)
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
+        // A local copy: take the value out now, put it back only if it changed.
+        let before = session.ext.remove(plugin).unwrap_or_default();
         let mut value = before.clone();
         f(&mut value);
         if value == before {
             return Ok(false);
         }
-        if value.is_null() {
-            session.ext.remove(plugin);
-        } else {
+        if !value.is_null() {
             session.ext.insert(plugin.to_owned(), value);
         }
         self.store.save(&session)?;
@@ -713,32 +711,27 @@ impl TxCore {
         id: &SessionId,
         tags: Vec<String>,
     ) -> Result<Session, CoreError> {
-        let (session, tagged) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+        self.emitting(|| {
+            let _session = self.lock_session(id)?;
             let mut session = self.get_session(id)?;
             session.tags = tags;
             self.store.save(&session)?;
             let tagged = event(EventType::Tagged, &session, None, session.tags.join(", "));
-            (session, tagged)
-        };
-        self.emit(vec![tagged]);
-        Ok(session)
+            Ok((session, [tagged]))
+        })
     }
 
     /// One `list-sessions`; a `Running` record without a live `@tx-id` becomes `Exited`.
     pub fn refresh_session(&self, id: &SessionId) -> Result<RefreshResult, CoreError> {
-        let (result, exited) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+        self.emitting(|| {
+            let _session = self.lock_session(id)?;
             let session = self.get_session(id)?;
             if session.lifecycle.is_terminal() || self.tmux.list_live()?.contains(id) {
-                (RefreshResult::Unchanged(session), None)
-            } else {
-                let (session, exited) = self.mark_exited(session)?;
-                (RefreshResult::Exited(session), Some(exited))
+                return Ok((RefreshResult::Unchanged(session), None));
             }
-        };
-        self.emit(exited.into_iter().collect());
-        Ok(result)
+            let (session, exited) = self.mark_exited(session)?;
+            Ok((RefreshResult::Exited(session), Some(exited)))
+        })
     }
 
     /// One `list-sessions` for every record; returns the records that changed. Records are
@@ -750,11 +743,11 @@ impl TxCore {
         let live = self.tmux.list_live()?;
         let mut changed = Vec::new();
         for session in records {
-            if session.lifecycle != Lifecycle::Running || live.contains(&session.id) {
+            if session.lifecycle.is_terminal() || live.contains(&session.id) {
                 continue;
             }
             let exited = {
-                let _lock = self.locks.session(&session.id).map_err(CoreError::Lock)?;
+                let _lock = self.lock_session(&session.id)?;
                 // Re-load under the lock: another process may have stopped it meanwhile.
                 match self.store.load(&session.id)? {
                     Some(current) if current.lifecycle == Lifecycle::Running => {
@@ -766,7 +759,7 @@ impl TxCore {
             // Emitted per record, right after its lock is released: a later failure cannot
             // swallow an exit that was already saved, and sinks see each exit as it happens.
             if let Some((session, exited)) = exited {
-                self.emit(vec![exited]);
+                self.emit([exited]);
                 changed.push(session);
             }
         }
@@ -774,12 +767,22 @@ impl TxCore {
     }
 
     /// Saves the record as `Exited`; the caller emits the returned event once its lock is gone.
-    fn mark_exited(&self, mut session: Session) -> Result<(Session, Event), CoreError> {
-        session.lifecycle = Lifecycle::Exited;
+    fn mark_exited(&self, session: Session) -> Result<(Session, Event), CoreError> {
+        self.mark_ended(session, Lifecycle::Exited, EventType::Exited)
+    }
+
+    /// Saves the record as ended (`lifecycle`, now) and returns it with its `type_` event.
+    fn mark_ended(
+        &self,
+        mut session: Session,
+        lifecycle: Lifecycle,
+        type_: EventType,
+    ) -> Result<(Session, Event), CoreError> {
+        session.lifecycle = lifecycle;
         session.ended_at = Some(now());
         self.store.save(&session)?;
-        let exited = event(EventType::Exited, &session, None, "");
-        Ok((session, exited))
+        let ended = event(type_, &session, None, "");
+        Ok((session, ended))
     }
 
     pub fn get_execution_location(&self, id: &SessionId) -> Result<ExecutionLocation, CoreError> {
@@ -816,33 +819,28 @@ impl TxCore {
     /// `kill-session`, then `Stopped`. A record whose session had already vanished becomes
     /// `Exited` instead (what happened, not what was asked).
     pub fn stop_session(&self, id: &SessionId) -> Result<Session, CoreError> {
-        let (session, ended) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-            let mut session = self.get_session(id)?;
+        self.emitting(|| {
+            let _session = self.lock_session(id)?;
+            let session = self.get_session(id)?;
             if session.lifecycle.is_terminal() {
                 return Err(CoreError::NotRunning(id.clone()));
             }
-            match self.tmux.is_live(id)? {
+            let (session, ended) = match self.tmux.is_live(id)? {
                 None => self.mark_exited(session)?,
                 Some(live) => {
                     self.tmux.kill_session(&live.session_target)?;
-                    session.lifecycle = Lifecycle::Stopped;
-                    session.ended_at = Some(now());
-                    self.store.save(&session)?;
-                    let stopped = event(EventType::Stopped, &session, None, "");
-                    (session, stopped)
+                    self.mark_ended(session, Lifecycle::Stopped, EventType::Stopped)?
                 }
-            }
-        };
-        self.emit(vec![ended]);
-        Ok(session)
+            };
+            Ok((session, [ended]))
+        })
     }
 
     /// Deletes the record (and its profile file). The tmux session, if any, keeps running and is
     /// no longer managed. `Ok(false)` when there was no record.
     pub fn forget_session(&self, id: &SessionId) -> Result<bool, CoreError> {
-        let (existed, name) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+        self.emitting(|| {
+            let _session = self.lock_session(id)?;
             let name = self
                 .store
                 .load(id)
@@ -850,24 +848,19 @@ impl TxCore {
                 .flatten()
                 .map(|session| session.name);
             let existed = self.store.delete(id)?;
-            let _ = std::fs::remove_file(
-                self.config
-                    .state_dir
-                    .join(PROFILES_DIR)
-                    .join(format!("{id}.md")),
-            );
-            (existed, name)
-        };
-        if existed {
-            self.emit(vec![Event::new(
-                EventType::Forgotten,
-                id.clone(),
-                name.unwrap_or_default(),
-                None,
-                "",
-            )]);
-        }
-        Ok(existed)
+            // Best effort: an agent-less session never had one.
+            let _ = std::fs::remove_file(self.profile_path(id));
+            let forgotten = existed.then(|| {
+                Event::new(
+                    EventType::Forgotten,
+                    id.clone(),
+                    name.unwrap_or_default(),
+                    None,
+                    "",
+                )
+            });
+            Ok((existed, forgotten))
+        })
     }
 
     // ----- messaging ---------------------------------------------------------------------------
@@ -882,10 +875,10 @@ impl TxCore {
             Some(sender) => Some(self.get_session(sender)?.name),
             None => None,
         };
-        let (receipt, sent) = {
-            let _session = self.locks.session(to).map_err(CoreError::Lock)?;
+        self.emitting(|| {
+            let _session = self.lock_session(to)?;
             let recipient = self.get_session(to)?;
-            if recipient.lifecycle != Lifecycle::Running {
+            if recipient.lifecycle.is_terminal() {
                 return Err(CoreError::NotRunning(to.clone()));
             }
             let live = self.live_or_not_running(to)?;
@@ -895,20 +888,16 @@ impl TxCore {
             let sent = event(
                 EventType::MessageSent,
                 &recipient,
-                opts.sender.clone(),
+                opts.sender,
                 format!("from {}", sender_name.as_deref().unwrap_or("user")),
             );
-            (
-                DeliveryReceipt {
-                    recipient: to.clone(),
-                    pane: live.pane_target,
-                    submitted_at,
-                },
-                sent,
-            )
-        };
-        self.emit(vec![sent]);
-        Ok(receipt)
+            let receipt = DeliveryReceipt {
+                recipient: to.clone(),
+                pane: live.pane_target,
+                submitted_at,
+            };
+            Ok((receipt, [sent]))
+        })
     }
 }
 

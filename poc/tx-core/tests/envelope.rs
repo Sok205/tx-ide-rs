@@ -19,7 +19,8 @@ impl EngineAdapter for Shout {
     }
 
     fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        Ok(LaunchPlan::new("sh").args(["-c", "env > env.txt; cat > input.txt"]))
+        Ok(LaunchPlan::new("sh")
+            .args(["-c", "env > env.tmp && mv env.tmp env.txt; cat > input.txt"]))
     }
 
     fn envelope(&self, sender: Option<&str>, text: &str) -> String {

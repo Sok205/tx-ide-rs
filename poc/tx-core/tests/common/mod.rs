@@ -154,7 +154,7 @@ impl EngineAdapter for ShellStub {
             return Err(EngineError::Refused("model refused".into()));
         }
         let script = format!(
-            "env > env.txt; echo \"{}\" > prompt.txt; cat > input.txt",
+            "env > env.tmp && mv env.tmp env.txt; echo \"{}\" > prompt.txt; cat > input.txt",
             req.initial_prompt.unwrap_or("")
         );
         Ok(LaunchPlan::new("sh")
@@ -178,7 +178,10 @@ pub fn process(name: &str, cwd: &Path) -> CreateOptions {
     CreateOptions::new(
         name,
         cwd,
-        LaunchOptions::process("sh", ["-c", "env > env.txt; cat > input.txt"]),
+        LaunchOptions::process(
+            "sh",
+            ["-c", "env > env.tmp && mv env.tmp env.txt; cat > input.txt"],
+        ),
     )
 }
 

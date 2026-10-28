@@ -48,7 +48,7 @@ pub enum StoreError {
     },
 }
 
-fn io_error(path: &Path) -> impl FnOnce(io::Error) -> StoreError + '_ {
+pub(crate) fn io_error(path: &Path) -> impl FnOnce(io::Error) -> StoreError + '_ {
     move |source| StoreError::Io {
         path: path.to_owned(),
         source,
@@ -145,29 +145,21 @@ impl SessionStore {
             let entry = entry.map_err(io_error(&self.dir))?;
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            if name.starts_with('.') || !name.ends_with(RECORD_SUFFIX) {
+            if name.starts_with('.') {
                 continue;
             }
-            let path = entry.path();
-            // Only a record file can be a record: a directory, FIFO or socket named `x.json`
-            // is skipped (a FIFO would block `open` forever), and one that vanished since the
-            // scan is a deletion that raced us.
-            let Ok(id) = name[..name.len() - RECORD_SUFFIX.len()].parse::<SessionId>() else {
+            let Some(stem) = name.strip_suffix(RECORD_SUFFIX) else {
                 continue;
             };
-            match std::fs::metadata(&path) {
-                Ok(meta) if meta.is_file() => {}
-                Ok(_) => continue,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(source) => {
-                    return Err(StoreError::Unreadable {
-                        file: name.to_owned(),
-                        source: ReadError::Io(source),
-                    });
-                }
-            }
-            match read(&path, &id) {
+            let Ok(id) = stem.parse::<SessionId>() else {
+                continue;
+            };
+            // Only a record file can be a record: a directory, FIFO or socket named `x.json` is
+            // skipped (a FIFO would block `open` forever), and one that vanished since the scan
+            // is a deletion that raced us.
+            match read(&entry.path(), &id) {
                 Ok(session) => sessions.push(session),
+                Err(ReadError::NotAFile) => {}
                 Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(source) => {
                     return Err(StoreError::Unreadable {

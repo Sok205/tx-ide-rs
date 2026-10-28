@@ -159,7 +159,7 @@ fn process_session_round_trip() {
             "--exec",
             "sh",
             "-c",
-            "echo $GREETING > env.txt; cat > input.txt",
+            "echo $GREETING > env.tmp && mv env.tmp env.txt; cat > input.txt",
         ])
         .trim()
         .to_owned();
@@ -264,7 +264,7 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
             "--exec",
             "sh",
             "-c",
-            "env > env.txt; cat > input.txt",
+            "env > env.tmp && mv env.tmp env.txt; cat > input.txt",
         ])
         .env_remove("TMUX")
         .env_remove("TX_SESSION_ID")
