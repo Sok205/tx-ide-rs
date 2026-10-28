@@ -709,7 +709,7 @@ fn missing_conf_file_does_not_stop_the_server() {
     let result = tmux.new_session("a", Path::new("/"), "sleep", &["60".into()], &[]);
     let listed = tmux.list_live();
     let _ = Command::new("tmux")
-        .args(tmux.argv(&["kill-server".into()]))
+        .args(tmux.argv(&["kill-server"]))
         .output();
     assert!(result.is_ok(), "{result:?}");
     assert!(listed.unwrap().is_empty());

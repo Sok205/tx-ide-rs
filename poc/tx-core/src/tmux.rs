@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 use crate::session::SessionId;
 
@@ -130,6 +130,11 @@ fn exact_for_pane_target(name: &str) -> String {
     format!("={name}:")
 }
 
+/// A failed call's stderr, as the error carries it.
+fn stderr_of(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).trim().to_owned()
+}
+
 /// tmux's two ways of saying "there is no server behind this socket". Any other failure means
 /// the socket is unusable and the answer is unknown.
 pub(crate) fn is_no_server(stderr: &str) -> bool {
@@ -165,10 +170,6 @@ impl Tmux {
         }
     }
 
-    pub fn binary(&self) -> &OsStr {
-        &self.binary
-    }
-
     pub fn socket(&self) -> &Path {
         &self.socket
     }
@@ -179,17 +180,19 @@ impl Tmux {
 
     /// The full argument list of one call: `-S <socket> -f <conf>` then `args`. `-f` only
     /// matters to the call that starts the server, so every call carries it.
-    pub fn argv(&self, args: &[OsString]) -> Vec<OsString> {
+    pub fn argv<A: AsRef<OsStr>>(&self, args: &[A]) -> Vec<OsString> {
         let mut argv = Vec::with_capacity(args.len() + 4);
-        argv.push("-S".into());
-        argv.push(self.socket.as_os_str().to_owned());
-        argv.push("-f".into());
-        argv.push(self.conf.as_os_str().to_owned());
-        argv.extend_from_slice(args);
+        argv.extend([
+            "-S".into(),
+            self.socket.clone().into_os_string(),
+            "-f".into(),
+            self.conf.clone().into_os_string(),
+        ]);
+        argv.extend(args.iter().map(|arg| arg.as_ref().to_owned()));
         argv
     }
 
-    fn output(&self, args: &[OsString]) -> Result<std::process::Output, TmuxError> {
+    fn output<A: AsRef<OsStr>>(&self, args: &[A]) -> Result<Output, TmuxError> {
         Command::new(&self.binary)
             .args(self.argv(args))
             .stdin(Stdio::null())
@@ -200,20 +203,20 @@ impl Tmux {
             })
     }
 
-    /// A call that must succeed.
-    fn run(&self, args: &[OsString]) -> Result<String, TmuxError> {
+    /// A call that must succeed; no caller reads its stdout.
+    fn run<A: AsRef<OsStr>>(&self, args: &[A]) -> Result<(), TmuxError> {
         let output = self.output(args)?;
-        if !output.status.success() {
-            return Err(TmuxError::Failed {
-                args: args
-                    .iter()
-                    .map(|arg| arg.to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            });
+        if output.status.success() {
+            return Ok(());
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Err(TmuxError::Failed {
+            args: args
+                .iter()
+                .map(|arg| arg.as_ref().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" "),
+            stderr: stderr_of(&output),
+        })
     }
 
     /// tmux parses its argv as a command sequence: an argument ending in `;` ends the command
@@ -259,26 +262,18 @@ impl Tmux {
         env: &[(String, String)],
     ) -> Result<(), TmuxError> {
         self.run(&Self::new_session_args(name, cwd, program, args, env))
-            .map(drop)
     }
 
     /// Links the session named exactly `name` to `id`. Session scope only.
     pub fn set_tx_id(&self, name: &str, id: &SessionId) -> Result<(), TmuxError> {
-        self.run(&[
-            "set-option".into(),
-            "-t".into(),
-            exact_for_pane_target(name).into(),
-            TX_ID_OPTION.into(),
-            id.as_str().into(),
-        ])
-        .map(drop)
+        let target = exact_for_pane_target(name);
+        self.run(&["set-option", "-t", &target, TX_ID_OPTION, id.as_str()])
     }
 
     /// `Ok(false)` when there is no such session (already gone); any other failure is an error.
     pub fn kill_session(&self, target: &str) -> Result<bool, TmuxError> {
-        let args: [OsString; 3] = ["kill-session".into(), "-t".into(), target.into()];
-        match self.run(&args) {
-            Ok(_) => Ok(true),
+        match self.run(&["kill-session", "-t", target]) {
+            Ok(()) => Ok(true),
             Err(TmuxError::Failed { stderr, .. })
                 if stderr.starts_with("can't find session") || is_no_server(&stderr) =>
             {
@@ -289,14 +284,7 @@ impl Tmux {
     }
 
     pub fn rename_session(&self, target: &str, new_name: &str) -> Result<(), TmuxError> {
-        self.run(&[
-            "rename-session".into(),
-            "-t".into(),
-            target.into(),
-            "--".into(),
-            new_name.into(),
-        ])
-        .map(drop)
+        self.run(&["rename-session", "-t", target, "--", new_name])
     }
 
     /// Types `text` verbatim into `pane` (`-l`: no key-name lookup, `--`: no option parsing).
@@ -305,31 +293,23 @@ impl Tmux {
     /// semicolons, then one `\;` per semicolon stripped.
     pub fn send_keys_literal(&self, pane: &str, text: &str) -> Result<(), TmuxError> {
         for chunk in literal_chunks(text) {
-            self.run(&[
-                "send-keys".into(),
-                "-t".into(),
-                pane.into(),
-                "-l".into(),
-                "--".into(),
-                chunk.into(),
-            ])?;
+            self.run(&["send-keys", "-t", pane, "-l", "--", chunk])?;
         }
         Ok(())
     }
 
     pub fn send_enter(&self, pane: &str) -> Result<(), TmuxError> {
-        self.run(&["send-keys".into(), "-t".into(), pane.into(), "Enter".into()])
-            .map(drop)
+        self.run(&["send-keys", "-t", pane, "Enter"])
     }
 
     /// The only liveness signal. No server (or one quitting) → an empty table; any other failure →
     /// `InspectionFailed`, never an empty table.
     pub fn list_live(&self) -> Result<LiveTable, TmuxError> {
-        let output = self.output(&["list-sessions".into(), "-F".into(), LIST_FORMAT.into()])?;
+        let output = self.output(&["list-sessions", "-F", LIST_FORMAT])?;
         if output.status.success() {
             return LiveTable::parse(&String::from_utf8_lossy(&output.stdout));
         }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stderr = stderr_of(&output);
         if is_no_server(&stderr) || server_quit(&stderr) {
             return Ok(LiveTable::default());
         }
@@ -362,14 +342,13 @@ mod tests {
 
     #[test]
     fn every_call_is_bound_to_the_socket_and_conf() {
-        let argv = tmux().argv(&["list-sessions".into()]);
+        let argv = tmux().argv(&["list-sessions"]);
         assert_eq!(
             strs(&argv),
             ["-S", "/s/tmux.sock", "-f", "/s/tmux.conf", "list-sessions"]
         );
         assert_eq!(tmux().socket(), Path::new("/s/tmux.sock"));
         assert_eq!(tmux().conf(), Path::new("/s/tmux.conf"));
-        assert_eq!(tmux().binary(), "tmux");
     }
 
     #[test]
@@ -481,6 +460,11 @@ mod tests {
     }
 
     #[test]
+    fn the_list_format_reads_the_option_core_sets() {
+        assert!(LIST_FORMAT.starts_with(&format!("#{{{TX_ID_OPTION}}}\t")));
+    }
+
+    #[test]
     fn live_table_parses_rows() {
         let table = LiveTable::parse("id-1\t$0\t%0\nid-2\t$3\t%7\n").unwrap();
         assert_eq!(table.len(), 2);
@@ -574,7 +558,7 @@ mod tests {
     impl Drop for Server {
         fn drop(&mut self) {
             let _ = Command::new("tmux")
-                .args(self.tmux.argv(&["kill-server".into()]))
+                .args(self.tmux.argv(&["kill-server"]))
                 .output();
         }
     }
@@ -688,7 +672,7 @@ mod tests {
         tmux.new_session("a", Path::new("/"), "sleep", &["30".into()], &[])
             .unwrap();
         let output = Command::new("tmux")
-            .args(tmux.argv(&["show-options".into(), "-gv".into(), "@from-conf".into()]))
+            .args(tmux.argv(&["show-options", "-gv", "@from-conf"]))
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "yes");
@@ -776,7 +760,7 @@ mod tests {
         assert_eq!(table.len(), 1);
         assert!(table.get(&sid("id-a")).is_some());
         let output = Command::new("tmux")
-            .args(tmux.argv(&["show-options".into(), "-gv".into(), "@tx-id".into()]))
+            .args(tmux.argv(&["show-options", "-gv", "@tx-id"]))
             .output()
             .unwrap();
         assert!(

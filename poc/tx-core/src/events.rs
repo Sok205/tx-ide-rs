@@ -136,22 +136,23 @@ impl EventLog {
     pub fn append(&self, event: &Event) -> io::Result<()> {
         self.append_at(
             event.ts,
+            event.actor.as_ref().map_or("", SessionId::as_str),
             event.type_.as_str(),
             event.id.as_str(),
             &event.name,
             &event.detail,
-            event.actor.as_ref().map_or("", SessionId::as_str),
         )
     }
 
+    /// One line from raw fields, in [`encode`]'s order.
     pub fn append_at(
         &self,
         ts: f64,
+        actor: &str,
         type_: &str,
         id: &str,
         name: &str,
         msg: &str,
-        actor: &str,
     ) -> io::Result<()> {
         let line = encode(ts, actor, type_, id, name, msg);
         if let Some(parent) = self.path.parent() {
@@ -190,7 +191,11 @@ pub fn encode(ts: f64, actor: &str, type_: &str, id: &str, name: &str, msg: &str
     if full.len() <= PIPE_BUF {
         return full.into_bytes();
     }
-    let skeleton = line(ts, actor, type_, id, name, "").len();
+    // `escaped_len` is exact (the property tests pin it), so the line without `msg` is the
+    // full line minus msg's escaped bytes: no second serialization.
+    let skeleton = full
+        .len()
+        .saturating_sub(msg.chars().map(escaped_len).sum());
     let mut budget = PIPE_BUF.saturating_sub(skeleton);
     let mut end = 0;
     for (index, c) in msg.char_indices() {
@@ -313,7 +318,7 @@ mod tests {
     fn append_creates_parent_dir_with_mode_0644() {
         let dir = tempfile::tempdir().unwrap();
         let log = EventLog::new(dir.path().join("sub/log.jsonl"));
-        log.append_at(1.0, "created", "i", "n", "a", "").unwrap();
+        log.append_at(1.0, "", "created", "i", "n", "a").unwrap();
         let event = Event::new(
             EventType::Tagged,
             "i".parse().unwrap(),
@@ -348,7 +353,7 @@ mod tests {
                 std::thread::spawn(move || {
                     let msg = format!("{worker}").repeat(400);
                     for _ in 0..200 {
-                        log.append_at(0.0, "t", "i", "n", &msg, "").unwrap();
+                        log.append_at(0.0, "", "t", "i", "n", &msg).unwrap();
                     }
                 })
             })

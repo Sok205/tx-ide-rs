@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&out).unwrap(), "-x ; one;\ntwo\n");
         assert!(deliver(&tmux, "%999", "x", Duration::ZERO).is_err());
         let _ = Command::new("tmux")
-            .args(tmux.argv(&["kill-server".into()]))
+            .args(tmux.argv(&["kill-server"]))
             .output();
     }
 }

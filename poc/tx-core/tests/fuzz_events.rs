@@ -249,7 +249,7 @@ fn eight_threads_five_hundred_appends_untorn() {
             std::thread::spawn(move || {
                 let msg = char::from(b'a' + worker).to_string().repeat(430);
                 for _ in 0..500 {
-                    log.append_at(f64::from(worker), "t", "i", "n", &msg, "s")
+                    log.append_at(f64::from(worker), "s", "t", "i", "n", &msg)
                         .unwrap();
                 }
             })
@@ -290,7 +290,7 @@ fn append_parent_is_a_file_errs() {
     let blocker = dir.0.join("blocker");
     std::fs::write(&blocker, b"x").unwrap();
     let log = EventLog::new(blocker.join("log.jsonl"));
-    assert!(log.append_at(0.0, "t", "i", "n", "m", "a").is_err());
+    assert!(log.append_at(0.0, "a", "t", "i", "n", "m").is_err());
     assert_eq!(std::fs::read(&blocker).unwrap(), b"x");
 }
 
@@ -298,7 +298,7 @@ fn append_parent_is_a_file_errs() {
 fn append_path_is_a_directory_errs() {
     let dir = TempDir::new("is-dir");
     let log = EventLog::new(&dir.0);
-    assert!(log.append_at(0.0, "t", "i", "n", "m", "a").is_err());
+    assert!(log.append_at(0.0, "a", "t", "i", "n", "m").is_err());
     assert!(dir.0.is_dir());
 }
 
@@ -313,23 +313,23 @@ fn append_in_read_only_dir_errs() {
         return;
     }
     let log = EventLog::new(ro.join("log.jsonl"));
-    assert!(log.append_at(0.0, "t", "i", "n", "m", "a").is_err());
+    assert!(log.append_at(0.0, "a", "t", "i", "n", "m").is_err());
     let nested = EventLog::new(ro.join("sub").join("log.jsonl"));
-    assert!(nested.append_at(0.0, "t", "i", "n", "m", "a").is_err());
+    assert!(nested.append_at(0.0, "a", "t", "i", "n", "m").is_err());
     std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
 #[test]
 fn append_empty_path_errs() {
     let log = EventLog::new("");
-    assert!(log.append_at(0.0, "t", "i", "n", "m", "a").is_err());
+    assert!(log.append_at(0.0, "a", "t", "i", "n", "m").is_err());
 }
 
 #[test]
 fn append_with_nul_in_path_errs() {
     let dir = TempDir::new("nul");
     let log = EventLog::new(dir.0.join("log\0.jsonl"));
-    assert!(log.append_at(0.0, "t", "i", "n", "m", "a").is_err());
+    assert!(log.append_at(0.0, "a", "t", "i", "n", "m").is_err());
 }
 
 #[test]
@@ -342,7 +342,7 @@ fn append_at_arbitrary_inputs_writes_bounded_lines() {
         (1e300, "\u{1F600}", "é", "\u{10FFFF}".repeat(300)),
     ];
     for (ts, type_, actor, msg) in &inputs {
-        log.append_at(*ts, type_, "i", "n", msg, actor).unwrap();
+        log.append_at(*ts, actor, type_, "i", "n", msg).unwrap();
     }
     let text = std::fs::read_to_string(log.path()).unwrap();
     let lines: Vec<_> = text.lines().collect();
