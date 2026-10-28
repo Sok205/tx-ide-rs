@@ -37,7 +37,7 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
 - [x] **H7 bug.** (fixed 5dccbb8) Ellipsis truncation copied 5 times; artifacts render/menu and chat
   history_verbs compute `width - 1` on `usize` and panic at width 0. One `tx_ui::render::trunc`
   (`saturating_sub`) and `pad`. Keep `py_prefix`.
-- [ ] **H8.** `$TX_SESSION_ID` read 5 times, the constant declared 3 times (hooks state.rs,
+- [x] (d0824cb) **H8.** `$TX_SESSION_ID` read 5 times, the constant declared 3 times (hooks state.rs,
   chat history_verbs.rs shadow `tx_core::core::SESSION_ID_ENV`). Add
   `tx_ui::env_session_id()`; mockup's `agent_from_env` re-implements `Ui::inside()`.
 - [x] **H9 bug.** (fixed 5dccbb8) tx-ui popup.rs `run_shell_background` duplicates `Ui::run_shell_background`
