@@ -93,7 +93,8 @@ impl SessionStore {
         })?;
         std::fs::create_dir_all(&self.dir).map_err(io_error(&self.dir))?;
         let target = self.path(&session.id);
-        crate::fs::write_atomic(&target, payload.as_bytes()).map_err(io_error(&target))
+        crate::fs::write_atomic_naming(&target, payload.as_bytes())
+            .map_err(|(path, source)| StoreError::Io { path, source })
     }
 
     /// One record by id; `None` if there is no such file.
