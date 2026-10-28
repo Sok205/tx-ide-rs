@@ -165,7 +165,7 @@ missing source file (E7, I11 half).
   as bare "Permission denied". Wrap with the record path.
 - [x] (e7cfb6c) **E3.** `VerbError::Failed(String)` drops every typed cause (chat stringifies 16
   variants). Add a boxed `Plugin` source variant; land with H4.
-- [ ] **I4.** artifacts `try_outcome!` re-implements `?`; steps return `Result<i32, Outcome>`
+- [x] (de135a3) **I4.** artifacts `try_outcome!` re-implements `?`; steps return `Result<i32, Outcome>`
   with `From<VerbError> for Outcome`.
 - [x] (a7abb05) **Q3 behaviour.** Two group cascades disagree: timeline ignores `ext.artifacts.group`
   (and its doc still says artifacts have no plugin). One resolver, with a differential test.
