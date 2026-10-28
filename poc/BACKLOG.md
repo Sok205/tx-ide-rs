@@ -13,7 +13,7 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
 
 ### HIGH
 
-- [ ] **H1 bug, behaviour.** Commands that re-invoke `txc` are built 8 ways. Picker, menu and
+- [x] (59f2129) **H1 bug, behaviour.** Commands that re-invoke `txc` are built 8 ways. Picker, menu and
   chat omit `--socket`, so with a custom socket their binds and popups reach the wrong tmux
   server. The picker also does not shell-quote, so paths with spaces break. One shared
   `tx_ui::txc::{exe, shell, command}` built from artifacts' `txc_command`.
@@ -45,23 +45,23 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
 - [ ] **H10.** Atomic file writes implemented 7 times (tx-core store, artifacts store, tutor
   progress/bundle, chat lib/install, hooks install). One `tx_core::fs::write_atomic`, with a
   permission-keeping variant for the installers.
-- [ ] **H11.** tx-core store.rs `all()` stats each record, then `read()` stats it again. Map
+- [x] (ad8e0d5) **H11.** tx-core store.rs `all()` stats each record, then `read()` stats it again. Map
   `ReadError::NotAFile` to skip instead; move the misplaced comment.
-- [ ] **H12.** tx-core core.rs `store_io` duplicates store.rs `io_error` (4 call sites).
-- [ ] **H13.** tx-core core.rs: lock, work, release, emit is written 7 times in two styles.
+- [x] (ad8e0d5) **H12.** tx-core core.rs `store_io` duplicates store.rs `io_error` (4 call sites).
+- [x] (ad8e0d5) **H13.** tx-core core.rs: lock, work, release, emit is written 7 times in two styles.
   One private `emitting(op)` helper; `refresh_all` keeps per-record emits.
-- [ ] **H14.** tx-core core.rs `stop_session` re-implements `mark_exited`. Generalise to
+- [x] (ad8e0d5) **H14.** tx-core core.rs `stop_session` re-implements `mark_exited`. Generalise to
   `mark_ended(session, lifecycle, event_type)`.
-- [ ] **H15.** tx-core core.rs:481 dead `#[allow(unreachable_patterns)]` wildcard arm
+- [x] (ad8e0d5) **H15.** tx-core core.rs:481 dead `#[allow(unreachable_patterns)]` wildcard arm
   (`#[non_exhaustive]` has no effect inside the defining crate).
-- [ ] **H16.** tx-core core.rs: the `"duplicate session"` to `NameTaken` mapping appears twice
+- [x] (ad8e0d5) **H16.** tx-core core.rs: the `"duplicate session"` to `NameTaken` mapping appears twice
   (create, rename). One `name_taken_or(error, name)`.
-- [ ] **H17.** tx-core events.rs `append_at` takes its six `&str`s in a different order from
+- [x] (132c7b0) **H17.** tx-core events.rs `append_at` takes its six `&str`s in a different order from
   `encode` / `line`; a swap still compiles. Reorder (callers: `append`, unit tests,
   tests/fuzz_events.rs) or pass a `Fields` struct.
-- [ ] **H18.** tx-core tmux.rs `run` builds an unused stdout `String` (4 `.map(drop)`s);
+- [x] (132c7b0) **H18.** tx-core tmux.rs `run` builds an unused stdout `String` (4 `.map(drop)`s);
   stderr lossy-trim copied twice. Return `()`, add `stderr_of`.
-- [ ] **H19.** tx-core tmux.rs argument arrays are all `"x".into()`; make private `output` /
+- [x] (132c7b0) **H19.** tx-core tmux.rs argument arrays are all `"x".into()`; make private `output` /
   `run` generic over `&[impl AsRef<OsStr>]` (keep pub `argv` non-generic).
 - [ ] **H20 ?, behaviour.** tmux.rs `kill_session` and core.rs `session_vanished` disagree on
   "session gone": a server quitting mid-kill is an error in one, gone in the other. Decide
@@ -79,42 +79,42 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
   menu verbs.rs `status()` is `Ui::display_status` minus stderr (merge if the extra line is ok).
 - [ ] **M4 behaviour.** chat ops.rs rebuilds tx-core's session env by hand; add
   `TxCore::session_env(id, extra)`. Override order in the `env` prefix changes.
-- [ ] **M5.** tx-core core.rs `.map_err(CoreError::Lock)` 10 times; add `lock_create` /
+- [x] (ad8e0d5) **M5.** tx-core core.rs `.map_err(CoreError::Lock)` 10 times; add `lock_create` /
   `lock_session`. Do not add `#[from] io::Error` to `Lock`.
-- [ ] **M6.** tx-core core.rs profile path `profiles/<id>.md` built twice; add `profile_path`.
+- [x] (ad8e0d5) **M6.** tx-core core.rs profile path `profiles/<id>.md` built twice; add `profile_path`.
 - [ ] **M7.** tx-core core.rs `create_locked` is 170 lines: redundant clones (match
   `opts.launch` by value), a second dead `unreachable!` arm (use a `Prepared` enum), split
   `agent_launch` so cleanup runs once.
-- [ ] **M8.** tx-core core.rs `emit(Vec<Event>)` forces `vec![x]` 5 times; take
+- [x] (ad8e0d5) **M8.** tx-core core.rs `emit(Vec<Event>)` forces `vec![x]` 5 times; take
   `impl IntoIterator<Item = Event>`.
-- [ ] **M9.** tx-core core.rs `update_ext` clones the value twice; remove first, clone once.
-- [ ] **M10.** tx-core tmux.rs `LIST_FORMAT` hardcodes `#{@tx-id}`; add a test tying it to
+- [x] (ad8e0d5) **M9.** tx-core core.rs `update_ext` clones the value twice; remove first, clone once.
+- [x] (132c7b0) **M10.** tx-core tmux.rs `LIST_FORMAT` hardcodes `#{@tx-id}`; add a test tying it to
   `TX_ID_OPTION`.
-- [ ] **M11.** tx-core profile.rs frontmatter lines copied to `String`s then borrowed back;
+- [x] (4c9c8b2) **M11.** tx-core profile.rs frontmatter lines copied to `String`s then borrowed back;
   return `(skills, body)` from `read_role`; `Cow` for the `\r` strip.
-- [ ] **M12.** tx-core profile.rs `is_bare_name` duplicates session.rs `is_safe_fragment`
+- [x] (4c9c8b2) **M12.** tx-core profile.rs `is_bare_name` duplicates session.rs `is_safe_fragment`
   minus the length cap.
-- [ ] **M13.** tx-core session.rs `RecordIn` and `let _ = record.version` do nothing; check the
+- [x] (4c9c8b2) **M13.** tx-core session.rs `RecordIn` and `let _ = record.version` do nothing; check the
   version on a `Map` then deserialize. Confirm against tests/fuzz_session.rs.
-- [ ] **M14.** tx-core engine.rs `EngineError::Workspace { .. }` written out 4 times; add a
+- [x] (4c9c8b2) **M14.** tx-core engine.rs `EngineError::Workspace { .. }` written out 4 times; add a
   constructor.
-- [ ] **M15.** tx-core events.rs `encode` serializes up to three times; compute the skeleton
+- [x] (132c7b0) **M15.** tx-core events.rs `encode` serializes up to three times; compute the skeleton
   length from `escaped_len`.
 
 ### LOW
 
-- [ ] **L1.** tx-core core.rs `resolve` collects a `Vec` only to search it; `send_message`
+- [x] (ad8e0d5) **L1.** tx-core core.rs `resolve` collects a `Vec` only to search it; `send_message`
   clones `opts.sender` that could move; `!= Running` vs `is_terminal()` mixed.
-- [ ] **L2.** tx-core store.rs suffix slicing should be `strip_suffix`.
+- [x] (ad8e0d5) **L2.** tx-core store.rs suffix slicing should be `strip_suffix`.
 - [ ] **L3.** `get_session` / `get_execution_location` break the no-`get_` rule (about 124
   call sites): rename only with the next deliberate API change, with a deprecated alias.
-- [ ] **L4.** tx-core locks.rs `LockGuard::is_current` can be private; test helper
+- [x] (4c9c8b2) **L4.** tx-core locks.rs `LockGuard::is_current` can be private; test helper
   `unsafe_is_root` has no `unsafe` and a useless wrapper.
-- [ ] **L5.** tx-core session.rs `SessionId: TryFrom<String>` goes through `parse`, allocating
+- [x] (4c9c8b2) **L5.** tx-core session.rs `SessionId: TryFrom<String>` goes through `parse`, allocating
   twice per deserialized id.
-- [ ] **L6.** Use the map entry API in engine.rs `register` and plugin.rs `insert_verb`;
+- [x] (4c9c8b2) **L6.** Use the map entry API in engine.rs `register` and plugin.rs `insert_verb`;
   plugin.rs:189 should use the `VerbTable` alias.
-- [ ] **L7.** tx-core tmux.rs `Tmux::binary()` is pub with only a unit-test caller.
+- [x] (132c7b0) **L7.** tx-core tmux.rs `Tmux::binary()` is pub with only a unit-test caller.
 - [ ] **L8.** tx-core events.rs `now()` can be `map_or(0.0, as_secs_f64)` (last-bit change).
 - [ ] **L9.** tx-ui editor.rs `Form::render` (77 lines) and `Form::handle`: extract
   `draw_field` / `handle_insert`. `out += &format!` / `push_str(&format!)` to `write!`.
@@ -240,9 +240,39 @@ missing source file (E7, I11 half).
 - [ ] **Flake.** tx-core tests/create.rs `agent_session_gets_profile_plan_and_workspace`
   failed once under parallel load (passes alone 3/3); watch.
 
+## Round 3 (2026-10-28): tx-core rescan (idiomatic-rust, ownership-not-clone, rust-errors)
+
+### MEDIUM
+
+- [x] (59ea7fe) **M16.** core.rs: the "running session" precondition (load, `is_terminal` →
+  `NotRunning`) is written 3 times (`get_execution_location`, `stop_session`,
+  `send_message`); one `running_session(id)`.
+- [x] (59ea7fe) **M17.** core.rs: `refresh_session` and `refresh_all` both do "lock, load, if running
+  and not live then `mark_exited`" in two styles; one `exit_unless_live(id, &live)`.
+- [ ] **M18 behaviour.** `InvalidEnvKey` says "a name without '=' or NUL" but the grammar is
+  `[A-Za-z0-9_.-]+`; a NUL in the value is reported as an invalid key. State the real
+  grammar; add `InvalidEnvValue`.
+
+### LOW
+
+- [x] (59ea7fe) **L13.** core.rs `forget_session` swallows an unreadable record's name with
+  `.ok().flatten()` without saying why (a corrupt record must stay forgettable).
+- [x] (59ea7fe) **L14.** store.rs: `ReadError::Io(e) if e.kind() == NotFound` written twice;
+  `ReadError::is_not_found`.
+- [ ] **L15 behaviour.** store.rs `Unreadable { file }` holds only the lossy file name, not the
+  path its doc promises; carry `path: PathBuf`.
+- [ ] **L16.** tmux.rs `InspectionFailed { stderr }` carries a parse diagnostic that is not
+  stderr; rename the field to `reason` with the next deliberate API change.
+- [x] (59ea7fe) **L17.** profile.rs allocates each role body twice then joins into a third buffer; push
+  trimmed bodies straight into one `String`.
+- [x] (59ea7fe) **L18.** profile.rs `skills_in` is `pub(crate)` but file-local.
+- [x] (59ea7fe) **L19.** Stale or repeated comments: events.rs `encode` "fits PIPE_BUF" (false when the
+  other fields exceed it); the trailing-`;` rule explained 3 times in tmux.rs; plugin.rs
+  `VerbTable` declared after its first use.
+
 ## Decisions needed
 
 - H20: one "session gone" rule for kill and refresh?
 - Hooks state type: tx-ui (hooks gains a tx-ui dependency) or tx-core?
-- H1, H3, M4, E2, E8, Q3/I9 change observable output (command strings in tests, an uninstall message, env
+- H1, H3, M4, E2, E8, Q3/I9, M18, L15 change observable output (command strings in tests, an uninstall message, env
   order); default is to take them as bug fixes unless told otherwise.
