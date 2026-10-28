@@ -21,7 +21,6 @@ pub mod picker;
 pub mod render;
 pub mod service;
 pub mod store;
-pub mod tmux;
 pub mod verbs;
 pub mod views;
 

@@ -12,7 +12,7 @@
 //! recent live non-`user` toucher, else its creator; in another companion, to its `parent`.
 
 use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
-use tx_ui::render::{DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, tag_ansi, tag_hex};
+use tx_ui::render::{DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, tag_ansi};
 use tx_ui::tmux::{Ui, shell_quote};
 
 use crate::artifact::{Artifact, USER_ACTOR};
@@ -20,8 +20,8 @@ use crate::grouping::bound_artifact;
 use crate::picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::render::{actor_label, updated_at};
 use crate::service::ArtifactService;
-use crate::tmux::{self as tm, DIM_FG_HEX, FG_HEX};
 use crate::views::{self, Opener};
+use tx_ui::popup as tm;
 
 const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
@@ -480,21 +480,16 @@ impl Nav<'_> {
                 }
             },
             Mode::Popup => {
-                let outer = tm::outer_client(&self.ui, client)
-                    .map_or_else(|| client.to_owned(), |(outer, _)| outer);
-                let prefix =
-                    tm::global_option(&self.ui, "prefix").unwrap_or_else(|| "C-b".to_owned());
                 let owner = self
                     .core
                     .resolve(session)
                     .and_then(|id| self.core.get_session(&id));
-                tm::popup_attach(
+                tm::popup_session(
                     &self.ui,
                     &self.core.socket_path().to_string_lossy(),
-                    &outer,
-                    &popup_title(target, owner.ok().as_ref()),
-                    &popup_footer(&prefix),
-                    &target.name,
+                    client,
+                    target,
+                    owner.ok().as_ref(),
                 )
                 .map_err(failed)?;
                 Ok(0)
@@ -543,29 +538,6 @@ impl Nav<'_> {
         let creator = &history[0].session_id;
         (creator != USER_ACTOR).then(|| creator.clone())
     }
-}
-
-/// The popup's title: the view's name, its tags as chips, then `◂ owner`.
-fn popup_title(view: &Session, owner: Option<&Session>) -> String {
-    let mut title = format!(" {} ", view.name);
-    for tag in &view.tags {
-        title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
-    }
-    if let Some(owner) = owner {
-        title.push_str(&format!(
-            "#[fg={DIM_FG_HEX},nobold]◂ {}#[default] ",
-            owner.name
-        ));
-    }
-    title
-}
-
-/// The popup's bottom line: how to leave it.
-fn popup_footer(prefix: &str) -> String {
-    format!(
-        " #[fg={FG_HEX}]{prefix} d#[fg={DIM_FG_HEX}] close, the view keeps running   \
-         #[fg={FG_HEX}]:q#[fg={DIM_FG_HEX}] in nvim ends the view"
-    )
 }
 
 impl Row {

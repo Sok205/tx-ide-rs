@@ -17,8 +17,10 @@ pub const RESET: &str = "\x1b[0m";
 // Inlined from main's `crates/tx/src/palette.rs` (tx-ui has no palette module).
 pub const DIM_FG_ANSI: &str = "\x1b[38;2;169;177;214m";
 pub const ACCENT_HEX: &str = "#7aa2f7";
+pub const FG_HEX: &str = "#c0caf5";
 pub const WARN_HEX: &str = "#e0af68";
 pub const DIM_FG_HEX: &str = "#a9b1d6";
+pub const BG_DEEP_HEX: &str = "#15161e";
 pub const WORKING_HEX: &str = "#9ece6a";
 pub const INFO_ANSI: &str = "\x1b[38;2;125;207;255m";
 pub const ITALIC: &str = "\x1b[3m";

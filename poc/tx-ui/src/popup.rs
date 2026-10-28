@@ -1,13 +1,11 @@
-//! The tmux calls prefix+a needs beyond `tx_ui::tmux::Ui` (popups, the outer-client walk,
-//! focusing a hosting pane), ported from main's `tmux.rs`. All go through `Ui::run` / `Ui::quiet`,
-//! so every call carries the core's `-S` and `-f`. Parsers are pure.
+//! The tmux calls the key plugins need beyond [`Ui`] (popups, the outer-client walk, focusing a
+//! hosting pane), ported from main's `tmux.rs`. All go through `Ui::run` / `Ui::quiet`, so every
+//! call carries the core's `-S` and `-f`. Parsers are pure.
 
-use tx_ui::tmux::{Ui, UiError, shell_quote};
+use tx_core::Session;
 
-pub const ACCENT_HEX: &str = "#7aa2f7";
-pub const FG_HEX: &str = "#c0caf5";
-pub const DIM_FG_HEX: &str = "#a9b1d6";
-pub const BG_DEEP_HEX: &str = "#15161e";
+use crate::render::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX, FG_HEX, tag_hex};
+use crate::tmux::{Ui, UiError, shell_quote};
 
 /// `client`'s terminal width in columns; `None` when there is no such client.
 pub fn client_width(ui: &Ui, client: &str) -> Option<usize> {
@@ -155,10 +153,58 @@ pub fn popup_attach(
     ui.set_session_option(session, "status-format[0]", footer)?;
     let command = popup_attach_command(socket, session);
     let shown = display_popup(ui, client, "90%", "90%", title, &command);
-    for option in ["status", "status-style", "status-format[0]"] {
+    // The whole `status-format` array: unsetting only `[0]` leaves an empty local array that
+    // blanks the global status line.
+    for option in ["status", "status-style", "status-format"] {
         ui.quiet(&["set-option", "-u", "-t", &format!("={session}:"), option]);
     }
     shown
+}
+
+/// Nest-attach `target` in a popup over the terminal that shows `client` (its outer client when
+/// `client` is nested); the panes stay as they are. `owner` is the session the popup was opened
+/// from, named in the title; `None` when it was not opened from a tx session (the picker).
+pub fn popup_session(
+    ui: &Ui,
+    socket: &str,
+    client: &str,
+    target: &Session,
+    owner: Option<&Session>,
+) -> Result<(), UiError> {
+    let outer = outer_client(ui, client).map_or_else(|| client.to_owned(), |(outer, _)| outer);
+    let prefix = global_option(ui, "prefix").unwrap_or_else(|| "C-b".to_owned());
+    popup_attach(
+        ui,
+        socket,
+        &outer,
+        &popup_title(target, owner),
+        &popup_footer(&prefix),
+        &target.name,
+    )
+}
+
+/// The popup's title, as the picker shows a row: the view's name, then its tags as chips, then
+/// `◂ owner` — the display name of the session it was opened from, when there is one.
+fn popup_title(view: &Session, owner: Option<&Session>) -> String {
+    let mut title = format!(" {} ", view.name);
+    for tag in &view.tags {
+        title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
+    }
+    if let Some(owner) = owner {
+        title.push_str(&format!(
+            "#[fg={DIM_FG_HEX},nobold]◂ {}#[default] ",
+            owner.name
+        ));
+    }
+    title
+}
+
+/// The popup's bottom line: how to leave it.
+fn popup_footer(prefix: &str) -> String {
+    format!(
+        " #[fg={FG_HEX}]{prefix} d#[fg={DIM_FG_HEX}] close, the view keeps running   \
+         #[fg={FG_HEX}]:q#[fg={DIM_FG_HEX}] in nvim ends the view"
+    )
 }
 
 /// Runs `command` on the server in the background (`run-shell -b`), outliving the caller.
