@@ -4,24 +4,28 @@
 //! The key fires INSIDE the nested session (the bind forwards it one level down while the pane
 //! hosts a `tmux` client), so `#{session_name}` is the session's name and `#{client_name}` the
 //! nested client whose screen is the hosting pane. In an agent session `_artifact-menu` opens a
-//! popup over the pane running `_artifact-pick`: the artifacts the session touched, its parent,
-//! its live children. Enter (or a digit) re-hosts the pane on the chosen view (the agent keeps
+//! popup over the pane running `_artifact-pick`: the artifacts the session owns, its parent, its
+//! live children. Enter (or a digit) re-hosts the pane on the chosen view (the agent keeps
 //! running detached); f then a digit or Enter moves the terminal to the pane already showing it;
-//! p then a digit or Enter nest-attaches it in a popup over the terminal.
-//! In an artifact's view the key goes back to the controlling session: the artifact's most
-//! recent live non-`user` toucher, else its creator; in another companion, to its `parent`.
+//! p then a digit or Enter nest-attaches it in a popup over the terminal; d asks about the
+//! cursor's row and y deletes it (a session is stopped, an artifact archived and its live view
+//! stopped) and the list redraws without it.
+//! In an artifact's view the key goes back to the artifact's owner while it runs; in another
+//! companion, to its `parent`.
 
 use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
+use tx_ui::editor::Terminal;
+use tx_ui::popup as tm;
 use tx_ui::render::{DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, tag_ansi};
 use tx_ui::tmux::{Ui, shell_quote};
 
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::grouping::bound_artifact;
+use crate::kinds::describe;
 use crate::picker::{self, HINT, Item, Pick, row_label, visible_width};
-use crate::render::{actor_label, updated_at};
+use crate::render::actor_label;
 use crate::service::ArtifactService;
 use crate::views::{self, Opener};
-use tx_ui::popup as tm;
 
 const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
@@ -92,33 +96,27 @@ pub struct Sections {
     pub targets: Vec<Target>,
 }
 
-/// Pure: the ARTIFACTS the session touched (newest first), its live PARENT, its live CHILDREN
+/// Pure: the ARTIFACTS the session owns (newest first), its live PARENT, its live CHILDREN
 /// (artifact views excluded: they are rows under their artifact). `locate` gives a session's
-/// LOCATION cell, `name_of` a touch author's name.
+/// LOCATION cell, `name_of` an owner's name.
 pub fn sections(
     record: &Session,
-    touched: &[Artifact],
+    owned: &[Artifact],
     live: &[Session],
     locate: impl Fn(&Session) -> String,
     name_of: impl Fn(&str) -> String,
 ) -> Sections {
-    let mut touched: Vec<&Artifact> = touched.iter().collect();
-    touched.sort_by(|a, b| updated_at(b).total_cmp(&updated_at(a)));
+    let mut owned: Vec<&Artifact> = owned.iter().collect();
+    owned.sort_by(|a, b| b.modified_secs().total_cmp(&a.modified_secs()));
     let mut out = Sections::default();
     let mut rows = Vec::new();
-    for artifact in touched {
+    for artifact in owned {
         let view = live
             .iter()
             .find(|candidate| bound_artifact(candidate).as_deref() == Some(artifact.id.as_str()));
-        let mut chips = Vec::new();
-        for touch in artifact.history() {
-            let author = name_of(&touch.session_id);
-            if !chips.contains(&author) {
-                chips.push(author);
-            }
-        }
+        let chips = vec![name_of(&artifact.owner), describe(&artifact.kind)];
         rows.push(Row {
-            name: artifact.display_name().to_owned(),
+            name: artifact.title.clone(),
             location: view.map_or_else(|| "—".to_owned(), &locate),
             chips,
         });
@@ -225,12 +223,10 @@ impl Nav<'_> {
             return Ok(1);
         };
         let back = match bound_artifact(&record) {
-            Some(artifact_id) => Some(
-                self.artifacts
-                    .require(&artifact_id)
-                    .map(|artifact| self.controlling_session(&artifact))
-                    .map_err(failed)?,
-            ),
+            Some(artifact_id) => {
+                let artifact = self.artifacts.require(&artifact_id).map_err(failed)?;
+                Some(self.controlling_session(&artifact))
+            }
             None => match (&record.launch, &record.parent) {
                 (Launch::Process { .. }, Some(parent)) => Some(Some(parent.to_string())),
                 _ => None,
@@ -270,30 +266,61 @@ impl Nav<'_> {
 
     /// Inside the popup: run the list (a focus on a view no pane shows is declined with a
     /// notice), then hand the choice to a background `_artifact-go` so the popup is gone before
-    /// the pane it sits on is re-hosted.
+    /// the pane it sits on is re-hosted. A delete runs here and now and the list comes back
+    /// without the row (a failure shows under it); the popup closes when nothing is left.
     pub fn pick(&self, session: &str, client: &str) -> Result<i32, VerbError> {
         let Some(record) = self.record(session, client) else {
             return Ok(1);
         };
-        let listing = self.listing(&record, client);
-        let decline = |pick: Pick| match pick {
-            Pick::Attach(_) | Pick::Popup(_) => None,
-            Pick::Focus(index) => {
-                let hosted = self
-                    .hosting_session(&listing.targets[index])
-                    .is_some_and(|name| self.ui.pane_for_session(&name, "").is_some());
-                (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
+        // One terminal for every round: a delete redraws without leaving the alternate screen.
+        let terminal = Terminal::open().map_err(|error| failed(format!("terminal: {error}")))?;
+        let mut failure: Option<String> = None;
+        let (listing, mode, index) = loop {
+            let listing = self.listing(&record, client);
+            if listing.targets.is_empty() {
+                if let Some(failure) = failure {
+                    self.ui
+                        .display_status(client, &format!("prefix+a: {failure}"));
+                }
+                return Ok(0);
             }
-        };
-        let chosen = picker::pick(&listing.header, &listing.items, decline)
+            let decline = |pick: Pick| match pick {
+                Pick::Focus(index) => {
+                    let hosted = self
+                        .hosting_session(&listing.targets[index])
+                        .is_some_and(|name| self.ui.pane_for_session(&name, "").is_some());
+                    (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
+                }
+                _ => None,
+            };
+            let confirm_text = |index: usize| {
+                let name = &listing.names[index];
+                match listing.targets[index].kind {
+                    "session" => format!("⚠  Kill \"{name}\"? [y/N]"),
+                    _ => format!("⚠  Archive \"{name}\" and close its view? [y/N]"),
+                }
+            };
+            let chosen = picker::pick(
+                &terminal,
+                &listing.header,
+                &listing.items,
+                failure.take(),
+                decline,
+                confirm_text,
+            )
             .map_err(|error| failed(format!("picker: {error}")))?;
-        let Some(chosen) = chosen else {
-            return Ok(0);
-        };
-        let (mode, index) = match chosen {
-            Pick::Attach(index) => (Mode::Attach, index),
-            Pick::Focus(index) => (Mode::Focus, index),
-            Pick::Popup(index) => (Mode::Popup, index),
+            match chosen {
+                None => return Ok(0),
+                Some(Pick::Attach(index)) => break (listing, Mode::Attach, index),
+                Some(Pick::Focus(index)) => break (listing, Mode::Focus, index),
+                Some(Pick::Popup(index)) => break (listing, Mode::Popup, index),
+                Some(Pick::Delete(index)) => {
+                    failure = self
+                        .delete(&record, &listing.targets[index])
+                        .err()
+                        .map(|error| format!("\"{}\": {error}", listing.names[index]));
+                }
+            }
         };
         let target = &listing.targets[index];
         let command = self.txc_command(&[
@@ -308,16 +335,39 @@ impl Nav<'_> {
         Ok(0)
     }
 
+    /// A confirmed delete: a session is stopped; an artifact has its live views stopped and is
+    /// archived, the session the key fired in being the actor.
+    fn delete(&self, record: &Session, target: &Target) -> Result<(), VerbError> {
+        let stop = |id: &SessionId| {
+            self.core
+                .stop_session(id)
+                .map(drop)
+                .map_err(VerbError::from)
+        };
+        if target.kind == "session" {
+            return stop(&target.id.parse().map_err(failed)?);
+        }
+        for view in self.live() {
+            if bound_artifact(&view).as_deref() == Some(target.id.as_str()) {
+                stop(&view.id)?;
+            }
+        }
+        self.artifacts
+            .set_archived(&target.id, record.id.as_str(), true)
+            .map(drop)
+            .map_err(failed)
+    }
+
     fn client_width(&self, client: &str) -> usize {
         tm::client_width(&self.ui, client).unwrap_or(DEFAULT_WIDTH)
     }
 
     fn listing(&self, record: &Session, client: &str) -> Listing {
-        let touched = self.artifacts.artifacts_for_session(record.id.as_str());
+        let owned = self.artifacts.artifacts_for_session(record.id.as_str());
         let live = self.live();
         let Sections { sections, targets } = sections(
             record,
-            &touched,
+            &owned,
             &live,
             |session| location_text(&self.ui.attached_to(&session.name)),
             |id| self.name_of(id),
@@ -403,14 +453,12 @@ impl Nav<'_> {
                     id: Some(record.id.clone()),
                     tags: record.tags.clone(),
                 };
-                let cwd = self.artifacts.files().content_dir(&artifact);
                 let id = views::open(
                     self.core,
                     &self.artifacts,
                     &artifact,
                     &opener,
                     None,
-                    &cwd,
                     self.editor,
                 )?;
                 self.core.get_session(&id)?
@@ -517,26 +565,19 @@ impl Nav<'_> {
         Ok(0)
     }
 
-    /// The artifact's most recent live non-`user` toucher, else its creator (`None` when the
-    /// creator was the bare terminal).
+    /// The artifact's owner while it runs (`None` when the owner was the bare terminal or has
+    /// ended).
     fn controlling_session(&self, artifact: &Artifact) -> Option<String> {
-        let history = artifact.history();
-        for touch in history.iter().rev() {
-            if touch.session_id == USER_ACTOR {
-                continue;
-            }
-            let running = touch
-                .session_id
-                .parse::<SessionId>()
-                .ok()
-                .and_then(|id| self.core.get_session(&id).ok())
-                .is_some_and(|session| session.lifecycle == Lifecycle::Running);
-            if running {
-                return Some(touch.session_id.clone());
-            }
+        if artifact.owner == USER_ACTOR {
+            return None;
         }
-        let creator = &history[0].session_id;
-        (creator != USER_ACTOR).then(|| creator.clone())
+        let running = artifact
+            .owner
+            .parse::<SessionId>()
+            .ok()
+            .and_then(|id| self.core.get_session(&id).ok())
+            .is_some_and(|session| session.lifecycle == Lifecycle::Running);
+        running.then(|| artifact.owner.clone())
     }
 }
 
@@ -664,21 +705,17 @@ mod tests {
         Session::from_json(&record.to_string()).unwrap()
     }
 
-    fn artifact(id: &str, title: &str, at: f64, authors: &[&str]) -> Artifact {
-        let history: Vec<Value> = authors
-            .iter()
-            .enumerate()
-            .map(|(rev, author)| json!({"session_id": author, "at": at, "rev": rev, "changes": null}))
-            .collect();
+    fn artifact(id: &str, title: &str, at: f64, owner: &str) -> Artifact {
         Artifact::from_value(&json!({
-            "artifact_schema_version": 2, "id": id, "title": title, "filename": "f.md",
-            "created_at": at, "group": null, "history": history,
+            "artifact_schema_version": 4, "id": id, "kind": "document", "title": title,
+            "owner": owner, "created_at": at, "modified_at": at, "archived_at": null,
+            "document": {"file": "f.md"},
         }))
         .unwrap()
     }
 
     #[test]
-    fn the_listing_holds_what_the_session_touched_its_parent_and_its_children() {
+    fn the_listing_holds_what_the_session_owns_its_parent_and_its_children() {
         let record = session("a1", "agent", json!({"parent": "p1"}));
         let live = vec![
             record.clone(),
@@ -690,13 +727,13 @@ mod tests {
                 json!({"parent": "a1", "ext": {"artifacts": {"bound": "art-new"}}}),
             ),
         ];
-        let touched = [
-            artifact("art-old", "Old", 10.0, &["a1"]),
-            artifact("art-new", "New", 20.0, &["a1", "user", "a1"]),
+        let owned = [
+            artifact("art-old", "Old", 10.0, "a1"),
+            artifact("art-new", "New", 20.0, "a1"),
         ];
         let out = sections(
             &record,
-            &touched,
+            &owned,
             &live,
             |session| format!("at-{}", session.name),
             |id| id.to_owned(),
@@ -706,7 +743,7 @@ mod tests {
         let artifacts = &out.sections[0].1;
         assert_eq!(artifacts[0].name, "New");
         assert_eq!(artifacts[0].location, "at-plan-md");
-        assert_eq!(artifacts[0].chips, ["a1", "user"]);
+        assert_eq!(artifacts[0].chips, ["a1", "document"]);
         assert_eq!(artifacts[1].location, "—");
         assert_eq!(out.sections[1].1[0].name, "boss");
         let children: Vec<&str> = out.sections[2].1.iter().map(|r| r.name.as_str()).collect();
@@ -728,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_touched_and_no_relatives_is_empty() {
+    fn nothing_owned_and_no_relatives_is_empty() {
         let record = session("a1", "agent", json!({}));
         let out = sections(
             &record,

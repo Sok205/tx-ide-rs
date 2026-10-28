@@ -4,7 +4,7 @@
 # in. While the pane hosts a `tmux` client the key is re-sent one level down, so the bind that
 # finally runs sees the NESTED session: `#{session_name}` is that session and `#{client_name}`
 # the nested client, and the menu paints inside the pane. A pick re-hosts that pane on the
-# artifact's nvim view; in a view the key goes back to the controlling session. The prefix is
+# artifact's nvim view; in a view the key goes back to the artifact's owner. The prefix is
 # read at compose time (run-shell runs after the theme set it), as for the nav keys. Run by
 # `run-shell` from the server's tmux.conf, which `txc ui install` writes; @tx-state names the
 # directory holding bin/tmux-artifact-menu.

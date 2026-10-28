@@ -3,7 +3,7 @@
 mod common;
 
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 use common::{Cli, lists_verb};
 
@@ -31,15 +31,19 @@ fn ok_as(cli: &Cli, actor: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// `txc artifact create <file>`; returns the new id.
+/// `txc artifact create <file> --title <name>`; returns the new id.
 fn create(cli: &Cli, actor: &str, name: &str, body: &str) -> String {
     let file = write_file(cli, name, body);
-    let out = ok_as(cli, actor, &["artifact", "create", &file]);
-    let id = out
-        .strip_prefix("Created artifact ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or_else(|| panic!("{out:?}"));
-    id.to_owned()
+    let out = ok_as(cli, actor, &["artifact", "create", &file, "--title", name]);
+    created_id(&out)
+}
+
+fn created_id(out: &str) -> String {
+    out.split_whitespace()
+        .nth(3)
+        .filter(|_| out.starts_with("Created "))
+        .unwrap_or_else(|| panic!("{out:?}"))
+        .to_owned()
 }
 
 fn record(cli: &Cli, id: &str) -> serde_json::Value {
@@ -47,13 +51,19 @@ fn record(cli: &Cli, id: &str) -> serde_json::Value {
     serde_json::from_str(&text).unwrap()
 }
 
-fn revs(cli: &Cli, id: &str) -> Vec<u64> {
-    record(cli, id)["history"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|touch| touch["rev"].as_u64().unwrap())
-        .collect()
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 #[test]
@@ -85,60 +95,49 @@ fn disabled_plugin_hides_the_verbs() {
 }
 
 #[test]
-fn create_modify_show_diff_and_ls() {
+fn create_modify_show_and_ls() {
     let cli = Cli::new();
     let actor = "11111111-1111-4111-8111-111111111111";
     let id = create(&cli, actor, "plan.md", "a\nb\n");
     let dir = data_dir(&cli);
     assert_eq!(
-        std::fs::read(dir.join(&id).join("current.md")).unwrap(),
+        std::fs::read(dir.join(&id).join("plan.md")).unwrap(),
         b"a\nb\n"
     );
-    assert_eq!(
-        std::fs::read(dir.join(&id).join("revs/0.md")).unwrap(),
-        b"a\nb\n"
-    );
-    assert_eq!(record(&cli, &id)["history"][0]["session_id"], actor);
-
-    let same = write_file(&cli, "same.md", "a\nb\n");
-    let out = ok_as(&cli, actor, &["artifact", "modify", &id[..8], &same]);
-    assert!(
-        out.starts_with("No change: the supplied file is identical to rev 0"),
-        "{out}"
-    );
+    let created = record(&cli, &id);
+    assert_eq!(created["artifact_schema_version"], 4);
+    assert_eq!(created["owner"], actor);
+    assert_eq!(created["document"]["file"], "plan.md");
 
     let next = write_file(&cli, "next.md", "a\nc\n");
-    let out = cli.ok(&["artifact", "modify", &id, &next, "--changes", "swap b"]);
-    assert_eq!(out, format!("Modified artifact {id} → rev 1\n"));
-    assert_eq!(record(&cli, &id)["history"][1]["session_id"], "user");
-    assert_eq!(record(&cli, &id)["history"][1]["changes"], "swap b");
-
+    let out = cli.ok(&["artifact", "modify", &id[..8], &next]);
+    assert_eq!(out, format!("Modified document artifact {id}\n"));
     assert_eq!(
-        cli.ok(&["artifact", "diff", &id]),
-        "--- rev0\n+++ rev1\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n"
+        std::fs::read(dir.join(&id).join("plan.md")).unwrap(),
+        b"a\nc\n"
     );
-    assert_eq!(
-        cli.ok(&["artifact", "diff", &id, "1", "1"]),
-        "(no differences)\n"
-    );
+    assert_ne!(record(&cli, &id)["modified_at"], created["modified_at"]);
 
-    std::fs::write(dir.join(&id).join("current.md"), "a\nc\nd\n").unwrap();
     let show = cli.ok(&["artifact", "show", &id]);
     assert!(show.starts_with(&format!("plan.md  ({id})\n")), "{show}");
-    assert!(show.contains("  working:    dirty"), "{show}");
+    assert!(show.contains("  document:   file=plan.md"), "{show}");
     assert!(show.contains("  group:      derived: "), "{show}");
-    let out = cli.ok(&["artifact", "modify", &id]);
-    assert_eq!(out, format!("Modified artifact {id} → rev 2\n"));
-    assert!(
-        cli.ok(&["artifact", "show", &id])
-            .contains("working:    clean")
+    assert_eq!(
+        cli.ok(&["artifact", "path", &id]),
+        format!("{}\n", dir.join(&id).display())
     );
 
     let ls = cli.ok(&["artifact", "ls"]);
     assert!(ls.starts_with("ARTIFACTS\n  "), "{ls}");
-    assert!(ls.contains(&id[..8]) && ls.contains("3r"), "{ls}");
-    let mine = cli.ok(&["artifact", "ls", "--session", actor]);
-    assert!(mine.contains(&id[..8]), "{mine}");
+    assert!(ls.contains(&id[..8]) && ls.contains("document"), "{ls}");
+    assert!(
+        cli.ok(&["artifact", "ls", "--session", actor])
+            .contains(&id[..8])
+    );
+    assert!(
+        cli.ok(&["artifact", "ls", "--kind", "diff"])
+            .contains("(none)")
+    );
     let none = cli.ok(&[
         "artifact",
         "ls",
@@ -150,151 +149,141 @@ fn create_modify_show_diff_and_ls() {
 }
 
 #[test]
+fn archive_hides_from_ls_until_unarchived() {
+    let cli = Cli::new();
+    let id = create(&cli, "user", "plan.md", "x");
+    let out = cli.ok(&["artifact", "archive", &id]);
+    assert!(
+        out.starts_with(&format!("Archived artifact {id} (plan.md)")),
+        "{out}"
+    );
+    assert_eq!(cli.ok(&["artifact", "ls"]), "ARTIFACTS\n  (none)\n");
+    assert!(cli.ok(&["artifact", "ls", "--archived"]).contains(&id[..8]));
+    assert!(
+        cli.ok(&["artifact", "show", &id])
+            .contains("  archived:   ")
+    );
+    cli.ok(&["artifact", "unarchive", &id]);
+    assert!(cli.ok(&["artifact", "ls"]).contains(&id[..8]));
+    assert!(record(&cli, &id)["archived_at"].is_null());
+}
+
+#[test]
 fn artifact_errors_exit_1_and_usage_exits_2() {
     let cli = Cli::new();
     let stderr = cli.fails(&["artifact", "show", "nope"], 1);
     assert_eq!(stderr, "txc artifact: artifact 'nope' not found\n");
     let stderr = cli.fails(&["artifact", "show", "../x"], 1);
     assert!(stderr.contains("not found"), "{stderr}");
-    let stderr = cli.fails(&["artifact", "create", "/no/such/file"], 2);
+    let stderr = cli.fails(&["artifact", "create", "/no/such/file", "--title", "t"], 2);
     assert!(stderr.contains("no such file: /no/such/file"), "{stderr}");
-    let id = create(&cli, "user", "p.md", "x");
-    let stderr = cli.fails(&["artifact", "diff", &id], 1);
-    assert!(stderr.contains("has only one revision"), "{stderr}");
-    let stderr = cli.fails(&["artifact", "diff", &id, "0"], 2);
-    assert!(stderr.contains("both revs or neither"), "{stderr}");
+    let file = write_file(&cli, "p.md", "x");
+    let stderr = cli.fails(&["artifact", "create", &file], 2);
+    assert!(stderr.contains("--title is required"), "{stderr}");
+    let stderr = cli.fails(&["artifact", "create", "--title", "t"], 2);
+    assert!(
+        stderr.contains("a document is created from a file"),
+        "{stderr}"
+    );
+    let stderr = cli.fails(
+        &[
+            "artifact", "create", &file, "--kind", "diff", "--title", "t",
+        ],
+        2,
+    );
+    assert!(stderr.contains("a diff takes no file"), "{stderr}");
+    cli.fails(
+        &[
+            "artifact", "create", &file, "--kind", "site", "--title", "t",
+        ],
+        2,
+    );
     cli.fails(&["artifact", "frob"], 2);
 }
 
 #[test]
-fn artifact_group_sets_reads_and_clears_the_override() {
+fn a_diff_pins_its_base_and_refuses_a_file() {
     let cli = Cli::new();
-    let id = create(&cli, "user", "p.md", "x");
-    assert_eq!(
-        cli.ok(&["artifact", "group", &id]),
-        "own:      —\nresolved: ungrouped\n"
-    );
-    cli.ok(&["artifact", "group", &id, "effort"]);
-    assert_eq!(
-        cli.ok(&["artifact", "group", &id]),
-        "own:      effort\nresolved: effort\n"
-    );
-    cli.fails(&["artifact", "group", &id, "x", "--clear"], 2);
-    cli.ok(&["artifact", "group", &id, "--clear"]);
-    assert_eq!(record(&cli, &id)["group"], serde_json::Value::Null);
-    assert_eq!(cli.ok(&["artifact", "doctor"]), "artifacts: clean\n");
-}
+    let repo = cli.dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "a.txt"]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+    let base = git(&repo, &["rev-parse", "HEAD"]);
+    std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+    let repo_arg = repo.to_str().unwrap();
+    let out = cli.ok(&[
+        "artifact", "create", "--kind", "diff", "--title", "review", "--cwd", repo_arg,
+    ]);
+    let id = created_id(&out);
+    assert_eq!(record(&cli, &id)["diff"]["base"], base.as_str());
+    let patch = std::fs::read_to_string(data_dir(&cli).join(&id).join("diff.patch")).unwrap();
+    assert!(patch.contains("+two"), "{patch}");
+    let show = cli.ok(&["artifact", "show", &id]);
+    assert!(show.contains(&format!("base={base}")), "{show}");
+    assert!(cli.ok(&["artifact", "ls"]).contains("diff"));
 
-/// Gate: two `modify` calls racing produce contiguous revs, none lost.
-#[test]
-fn two_concurrent_modifies_produce_two_contiguous_revs() {
-    let cli = Cli::new();
-    let id = create(&cli, "user", "plan.md", "base\n");
-    for round in 0..5 {
-        let files: Vec<String> = (0..2)
-            .map(|n| {
-                let body = format!("round {round} writer {n}\n");
-                write_file(&cli, &format!("w{n}.md"), &body)
-            })
-            .collect();
-        let before = revs(&cli, &id).len() as u64;
-        let children: Vec<Child> = files
-            .iter()
-            .map(|file| {
-                cli.command(&["artifact", "modify", &id, file], &[])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .unwrap()
-            })
-            .collect();
-        for child in children {
-            let output = child.wait_with_output().unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        assert_eq!(
-            revs(&cli, &id),
-            (0..before + 2).collect::<Vec<u64>>(),
-            "both writes landed, contiguously"
-        );
-    }
-    let dir = data_dir(&cli).join(&id).join("revs");
-    for rev in revs(&cli, &id) {
-        assert!(dir.join(format!("{rev}.md")).is_file(), "rev {rev}");
-    }
-    assert_eq!(cli.ok(&["artifact", "doctor"]), "artifacts: clean\n");
-}
-
-/// Gate: `doctor --repair` removes only the orphan rev file.
-#[test]
-fn doctor_repair_removes_only_the_orphan_rev() {
-    let cli = Cli::new();
-    let id = create(&cli, "user", "plan.md", "v0\n");
-    let next = write_file(&cli, "v1.md", "v1\n");
-    cli.ok(&["artifact", "modify", &id, &next]);
-    let revs_dir = data_dir(&cli).join(&id).join("revs");
-    std::fs::write(revs_dir.join("2.md"), "crash debris").unwrap();
-    std::fs::write(revs_dir.join("notes.txt"), "not a rev").unwrap();
-    std::fs::write(revs_dir.join(".3.abc.tmp"), "staging").unwrap();
-
-    let output = cli.run(&["artifact", "doctor"], &[], "");
-    assert_eq!(output.status.code(), Some(1));
-    let out = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        out.contains(&format!("{id}: orphan rev file 2 not in history")),
-        "{out}"
-    );
-    assert!(out.ends_with("artifacts: 1 problem(s)\n"), "{out}");
-
-    // The orphan blocks the slot the next modify needs.
-    let blocked = write_file(&cli, "v2.md", "v2\n");
-    let stderr = cli.fails(&["artifact", "modify", &id, &blocked], 1);
-    assert!(stderr.contains("rev 2 is already claimed"), "{stderr}");
-
-    let out = cli.ok(&["artifact", "doctor", "--repair"]);
-    assert_eq!(
-        out,
-        format!("  {id}: removed orphan rev file 2\nartifacts: clean\n")
-    );
-    let mut left: Vec<String> = std::fs::read_dir(&revs_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    left.sort();
-    assert_eq!(left, [".3.abc.tmp", "0.md", "1.md", "notes.txt"]);
-    assert_eq!(std::fs::read(revs_dir.join("1.md")).unwrap(), b"v1\n");
-    cli.ok(&["artifact", "modify", &id, &blocked]);
-    assert_eq!(revs(&cli, &id), [0, 1, 2]);
+    std::fs::write(repo.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    cli.ok(&["artifact", "modify", &id]);
+    let patch = std::fs::read_to_string(data_dir(&cli).join(&id).join("diff.patch")).unwrap();
+    assert!(patch.contains("+three"), "{patch}");
+    let file = write_file(&cli, "x.patch", "x");
+    let stderr = cli.fails(&["artifact", "modify", &id, &file], 1);
+    assert!(stderr.contains("is a diff"), "{stderr}");
 }
 
 #[test]
-fn doctor_reports_dirty_missing_and_out_of_band() {
+fn doctor_reports_a_missing_file_and_a_stray_directory() {
     let cli = Cli::new();
     let id = create(&cli, "user", "plan.md", "v0\n");
     let dir = data_dir(&cli);
-    std::fs::write(dir.join(&id).join("current.md"), "edited").unwrap();
+    std::fs::remove_file(dir.join(&id).join("plan.md")).unwrap();
     std::fs::create_dir_all(dir.join("stray")).unwrap();
-    std::fs::remove_file(dir.join(".log.jsonl")).unwrap();
     let output = cli.run(&["artifact", "doctor"], &[], "");
     assert_eq!(output.status.code(), Some(1));
     let out = String::from_utf8_lossy(&output.stdout);
     assert!(
-        out.contains("working copy differs from last rev 0"),
-        "{out}"
-    );
-    assert!(
-        out.contains("rev 0 touch has no matching log line"),
+        out.contains(&format!("{id}: document file plan.md is missing")),
         "{out}"
     );
     assert!(
         out.contains("stray: content directory has no record"),
         "{out}"
     );
-    assert!(out.ends_with("artifacts: 3 problem(s)\n"), "{out}");
+    assert!(out.ends_with("artifacts: 2 problem(s)\n"), "{out}");
+    let stderr = cli.fails(&["artifact", "open", &id], 1);
+    assert!(
+        stderr.contains("document file plan.md is missing"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn migrate_upgrades_a_v2_record_in_place() {
+    let cli = Cli::new();
+    let dir = data_dir(&cli);
+    std::fs::create_dir_all(dir.join("old/revs")).unwrap();
+    std::fs::write(dir.join("old/current.md"), "body").unwrap();
+    std::fs::write(dir.join("old/revs/0.md"), "body").unwrap();
+    let v2 = serde_json::json!({
+        "artifact_schema_version": 2, "id": "old", "title": "Plan", "filename": "plan.md",
+        "created_at": 1.0, "group": null,
+        "history": [{"session_id": "user", "at": 2.0, "rev": 0, "changes": null}],
+    });
+    std::fs::write(dir.join("old.json"), v2.to_string()).unwrap();
+    let output = cli.run(&["artifact", "ls"], &[], "");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("run `txc artifact migrate`"),
+        "{output:?}"
+    );
+    assert_eq!(
+        cli.ok(&["artifact", "migrate"]),
+        "  migrated old.json\nartifacts: 1 migrated, 0 skipped\n"
+    );
+    assert_eq!(std::fs::read(dir.join("old/plan.md")).unwrap(), b"body");
+    assert!(cli.ok(&["artifact", "ls"]).contains("Plan"));
+    assert_eq!(cli.ok(&["artifact", "doctor"]), "artifacts: clean\n");
 }
 
 #[test]
@@ -318,11 +307,11 @@ fn group_sets_reads_and_clears_a_sessions_override() {
         "own:      effort\nresolved: effort\n"
     );
 
-    // An artifact the worker created takes its group.
+    // An artifact the worker owns takes its group.
     let artifact = create(&cli, &id, "p.md", "x");
-    assert_eq!(
-        cli.ok(&["artifact", "group", &artifact]),
-        "own:      —\nresolved: effort\n"
+    assert!(
+        cli.ok(&["artifact", "show", &artifact])
+            .contains("group:      derived: effort")
     );
 
     cli.ok(&["group", "worker", "--clear"]);
@@ -382,20 +371,21 @@ fn artifact_open_starts_a_bound_view() {
     cli.ok(&["tag", "worker", "feat-x"]);
     let id = create(&cli, &worker, "plan.md", "x");
     let out = ok_as(&cli, &worker, &["artifact", "open", &id]);
-    let current = data_dir(&cli).join(&id).join("current.md");
-    assert_eq!(
-        out,
-        format!(
-            "Opened artifact {id} in nvim view 'plan-md' ({})\n",
-            current.display()
-        )
+    let dir = data_dir(&cli).join(&id);
+    let file = dir.join("plan.md");
+    // The core canonicalizes the cwd (/tmp is /private/tmp on macOS).
+    assert!(
+        out.starts_with(&format!(
+            "Opened document artifact {id} in view 'plan-md' (cwd "
+        )) && out.ends_with(&format!("plugins/artifacts/{id})\n")),
+        "{out}"
     );
     let view: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "plan-md"])).unwrap();
     assert_eq!(view["ext"]["artifacts"]["bound"], id.as_str());
     assert_eq!(view["parent"], worker.as_str());
     assert_eq!(view["tags"], serde_json::json!(["feat-x"]));
     assert_eq!(view["launch"]["program"], editor.as_str());
-    assert_eq!(view["launch"]["args"][0], current.to_str().unwrap());
+    assert_eq!(view["launch"]["args"][0], file.to_str().unwrap());
     // A view takes its artifact's group.
     cli.ok(&["group", "worker", "effort"]);
     assert_eq!(
@@ -405,11 +395,92 @@ fn artifact_open_starts_a_bound_view() {
     // A second open while the first runs gets a disambiguated name.
     let out = cli.ok(&["artifact", "open", &id, "--tag", "x,y"]);
     assert!(
-        out.contains(&format!("nvim view 'plan-md-{}'", &id[..8])),
+        out.contains(&format!("in view 'plan-md-{}'", &id[..8])),
         "{out}"
     );
     let log = std::fs::read_to_string(data_dir(&cli).join(".log.jsonl")).unwrap();
     assert_eq!(log.matches("\"artifact-open\"").count(), 2, "{log}");
+
+    // Stopping a bound view runs the close step its open left behind.
+    let temp = data_dir(&cli).join(".scratch/worktrees/artifact-fake");
+    std::fs::create_dir_all(&temp).unwrap();
+    let cleanups = serde_json::json!({ view["id"].as_str().unwrap(): {"remove_worktree": temp} });
+    std::fs::write(dir.join(".cleanup.json"), cleanups.to_string()).unwrap();
+    cli.ok(&["kill", "plan-md"]);
+    assert!(!temp.exists());
+    assert!(!dir.join(".cleanup.json").exists());
+}
+
+/// A plugins.yaml whose editor is `script`.
+fn editor_running(cli: &Cli, script: &str) {
+    let path = cli.shim_path(&[("fake-nvim", script)]);
+    let dir = path.split(':').next().unwrap();
+    cli.write_yaml(&format!(
+        "plugins:\n  artifacts:\n    settings: {{ editor: \"{dir}/fake-nvim\" }}\n"
+    ));
+}
+
+/// A diff artifact on a feature worktree that is then removed, so an open needs a temp worktree
+/// made from the sibling `main` checkout. Returns (artifact id, the temp worktrees' root).
+fn gone_diff(cli: &Cli) -> (String, std::path::PathBuf) {
+    let main = cli.dir.path().join("repos/main");
+    std::fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    std::fs::write(main.join("a.txt"), "one\n").unwrap();
+    git(&main, &["add", "a.txt"]);
+    git(&main, &["commit", "-q", "-m", "base"]);
+    let feature = cli.dir.path().join("repos/main--feature");
+    let tree = feature.to_str().unwrap();
+    git(&main, &["worktree", "add", "-q", "--detach", tree, "HEAD"]);
+    std::fs::write(feature.join("a.txt"), "one\ntwo\n").unwrap();
+    let out = cli.ok(&[
+        "artifact", "create", "--kind", "diff", "--title", "review", "--cwd", tree, "--base",
+        "main",
+    ]);
+    git(&main, &["worktree", "remove", "--force", tree]);
+    (created_id(&out), data_dir(cli).join(".scratch/worktrees"))
+}
+
+fn temp_worktrees(root: &std::path::Path) -> usize {
+    std::fs::read_dir(root).map_or(0, |entries| entries.count())
+}
+
+#[test]
+fn a_gone_diff_opens_in_a_temp_worktree_that_close_removes() {
+    require_tmux!();
+    let cli = Cli::new();
+    editor_running(&cli, "exec sleep 60");
+    let (id, root) = gone_diff(&cli);
+    let out = cli.ok(&["artifact", "open", &id]);
+    assert!(out.contains("in view 'review-diff'"), "{out}");
+    assert_eq!(temp_worktrees(&root), 1);
+    assert_eq!(cli.ok(&["artifact", "doctor"]), "artifacts: clean\n");
+    assert_eq!(
+        cli.ok(&["artifact", "close", &id]),
+        format!("Closed artifact {id}: 1 close step(s) run\n")
+    );
+    assert_eq!(temp_worktrees(&root), 0);
+}
+
+/// An editor that exits at once leaks no temp worktree, whether it ends before the close step is
+/// recorded (the open runs it) or just after (the Exited sink runs it).
+#[test]
+fn an_editor_that_exits_at_once_leaks_no_temp_worktree() {
+    require_tmux!();
+    let cli = Cli::new();
+    editor_running(&cli, "exit 0");
+    let (id, root) = gone_diff(&cli);
+    cli.ok(&["artifact", "open", &id]);
+    // Either the open saw the view already ended, or the next refresh marks it Exited and the
+    // end sink runs the step.
+    assert!(
+        cli.wait_for(5, || {
+            cli.ok(&["refresh"]);
+            temp_worktrees(&root) == 0
+        }),
+        "temp worktree left behind"
+    );
+    assert_eq!(cli.ok(&["artifact", "doctor"]), "artifacts: clean\n");
 }
 
 // ----- prefix+a ---------------------------------------------------------------------------
@@ -511,7 +582,7 @@ fn running_pick(cli: &Cli) -> bool {
         .any(|line| line.contains("_artifact-pick") && line.contains(cli.state().to_str().unwrap()))
 }
 
-/// Gate: prefix+a in an agent pane lists what it touched; Enter attaches the chosen artifact's
+/// Gate: prefix+a in an agent pane lists what it owns; Enter attaches the chosen artifact's
 /// view in that pane.
 #[test]
 fn prefix_a_in_an_agent_pane_attaches_the_chosen_artifact() {

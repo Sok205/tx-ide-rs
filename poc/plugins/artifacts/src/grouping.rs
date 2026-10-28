@@ -6,9 +6,7 @@
 //!                      ?? the bound artifact's group (ext.artifacts.bound, nvim views)
 //!                      ?? tags[0]
 //!                      ?? session.name
-//! resolved(artifact) = artifact.group
-//!                      ?? resolved(creator = history[0].session_id)
-//!                      ?? newest surviving toucher's resolved group
+//! resolved(artifact) = resolved(owner)
 //!                      ?? "ungrouped"
 //! ```
 //!
@@ -25,7 +23,7 @@ use tx_core::Session;
 use crate::PLUGIN_ID;
 use crate::artifact::{Artifact, USER_ACTOR};
 
-/// Display fallback when no touch author survives.
+/// Display fallback when the owner is the bare terminal or is gone.
 pub const UNGROUPED: &str = "ungrouped";
 
 /// The parent walk stops AT a hub, so one effort's group never leaks through it.
@@ -85,10 +83,6 @@ fn is_hub(session: &Session) -> bool {
     HUB_SESSION_NAMES.contains(&session.name.as_str())
 }
 
-fn set(group: &Option<String>) -> Option<&str> {
-    group.as_deref().filter(|group| !group.is_empty())
-}
-
 pub struct GroupResolver<'a> {
     sessions_by_id: HashMap<&'a str, &'a Session>,
     artifacts_by_id: HashMap<&'a str, &'a Artifact>,
@@ -109,7 +103,7 @@ impl<'a> GroupResolver<'a> {
 
     /// The artifact's effective group, [`UNGROUPED`] when nothing survives.
     pub fn artifact_group(&self, artifact: &Artifact) -> String {
-        self.artifact_override(artifact, &HashSet::new())
+        self.owner_group(artifact, &HashSet::new())
             .unwrap_or_else(|| UNGROUPED.into())
     }
 
@@ -153,31 +147,18 @@ impl<'a> GroupResolver<'a> {
         if resolving.contains(artifact.id.as_str()) {
             return None;
         }
-        self.artifact_override(artifact, resolving)
+        self.owner_group(artifact, resolving)
     }
 
-    /// Own override, else the creator's full resolution, else the newest surviving toucher's.
-    fn artifact_override(
-        &self,
-        artifact: &'a Artifact,
-        resolving: &HashSet<&'a str>,
-    ) -> Option<String> {
-        if let Some(group) = set(&artifact.group) {
-            return Some(group.to_owned());
+    /// The owner's full resolution; none when the owner was the bare terminal or is unknown.
+    fn owner_group(&self, artifact: &'a Artifact, resolving: &HashSet<&'a str>) -> Option<String> {
+        if artifact.owner == USER_ACTOR {
+            return None;
         }
+        let owner = self.sessions_by_id.get(artifact.owner.as_str())?;
         let mut resolving = resolving.clone();
         resolving.insert(&artifact.id);
-        let history = artifact.history();
-        let creator_first = history.iter().take(1).chain(history.iter().skip(1).rev());
-        for touch in creator_first {
-            if touch.session_id == USER_ACTOR {
-                continue;
-            }
-            if let Some(author) = self.sessions_by_id.get(touch.session_id.as_str()) {
-                return Some(self.session_group_guarded(author, &resolving));
-            }
-        }
-        None
+        Some(self.session_group_guarded(owner, &resolving))
     }
 }
 
@@ -203,15 +184,11 @@ mod tests {
         json!({"artifacts": {"group": name}})
     }
 
-    fn artifact(id: &str, group: Option<&str>, authors: &[&str]) -> Artifact {
-        let history: Vec<Value> = authors
-            .iter()
-            .enumerate()
-            .map(|(rev, author)| json!({"session_id": author, "at": 1000.0, "rev": rev, "changes": null}))
-            .collect();
+    fn artifact(id: &str, owner: &str) -> Artifact {
         Artifact::from_value(&json!({
-            "artifact_schema_version": 2, "id": id, "title": null, "filename": "f.md",
-            "created_at": 1000.0, "group": group, "history": history,
+            "artifact_schema_version": 4, "id": id, "kind": "document", "title": "f.md",
+            "owner": owner, "created_at": 1000.0, "modified_at": 1000.0, "archived_at": null,
+            "document": {"file": "f.md"},
         }))
         .unwrap()
     }
@@ -299,21 +276,21 @@ mod tests {
     #[test]
     fn artifact_cascade_and_recursion_guard() {
         let sessions = fixture_g(None, None);
-        let resolve = |authors: &[&str], group: Option<&str>| {
-            let artifacts = [artifact("art", group, authors)];
+        let resolve = |owner: &str| {
+            let artifacts = [artifact("art", owner)];
             GroupResolver::new(&sessions, &artifacts).artifact_group(&artifacts[0])
         };
-        assert_eq!(resolve(&["user", "c1", "b1"], None), "feat-x");
-        assert_eq!(resolve(&["user", "gone", "user"], None), UNGROUPED);
-        assert_eq!(resolve(&["c1", "b1"], None), "child");
-        assert_eq!(resolve(&["user", "b1"], Some("g")), "g");
+        assert_eq!(resolve("b1"), "feat-x");
+        assert_eq!(resolve("user"), UNGROUPED);
+        assert_eq!(resolve("gone"), UNGROUPED);
+        assert_eq!(resolve("c1"), "child");
 
         let sessions = [session(
             "v1",
             "view",
             json!({"ext": {"artifacts": {"bound": "art3"}}}),
         )];
-        let artifacts = [artifact("art3", None, &["v1"])];
+        let artifacts = [artifact("art3", "v1")];
         let resolver = GroupResolver::new(&sessions, &artifacts);
         assert_eq!(resolver.session_group(&sessions[0]), "view");
         assert_eq!(resolver.artifact_group(&artifacts[0]), "view");
@@ -329,7 +306,7 @@ mod tests {
                 json!({"ext": {"artifacts": {"bound": "art"}}}),
             ),
         ];
-        let artifacts = [artifact("art", None, &["w1"])];
+        let artifacts = [artifact("art", "w1")];
         assert_eq!(group_of(&sessions, &artifacts, "v1"), "effort");
     }
 }

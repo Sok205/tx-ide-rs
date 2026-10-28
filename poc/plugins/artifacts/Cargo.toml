@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "tx-core plugin: durable versioned artifacts, effort groups, and the prefix+a menu."
+description = "tx-core plugin: artifacts (documents, diffs, tours), effort groups, and the prefix+a menu."
 
 [dependencies]
 tx-core.workspace = true

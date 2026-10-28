@@ -1,13 +1,13 @@
-//! An artifact's nvim view: a process session running the editor on `current<ext>`, bound to the
-//! artifact through `ext["artifacts"].bound`. Shared by `artifact open` and prefix+a.
-
-use std::path::Path;
+//! An artifact's view: a process session running the editor as the artifact's kind decides
+//! (`kinds::open`), bound to the artifact through `ext["artifacts"].bound`. Shared by
+//! `artifact open` and prefix+a.
 
 use serde_json::{Value, json};
 use tx_core::{CreateOptions, LaunchOptions, Lifecycle, ListFilter, SessionId, TxCore, VerbError};
 
 use crate::PLUGIN_ID;
 use crate::artifact::{Artifact, USER_ACTOR};
+use crate::kinds::{self, Opened, view_suffix};
 use crate::service::ArtifactService;
 
 /// Who opens the view: the calling session (its id becomes the view's parent) and the tags the
@@ -38,10 +38,14 @@ pub fn sanitize(title: &str) -> String {
     }
 }
 
-/// The view's name: the sanitized title, with the id's first 8 chars appended when a running
-/// session already holds that name.
-pub fn view_name(core: &TxCore, artifact: &Artifact) -> Result<String, VerbError> {
-    let base = sanitize(artifact.display_name());
+/// The view's name: the sanitized title (`-diff` / `-tour` suffixed for those kinds), with the
+/// id's first 8 chars appended when a running session already holds that name.
+pub(crate) fn view_name(core: &TxCore, artifact: &Artifact) -> Result<String, VerbError> {
+    let base = sanitize(&format!(
+        "{}{}",
+        artifact.title,
+        view_suffix(&artifact.kind)
+    ));
     let running = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
     let taken = running
         .iter()
@@ -54,35 +58,52 @@ pub fn view_name(core: &TxCore, artifact: &Artifact) -> Result<String, VerbError
     Ok(base)
 }
 
-/// Starts the view, binds it, logs the open. Returns the view's id.
+/// Decides the launch (logging the open), starts the view, binds it and records any close step
+/// the open left behind. Returns the view's id.
 pub fn open(
     core: &TxCore,
     artifacts: &ArtifactService,
     artifact: &Artifact,
     opener: &Opener,
     tags: Option<Vec<String>>,
-    cwd: &Path,
     editor: &str,
 ) -> Result<SessionId, VerbError> {
-    let current = artifacts.files().current_path(artifact);
+    let failed = |error: crate::service::ArtifactError| VerbError::Failed(error.to_string());
     let tags = tags
         .or_else(|| (!opener.tags.is_empty()).then(|| opener.tags.clone()))
         .unwrap_or_else(|| vec!["artifact".to_owned()]);
-    let launch = LaunchOptions::process(editor, [current.to_string_lossy().into_owned()]);
-    let mut options = CreateOptions::new(view_name(core, artifact)?, cwd, launch).tags(tags);
-    if let Some(parent) = &opener.id {
-        options = options.parent(parent.clone());
-    }
-    let id = core.create_session(options)?;
-    let bound = Value::String(artifact.id.clone());
-    core.update_ext(&id, PLUGIN_ID, |value| *value = json!({ "bound": bound }))?;
     let actor = opener
         .id
         .as_ref()
         .map_or(USER_ACTOR.to_owned(), ToString::to_string);
-    artifacts
-        .opened(&artifact.id, &actor)
-        .map_err(|error| VerbError::Failed(error.to_string()))?;
+    let name = view_name(core, artifact)?;
+    let Opened { cwd, args, cleanup } = artifacts.open(&artifact.id, &actor).map_err(failed)?;
+    let launch = LaunchOptions::process(editor, args);
+    let mut options = CreateOptions::new(name, cwd, launch).tags(tags);
+    if let Some(parent) = &opener.id {
+        options = options.parent(parent.clone());
+    }
+    let id = match core.create_session(options) {
+        Ok(id) => id,
+        Err(error) => {
+            if let Some(cleanup) = &cleanup {
+                let _ = kinds::close(cleanup); // best effort: the open failed anyway
+            }
+            return Err(error.into());
+        }
+    };
+    let bound = Value::String(artifact.id.clone());
+    core.update_ext(&id, PLUGIN_ID, |value| *value = json!({ "bound": bound }))?;
+    if let Some(cleanup) = cleanup {
+        artifacts
+            .record_cleanup(&artifact.id, id.as_str(), cleanup)
+            .map_err(failed)?;
+        // An editor that died at once ended before the step was recorded, so the end sink found
+        // nothing to run: run it now (close is idempotent).
+        if core.get_session(&id)?.lifecycle.is_terminal() {
+            artifacts.close(&artifact.id, id.as_str()).map_err(failed)?;
+        }
+    }
     Ok(id)
 }
 

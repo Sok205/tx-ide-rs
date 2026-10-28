@@ -1,47 +1,48 @@
-//! The artifact use cases, ported from main's `artifact_service.rs`.
+//! The artifact use cases, ported from main's v4 `artifact_service.rs`.
 //!
-//! Composes `ArtifactStore` (records) + `ArtifactContent` (files) + the plugin's own
+//! Composes `ArtifactStore` (records) + `ArtifactContent` (the directory) + the plugin's own
 //! `.log.jsonl` under the data dir (the core's `log.jsonl` stays the core's). Every mutation logs
-//! one line; reads (`content`, `diff`, `opened`) log a read-visibility line; queries do not log.
-//!
-//! Writes to one artifact are serialised by a flock on `.locks/<id>.lock`, held from loading the
-//! record to saving it, so two `txc` processes modifying at once produce two contiguous revs.
+//! one line, a content mutation stamps `modified_at` (archive stamps `archived_at` instead), an
+//! open logs a read-visibility line, and the queries do not log.
 
-use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
+use std::collections::{BTreeMap, HashSet};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use serde_json::{Number, Value, json};
+use serde_json::{Map, Number, Value, json};
 
-use crate::artifact::Artifact;
-use crate::difflib;
-use crate::store::{
-    ArtifactContent, ArtifactStore, ArtifactStoreError, ClaimRevError, Scan, is_valid_id,
-};
+use crate::artifact::{Artifact, Kind};
+use crate::kinds::{self, Cleanup, KindError, Opened};
+use crate::store::{ArtifactContent, ArtifactStore, ArtifactStoreError, Scan, atomic_write};
 
-pub const LOG_FILE: &str = ".log.jsonl";
-pub const LOCK_DIR: &str = ".locks";
+pub(crate) const LOG_FILE: &str = ".log.jsonl";
+/// What opens write outside the content directories: temp worktrees, the tour runtime.
+pub(crate) const SCRATCH_DIR: &str = ".scratch";
+/// Pending close steps beside the record, keyed by the view session that needs them.
+const CLEANUP_FILE: &str = ".cleanup.json";
 
 /// A precondition failed; the verb prints `txc artifact: <error>`, exit 1.
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
     #[error("artifact '{0}' not found")]
     NotFound(String),
-    /// A crash orphan holds the slot the next rev needs.
-    #[error(
-        "artifact {id}: rev {rev} is already claimed by a file the history does not know (a crashed \
-         write left an orphan; `txc artifact doctor --repair` clears it). Retry after the repair."
-    )]
-    Conflict { id: String, rev: u64 },
     #[error("artifact id prefix '{token}' is ambiguous ({count} matches); use more characters")]
     Ambiguous { token: String, count: usize },
-    #[error("artifact {0} has only one revision; nothing to diff")]
-    SingleRevision(String),
-    #[error("artifact {id} has no revision {rev}")]
-    NoRevision { id: String, rev: i64 },
-    #[error("artifact {id} revision {rev} is not utf-8 text; cannot diff")]
-    NotText { id: String, rev: i64 },
+    /// `modify <file>` on a diff: its content is derived from the worktree, never hand-edited.
+    #[error(
+        "artifact {0} is a diff; its patch is rewritten from the worktree, so `modify` takes no file"
+    )]
+    NotEditable(String),
+    /// A `.cleanup.json` entry naming a path outside the plugin's temp worktrees: never run.
+    #[error("artifact {id}: refusing the close step for {}: not a temp worktree under {}", path.display(), root.display())]
+    ForeignCleanup {
+        id: String,
+        path: PathBuf,
+        root: PathBuf,
+    },
+    #[error(transparent)]
+    Kind(#[from] KindError),
     #[error(transparent)]
     Store(#[from] ArtifactStoreError),
     #[error("{}: {source}", path.display())]
@@ -102,7 +103,7 @@ impl ArtifactService {
         self.store.all().artifacts
     }
 
-    fn append(&self, type_: &str, msg: &str, actor: &str) -> Result<()> {
+    pub(crate) fn append(&self, type_: &str, msg: &str, actor: &str) -> Result<()> {
         let path = self.log_path();
         fs::create_dir_all(&self.dir).map_err(io_at(&self.dir))?;
         let mut line = json!({
@@ -122,307 +123,236 @@ impl ArtifactService {
             .map_err(io_at(&path))
     }
 
-    /// The per-artifact write lock, held until the guard drops.
-    fn lock(&self, artifact_id: &str) -> Result<File> {
-        if !is_valid_id(artifact_id) {
-            return Err(ArtifactError::NotFound(artifact_id.to_owned()));
-        }
-        let dir = self.dir.join(LOCK_DIR);
-        fs::create_dir_all(&dir).map_err(io_at(&dir))?;
-        let path = dir.join(format!("{artifact_id}.lock"));
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .map_err(io_at(&path))?;
-        file.lock().map_err(io_at(&path))?;
-        Ok(file)
-    }
-
-    // ----- mutations -----------------------------------------------------------------------
-
-    /// Register a new artifact: `revs/0<ext>` + `current<ext>`, the record, one log line.
-    pub fn create(
-        &self,
-        session_id: &str,
-        content: &[u8],
-        title: Option<String>,
-        filename: Option<String>,
-        group: Option<String>,
-    ) -> Result<Artifact> {
-        let artifact = Artifact::new(
-            uuid::Uuid::new_v4().to_string(),
-            title,
-            filename.unwrap_or_else(|| "artifact".to_owned()),
-            float(tx_core::events::now()),
-            group,
-            session_id.to_owned(),
-        );
-        self.claim(&artifact, 0, content)?;
-        self.write_current(&artifact, content)?;
-        self.save(&artifact)?;
-        self.append(
-            "artifact-create",
-            &format!("{} {}", artifact.id, artifact.filename),
-            session_id,
-        )?;
-        Ok(artifact)
-    }
-
-    /// Snapshot `content` as the next revision; identical to the last rev is a no-op.
-    pub fn modify(
-        &self,
-        artifact_id: &str,
-        session_id: &str,
-        content: &[u8],
-        changes: Option<String>,
-    ) -> Result<Artifact> {
-        let _lock = self.lock(artifact_id)?;
-        let artifact = self.require(artifact_id)?;
-        self.apply_modify(artifact, session_id, content, changes)
-    }
-
-    /// Snapshot the working copy as the next revision.
-    pub fn snapshot_current(
-        &self,
-        artifact_id: &str,
-        session_id: &str,
-        changes: Option<String>,
-    ) -> Result<Artifact> {
-        let _lock = self.lock(artifact_id)?;
-        let artifact = self.require(artifact_id)?;
-        let path = self.files.current_path(&artifact);
-        let content = self.files.read_current(&artifact).map_err(io_at(&path))?;
-        self.apply_modify(artifact, session_id, &content, changes)
-    }
-
-    fn apply_modify(
-        &self,
-        mut artifact: Artifact,
-        session_id: &str,
-        content: &[u8],
-        changes: Option<String>,
-    ) -> Result<Artifact> {
-        if content == self.last_snapshot(&artifact)?.as_slice() {
-            return Ok(artifact);
-        }
-        let next_rev = artifact.next_rev();
-        self.claim(&artifact, next_rev, content)?;
-        self.write_current(&artifact, content)?;
-        artifact.record_touch(
-            session_id.to_owned(),
-            float(tx_core::events::now()),
-            changes,
-        );
-        self.save(&artifact)?;
-        self.append(
-            "artifact-modify",
-            &format!("{} rev{next_rev}", artifact.id),
-            session_id,
-        )?;
-        Ok(artifact)
-    }
-
-    /// Set (or with `None` clear) the explicit group override: metadata only, one log line.
-    pub fn set_group(
-        &self,
-        artifact_id: &str,
-        session_id: &str,
-        group: Option<String>,
-    ) -> Result<Artifact> {
-        let _lock = self.lock(artifact_id)?;
-        let mut artifact = self.require(artifact_id)?;
-        artifact.group = group;
-        self.save(&artifact)?;
-        let shown = artifact.group.as_deref().unwrap_or("(cleared)");
-        self.append(
-            "artifact-group",
-            &format!("{} {shown}", artifact.id),
-            session_id,
-        )?;
-        Ok(artifact)
-    }
-
-    /// Claim `revs/<rev>` exclusively; a taken slot is always a conflict, never overwritten.
-    fn claim(&self, artifact: &Artifact, rev: u64, content: &[u8]) -> Result<()> {
-        match self.files.claim_rev(artifact, rev, content) {
-            Ok(()) => Ok(()),
-            Err(ClaimRevError::Taken(rev)) => Err(ArtifactError::Conflict {
-                id: artifact.id.clone(),
-                rev,
-            }),
-            Err(ClaimRevError::Io(source)) => Err(ArtifactError::Io {
-                path: self.files.rev_path(artifact, rev),
-                source,
-            }),
-        }
-    }
-
-    fn write_current(&self, artifact: &Artifact, content: &[u8]) -> Result<()> {
-        self.files
-            .write_current(artifact, content)
-            .map_err(io_at(&self.files.current_path(artifact)))
-    }
-
     fn save(&self, artifact: &Artifact) -> Result<()> {
         self.store
             .save(artifact)
             .map_err(io_at(&self.store.record_path(&artifact.id)))
     }
 
-    fn last_snapshot(&self, artifact: &Artifact) -> Result<Vec<u8>> {
-        let latest = artifact.latest_rev();
-        self.files
-            .read_rev(artifact, latest)
-            .map_err(io_at(&self.files.rev_path(artifact, latest)))
+    // ----- mutations -----------------------------------------------------------------------
+
+    /// Register a new artifact: its directory with the kind's content, the record, one log line.
+    /// `source` is the file a document or tour is created from; a diff's empty `base` resolves
+    /// to the merge-base with the default branch.
+    pub fn create(
+        &self,
+        owner: &str,
+        kind: Kind,
+        title: String,
+        source: Option<&Path>,
+    ) -> Result<Artifact> {
+        let kind = match kind {
+            Kind::Diff { worktree, base } => {
+                let base = kinds::resolve_base(&worktree, &base)?;
+                Kind::Diff { worktree, base }
+            }
+            other => other,
+        };
+        let artifact = Artifact::new(
+            uuid::Uuid::new_v4().to_string(),
+            kind,
+            title,
+            owner.to_owned(),
+            now(),
+        );
+        let dir = self.files.content_dir(&artifact);
+        fs::create_dir_all(&dir).map_err(io_at(&dir))?;
+        kinds::create_content(&artifact.kind, &dir, source)?;
+        self.save(&artifact)?;
+        let msg = format!(
+            "{} {} {}",
+            artifact.id,
+            artifact.kind.name(),
+            artifact.title
+        );
+        self.append("artifact-create", &msg, owner)?;
+        Ok(artifact)
+    }
+
+    /// Stamp `modified_at` (a meaningful revision happened); with `file`, replace a document's
+    /// or tour's file first. A diff's patch is rewritten instead.
+    pub fn modify(&self, artifact_id: &str, actor: &str, file: Option<&Path>) -> Result<Artifact> {
+        let mut artifact = self.require(artifact_id)?;
+        let dir = self.files.content_dir(&artifact);
+        match file {
+            Some(_) if artifact.kind.is_diff() => {
+                return Err(ArtifactError::NotEditable(artifact.id));
+            }
+            Some(source) => kinds::replace_content(&artifact.kind, &dir, source)?,
+            None => kinds::refresh(&artifact.kind, &dir)?,
+        }
+        artifact.modified_at = now();
+        self.save(&artifact)?;
+        self.append("artifact-modify", &artifact.id, actor)?;
+        Ok(artifact)
+    }
+
+    /// Archive (hidden from prefix+a and default listings, content kept) or unarchive: metadata
+    /// only, `modified_at` untouched, one log line.
+    pub fn set_archived(&self, artifact_id: &str, actor: &str, archived: bool) -> Result<Artifact> {
+        let mut artifact = self.require(artifact_id)?;
+        artifact.archived_at = archived.then(now);
+        self.save(&artifact)?;
+        let type_ = if archived {
+            "artifact-archive"
+        } else {
+            "artifact-unarchive"
+        };
+        self.append(type_, &artifact.id, actor)?;
+        Ok(artifact)
     }
 
     // ----- reads ---------------------------------------------------------------------------
 
-    /// The working copy (default) or one snapshot; logs a read-visibility line.
-    pub fn content(&self, artifact_id: &str, rev: Option<i64>) -> Result<Vec<u8>> {
-        let artifact = self.require(artifact_id)?;
-        let data = match rev {
-            None => {
-                let path = self.files.current_path(&artifact);
-                self.files.read_current(&artifact).map_err(io_at(&path))?
-            }
-            Some(rev) => self.read_rev(&artifact, rev)?,
-        };
-        let which = rev.map_or_else(|| "current".to_owned(), |rev| format!("rev{rev}"));
-        self.append(
-            "artifact-read",
-            &format!("{artifact_id} {which}"),
-            &self.actor,
-        )?;
-        Ok(data)
-    }
-
-    /// Record that a session opened the artifact's view (read-visibility, not history).
-    pub fn opened(&self, artifact_id: &str, session_id: &str) -> Result<()> {
-        self.append(
-            "artifact-open",
-            &format!("{artifact_id} → {session_id}"),
-            session_id,
-        )
-    }
-
-    /// A unified diff between two revisions (default: the last two); both must be utf-8.
-    pub fn diff(&self, artifact_id: &str, revs: Option<(i64, i64)>) -> Result<String> {
-        let artifact = self.require(artifact_id)?;
-        let (left_rev, right_rev) = match revs {
-            Some(pair) => pair,
-            None => {
-                let latest = artifact.latest_rev();
-                if latest == 0 {
-                    return Err(ArtifactError::SingleRevision(artifact.id));
-                }
-                let latest = i64::try_from(latest).unwrap_or(i64::MAX);
-                (latest - 1, latest)
-            }
-        };
-        let left = self.decoded_rev(&artifact, left_rev)?;
-        let right = self.decoded_rev(&artifact, right_rev)?;
-        self.append(
-            "artifact-diff",
-            &format!("{artifact_id} rev{left_rev}..rev{right_rev}"),
-            &self.actor,
-        )?;
-        Ok(difflib::unified_diff(
-            &difflib::splitlines_keepends(&left),
-            &difflib::splitlines_keepends(&right),
-            &format!("rev{left_rev}"),
-            &format!("rev{right_rev}"),
-        ))
-    }
-
-    /// A rev by a signed number: a negative rev names a file that never exists.
-    fn read_rev(&self, artifact: &Artifact, rev: i64) -> Result<Vec<u8>> {
-        let not_found = || ArtifactError::NoRevision {
-            id: artifact.id.clone(),
-            rev,
-        };
-        let Ok(unsigned) = u64::try_from(rev) else {
-            return Err(not_found());
-        };
-        match self.files.read_rev(artifact, unsigned) {
-            Ok(data) => Ok(data),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(not_found()),
-            Err(source) => Err(ArtifactError::Io {
-                path: self.files.rev_path(artifact, unsigned),
-                source,
-            }),
+    /// Decide the view for an artifact: refresh derived content (a live diff's patch, which also
+    /// stamps `modified_at`), then the kind's launch. The caller starts it and binds the session;
+    /// one `artifact-open` line is logged as `actor`.
+    pub fn open(&self, artifact_id: &str, actor: &str) -> Result<Opened> {
+        let mut artifact = self.require(artifact_id)?;
+        let dir = self.files.content_dir(&artifact);
+        if artifact.kind.is_diff() && artifact.kind.worktree().is_some_and(Path::is_dir) {
+            kinds::refresh(&artifact.kind, &dir)?;
+            artifact.modified_at = now();
+            self.save(&artifact)?;
         }
+        let opened = kinds::open(&artifact, &dir, &self.dir.join(SCRATCH_DIR))?;
+        self.append("artifact-open", &format!("{artifact_id} → {actor}"), actor)?;
+        Ok(opened)
     }
 
-    fn decoded_rev(&self, artifact: &Artifact, rev: i64) -> Result<String> {
-        String::from_utf8(self.read_rev(artifact, rev)?).map_err(|_| ArtifactError::NotText {
-            id: artifact.id.clone(),
-            rev,
-        })
-    }
-
-    /// Whether the working copy differs from the last snapshot.
-    pub fn current_is_dirty(&self, artifact: &Artifact) -> Result<bool> {
-        let current_path = self.files.current_path(artifact);
-        let current = self
-            .files
-            .read_current(artifact)
-            .map_err(io_at(&current_path))?;
-        Ok(current != self.last_snapshot(artifact)?)
-    }
-
-    /// Every artifact `session_id` created or touched (a query, never denormalized).
+    /// Every unarchived artifact `session_id` owns.
     pub fn artifacts_for_session(&self, session_id: &str) -> Vec<Artifact> {
         let mut artifacts = self.all();
-        artifacts.retain(|artifact| {
-            artifact
-                .history()
-                .iter()
-                .any(|touch| touch.session_id == session_id)
-        });
+        artifacts.retain(|artifact| !artifact.is_archived() && artifact.owner == session_id);
         artifacts
+    }
+
+    // ----- close steps ---------------------------------------------------------------------
+
+    /// The pending close steps of an artifact, by view session id.
+    pub fn pending_cleanups(&self, artifact: &Artifact) -> Result<BTreeMap<String, Cleanup>> {
+        let path = self.files.file_path(artifact, CLEANUP_FILE);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(source) => return Err(io_at(&path)(source)),
+        };
+        let data: Value = serde_json::from_slice(&bytes).map_err(ArtifactStoreError::from)?;
+        Ok(data
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(view, value)| Some((view.clone(), Cleanup::from_value(value)?)))
+            .collect())
+    }
+
+    // shortcut: `.cleanup.json` is read-modify-written without a lock, so two opens of one diff at
+    // the same instant can drop an entry (doctor then reports the worktree); add a lock if that bites.
+    fn write_cleanups(
+        &self,
+        artifact: &Artifact,
+        cleanups: &BTreeMap<String, Cleanup>,
+    ) -> Result<()> {
+        let path = self.files.file_path(artifact, CLEANUP_FILE);
+        if cleanups.is_empty() {
+            return match fs::remove_file(&path) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(io_at(&path)(error)),
+                _ => Ok(()),
+            };
+        }
+        let map: Map<String, Value> = cleanups
+            .iter()
+            .map(|(view, cleanup)| (view.clone(), cleanup.to_value()))
+            .collect();
+        let payload =
+            serde_json::to_string_pretty(&Value::Object(map)).map_err(ArtifactStoreError::from)?;
+        let dir = self.files.content_dir(artifact);
+        atomic_write(&dir, ".cleanup.", payload.as_bytes(), &path).map_err(io_at(&path))
+    }
+
+    /// Remember the close step an open left behind, keyed by the view that needs it, so whichever
+    /// `txc` process sees that view end can run it.
+    pub fn record_cleanup(&self, artifact_id: &str, view: &str, cleanup: Cleanup) -> Result<()> {
+        let artifact = self.require(artifact_id)?;
+        let mut cleanups = self.pending_cleanups(&artifact)?;
+        cleanups.insert(view.to_owned(), cleanup);
+        self.write_cleanups(&artifact, &cleanups)
+    }
+
+    /// Run the close step recorded for `view`, if any; whether one ran. One `artifact-close`
+    /// line per step run.
+    pub fn close(&self, artifact_id: &str, view: &str) -> Result<bool> {
+        let artifact = self.require(artifact_id)?;
+        let mut cleanups = self.pending_cleanups(&artifact)?;
+        let Some(cleanup) = cleanups.remove(view) else {
+            return Ok(false);
+        };
+        // The file is plain JSON on disk: only ever remove what an open made.
+        let root = self.dir.join(SCRATCH_DIR).join(kinds::WORKTREES_DIR);
+        let Cleanup::RemoveWorktree(path) = &cleanup;
+        if !path.starts_with(&root)
+            || path
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+        {
+            return Err(ArtifactError::ForeignCleanup {
+                id: artifact.id,
+                path: path.clone(),
+                root,
+            });
+        }
+        kinds::close(&cleanup)?;
+        self.write_cleanups(&artifact, &cleanups)?;
+        let msg = format!("{artifact_id} {view} {}", cleanup.describe());
+        self.append("artifact-close", &msg, &self.actor)?;
+        Ok(true)
+    }
+
+    /// Run every pending close step of an artifact now (`artifact close`); how many ran.
+    pub fn close_all(&self, artifact_id: &str) -> Result<usize> {
+        let artifact = self.require(artifact_id)?;
+        let views: Vec<String> = self.pending_cleanups(&artifact)?.into_keys().collect();
+        for view in &views {
+            self.close(artifact_id, view)?;
+        }
+        Ok(views.len())
     }
 
     // ----- diagnostics ---------------------------------------------------------------------
 
-    /// Invariant check across the store (read-only); an empty list means clean.
-    pub fn doctor(&self) -> Result<Vec<String>> {
+    /// Invariant check across the store (read-only); an empty list means clean. Every record has
+    /// its directory and its kind's file, every directory has a record, and no close step waits
+    /// on a view that has already ended (`view_is_alive` is the core's answer).
+    pub fn doctor(&self, view_is_alive: &dyn Fn(&str) -> bool) -> Result<Vec<String>> {
         let mut problems = Vec::new();
         let artifacts = self.all();
         let record_ids: HashSet<&str> = artifacts.iter().map(|a| a.id.as_str()).collect();
-        let logged = self.logged_mutations()?;
         for artifact in &artifacts {
-            for rev in self.orphan_revs(artifact)? {
+            let dir = self.files.content_dir(artifact);
+            if !dir.is_dir() {
+                problems.push(format!("{}: content directory is missing", artifact.id));
+                continue;
+            }
+            let file = kinds::content_file(&artifact.kind);
+            if !dir.join(file).is_file() {
                 problems.push(format!(
-                    "{}: orphan rev file {rev} not in history (crash debris, ignored on read; \
-                     blocks that slot until `doctor --repair`)",
-                    artifact.id
+                    "{}: {} file {file} is missing",
+                    artifact.id,
+                    artifact.kind.name()
                 ));
             }
-            let missing = self.files.missing_revs(artifact);
-            for rev in &missing {
+            for (view, cleanup) in self.stale_cleanups(artifact, view_is_alive)? {
                 problems.push(format!(
-                    "{}: history rev {rev} has no file on disk",
-                    artifact.id
+                    "{}: close step for ended view {view} never ran ({}); `doctor --repair` runs it",
+                    artifact.id,
+                    cleanup.describe()
                 ));
-            }
-            problems.extend(self.current_health(artifact, &missing)?);
-            for touch in artifact.history() {
-                if !logged.contains(&signature(&artifact.id, touch.rev)) {
-                    problems.push(format!(
-                        "{}: rev {} touch has no matching log line (suspected out-of-band \
-                         write; a truncated log is also possible)",
-                        artifact.id, touch.rev
-                    ));
-                }
             }
         }
         if self.dir.exists() {
             let mut entries: Vec<(String, bool)> = fs::read_dir(&self.dir)
                 .map_err(io_at(&self.dir))?
-                .filter_map(|entry| entry.ok())
+                .filter_map(Result::ok)
                 .map(|entry| {
                     let is_dir = entry.path().is_dir();
                     (entry.file_name().to_string_lossy().into_owned(), is_dir)
@@ -442,68 +372,30 @@ impl ArtifactService {
         Ok(problems)
     }
 
-    /// Remove every orphan rev file; returns the removed lines. Takes each artifact's write lock,
-    /// so a repair never races a modify.
-    pub fn repair_orphans(&self) -> Result<Vec<String>> {
-        let mut removed = Vec::new();
+    fn stale_cleanups(
+        &self,
+        artifact: &Artifact,
+        view_is_alive: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<(String, Cleanup)>> {
+        let mut cleanups = self.pending_cleanups(artifact)?;
+        cleanups.retain(|view, _| !view_is_alive(view));
+        Ok(cleanups.into_iter().collect())
+    }
+
+    /// Run every close step whose view has ended (`doctor --repair`); the lines describe what ran.
+    pub fn repair(&self, view_is_alive: &dyn Fn(&str) -> bool) -> Result<Vec<String>> {
+        let mut lines = Vec::new();
         for artifact in self.all() {
-            let _lock = self.lock(&artifact.id)?;
-            let Some(artifact) = self.store.load(&artifact.id)? else {
-                continue;
-            };
-            for rev in self.orphan_revs(&artifact)? {
-                self.files
-                    .remove_rev(&artifact, rev)
-                    .map_err(io_at(&self.files.rev_path(&artifact, rev)))?;
-                removed.push(format!("{}: removed orphan rev file {rev}", artifact.id));
+            for (view, cleanup) in self.stale_cleanups(&artifact, view_is_alive)? {
+                self.close(&artifact.id, &view)?;
+                lines.push(format!(
+                    "{}: ran the close step of ended view {view} ({})",
+                    artifact.id,
+                    cleanup.describe()
+                ));
             }
         }
-        Ok(removed)
-    }
-
-    fn orphan_revs(&self, artifact: &Artifact) -> Result<Vec<u64>> {
-        self.files
-            .orphan_revs(artifact)
-            .map_err(io_at(&self.files.revs_dir(artifact)))
-    }
-
-    /// The mutation signatures present in the log; unparsable lines are skipped.
-    fn logged_mutations(&self) -> Result<HashSet<Signature>> {
-        let mut signatures = HashSet::new();
-        let path = self.log_path();
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(signatures),
-            Err(source) => return Err(io_at(&path)(source)),
-        };
-        for line in String::from_utf8_lossy(&bytes).lines() {
-            if let Some(signature) = parse_signature(line) {
-                signatures.insert(signature);
-            }
-        }
-        Ok(signatures)
-    }
-
-    fn current_health(&self, artifact: &Artifact, missing_revs: &[u64]) -> Result<Vec<String>> {
-        if missing_revs.contains(&artifact.latest_rev()) {
-            return Ok(Vec::new());
-        }
-        if !self.files.current_path(artifact).exists() {
-            return Ok(vec![format!(
-                "{}: working copy current{} is missing",
-                artifact.id,
-                artifact.extension()
-            )]);
-        }
-        if self.current_is_dirty(artifact)? {
-            return Ok(vec![format!(
-                "{}: working copy differs from last rev {} (dirty: un-snapshotted edits; close \
-                 with `txc artifact modify`)",
-                artifact.id,
-                artifact.latest_rev()
-            )]);
-        }
-        Ok(Vec::new())
+        Ok(lines)
     }
 
     // ----- resolution ----------------------------------------------------------------------
@@ -540,39 +432,9 @@ impl ArtifactService {
     }
 }
 
-/// The log signature a touch should carry: a create (rev 0) or a modify (rev n).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Signature {
-    Create(String),
-    Modify(String, u64),
-}
-
-fn signature(artifact_id: &str, rev: u64) -> Signature {
-    if rev == 0 {
-        Signature::Create(artifact_id.to_owned())
-    } else {
-        Signature::Modify(artifact_id.to_owned(), rev)
-    }
-}
-
-/// One log line → its mutation signature, if any. A line that is not JSON is skipped.
-fn parse_signature(line: &str) -> Option<Signature> {
-    let entry: Value = serde_json::from_str(line).ok()?;
-    let kind = entry.get("type").and_then(Value::as_str);
-    let msg = entry.get("msg").and_then(Value::as_str).unwrap_or("");
-    let fields: Vec<&str> = msg.split_whitespace().collect();
-    match (kind, fields.as_slice()) {
-        (Some("artifact-create"), [id, ..]) => Some(Signature::Create((*id).to_owned())),
-        (Some("artifact-modify"), [id, rev, ..]) => Some(Signature::Modify(
-            (*id).to_owned(),
-            rev.strip_prefix("rev")?.parse().ok()?,
-        )),
-        _ => None,
-    }
-}
-
-fn float(value: f64) -> Number {
-    Number::from_f64(value).unwrap_or_else(|| Number::from(0))
+fn now() -> Number {
+    // The clock is always finite; the fallback only keeps this total.
+    Number::from_f64(tx_core::events::now()).unwrap_or_else(|| Number::from(0))
 }
 
 #[cfg(test)]
@@ -583,94 +445,116 @@ mod tests {
         ArtifactService::new(dir.join("plugins/artifacts"), "user")
     }
 
+    fn document(service: &ArtifactService, dir: &Path, body: &str) -> Artifact {
+        let source = dir.join("p.md");
+        fs::write(&source, body).unwrap();
+        let kind = Kind::Document {
+            file: "p.md".into(),
+        };
+        service
+            .create("s1", kind, "Plan".into(), Some(&source))
+            .unwrap()
+    }
+
     #[test]
-    fn create_modify_diff_and_doctor_round_trip() {
+    fn create_modify_open_and_doctor_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let service = service(dir.path());
-        let artifact = service
-            .create("s1", b"a\nb\n", None, Some("p.md".into()), None)
-            .unwrap();
-        let same = service.modify(&artifact.id, "s1", b"a\nb\n", None).unwrap();
-        assert_eq!(same.latest_rev(), 0);
-        let next = service
-            .modify(&artifact.id, "s2", b"a\nc\n", Some("x".into()))
-            .unwrap();
-        assert_eq!(next.latest_rev(), 1);
-        assert_eq!(
-            service.diff(&artifact.id, None).unwrap(),
-            "--- rev0\n+++ rev1\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n"
-        );
-        assert!(matches!(
-            service.diff(&artifact.id, Some((-1, 0))),
-            Err(ArtifactError::NoRevision { rev: -1, .. })
-        ));
-        assert_eq!(service.doctor().unwrap(), Vec::<String>::new());
-        assert!(matches!(
-            service.modify(&artifact.id[..4], "s1", b"z", None),
-            Err(ArtifactError::NotFound(_))
-        ));
+        let artifact = document(&service, dir.path(), "a\nb\n");
+        assert_eq!(artifact.owner, "s1");
+        assert_eq!(artifact.created_at, artifact.modified_at);
+        let path = service.files().file_path(&artifact, "p.md");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a\nb\n");
+        let opened = service.open(&artifact.id, "s1").unwrap();
+        assert_eq!(opened.args, [path.to_string_lossy()]);
+        assert!(service.doctor(&|_| true).unwrap().is_empty());
+
+        let source = dir.path().join("p.md");
+        fs::write(&source, "a\nc\n").unwrap();
+        let modified = service.modify(&artifact.id, "s2", Some(&source)).unwrap();
+        assert!(modified.modified_secs() >= artifact.modified_secs());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a\nc\n");
+        assert_eq!(service.artifacts_for_session("s1").len(), 1);
+        assert!(service.artifacts_for_session("s2").is_empty());
+
         assert_eq!(service.resolve_id(&artifact.id[..4]).unwrap(), artifact.id);
         assert!(matches!(
             service.resolve_id(""),
             Err(ArtifactError::NotFound(_))
         ));
-        assert_eq!(
-            service.artifacts_for_session("s2")[0].id,
-            artifact.id,
-            "a toucher finds it"
-        );
-        assert!(service.artifacts_for_session("s3").is_empty());
+
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(dir.path().join("plugins/artifacts/stray")).unwrap();
+        let problems = service.doctor(&|_| true).unwrap();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].ends_with("document file p.md is missing"));
+        assert!(problems[1].starts_with("stray: content directory"));
     }
 
     #[test]
-    fn concurrent_modifies_in_threads_produce_contiguous_revs() {
-        let dir = tempfile::tempdir().unwrap();
-        let artifact = service(dir.path())
-            .create("s1", b"base\n", None, Some("p.md".into()), None)
-            .unwrap();
-        std::thread::scope(|scope| {
-            for writer in 0..8 {
-                let (root, id) = (dir.path(), artifact.id.as_str());
-                scope.spawn(move || {
-                    service(root)
-                        .modify(id, "s1", format!("writer {writer}\n").as_bytes(), None)
-                        .unwrap();
-                });
-            }
-        });
-        let service = service(dir.path());
-        let after = service.require(&artifact.id).unwrap();
-        let revs: Vec<u64> = after.history().iter().map(|touch| touch.rev).collect();
-        assert_eq!(revs, (0..=8).collect::<Vec<u64>>());
-        assert_eq!(service.doctor().unwrap(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn signatures_follow_the_log_lines() {
-        let line = |kind: &str, msg: &str| format!(r#"{{"type":"{kind}","msg":"{msg}"}}"#);
-        assert_eq!(
-            parse_signature(&line("artifact-create", "a plan.md")),
-            Some(Signature::Create("a".into()))
-        );
-        assert_eq!(
-            parse_signature(&line("artifact-modify", "a rev10")),
-            Some(Signature::Modify("a".into(), 10))
-        );
-        assert_eq!(parse_signature(&line("artifact-modify", "x")), None);
-        assert_eq!(parse_signature(&line("artifact-modify", "a revx")), None);
-        assert_eq!(parse_signature("not json"), None);
-    }
-
-    #[test]
-    fn doctor_ignores_the_hidden_log_and_locks() {
+    fn archiving_hides_from_the_session_query_and_is_reversible() {
         let dir = tempfile::tempdir().unwrap();
         let service = service(dir.path());
-        let artifact = service
-            .create("s1", b"x", None, Some("p.md".into()), None)
+        let artifact = document(&service, dir.path(), "a\n");
+        let archived = service.set_archived(&artifact.id, "s1", true).unwrap();
+        assert!(archived.is_archived());
+        assert_eq!(archived.modified_at, artifact.modified_at);
+        assert!(service.artifacts_for_session("s1").is_empty());
+        assert_eq!(service.all().len(), 1);
+        let back = service.set_archived(&artifact.id, "s1", false).unwrap();
+        assert!(!back.is_archived());
+        assert_eq!(service.artifacts_for_session("s1").len(), 1);
+    }
+
+    #[test]
+    fn cleanups_are_recorded_closed_and_repaired() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = service(dir.path());
+        let artifact = document(&service, dir.path(), "x");
+        let root = dir.path().join("plugins/artifacts/.scratch/worktrees");
+        let temp = root.join("artifact-x");
+        fs::create_dir_all(&temp).unwrap();
+        service
+            .record_cleanup(
+                &artifact.id,
+                "view-1",
+                Cleanup::RemoveWorktree(temp.clone()),
+            )
             .unwrap();
-        service.modify(&artifact.id, "s1", b"y", None).unwrap();
-        assert!(service.log_path().is_file());
-        assert!(dir.path().join("plugins/artifacts/.locks").is_dir());
-        assert_eq!(service.doctor().unwrap(), Vec::<String>::new());
+        let gone = Cleanup::RemoveWorktree(root.join("gone"));
+        service
+            .record_cleanup(&artifact.id, "view-2", gone)
+            .unwrap();
+        assert_eq!(service.pending_cleanups(&artifact).unwrap().len(), 2);
+        assert!(service.doctor(&|_| true).unwrap().is_empty());
+        let stale = service.doctor(&|view| view == "view-1").unwrap();
+        assert_eq!(stale.len(), 1);
+        assert!(stale[0].contains("ended view view-2"), "{stale:?}");
+
+        assert!(!service.close(&artifact.id, "nobody").unwrap());
+        assert!(service.close(&artifact.id, "view-1").unwrap());
+        assert!(!temp.exists());
+        assert_eq!(service.repair(&|_| false).unwrap().len(), 1);
+        assert!(service.pending_cleanups(&artifact).unwrap().is_empty());
+        assert!(!service.files().file_path(&artifact, CLEANUP_FILE).exists());
+        assert_eq!(service.close_all(&artifact.id).unwrap(), 0);
+        let log = fs::read_to_string(service.log_path()).unwrap();
+        assert_eq!(log.matches("artifact-close").count(), 2, "{log}");
+
+        // A step naming anything but a temp worktree is refused and kept.
+        let outside = dir.path().join("precious");
+        fs::create_dir(&outside).unwrap();
+        for path in [outside.clone(), root.join("../../../../precious")] {
+            let step = Cleanup::RemoveWorktree(path);
+            service
+                .record_cleanup(&artifact.id, "view-3", step)
+                .unwrap();
+            assert!(matches!(
+                service.close(&artifact.id, "view-3"),
+                Err(ArtifactError::ForeignCleanup { .. })
+            ));
+            assert!(outside.exists());
+            service.write_cleanups(&artifact, &BTreeMap::new()).unwrap();
+        }
     }
 }

@@ -1,18 +1,16 @@
-//! Record persistence (`ArtifactStore`) and the content files beside it (`ArtifactContent`),
+//! Record persistence (`ArtifactStore`) and the content directory beside it (`ArtifactContent`),
 //! ported from main's `artifact_store.rs`.
 //!
 //! `<dir>/<id>.json` is written temp-file + fsync + rename and is authoritative: the service
-//! writes it LAST. `<dir>/<id>/current<ext>` is the working copy (atomic, last write wins);
-//! `<dir>/<id>/revs/<n><ext>` are immutable snapshots claimed by staging a temp file in `revs/`
-//! and hard-linking it onto the slot, so `EEXIST` means the slot is taken and a crash can only
-//! leave a stray `.tmp`.
+//! writes it LAST. `<dir>/<id>/` holds the artifact's files under their own names; a file tx
+//! writes goes through the same temp + rename, so a reader never sees a partial one.
 
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use crate::artifact::{Artifact, UnsupportedArtifactError, suffix};
+use crate::artifact::{Artifact, UnsupportedArtifactError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactStoreError {
@@ -48,7 +46,7 @@ pub struct Scan {
 }
 
 /// An artifact id is a path fragment: `[A-Za-z0-9_-]+`. Anything else names no record.
-pub fn is_valid_id(id: &str) -> bool {
+pub(crate) fn is_valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id
@@ -104,8 +102,17 @@ impl ArtifactStore {
     /// Every `*.json` record (non-hidden, name order). Unreadable records are skipped, not fatal.
     pub fn all(&self) -> Scan {
         let mut scan = Scan::default();
-        let Ok(entries) = fs::read_dir(&self.directory) else {
-            return scan;
+        let entries = match fs::read_dir(&self.directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return scan,
+            // An unreadable store is reported, never shown as empty.
+            Err(error) => {
+                scan.skipped.push(Skipped {
+                    name: self.directory.display().to_string(),
+                    error: error.into(),
+                });
+                return scan;
+            }
         };
         let mut paths: Vec<PathBuf> = entries
             .filter_map(Result::ok)
@@ -140,16 +147,7 @@ fn read_record(path: &Path) -> Result<Artifact, ArtifactStoreError> {
     Ok(Artifact::from_value(&data)?)
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ClaimRevError {
-    /// The slot already exists: a crash orphan holds it.
-    #[error("rev {0} is already claimed")]
-    Taken(u64),
-    #[error(transparent)]
-    Io(#[from] io::Error),
-}
-
-/// Working copy + revision file I/O under `<dir>/<id>/`; bytes-clean.
+/// The files under `<dir>/<id>/`; bytes-clean.
 #[derive(Clone, Debug)]
 pub struct ArtifactContent {
     directory: PathBuf,
@@ -166,111 +164,9 @@ impl ArtifactContent {
         self.directory.join(&artifact.id)
     }
 
-    pub fn revs_dir(&self, artifact: &Artifact) -> PathBuf {
-        self.content_dir(artifact).join("revs")
+    pub fn file_path(&self, artifact: &Artifact, name: &str) -> PathBuf {
+        self.content_dir(artifact).join(name)
     }
-
-    pub fn current_path(&self, artifact: &Artifact) -> PathBuf {
-        self.content_dir(artifact)
-            .join(format!("current{}", artifact.extension()))
-    }
-
-    pub fn rev_path(&self, artifact: &Artifact, rev: u64) -> PathBuf {
-        self.revs_dir(artifact)
-            .join(format!("{rev}{}", artifact.extension()))
-    }
-
-    pub fn read_current(&self, artifact: &Artifact) -> io::Result<Vec<u8>> {
-        fs::read(self.current_path(artifact))
-    }
-
-    pub fn read_rev(&self, artifact: &Artifact, rev: u64) -> io::Result<Vec<u8>> {
-        fs::read(self.rev_path(artifact, rev))
-    }
-
-    /// Refresh the working copy atomically (last write wins between writers).
-    pub fn write_current(&self, artifact: &Artifact, content: &[u8]) -> io::Result<()> {
-        let dir = self.content_dir(artifact);
-        fs::create_dir_all(&dir)?;
-        let path = self.current_path(artifact);
-        let prefix = format!(".{}.", file_name(&path));
-        atomic_write(&dir, &prefix, content, &path)
-    }
-
-    /// Exclusively claim `revs/<rev><ext>`: stage the full content in `revs/.<rev>.*.tmp`, fsync,
-    /// then hard-link it onto the slot. An existing slot is never overwritten (`Taken`); the
-    /// staging file is always removed.
-    pub fn claim_rev(
-        &self,
-        artifact: &Artifact,
-        rev: u64,
-        content: &[u8],
-    ) -> Result<(), ClaimRevError> {
-        let revs = self.revs_dir(artifact);
-        fs::create_dir_all(&revs)?;
-        let target = self.rev_path(artifact, rev);
-        let mut staged = tempfile::Builder::new()
-            .prefix(&format!(".{rev}."))
-            .suffix(".tmp")
-            .tempfile_in(&revs)?;
-        staged.write_all(content)?;
-        staged.as_file().sync_all()?;
-        match fs::hard_link(staged.path(), &target) {
-            Ok(()) => {
-                sync_dir(&revs)?;
-                Ok(())
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                Err(ClaimRevError::Taken(rev))
-            }
-            Err(error) => Err(error.into()),
-        }
-        // `staged` drops here, unlinking the staging file.
-    }
-
-    /// Unlink a rev file (orphan repair only); a missing file is fine.
-    pub fn remove_rev(&self, artifact: &Artifact, rev: u64) -> io::Result<()> {
-        match fs::remove_file(self.rev_path(artifact, rev)) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        }
-    }
-
-    /// Rev files on disk the history does not reference (crash orphans), ascending.
-    pub fn orphan_revs(&self, artifact: &Artifact) -> io::Result<Vec<u64>> {
-        let revs = self.revs_dir(artifact);
-        if !revs.exists() {
-            return Ok(Vec::new());
-        }
-        let recorded: Vec<u64> = artifact.history().iter().map(|touch| touch.rev).collect();
-        let mut found = Vec::new();
-        for entry in fs::read_dir(&revs)? {
-            let name = entry?.file_name();
-            if let Some(rev) = rev_number(&name.to_string_lossy())
-                && !recorded.contains(&rev)
-            {
-                found.push(rev);
-            }
-        }
-        found.sort_unstable();
-        Ok(found)
-    }
-
-    /// History revs with no file on disk, in history order.
-    pub fn missing_revs(&self, artifact: &Artifact) -> Vec<u64> {
-        artifact
-            .history()
-            .iter()
-            .map(|touch| touch.rev)
-            .filter(|&rev| !self.rev_path(artifact, rev).exists())
-            .collect()
-    }
-}
-
-fn file_name(path: &Path) -> String {
-    path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 fn sync_dir(dir: &Path) -> io::Result<()> {
@@ -279,7 +175,12 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
 
 /// Write `content` to a `<prefix>*.tmp` file in `dir` (mode 0600), fsync it, rename it onto
 /// `target`, fsync the directory. The temp file is removed on any failure.
-fn atomic_write(dir: &Path, prefix: &str, content: &[u8], target: &Path) -> io::Result<()> {
+pub(crate) fn atomic_write(
+    dir: &Path,
+    prefix: &str,
+    content: &[u8],
+    target: &Path,
+) -> io::Result<()> {
     let mut temp = tempfile::Builder::new()
         .prefix(prefix)
         .suffix(".tmp")
@@ -290,23 +191,10 @@ fn atomic_write(dir: &Path, prefix: &str, content: &[u8], target: &Path) -> io::
     sync_dir(dir)
 }
 
-/// The rev a `revs/<n><ext>` file name encodes: `None` for a staging temp (leading dot) or a
-/// name whose stem is not all ASCII digits.
-fn rev_number(name: &str) -> Option<u64> {
-    if name.starts_with('.') {
-        return None;
-    }
-    let stem = &name[..name.len() - suffix(name).len()];
-    if stem.is_empty() || !stem.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    stem.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::USER_ACTOR;
+    use crate::artifact::Kind;
     use serde_json::Number;
     use std::os::unix::fs::PermissionsExt;
 
@@ -326,14 +214,13 @@ mod tests {
         }
     }
 
-    fn artifact(id: &str, filename: &str) -> Artifact {
+    fn artifact(id: &str, file: &str) -> Artifact {
         Artifact::new(
             id.into(),
-            None,
-            filename.into(),
-            Number::from_f64(1.5).unwrap(),
-            None,
+            Kind::Document { file: file.into() },
+            "T".into(),
             "s1".into(),
+            Number::from_f64(1.5).unwrap(),
         )
     }
 
@@ -356,7 +243,7 @@ mod tests {
         f.store.save(&a).unwrap();
         let path = f.store.record_path("a");
         let bytes = fs::read_to_string(&path).unwrap();
-        assert!(bytes.starts_with("{\n  \"artifact_schema_version\": 2,\n  \"id\": \"a\","));
+        assert!(bytes.starts_with("{\n  \"artifact_schema_version\": 4,\n  \"id\": \"a\","));
         let mode = fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         assert!(tmp_files(f.store.directory()).is_empty());
@@ -379,7 +266,7 @@ mod tests {
         fs::create_dir_all(f.store.directory()).unwrap();
         write(
             f.store.record_path("old"),
-            r#"{"artifact_schema_version": 1, "id": "old", "foo": 1}"#,
+            r#"{"artifact_schema_version": 2, "id": "old", "foo": 1}"#,
         );
         let error = f.store.load("old").unwrap_err();
         assert!(matches!(error, ArtifactStoreError::Unsupported(_)));
@@ -394,7 +281,7 @@ mod tests {
         write(dir.join("bad.json"), "{");
         write(
             dir.join("old.json"),
-            r#"{"artifact_schema_version": 1, "id": "old"}"#,
+            r#"{"artifact_schema_version": 2, "id": "old"}"#,
         );
         fs::create_dir(dir.join("x")).unwrap();
         write(dir.join(".good.abc.tmp"), "{}");
@@ -406,7 +293,7 @@ mod tests {
         let warnings: Vec<String> = scan.skipped.iter().map(Skipped::warning).collect();
         assert_eq!(warnings.len(), 2);
         assert!(warnings[0].starts_with("txc artifact: skipping unreadable artifact bad.json: "));
-        assert!(warnings[1].contains("old.json: record artifact_schema_version=1"));
+        assert!(warnings[1].contains("old.json: record artifact_schema_version=2"));
     }
 
     #[test]
@@ -421,76 +308,7 @@ mod tests {
         let f = fixture();
         let a = artifact("id", "plan.md");
         let dir = f.store.directory().join("id");
-        assert_eq!(f.content.current_path(&a), dir.join("current.md"));
-        assert_eq!(f.content.rev_path(&a, 3), dir.join("revs/3.md"));
-        let bare = artifact("bare", "artifact");
-        f.content.claim_rev(&bare, 0, b"b").unwrap();
-        f.content.write_current(&bare, b"b").unwrap();
-        let bare_dir = f.store.directory().join("bare");
-        let mut names: Vec<String> = fs::read_dir(&bare_dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        assert_eq!(names, ["current", "revs"]);
-        assert!(bare_dir.join("revs/0").is_file());
-    }
-
-    #[test]
-    fn claim_rev_is_exclusive() {
-        let f = fixture();
-        let a = artifact("id", "v0.md");
-        f.content.claim_rev(&a, 0, b"v0").unwrap();
-        f.content.write_current(&a, b"v0").unwrap();
-        write(f.content.rev_path(&a, 1), "other");
-        let error = f.content.claim_rev(&a, 1, b"new").unwrap_err();
-        assert!(matches!(error, ClaimRevError::Taken(1)));
-        assert_eq!(fs::read(f.content.rev_path(&a, 1)).unwrap(), b"other");
-        assert_eq!(f.content.read_rev(&a, 0).unwrap(), b"v0");
-        assert!(tmp_files(&f.content.revs_dir(&a)).is_empty());
-        assert!(tmp_files(&f.content.content_dir(&a)).is_empty());
-    }
-
-    #[test]
-    fn orphan_and_missing_detection() {
-        let f = fixture();
-        let mut a = artifact("id", "p.md");
-        assert_eq!(f.content.orphan_revs(&a).unwrap(), Vec::<u64>::new());
-        f.content.claim_rev(&a, 0, b"p0").unwrap();
-        let rev = a.record_touch(USER_ACTOR.into(), Number::from(2), None);
-        f.content.claim_rev(&a, rev, b"p1").unwrap();
-        let revs = f.content.revs_dir(&a);
-        for (name, body) in [
-            (".1.xyz.tmp", "stage"),
-            ("7.md", "orphan"),
-            ("notes.txt", "foreign"),
-            ("12.txt", "other ext"),
-            ("1.5.md", "not a rev"),
-        ] {
-            write(revs.join(name), body);
-        }
-        assert_eq!(f.content.orphan_revs(&a).unwrap(), [7, 12]);
-        assert!(f.content.missing_revs(&a).is_empty());
-        fs::remove_file(f.content.rev_path(&a, 1)).unwrap();
-        assert_eq!(f.content.missing_revs(&a), [1]);
-        f.content.remove_rev(&a, 7).unwrap();
-        f.content.remove_rev(&a, 7).unwrap();
-        assert_eq!(f.content.orphan_revs(&a).unwrap(), [12]);
-    }
-
-    #[test]
-    fn rev_number_parses_digit_stems_only() {
-        let cases = [
-            ("7.md", Some(7)),
-            (".1.x.tmp", None),
-            ("notes.txt", None),
-            ("007.md", Some(7)),
-            ("3", Some(3)),
-            ("1.5.md", None),
-            ("x.7", None),
-        ];
-        for (name, rev) in cases {
-            assert_eq!(rev_number(name), rev, "{name}");
-        }
+        assert_eq!(f.content.content_dir(&a), dir);
+        assert_eq!(f.content.file_path(&a, "plan.md"), dir.join("plan.md"));
     }
 }
