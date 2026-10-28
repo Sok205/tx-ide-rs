@@ -80,6 +80,18 @@ fn classification_matches_python() {
             )),
         ),
         (
+            // What `txc send` writes for the operator: no origin session.
+            text("<from-user>hi there</from-user>"),
+            Some(expect(
+                "you",
+                "send-user-message",
+                "you",
+                "hi there",
+                "u1",
+                "",
+            )),
+        ),
+        (
             text("<tx-command-prompt focus=\"a/b\"/>\n  do it "),
             Some(expect("you", "prompt", "you", "do it", "u1", "")),
         ),

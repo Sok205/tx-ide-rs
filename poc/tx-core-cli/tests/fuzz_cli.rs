@@ -100,7 +100,7 @@ impl Cli {
             "--exec",
             "sh",
             "-c",
-            "printf '%s\\n' \"$@\" > args.txt; env > env.tmp && mv env.tmp env.txt; cat > input.txt",
+            "printf '%s\\n' \"$@\" > args.tmp && mv args.tmp args.txt; env > env.tmp && mv env.tmp env.txt; cat > input.txt",
             "argv0",
         ]);
         self.ok(&args).trim().to_owned()

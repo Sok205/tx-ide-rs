@@ -3,7 +3,8 @@
 //! A message is typed into the recipient's input, so the engine records it verbatim as a `user`
 //! turn. Classification keys on the leading marker of a genuine typed turn:
 //! `<from-agent session="X">…</from-agent>` (peer; the legacy `<from-claude>` still parses),
-//! `<from-user session="X">…</from-user>` (the operator, typed in session X),
+//! `<from-user>…</from-user>` (the operator; older writers named the session typed in as
+//! `session="X"`), both read by `tx_core::parse_envelope`,
 //! `<tx-command-prompt …/> text` (prefix+/), the viewer composer template, or plain typed text.
 //! [`parse_message`] is the pure per-turn classifier; [`collect_messages`] and
 //! [`source_signature`] are the only functions touching the filesystem.
@@ -16,7 +17,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
-use tx_core::{Launch, Lifecycle, Session};
+use tx_core::{Launch, Lifecycle, Sender, Session, parse_envelope};
 
 use crate::engines::BUNDLE_TRANSCRIPT_NAME;
 use crate::ext::history_ext;
@@ -29,10 +30,6 @@ pub enum SenderRole {
 }
 
 pub const SENDER_YOU: &str = "you";
-/// The peer channel — `tx send-message`.
-pub const TAG_AGENT: &str = "from-agent";
-/// The operator channel — `tx send-user-message`.
-pub const TAG_USER: &str = "from-user";
 
 /// Harness-injected user turns that nobody sent.
 const HARNESS_PREFIXES: [&str; 4] = [
@@ -41,12 +38,6 @@ const HARNESS_PREFIXES: [&str; 4] = [
     "<command-",
     "[Request interrupted",
 ];
-
-/// Build a message envelope. `tag` is [`TAG_AGENT`] (peer) or [`TAG_USER`] (operator); one
-/// builder for both channels so their wire shape cannot drift.
-pub fn build_envelope(sender: &str, body: &str, tag: &str) -> String {
-    format!("<{tag} session=\"{sender}\">{body}</{tag}>")
-}
 
 /// Who sent a message: an llm session (the inter-agent channel) or you.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -216,21 +207,24 @@ fn classify(
         body: py_strip(body).to_owned(),
         origin: origin.to_owned(),
     };
-    if let Some((sender, body)) = match_envelope(text, &["from-agent", "from-claude"]) {
-        let kind = match sender_role(sender) {
-            Some(role) if role != SenderRole::Agent => Kind::You,
-            _ => Kind::Agent,
-        };
-        return Some(Classified {
-            kind,
-            via: Via::SendMessage,
-            sender: sender.to_owned(),
-            body: py_strip(body).to_owned(),
-            origin: String::new(),
-        });
-    }
-    if let Some((origin, body)) = match_envelope(text, &["from-user"]) {
-        return Some(you(Via::SendUserMessage, body, origin));
+    match parse_envelope(text.trim_end_matches(py_isspace)) {
+        Some((Sender::Agent(sender), body)) => {
+            let kind = match sender_role(sender) {
+                Some(role) if role != SenderRole::Agent => Kind::You,
+                _ => Kind::Agent,
+            };
+            return Some(Classified {
+                kind,
+                via: Via::SendMessage,
+                sender: sender.to_owned(),
+                body: py_strip(body).to_owned(),
+                origin: String::new(),
+            });
+        }
+        Some((Sender::User { origin }, body)) => {
+            return Some(you(Via::SendUserMessage, body, origin.unwrap_or_default()));
+        }
+        None => {}
     }
     if let Some(body) = match_command_prompt(text) {
         return Some(you(Via::Prompt, body, ""));
@@ -252,26 +246,6 @@ fn classify(
         return None;
     }
     Some(you(Via::Typed, stripped, ""))
-}
-
-/// `^<(T) session="([^"]*)">(.*)</(T)>\s*\Z` (DOTALL, greedy body) for any open/close tag of
-/// `tags`: `(session, body)`.
-fn match_envelope<'t>(text: &'t str, tags: &[&str]) -> Option<(&'t str, &'t str)> {
-    let rest = tags.iter().find_map(|tag| {
-        text.strip_prefix('<')?
-            .strip_prefix(tag)?
-            .strip_prefix(" session=\"")
-    })?;
-    let (session, rest) = rest.split_once('"')?;
-    let rest = rest.strip_prefix('>')?;
-    let trimmed = rest.trim_end_matches(py_isspace);
-    let body = tags.iter().find_map(|tag| {
-        trimmed
-            .strip_suffix('>')?
-            .strip_suffix(tag)?
-            .strip_suffix("</")
-    })?;
-    Some((session, body))
 }
 
 /// `^<tx-command-prompt\b[^>]*/>\s*(.*)\Z` (DOTALL): the text after the focus envelope.
@@ -1001,18 +975,6 @@ mod tests {
             let got = fromisoformat_timestamp(&input.replace('Z', "+00:00"));
             assert_eq!(got, expected, "{input}");
         }
-    }
-
-    #[test]
-    fn build_envelope_shapes() {
-        assert_eq!(
-            build_envelope("alice", "hi <b> & \"q\"", TAG_AGENT),
-            "<from-agent session=\"alice\">hi <b> & \"q\"</from-agent>"
-        );
-        assert_eq!(
-            build_envelope("viewer", "q?", TAG_USER),
-            "<from-user session=\"viewer\">q?</from-user>"
-        );
     }
 
     #[test]

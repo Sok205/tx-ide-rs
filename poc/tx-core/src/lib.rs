@@ -39,7 +39,7 @@ pub use locks::{LockGuard, Locks};
 #[doc(hidden)]
 pub use messaging::DELIVERY_PAUSE;
 /// The default envelope; an `EngineAdapter::envelope` override may wrap it.
-pub use messaging::build_envelope;
+pub use messaging::{Sender, build_envelope, parse_envelope};
 pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
     say,

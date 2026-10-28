@@ -140,7 +140,8 @@ regex!(PROMPT_OPEN, r"^<tx-command-prompt[^>]*>");
 regex!(PROMPT_CLOSE, r"</tx-command-prompt>\s*$");
 regex!(FROM_AGENT, r#"^<from-agent session="([^"]+)">"#);
 regex!(FROM_CLAUDE, r#"^<from-claude session="([^"]+)">"#);
-regex!(FROM_CLOSE, r"</from-(agent|claude)>\s*$");
+regex!(FROM_USER, r#"^<from-user(?: session="[^"]*")?>"#);
+regex!(FROM_CLOSE, r"</from-(agent|claude|user)>\s*$");
 regex!(PEER, r"^\s*<from-(agent|claude)\b");
 regex!(PASTED_OPEN, r"^\s*<pasted_content\b[^>]*>\s*");
 regex!(PASTED_CLOSE, r"\s*</pasted_content>");
@@ -206,6 +207,7 @@ pub fn clean_user(raw: &str) -> String {
     let text = PROMPT_CLOSE.replace(&text, "");
     let text = FROM_AGENT.replace(&text, "[peer $1] ");
     let text = FROM_CLAUDE.replace(&text, "[peer $1] ");
+    let text = FROM_USER.replace(&text, "");
     let text = FROM_CLOSE.replace(&text, "");
     text.trim().to_owned()
 }
@@ -506,6 +508,10 @@ mod tests {
             clean_user("<from-agent session=\"and-48\">ping</from-agent>"),
             "[peer and-48] ping"
         );
+        // The operator's envelope is the human speaking: tags dropped, still a user row.
+        assert_eq!(clean_user("<from-user>hi there</from-user>\n"), "hi there");
+        assert_eq!(clean_user("<from-user session=\"v\">q?</from-user>"), "q?");
+        assert_eq!(user_kind("<from-user>hi</from-user>"), Kind::User);
         assert_eq!(
             peer_parts("[peer and-48] ping"),
             Some(("and-48".into(), "ping".into()))

@@ -154,7 +154,7 @@ impl EngineAdapter for ShellStub {
             return Err(EngineError::Refused("model refused".into()));
         }
         let script = format!(
-            "env > env.tmp && mv env.tmp env.txt; echo \"{}\" > prompt.txt; cat > input.txt",
+            "env > env.tmp && mv env.tmp env.txt; echo \"{}\" > prompt.tmp && mv prompt.tmp prompt.txt; cat > input.txt",
             req.initial_prompt.unwrap_or("")
         );
         Ok(LaunchPlan::new("sh")
