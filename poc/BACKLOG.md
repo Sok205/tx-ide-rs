@@ -28,11 +28,11 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
   fsync, a same-second backup overwrites the last. Move chat's installer (plus `read_payload`,
   `home_dir`, `shell_quote`) to `tx_core::agent_hooks`; replace the `_history-ingest` special
   case with an `Entries` field. Behaviour: hooks' uninstall message wording.
-- [ ] **H4.** `failed(impl Display) -> VerbError` copied 6 times plus 18 inline `map_err`s.
+- [x] (3ac1400) **H4.** `failed(impl Display) -> VerbError` copied 6 times plus 18 inline `map_err`s.
   Add `VerbError::failed` in tx-core plugin.rs.
-- [ ] **H5.** stdout write helpers copied 7 times (`write_out`, `say`, `write_failed`) plus 3
+- [x] (3ac1400) **H5.** stdout write helpers copied 7 times (`write_out`, `say`, `write_failed`) plus 3
   inline. Add `tx_core::say(out, text)` and `VerbError::write(io::Error)`.
-- [ ] **H6.** Plugin data dir `state_dir/plugins/<id>` built 4 times (artifacts, chat, tutor,
+- [x] (3ac1400) **H6.** Plugin data dir `state_dir/plugins/<id>` built 4 times (artifacts, chat, tutor,
   picker); timeline imports chat's just for this. Add `CoreConfig::plugin_dir(plugin)`.
 - [x] **H7 bug.** (fixed 5dccbb8) Ellipsis truncation copied 5 times; artifacts render/menu and chat
   history_verbs compute `width - 1` on `usize` and panic at width 0. One `tx_ui::render::trunc`
@@ -122,6 +122,8 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
   `picker_namew` to `picker_name_width`; `Ui::quiet` returns `(bool, String)` read as `.0`
   / `.1` about 20 times.
 - [ ] **L11.** 8-char short ids cut by hand 5 times; add `short_id`.
+- [ ] **L20.** `current_exe:` / `could not run fzf:` / `HOME is not set` errors are
+  hand-written 2-5 times each across plugins; `tx_ui::txc::exe()` exists for the first.
 - [ ] **L12.** tx-core core.rs:477/543 report an empty program as `InvalidName` ("invalid
   session name"); needs its own variant (behaviour).
 
