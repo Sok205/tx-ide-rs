@@ -359,7 +359,7 @@ fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
             let mut command = txc.command(&["tutor", "start", "--detach"]);
             command.env_remove("TMUX");
             match output(command) {
-                Ok(out) => match tutor_view(&out) {
+                Ok(out) => match tx_tutor::ready_view(&out) {
                     Some(view) => switch(ui, client, view),
                     None => status(ui, client, out.lines().last().unwrap_or("tutor started")),
                 },
@@ -374,7 +374,7 @@ fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
             Ok(out) => {
                 let said = out.lines().next().unwrap_or("resumed");
                 status(ui, client, said);
-                if let Some(name) = resumed_name(&out) {
+                if let Some(name) = tx_chat::ops::resumed_name(&out) {
                     show(ui, pane, client, name);
                 }
             }
@@ -387,16 +387,6 @@ fn switch(ui: &Ui, client: &str, session: &str) {
     if let Err(error) = ui.run(&["switch-client", "-c", client, "-t", &format!("={session}")]) {
         status(ui, client, &format!("tx menu: {error}"));
     }
-}
-
-/// `resume` says `Resumed '<old>' as '<new>' (chat …)`.
-fn resumed_name(stdout: &str) -> Option<&str> {
-    stdout.lines().find_map(|line| {
-        let rest = line.strip_prefix("Resumed '")?;
-        let (_, rest) = rest.split_once("' as '")?;
-        let (name, _) = rest.split_once('\'')?;
-        (!name.is_empty()).then_some(name)
-    })
 }
 
 /// Foreground commands of a pane the picker's Enter would replace by a nested attach.
@@ -424,14 +414,6 @@ fn show(ui: &Ui, pane: &str, client: &str, name: &str) {
     }
 }
 
-/// `tutor start --detach` ends with `<view> is ready: tmux … attach -t =<view>`.
-fn tutor_view(stdout: &str) -> Option<&str> {
-    stdout
-        .lines()
-        .find_map(|line| line.split_once(" is ready: ").map(|(view, _)| view.trim()))
-        .filter(|view| !view.is_empty())
-}
-
 /// What prefix+a would see in `pane`: the nested session and the nested client drawing it, or
 /// the pane's own session and the firing client.
 fn artifact_target(ui: &Ui, pane: &str, client: &str) -> Option<(String, String)> {
@@ -454,14 +436,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tutor_view_is_read_from_the_ready_line() {
-        let out = "Scaffolded /h/tx-tutor/rust\ntutor-rust view created.\n\
-                   tutor-rust is ready: tmux -S '/s/tmux.sock' attach -t =tutor-rust\n";
-        assert_eq!(tutor_view(out), Some("tutor-rust"));
-        assert_eq!(tutor_view("tutor-rust view created.\n"), None);
-    }
-
-    #[test]
     fn a_gone_or_nested_client_is_no_first_attach() {
         let clients = "/dev/ttys001\t/dev/ttys001\n/dev/ttys009\t/dev/ttys009\n";
         let panes = "/dev/ttys009\n/dev/ttys010\n";
@@ -469,14 +443,6 @@ mod tests {
         assert!(skips_first(clients, panes, "/dev/ttys009"), "nested");
         assert!(skips_first(clients, panes, "/dev/ttys002"), "gone");
         assert!(skips_first("", "", "/dev/ttys001"), "no server");
-    }
-
-    #[test]
-    fn the_resumed_name_is_read_from_resumes_line() {
-        let out = "Resumed 'fixer' as 'fixer-2' (chat 0f3a, cwd=/w)\n";
-        assert_eq!(resumed_name(out), Some("fixer-2"));
-        assert_eq!(resumed_name("Resumed 'a' as '' (chat x)\n"), None);
-        assert_eq!(resumed_name("something else\n"), None);
     }
 
     #[test]

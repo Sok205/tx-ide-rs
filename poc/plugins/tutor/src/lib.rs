@@ -337,10 +337,10 @@ impl<'a> Tutor<'a> {
             return Ok(0);
         }
         if args.detach || !std::io::stdin().is_terminal() {
-            writeln!(
+            write!(
                 io.stdout,
-                "{view} is ready: tmux -S {} attach -t ={view}",
-                shell_quote(&self.core.socket_path().to_string_lossy())
+                "{}",
+                ready_line(&view, &self.core.socket_path().to_string_lossy())
             )
             .map_err(VerbError::other)?;
             return Ok(0);
@@ -678,9 +678,39 @@ fn confirm(io: &mut VerbIo<'_>, prompt: &str) -> bool {
     )
 }
 
+const READY: &str = " is ready: ";
+
+/// `tutor start --detach`'s last line; [`ready_view`] reads the view back.
+fn ready_line(view: &str, socket: &str) -> String {
+    format!(
+        "{view}{READY}tmux -S {} attach -t ={view}\n",
+        shell_quote(socket)
+    )
+}
+
+/// The view `tutor start --detach` names in its `<view> is ready: tmux … attach` line.
+pub fn ready_view(stdout: &str) -> Option<&str> {
+    stdout
+        .lines()
+        .find_map(|line| line.split_once(READY).map(|(view, _)| view.trim()))
+        .filter(|view| !view.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_view_is_read_from_the_ready_line() {
+        let line = ready_line("tutor-rust", "/s/tmux.sock");
+        assert_eq!(
+            line,
+            "tutor-rust is ready: tmux -S '/s/tmux.sock' attach -t =tutor-rust\n"
+        );
+        let out = format!("Scaffolded /h/tx-tutor/rust\ntutor-rust view created.\n{line}");
+        assert_eq!(ready_view(&out), Some("tutor-rust"));
+        assert_eq!(ready_view("tutor-rust view created.\n"), None);
+    }
 
     fn argv(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| (*word).to_owned()).collect()

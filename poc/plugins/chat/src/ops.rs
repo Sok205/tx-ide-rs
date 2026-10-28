@@ -1287,12 +1287,7 @@ impl Verb for Resume {
                     .map_or_else(|| target.to_owned(), |s| s.name);
                 say(
                     io.stdout,
-                    &format!(
-                        "Resumed '{old}' as '{}' (chat {}, cwd={})\n",
-                        new.name,
-                        short(&chat_id),
-                        new.cwd.display()
-                    ),
+                    &resumed_line(&old, &new.name, &short(&chat_id), &new.cwd),
                 )?;
                 Ok(0)
             }
@@ -1346,11 +1341,41 @@ impl Verb for OpWatch {
     }
 }
 
+const RESUMED_PREFIX: &str = "Resumed '";
+const RESUMED_AS: &str = "' as '";
+
+/// `resume`'s report; [`resumed_name`] reads the new name back.
+fn resumed_line(old: &str, new: &str, chat: &str, cwd: &Path) -> String {
+    format!(
+        "{RESUMED_PREFIX}{old}{RESUMED_AS}{new}' (chat {chat}, cwd={})\n",
+        cwd.display()
+    )
+}
+
+/// The new session's name in `resume`'s `Resumed '<old>' as '<new>' (chat …)` line.
+pub fn resumed_name(stdout: &str) -> Option<&str> {
+    stdout.lines().find_map(|line| {
+        let rest = line.strip_prefix(RESUMED_PREFIX)?;
+        let (_, rest) = rest.split_once(RESUMED_AS)?;
+        let (name, _) = rest.split_once('\'')?;
+        (!name.is_empty()).then_some(name)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
+    #[test]
+    fn the_resumed_name_is_read_from_resumes_line() {
+        let out = resumed_line("fixer", "fixer-2", "0f3a", Path::new("/w"));
+        assert_eq!(out, "Resumed 'fixer' as 'fixer-2' (chat 0f3a, cwd=/w)\n");
+        assert_eq!(resumed_name(&out), Some("fixer-2"));
+        assert_eq!(resumed_name("Resumed 'a' as '' (chat x)\n"), None);
+        assert_eq!(resumed_name("something else\n"), None);
+    }
 
     #[test]
     fn slug_cases() {
