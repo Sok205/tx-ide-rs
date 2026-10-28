@@ -17,8 +17,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tx_core::Session;
+use tx_core::{ExtRecord, Session};
 
 use crate::PLUGIN_ID;
 use crate::artifact::{Artifact, USER_ACTOR};
@@ -28,9 +27,6 @@ pub const UNGROUPED: &str = "ungrouped";
 
 /// The parent walk stops AT a hub, so one effort's group never leaks through it.
 pub const HUB_SESSION_NAMES: [&str; 1] = ["tx-assistant"];
-
-/// The prefix+e editor's key; its `group` is the operator's override and wins.
-const EDIT_PLUGIN: &str = "edit";
 
 /// `ext["artifacts"]` on a session record.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,10 +39,14 @@ pub struct Ext {
     pub group: Option<String>,
 }
 
+impl ExtRecord for Ext {
+    const KEY: &'static str = PLUGIN_ID;
+}
+
 /// The session's `ext["artifacts"]`; `Err` names what is wrong with a malformed one.
 pub fn ext_of(session: &Session) -> Result<Ext, String> {
     session
-        .ext::<Ext>(PLUGIN_ID)
+        .ext_of::<Ext>()
         .map(Option::unwrap_or_default)
         .map_err(|error| {
             format!(
@@ -61,22 +61,14 @@ pub fn bound_artifact(session: &Session) -> Option<String> {
     ext_of(session).ok()?.bound
 }
 
-fn non_empty(value: Option<&Value>) -> Option<&str> {
-    value?.as_str().filter(|group| !group.is_empty())
-}
-
 /// The session's own override: the prefix+e editor's, else `txc group`'s.
 pub fn own_group(session: &Session) -> Option<String> {
-    let edit = session
-        .ext
-        .get(EDIT_PLUGIN)
-        .and_then(|edit| edit.get("group"));
-    let ours = session
-        .ext
-        .get(PLUGIN_ID)
-        .and_then(|ours| ours.as_object())
-        .and_then(|ours| ours.get("group"));
-    non_empty(edit).or(non_empty(ours)).map(str::to_owned)
+    tx_edit::group(session).or_else(|| {
+        ext_of(session)
+            .ok()?
+            .group
+            .filter(|group| !group.is_empty())
+    })
 }
 
 fn is_hub(session: &Session) -> bool {

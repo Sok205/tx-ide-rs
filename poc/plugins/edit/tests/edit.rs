@@ -79,7 +79,7 @@ fn apply_edit_renames_tags_and_groups() {
     assert_eq!(after.name, "b");
     assert_eq!(after.tags, ["x", "y"]);
     assert_eq!(
-        after.ext::<Ext>("edit").unwrap().unwrap().group.as_deref(),
+        after.ext_of::<Ext>().unwrap().unwrap().group.as_deref(),
         Some("g")
     );
     let json: serde_json::Value =
@@ -103,7 +103,7 @@ fn apply_edit_keeps_other_ext_fields() {
     let ext = core
         .get_session(&id)
         .unwrap()
-        .ext::<Ext>("edit")
+        .ext_of::<Ext>()
         .unwrap()
         .unwrap();
     assert_eq!(ext.group.as_deref(), Some("new"));

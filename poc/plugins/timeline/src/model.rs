@@ -24,6 +24,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
+use tx_artifacts::grouping::GroupResolver;
 use tx_chat::engines::BUNDLE_TRANSCRIPT_NAME;
 use tx_chat::ext::{chat_ext, history_ext};
 use tx_core::{CoreError, Launch, Lifecycle, ListFilter, Session, TxCore};
@@ -45,8 +46,6 @@ pub const HOLD_CAP_S: f64 = 900.0;
 pub const DEFAULT_DAYS: f64 = 14.0;
 /// The user-dragged group order, in the plugin's data dir.
 pub const ORDER_FILE: &str = "group-order.json";
-/// The parent walk of the group cascade stops AT a hub.
-pub const HUB_SESSION_NAMES: [&str; 1] = [ASSISTANT_NAME];
 
 static SUFFIX_RX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@\w+$").unwrap());
 
@@ -420,50 +419,6 @@ pub fn hook_state(session: &Session) -> HookState {
     hooks(session).map_or(HookState::Idle, |hooks| hooks.state)
 }
 
-fn group_override(session: &Session) -> Option<&str> {
-    session
-        .ext
-        .get("edit")?
-        .get("group")?
-        .as_str()
-        .filter(|group| !group.is_empty())
-}
-
-fn is_hub(session: &Session) -> bool {
-    HUB_SESSION_NAMES.contains(&session.name.as_str())
-}
-
-/// Main's group cascade without artifacts: the record's own `ext.edit.group`, else the first
-/// override up the parent chain (stopping at hubs and cycles), else `tags[0]`, else the name.
-pub fn session_group(session: &Session, by_id: &HashMap<&str, &Session>) -> String {
-    if let Some(group) = group_override(session) {
-        return group.to_owned();
-    }
-    if !is_hub(session) {
-        let mut visited = HashSet::from([session.id.as_str()]);
-        let mut ancestor = session
-            .parent
-            .as_ref()
-            .and_then(|parent| by_id.get(parent.as_str()));
-        while let Some(current) = ancestor {
-            if !visited.insert(current.id.as_str()) {
-                break;
-            }
-            if let Some(group) = group_override(current) {
-                return group.to_owned();
-            }
-            if is_hub(current) {
-                break;
-            }
-            ancestor = current
-                .parent
-                .as_ref()
-                .and_then(|parent| by_id.get(parent.as_str()));
-        }
-    }
-    session.tags.first().unwrap_or(&session.name).clone()
-}
-
 struct LaneSeed {
     name: String,
     records: Vec<Session>,
@@ -599,10 +554,8 @@ impl Builder {
             .iter()
             .map(|session| (session.id.as_str(), session.name.as_str()))
             .collect();
-        let by_id: HashMap<&str, &Session> = everyone
-            .iter()
-            .map(|session| (session.id.as_str(), session))
-            .collect();
+        // Views carry no lanes, so no artifacts: a lane's group is its session's override.
+        let groups = GroupResolver::new(everyone, &[]);
         let seeds = self.lane_seeds(everyone, epoch);
 
         let mut lanes: Vec<Lane> = Vec::new();
@@ -790,7 +743,7 @@ impl Builder {
             lanes.push(Lane {
                 sid: primary.id.to_string(),
                 name: seed.name.clone(),
-                group: session_group(primary, &by_id),
+                group: groups.session_group(primary),
                 meta: format!(
                     "{} · {} · {message_count} msgs",
                     engines.join("/"),
@@ -984,6 +937,51 @@ mod tests {
             payload.to_json()["edges"][0],
             json!([1.0, 0, 1, "hub", "", "spawn"])
         );
+    }
+
+    fn agent(id: &str, name: &str, parent: Option<&str>, ext: Value) -> Session {
+        serde_json::from_value(json!({
+            "id": id, "name": name, "parent": parent, "tags": ["t"], "cwd": "/tmp",
+            "created_at": 1000.0, "ended_at": null, "lifecycle": "running",
+            "launch": {"kind": "agent", "engine": "claude", "profile": [], "model": null,
+                       "effort": null, "resume": null},
+            "ext": ext,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn lane_groups_follow_the_artifacts_cascade() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = [
+            agent(
+                "a1b2c3d4e5f60001",
+                "lead",
+                None,
+                json!({"artifacts": {"group": "ours"}}),
+            ),
+            agent(
+                "a1b2c3d4e5f60002",
+                "helper",
+                Some("a1b2c3d4e5f60001"),
+                json!({}),
+            ),
+            agent(
+                "a1b2c3d4e5f60003",
+                "edited",
+                None,
+                json!({"edit": {"group": "picked"}, "artifacts": {"group": "ours"}}),
+            ),
+        ];
+        let payload =
+            Builder::new(dir.path().into(), dir.path().into()).build(&sessions, 1.0, 1100.0);
+        let group = |name: &str| {
+            let lane = payload.lanes.iter().find(|lane| lane.name == name).unwrap();
+            lane.group.clone()
+        };
+        assert_eq!(group("lead"), "ours");
+        assert_eq!(group("helper"), "ours");
+        assert_eq!(group("edited"), "picked");
     }
 
     #[test]

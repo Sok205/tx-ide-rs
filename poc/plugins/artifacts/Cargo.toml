@@ -9,6 +9,7 @@ description = "tx-core plugin: artifacts (documents, diffs, tours), effort group
 [dependencies]
 tx-core.workspace = true
 tx-ui.workspace = true
+tx-edit = { path = "../edit" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

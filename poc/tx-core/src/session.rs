@@ -270,6 +270,17 @@ impl Session {
     ) -> Result<Option<T>, serde_json::Error> {
         self.ext.get(plugin).map(T::deserialize).transpose()
     }
+
+    /// [`ext`](Self::ext) for a record type that names its own key.
+    pub fn ext_of<T: ExtRecord>(&self) -> Result<Option<T>, serde_json::Error> {
+        self.ext(T::KEY)
+    }
+}
+
+/// A plugin's typed record in [`Session::ext`], stored under `KEY`. Implemented by the plugin
+/// that writes it, so readers in other crates name the type instead of the key.
+pub trait ExtRecord: serde::de::DeserializeOwned {
+    const KEY: &'static str;
 }
 
 /// `[A-Za-z0-9_-]+`, at most `MAX_NAME_BYTES`. The grammar keeps names safe as exact tmux targets

@@ -1748,6 +1748,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tx-core",
+ "tx-edit",
  "tx-ui",
  "uuid",
 ]
@@ -1934,6 +1935,7 @@ dependencies = [
  "regex",
  "serde_json",
  "tempfile",
+ "tx-artifacts",
  "tx-chat",
  "tx-core",
  "tx-ui",

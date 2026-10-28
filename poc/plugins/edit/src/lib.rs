@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tx_core::{
-    CoreError, Plugin, PluginError, Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
+    CoreError, ExtRecord, Plugin, PluginError, Registry, Session, SessionId, TxCore, Verb,
+    VerbError, VerbIo,
 };
 
 use tx_ui::editor::edit_session;
@@ -41,6 +42,20 @@ pub struct Ext {
     pub group: Option<String>,
 }
 
+impl ExtRecord for Ext {
+    const KEY: &'static str = PLUGIN_ID;
+}
+
+/// The operator's group override; `None` when unset, empty or malformed.
+pub fn group(session: &Session) -> Option<String> {
+    session
+        .ext_of::<Ext>()
+        .ok()
+        .flatten()
+        .and_then(|ext| ext.group)
+        .filter(|group| !group.is_empty())
+}
+
 const NO_SESSION: &str = "prefix+e: no tx session in this pane (view homes cannot be edited)";
 const NOT_MANAGED: &str = "prefix+e: the session in this pane is not tx-managed";
 
@@ -69,7 +84,7 @@ pub fn apply_edit(
         core.set_session_tags(id, tags)?;
     }
     let group = Some(group.trim().to_owned()).filter(|group| !group.is_empty());
-    if group != current_group(before) {
+    if group != self::group(before) {
         let group = group.map_or(serde_json::Value::Null, serde_json::Value::String);
         core.update_ext(id, PLUGIN_ID, |value| match value.as_object_mut() {
             Some(object) => {
@@ -79,14 +94,6 @@ pub fn apply_edit(
         })?;
     }
     Ok(())
-}
-
-fn current_group(session: &Session) -> Option<String> {
-    session
-        .ext::<Ext>(PLUGIN_ID)
-        .ok()
-        .flatten()
-        .and_then(|ext| ext.group)
 }
 
 pub struct EditSession;
@@ -116,7 +123,7 @@ impl Verb for EditSession {
             ui.display_status(client, NOT_MANAGED);
             return Ok(1);
         };
-        let group = current_group(&before).unwrap_or_default();
+        let group = self::group(&before).unwrap_or_default();
         let edited = edit_session(&before.name, &before.tags.join(","), &group, "")
             .map_err(|e| VerbError::Failed(format!("editor: {e}")))?;
         let Some(edited) = edited else {

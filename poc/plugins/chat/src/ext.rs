@@ -3,10 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use tx_core::{Effort, Launch, ListFilter, Session, SessionId, TxCore};
+use tx_core::{Effort, ExtRecord, Launch, ListFilter, Session, SessionId, TxCore};
 
 use crate::{CHAT_ID, ChatError, HISTORY_ID};
 
@@ -87,12 +86,20 @@ pub struct HistoryExt {
     pub rest: Map<String, Value>,
 }
 
-fn read_ext<T: DeserializeOwned + Default>(s: &Session, plugin: &str) -> Result<T, ChatError> {
-    match s.ext.get(plugin) {
+impl ExtRecord for ChatExt {
+    const KEY: &'static str = CHAT_ID;
+}
+
+impl ExtRecord for HistoryExt {
+    const KEY: &'static str = HISTORY_ID;
+}
+
+fn read_ext<T: ExtRecord + Default>(s: &Session) -> Result<T, ChatError> {
+    match s.ext.get(T::KEY) {
         None | Some(Value::Null) => Ok(T::default()),
         Some(value) => {
             serde_json::from_value(value.clone()).map_err(|error| ChatError::Malformed {
-                plugin: plugin.to_owned(),
+                plugin: T::KEY.to_owned(),
                 name: s.name.clone(),
                 reason: error.to_string(),
             })
@@ -102,11 +109,11 @@ fn read_ext<T: DeserializeOwned + Default>(s: &Session, plugin: &str) -> Result<
 
 /// Absent is the default; a value of the wrong shape is `Malformed`.
 pub fn chat_ext(s: &Session) -> Result<ChatExt, ChatError> {
-    read_ext(s, CHAT_ID)
+    read_ext(s)
 }
 
 pub fn history_ext(s: &Session) -> Result<HistoryExt, ChatError> {
-    read_ext(s, HISTORY_ID)
+    read_ext(s)
 }
 
 /// The record's own agent launch, else the one `ext.chat` remembers.

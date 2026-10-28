@@ -47,7 +47,9 @@ pub use plugin::{
     say,
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
-pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
+pub use session::{
+    Effort, ExtRecord, Launch, Lifecycle, RecordError, Session, SessionId, validate_name,
+};
 #[doc(hidden)]
 pub use store::SessionStore;
 /// Stable: they are the payload of `CoreError::Store`.

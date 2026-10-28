@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use tx_core::{Launch, Session};
+use tx_core::{ExtRecord, Launch, Session};
 
 use crate::tmux::Location;
 
@@ -155,23 +155,32 @@ pub struct Hooks {
     pub since: f64,
 }
 
+impl ExtRecord for Hooks {
+    const KEY: &'static str = HOOKS_KEY;
+}
+
 /// `ext["hooks"]`; a missing or malformed record reads as absent.
 pub fn hooks(session: &Session) -> Option<Hooks> {
-    session.ext(HOOKS_KEY).ok().flatten()
+    session.ext_of().ok().flatten()
 }
 
 fn hooks_since(session: &Session) -> Option<f64> {
     hooks(session).map(|hooks| hooks.since)
 }
 
+/// The part of `ext["spawn"]` (owned by the spawn plugin) the role reads.
 #[derive(Deserialize)]
 struct Kind {
     kind: Option<String>,
 }
 
+impl ExtRecord for Kind {
+    const KEY: &'static str = "spawn";
+}
+
 fn spawn_kind(session: &Session) -> Option<String> {
     session
-        .ext::<Kind>("spawn")
+        .ext_of::<Kind>()
         .ok()
         .flatten()
         .and_then(|spawn| spawn.kind)
