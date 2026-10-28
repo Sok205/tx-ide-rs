@@ -419,9 +419,9 @@ pub fn hook_state(session: &Session) -> HookState {
     hooks(session).map_or(HookState::Idle, |hooks| hooks.state)
 }
 
-struct LaneSeed {
+struct LaneSeed<'a> {
     name: String,
-    records: Vec<Session>,
+    records: Vec<&'a Session>,
     paths: HashSet<String>,
 }
 
@@ -477,8 +477,8 @@ impl Builder {
 
     /// Window-filtered agent records merged into lanes, same-name dead lanes disambiguated with
     /// a `@MonDD` suffix.
-    fn lane_seeds(&self, everyone: &[Session], cut: f64) -> Vec<LaneSeed> {
-        let mut records: Vec<&Session> = everyone
+    fn lane_seeds<'a>(&self, everyone: &'a [Session], cut: f64) -> Vec<LaneSeed<'a>> {
+        let mut records: Vec<&'a Session> = everyone
             .iter()
             .filter(|session| is_agent(session))
             .filter(|session| !session.tags.iter().any(|tag| tag == "temporary"))
@@ -498,12 +498,12 @@ impl Builder {
             });
             match merged {
                 Some(seed) => {
-                    seed.records.push(record.clone());
+                    seed.records.push(record);
                     seed.paths.extend(paths);
                 }
                 None => seeds.push(LaneSeed {
                     name: record.name.clone(),
-                    records: vec![record.clone()],
+                    records: vec![record],
                     paths,
                 }),
             }
@@ -513,7 +513,7 @@ impl Builder {
             *by_name.entry(seed.name.clone()).or_default() += 1;
         }
         for seed in &mut seeds {
-            if by_name[&seed.name] > 1 && !seed.records.iter().any(is_alive) {
+            if by_name[&seed.name] > 1 && !seed.records.iter().copied().any(is_alive) {
                 let created = seed.records[0].created_at;
                 seed.name = format!("{}@{}", seed.name, clock::month_day(created));
             }
@@ -523,7 +523,7 @@ impl Builder {
 
     /// All parsed rows, turn spans and peer messages of a lane's merged records, paths
     /// deduplicated.
-    fn lane_data(&mut self, seed: &LaneSeed) -> LaneData {
+    fn lane_data(&mut self, seed: &LaneSeed<'_>) -> LaneData {
         let mut data = LaneData {
             rows: Vec::new(),
             turns: Vec::new(),
@@ -571,7 +571,7 @@ impl Builder {
                 .iter()
                 .flat_map(|record| record.tags.iter().map(String::as_str))
                 .collect();
-            let live = records.iter().any(is_alive);
+            let live = records.iter().copied().any(is_alive);
             let primary = records
                 .iter()
                 .max_by(|left, right| {
@@ -608,7 +608,11 @@ impl Builder {
                     .iter()
                     .map(|record| record.created_at)
                     .fold(f64::MAX, f64::min);
-                let last = records.iter().map(activity_at).fold(f64::MIN, f64::max);
+                let last = records
+                    .iter()
+                    .copied()
+                    .map(activity_at)
+                    .fold(f64::MIN, f64::max);
                 times = vec![first, last.max(first + 120.0)];
             }
             let segments = |gap_seconds: f64| -> Vec<(f64, f64)> {

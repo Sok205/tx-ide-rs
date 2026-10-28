@@ -1,6 +1,8 @@
 //! Picker row rendering: port of main's `render.rs` picker feed and `palette.rs` tag colours.
 //! Pure formatting; every function takes the records and `now`, nothing reads the clock.
 
+use std::fmt::Write;
+
 use serde::{Deserialize, Serialize};
 
 use tx_core::{ExtRecord, Launch, Session};
@@ -258,7 +260,8 @@ fn picker_visual(row: &Row<'_>, namew: i64, now: f64) -> String {
 }
 
 /// Every whitespace-separated term of `query` appears, case-insensitively, in the row.
-pub fn picker_matches(row: &Row<'_>, query: &str) -> bool {
+/// `terms`: the query lowercased and split once per feed, not per row.
+pub fn picker_matches(row: &Row<'_>, terms: &[String]) -> bool {
     let haystack = format!(
         "{}{} {} {}",
         row.session.name,
@@ -267,10 +270,7 @@ pub fn picker_matches(row: &Row<'_>, query: &str) -> bool {
         role_of(row.session)
     )
     .to_lowercase();
-    query
-        .to_lowercase()
-        .split_whitespace()
-        .all(|term| haystack.contains(term))
+    terms.iter().all(|term| haystack.contains(term.as_str()))
 }
 
 pub const PICKER_NUMBER_W: usize = 2;
@@ -278,24 +278,29 @@ pub const PICKER_NUMBER_W: usize = 2;
 /// The fzf picker feed, newest activity first (stable for ties), numbered 1..n ahead of the
 /// visual so the picker's digits address the rows as shown.
 pub fn picker_rows(rows: &[Row<'_>], namew: i64, now: f64) -> String {
-    let mut ordered: Vec<&Row<'_>> = rows.iter().collect();
-    ordered.sort_by(|a, b| activity_at(b.session).total_cmp(&activity_at(a.session)));
-    ordered
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| {
-            // One fzf row: `name \t plain_chips \t L \t target \t number visual`.
-            let number = index + 1;
-            format!(
-                "{}\t{}\tL\t{}\t{ACCENT_ANSI}{number:>PICKER_NUMBER_W$}{RESET_FG} {}",
-                row.session.name,
-                chips(&row.session.tags),
-                row.target,
-                picker_visual(row, namew, now)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    // Keyed once: the activity time parses `ext.hooks`.
+    let mut ordered: Vec<(f64, &Row<'_>)> = rows
+        .iter()
+        .map(|row| (activity_at(row.session), row))
+        .collect();
+    ordered.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut out = String::new();
+    for (index, (_, row)) in ordered.into_iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        // One fzf row: `name \t plain_chips \t L \t target \t number visual`.
+        let number = index + 1;
+        let _ = write!(
+            out,
+            "{}\t{}\tL\t{}\t{ACCENT_ANSI}{number:>PICKER_NUMBER_W$}{RESET_FG} {}",
+            row.session.name,
+            chips(&row.session.tags),
+            row.target,
+            picker_visual(row, namew, now)
+        );
+    }
+    out
 }
 
 #[cfg(test)]

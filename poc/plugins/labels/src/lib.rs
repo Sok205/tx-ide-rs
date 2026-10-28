@@ -2,6 +2,7 @@
 //! feeds tmux and fzf call (`_pane-info`, `_tmux-name`, `_relabel`, `_pane-label`), plus the
 //! `keys/labels.tmux` fragment: prefix+s session tree, pane-border labels.
 
+use std::fmt::Write;
 use std::sync::Arc;
 
 use tx_core::say;
@@ -205,10 +206,11 @@ fn nested_label(core: &TxCore, inner: &str, now: f64) -> String {
         session.name
     );
     for tag in &session.tags {
-        label.push_str(&format!(
+        let _ = write!(
+            label,
             " #[fg={},#{{?pane_active,bold,nobold}}][{tag}]#[default]",
             tag_hex(tag)
-        ));
+        );
     }
     label.push_str(&state_mark(hooks.as_ref(), now));
     label

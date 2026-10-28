@@ -257,6 +257,11 @@ fn feed(
     let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::other)?;
     let targets = ui.live_targets();
     let attachments = ui.attachment_map();
+    let terms: Vec<String> = query
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
     let rows: Vec<Row<'_>> = sessions
         .iter()
         .filter(|session| {
@@ -272,7 +277,7 @@ fn feed(
                 .find(|(name, _)| *name == session.name)
                 .map_or(&[][..], |(_, locations)| locations.as_slice()),
         })
-        .filter(|row| picker_matches(row, query))
+        .filter(|row| picker_matches(row, &terms))
         .collect();
     Ok(format!("{}\n", picker_rows(&rows, namew, now())))
 }
