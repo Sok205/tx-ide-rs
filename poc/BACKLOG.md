@@ -24,10 +24,11 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
   Add `TxCore::sessions(&ListFilter) -> Result<Vec<Session>, CoreError>` over `store.all()`.
   13 callers: artifacts verbs/menu/views, picker `running`, labels, hooks status, tutor, chat
   ops (2) / ext / history_verbs, menu data, timeline `load_sessions`.
-- [ ] **H3 bug.** hooks/install.rs is an older fork of chat/install.rs: fixed temp name, no
-  fsync, a same-second backup overwrites the last. Move chat's installer (plus `read_payload`,
-  `home_dir`, `shell_quote`) to `tx_core::agent_hooks`; replace the `_history-ingest` special
-  case with an `Entries` field. Behaviour: hooks' uninstall message wording.
+- [x] (43aff2d) **H3 bug.** hooks/install.rs is an older fork of chat/install.rs: fixed temp name, no
+  fsync, a same-second backup overwrites the last. Chat's installer, `read_payload` and
+  `home_dir` moved to `tx_core::agent_hooks`; `shell_quote` to `tx_core::tmux` (tx-ui
+  re-exports); the `_history-ingest` special case dropped (its entries have empty events).
+  Behaviour: hooks' uninstall message names the sidecar.
 - [x] (3ac1400) **H4.** `failed(impl Display) -> VerbError` copied 6 times plus 18 inline `map_err`s.
   Add `VerbError::failed` in tx-core plugin.rs.
 - [x] (3ac1400) **H5.** stdout write helpers copied 7 times (`write_out`, `say`, `write_failed`) plus 3
