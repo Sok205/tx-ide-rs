@@ -143,7 +143,7 @@ missing source file (E7, I11 half).
   messages.rs dead `build_envelope` + tag constants, timeline rows.rs regex). One
   `tx_core::messaging::Envelope` with `wrap` / `parse`. Confirm with a `<from-user>hi</from-user>`
   chat-messages test first.
-- [ ] **I1 / T2.** The hooks state is a string in 6 crates, `ext["hooks"]` parsed 6 ways,
+- [x] (6474588) **I1 / T2.** The hooks state is a string in 6 crates, `ext["hooks"]` parsed 6 ways,
   while plugins/hooks has `State`. One serde `HookState` + `Hooks { state, since }` in tx-ui
   (re-exported by hooks) or tx-core; one shared `activity_at` (chat, timeline copies).
 - [ ] **T3.** `ext` is read by string key around the owners' types (`ext.edit.group` in
@@ -276,6 +276,6 @@ missing source file (E7, I11 half).
 ## Decisions needed
 
 - H20: one "session gone" rule for kill and refresh?
-- Hooks state type: tx-ui (hooks gains a tx-ui dependency) or tx-core?
+- Hooks state type: chose tx-ui (hooks gained a tx-ui dependency).
 - H1, H3, M4, E2, E8, Q3/I9, M18, L15 change observable output (command strings in tests, an uninstall message, env
   order); default is to take them as bug fixes unless told otherwise.
