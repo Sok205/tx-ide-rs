@@ -11,17 +11,16 @@ use crate::tmux::{Tmux, TmuxError};
 pub const DELIVERY_PAUSE: Duration = Duration::from_millis(300);
 
 const USER_TAG: &str = "from-user";
-/// `from-claude` is the legacy name of the agent tag; either opens or closes an agent envelope.
-const AGENT_TAGS: [&str; 2] = ["from-agent", "from-claude"];
+const AGENT_TAG: &str = "from-agent";
+/// The agent tag's old name: it and [`AGENT_TAG`] open and close an agent envelope alike.
+const LEGACY_AGENT_TAG: &str = "from-claude";
+const AGENT_TAGS: [&str; 2] = [AGENT_TAG, LEGACY_AGENT_TAG];
 
 /// `sender: None` is the user; `Some(name)` is another agent, named by its session name.
 pub fn build_envelope(sender: Option<&str>, text: &str) -> String {
     match sender {
         None => format!("<{USER_TAG}>{text}</{USER_TAG}>"),
-        Some(name) => format!(
-            "<{tag} session=\"{name}\">{text}</{tag}>",
-            tag = AGENT_TAGS[0]
-        ),
+        Some(name) => format!("<{AGENT_TAG} session=\"{name}\">{text}</{AGENT_TAG}>"),
     }
 }
 
@@ -39,10 +38,10 @@ pub enum Sender<'a> {
 /// envelope that names its origin session, which older writers produced.
 pub fn parse_envelope(text: &str) -> Option<(Sender<'_>, &str)> {
     let rest = text.strip_prefix('<')?;
-    let (family, rest): (&[&str], &str) =
+    let (is_user, family, rest): (bool, &[&str], &str) =
         match AGENT_TAGS.iter().find_map(|tag| rest.strip_prefix(tag)) {
-            Some(rest) => (&AGENT_TAGS, rest),
-            None => (&[USER_TAG], rest.strip_prefix(USER_TAG)?),
+            Some(rest) => (false, &AGENT_TAGS, rest),
+            None => (true, &[USER_TAG], rest.strip_prefix(USER_TAG)?),
         };
     let (session, rest) = match rest.strip_prefix(" session=\"") {
         Some(rest) => {
@@ -57,7 +56,7 @@ pub fn parse_envelope(text: &str) -> Option<(Sender<'_>, &str)> {
             .strip_suffix(tag)?
             .strip_suffix("</")
     })?;
-    let sender = if family == [USER_TAG] {
+    let sender = if is_user {
         Sender::User { origin: session }
     } else {
         Sender::Agent(session?)
