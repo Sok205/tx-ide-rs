@@ -34,7 +34,11 @@ pub fn outer_client(ui: &Ui, client: &str) -> Option<(String, String)> {
 /// A client whose tty is some pane's tty is nested in that pane, so the walk ascends to the most
 /// recently active client of that pane's session until the tty belongs to no pane. `None` when
 /// the chain ends without a terminal client.
-pub fn walk_to_outer_client(clients: &str, panes: &str, client: &str) -> Option<(String, String)> {
+pub(crate) fn walk_to_outer_client(
+    clients: &str,
+    panes: &str,
+    client: &str,
+) -> Option<(String, String)> {
     let clients: Vec<(&str, &str, &str, i64)> = clients
         .lines()
         .filter_map(|line| {
@@ -75,7 +79,7 @@ pub fn pane_hosting_client(ui: &Ui, client: &str) -> Option<String> {
 }
 
 /// The argv of a `width`×`height` popup centred on `client`, in the picker's palette.
-pub fn popup_args(
+pub(crate) fn popup_args(
     client: &str,
     width: &str,
     height: &str,
@@ -129,7 +133,7 @@ pub fn display_popup(
 
 /// The popup's attach command: this server's socket, `$TMUX` cleared, no fallback shell, so
 /// detaching closes the popup.
-pub fn popup_attach_command(socket: &str, session: &str) -> String {
+pub(crate) fn popup_attach_command(socket: &str, session: &str) -> String {
     format!(
         "TMUX= tmux -S {} attach -t {}",
         shell_quote(socket),

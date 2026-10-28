@@ -287,7 +287,7 @@ impl Ui {
 
 /// `(inner session, hosting pane)` for every pane whose tty is a client's tty. A pane hosting
 /// its own session is dropped.
-pub fn parse_attachment_join(clients: &str, panes: &str) -> Vec<(String, Location)> {
+pub(crate) fn parse_attachment_join(clients: &str, panes: &str) -> Vec<(String, Location)> {
     let mut session_by_tty: HashMap<&str, &str> = HashMap::new();
     for line in clients.lines() {
         if let Some((tty, session)) = line.split_once('\t')

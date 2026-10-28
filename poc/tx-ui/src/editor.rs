@@ -60,21 +60,21 @@ pub enum Key {
 
 /// The editing mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
+pub(crate) enum Mode {
     Normal,
     Insert,
 }
 
 /// How the form finished.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     Cancel,
     /// `(name, tags, group)` as typed — the name is not stripped.
     Save(String, String, String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Style {
+pub(crate) enum Style {
     /// Inactive field: the palette's foreground.
     Normal,
     /// Active label: the palette accent, bold.
@@ -110,7 +110,7 @@ impl Style {
 
 /// One `addstr` onto the erased screen.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Draw {
+pub(crate) struct Draw {
     pub row: usize,
     pub col: usize,
     pub text: String,
@@ -119,7 +119,7 @@ pub struct Draw {
 
 /// A full repaint: the draws in order and the cursor position (`screen.move`), if any.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Frame {
+pub(crate) struct Frame {
     pub draws: Vec<Draw>,
     pub cursor: Option<(usize, usize)>,
 }
@@ -158,7 +158,8 @@ impl Frame {
     }
 
     /// The screen text as `capture-pane` shows it: one line per row, trailing blanks trimmed.
-    pub fn rows(&self, height: usize, width: usize) -> Vec<String> {
+    #[cfg(test)]
+    fn rows(&self, height: usize, width: usize) -> Vec<String> {
         let mut grid = vec![vec![Some(' '); width]; height];
         for draw in &self.draws {
             let mut col = draw.col;
@@ -370,7 +371,7 @@ fn is_printable(character: char) -> bool {
 /// The form state (`values`, `positions`, `offsets`, `active`, `error` of `_form`), plus the
 /// group the resolver derives when there is no override (the group field's placeholder).
 #[derive(Clone, Debug)]
-pub struct Form {
+pub(crate) struct Form {
     values: [Vec<char>; 3],
     positions: [usize; 3],
     offsets: [usize; 3],
