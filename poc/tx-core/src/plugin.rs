@@ -183,10 +183,12 @@ fn validate_resource_name(name: &str) -> Result<(), PluginError> {
     }
 }
 
+/// name → (plugin id, verb).
+type VerbTable = BTreeMap<String, (String, Arc<dyn Verb>)>;
+
 /// The host side, kept in `TxCore`.
 #[derive(Default)]
 pub(crate) struct Host {
-    /// name → (plugin id, verb)
     verbs: VerbTable,
     /// Manifest order, then name order within a plugin.
     resources: Vec<Resource>,
@@ -243,8 +245,6 @@ fn load(
     }
     Ok(loaded)
 }
-
-type VerbTable = BTreeMap<String, (String, Arc<dyn Verb>)>;
 
 fn insert_verb(
     table: &mut VerbTable,

@@ -24,6 +24,13 @@ pub enum ReadError {
     IdMismatch { found: String },
 }
 
+impl ReadError {
+    /// The file is gone: a record deleted between a scan and its read.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Io(error) if error.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("{}: {source}", path.display())]
@@ -112,7 +119,7 @@ impl SessionStore {
         let path = self.path(id);
         match read(&path, id) {
             Ok(session) => Ok(Some(session)),
-            Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) if error.is_not_found() => Ok(None),
             Err(source) => Err(StoreError::Unreadable {
                 file: file_name(&path),
                 source,
@@ -160,7 +167,7 @@ impl SessionStore {
             match read(&entry.path(), &id) {
                 Ok(session) => sessions.push(session),
                 Err(ReadError::NotAFile) => {}
-                Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) if error.is_not_found() => {}
                 Err(source) => {
                     return Err(StoreError::Unreadable {
                         file: name.to_owned(),

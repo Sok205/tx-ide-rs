@@ -185,7 +185,8 @@ fn line(ts: f64, actor: &str, type_: &str, id: &str, name: &str, msg: &str) -> S
     line
 }
 
-/// Compact JSON + newline, `msg` trimmed on a char boundary so the line fits `PIPE_BUF`.
+/// Compact JSON + newline, `msg` trimmed on a char boundary so the line fits `PIPE_BUF` (when
+/// the other fields alone exceed it, `msg` is emptied and the line is still longer).
 pub fn encode(ts: f64, actor: &str, type_: &str, id: &str, name: &str, msg: &str) -> Vec<u8> {
     let full = line(ts, actor, type_, id, name, msg);
     if full.len() <= PIPE_BUF {

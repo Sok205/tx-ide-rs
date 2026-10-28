@@ -11,7 +11,7 @@ use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
 use crate::profile::{Profile, Profiles};
 use crate::session::{Effort, Launch, Lifecycle, Session, SessionId, validate_name};
 use crate::store::{SessionStore, io_error};
-use crate::tmux::{Live, Tmux, TmuxError, exact};
+use crate::tmux::{Live, LiveTable, Tmux, TmuxError, exact};
 
 pub const SESSIONS_DIR: &str = "sessions";
 pub const LOCKS_DIR: &str = "locks";
@@ -726,11 +726,15 @@ impl TxCore {
         self.emitting(|| {
             let _session = self.lock_session(id)?;
             let session = self.get_session(id)?;
-            if session.lifecycle.is_terminal() || self.tmux.list_live()?.contains(id) {
+            if session.lifecycle.is_terminal() {
                 return Ok((RefreshResult::Unchanged(session), None));
             }
-            let (session, exited) = self.mark_exited(session)?;
-            Ok((RefreshResult::Exited(session), Some(exited)))
+            Ok(
+                match self.exit_unless_live(session, &self.tmux.list_live()?)? {
+                    (session, None) => (RefreshResult::Unchanged(session), None),
+                    (session, exited) => (RefreshResult::Exited(session), exited),
+                },
+            )
         })
     }
 
@@ -750,20 +754,32 @@ impl TxCore {
                 let _lock = self.lock_session(&session.id)?;
                 // Re-load under the lock: another process may have stopped it meanwhile.
                 match self.store.load(&session.id)? {
-                    Some(current) if current.lifecycle == Lifecycle::Running => {
-                        Some(self.mark_exited(current)?)
-                    }
-                    _ => None,
+                    Some(current) => self.exit_unless_live(current, &live)?,
+                    None => continue,
                 }
             };
             // Emitted per record, right after its lock is released: a later failure cannot
             // swallow an exit that was already saved, and sinks see each exit as it happens.
-            if let Some((session, exited)) = exited {
+            if let (session, Some(exited)) = exited {
                 self.emit([exited]);
                 changed.push(session);
             }
         }
         Ok(changed)
+    }
+
+    /// A running record that `live` does not list is marked `Exited` (with its event); anything
+    /// else comes back unchanged. The caller holds the session lock.
+    fn exit_unless_live(
+        &self,
+        session: Session,
+        live: &LiveTable,
+    ) -> Result<(Session, Option<Event>), CoreError> {
+        if session.lifecycle.is_terminal() || live.contains(&session.id) {
+            return Ok((session, None));
+        }
+        let (session, exited) = self.mark_exited(session)?;
+        Ok((session, Some(exited)))
     }
 
     /// Saves the record as `Exited`; the caller emits the returned event once its lock is gone.
@@ -786,9 +802,7 @@ impl TxCore {
     }
 
     pub fn get_execution_location(&self, id: &SessionId) -> Result<ExecutionLocation, CoreError> {
-        if self.get_session(id)?.lifecycle.is_terminal() {
-            return Err(CoreError::NotRunning(id.clone()));
-        }
+        self.running_session(id)?;
         let live = self.live_or_not_running(id)?;
         Ok(ExecutionLocation {
             socket: self.tmux.socket().to_owned(),
@@ -810,6 +824,15 @@ impl TxCore {
         }
     }
 
+    /// The record, or `NotRunning` when it has ended.
+    fn running_session(&self, id: &SessionId) -> Result<Session, CoreError> {
+        let session = self.get_session(id)?;
+        if session.lifecycle.is_terminal() {
+            return Err(CoreError::NotRunning(id.clone()));
+        }
+        Ok(session)
+    }
+
     fn live_or_not_running(&self, id: &SessionId) -> Result<Live, CoreError> {
         self.tmux
             .is_live(id)?
@@ -821,10 +844,7 @@ impl TxCore {
     pub fn stop_session(&self, id: &SessionId) -> Result<Session, CoreError> {
         self.emitting(|| {
             let _session = self.lock_session(id)?;
-            let session = self.get_session(id)?;
-            if session.lifecycle.is_terminal() {
-                return Err(CoreError::NotRunning(id.clone()));
-            }
+            let session = self.running_session(id)?;
             let (session, ended) = match self.tmux.is_live(id)? {
                 None => self.mark_exited(session)?,
                 Some(live) => {
@@ -841,6 +861,7 @@ impl TxCore {
     pub fn forget_session(&self, id: &SessionId) -> Result<bool, CoreError> {
         self.emitting(|| {
             let _session = self.lock_session(id)?;
+            // An unreadable record must stay forgettable: its name is then just unknown.
             let name = self
                 .store
                 .load(id)
@@ -877,10 +898,7 @@ impl TxCore {
         };
         self.emitting(|| {
             let _session = self.lock_session(to)?;
-            let recipient = self.get_session(to)?;
-            if recipient.lifecycle.is_terminal() {
-                return Err(CoreError::NotRunning(to.clone()));
-            }
+            let recipient = self.running_session(to)?;
             let live = self.live_or_not_running(to)?;
             let envelope = self.envelope_for(&recipient, sender_name.as_deref(), text);
             deliver(&self.tmux, &live.pane_target, &envelope, DELIVERY_PAUSE)?;

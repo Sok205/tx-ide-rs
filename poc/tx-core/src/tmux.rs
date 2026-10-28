@@ -219,10 +219,8 @@ impl Tmux {
         })
     }
 
-    /// tmux parses its argv as a command sequence: an argument ending in `;` ends the command
-    /// (so a `Process` arg `x;` followed by `kill-server` would run `kill-server` as a tmux
-    /// command), and a trailing `\;` loses one backslash. Every user-controlled argument is
-    /// escaped accordingly.
+    /// Every user-controlled argument goes through [`escape_trailing_semicolon`]: otherwise a
+    /// `Process` arg `x;` followed by `kill-server` would run `kill-server` as a tmux command.
     pub(crate) fn new_session_args(
         name: &str,
         cwd: &Path,
@@ -287,10 +285,8 @@ impl Tmux {
         self.run(&["rename-session", "-t", target, "--", new_name])
     }
 
-    /// Types `text` verbatim into `pane` (`-l`: no key-name lookup, `--`: no option parsing).
-    /// tmux still reads a trailing `;` as its command separator and drops it, and `\;` is
-    /// unescaped only at the end of an argument; so the text is sent without its trailing
-    /// semicolons, then one `\;` per semicolon stripped.
+    /// Types `text` verbatim into `pane` (`-l`: no key-name lookup, `--`: no option parsing),
+    /// in the chunks [`literal_chunks`] splits off so tmux keeps trailing semicolons.
     pub fn send_keys_literal(&self, pane: &str, text: &str) -> Result<(), TmuxError> {
         for chunk in literal_chunks(text) {
             self.run(&["send-keys", "-t", pane, "-l", "--", chunk])?;

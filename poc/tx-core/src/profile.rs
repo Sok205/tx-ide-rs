@@ -124,14 +124,17 @@ impl Profiles {
                 ordered.push(role);
             }
         }
-        let mut bodies = Vec::new();
+        let mut text = String::new();
         let mut skills: Vec<String> = Vec::new();
         for role in ordered {
             for path in self.role_files(role)? {
                 let (granted, body) = read_role(&path)?;
                 let body = body.trim();
                 if !body.is_empty() {
-                    bodies.push(body.to_owned());
+                    if !text.is_empty() {
+                        text.push_str("\n\n");
+                    }
+                    text.push_str(body);
                 }
                 for skill in granted {
                     if !skills.contains(&skill) {
@@ -144,10 +147,7 @@ impl Profiles {
             .iter()
             .map(|skill| self.skill_dir(skill))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(ResolvedProfile {
-            text: bodies.join("\n\n"),
-            skill_dirs,
-        })
+        Ok(ResolvedProfile { text, skill_dirs })
     }
 
     /// The base file from the last dir holding `<role>.md`, then every dir's `<role>.local.md`.
@@ -222,7 +222,7 @@ fn read_role(path: &Path) -> Result<(Vec<String>, String), RoleError> {
 }
 
 /// Every `skills: [a, b]` line in a frontmatter block, at any indent, in order.
-pub(crate) fn skills_in(lines: &[&str]) -> Vec<String> {
+fn skills_in(lines: &[&str]) -> Vec<String> {
     lines
         .iter()
         .filter_map(|line| {
