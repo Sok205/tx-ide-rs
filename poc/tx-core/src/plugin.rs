@@ -108,15 +108,23 @@ pub enum VerbError {
     Core(#[from] CoreError),
     #[error("{0}")]
     Failed(String),
+    /// Any other typed error, kept whole so its source chain survives.
+    #[error(transparent)]
+    Other(Box<dyn std::error::Error + Send + Sync>),
     /// A usage mistake: the host writes the text to stderr and exits 2.
     #[error("{0}")]
     Usage(String),
 }
 
 impl VerbError {
-    /// Any failure, reported by its message: `.map_err(VerbError::failed)`.
+    /// A failure reported by its message alone; typed errors go through [`other`](Self::other).
     pub fn failed(error: impl std::fmt::Display) -> Self {
         Self::Failed(error.to_string())
+    }
+
+    /// A typed failure, kept as the source: `.map_err(VerbError::other)`.
+    pub fn other(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Other(Box::new(error))
     }
 
     pub fn usage(text: impl Into<String>) -> Self {

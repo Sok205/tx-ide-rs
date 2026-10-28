@@ -217,7 +217,7 @@ impl Nav<'_> {
                 let artifact = self
                     .artifacts
                     .require(&artifact_id)
-                    .map_err(VerbError::failed)?;
+                    .map_err(VerbError::other)?;
                 Some(self.controlling_session(&artifact))
             }
             None => match (&record.launch, &record.parent) {
@@ -245,7 +245,7 @@ impl Nav<'_> {
                     &listing.title,
                     &tx_ui::txc::shell(self.core, &[PICK_VERB, session, client])?,
                 )
-                .map_err(VerbError::failed)?;
+                .map_err(VerbError::other)?;
                 Ok(0)
             }
             Some(None) => {
@@ -330,7 +330,7 @@ impl Nav<'_> {
         )?;
         self.ui
             .run_shell_background(&format!("{command} || true"))
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         Ok(0)
     }
 
@@ -344,7 +344,7 @@ impl Nav<'_> {
                 .map_err(VerbError::from)
         };
         if target.kind == "session" {
-            return stop(&target.id.parse().map_err(VerbError::failed)?);
+            return stop(&target.id.parse().map_err(VerbError::other)?);
         }
         for view in self.live() {
             if bound_artifact(&view).as_deref() == Some(target.id.as_str()) {
@@ -354,7 +354,7 @@ impl Nav<'_> {
         self.artifacts
             .set_archived(&target.id, record.id.as_str(), true)
             .map(drop)
-            .map_err(VerbError::failed)
+            .map_err(VerbError::other)
     }
 
     fn client_width(&self, client: &str) -> usize {
@@ -431,7 +431,7 @@ impl Nav<'_> {
                 let artifact = self
                     .artifacts
                     .require(artifact_id)
-                    .map_err(VerbError::failed)?;
+                    .map_err(VerbError::other)?;
                 let opener = Opener {
                     id: Some(record.id.clone()),
                     tags: record.tags.clone(),
@@ -519,7 +519,7 @@ impl Nav<'_> {
                     target,
                     owner.ok().as_ref(),
                 )
-                .map_err(VerbError::failed)?;
+                .map_err(VerbError::other)?;
                 Ok(0)
             }
             Mode::Attach => self.rehost(session, client, target),
@@ -541,7 +541,7 @@ impl Nav<'_> {
         };
         self.ui
             .respawn_pane(&pane, &self.ui.nest_attach_command(&target.name))
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         Ok(0)
     }
 

@@ -148,14 +148,14 @@ fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), Ver
         // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
         let project = project_of(dir)?.to_string_lossy().replace('#', "##");
         ui.run(&["new-session", "-d", "-s", view, "-c", &project, &command])
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
     } else if ui
         .display_message("#{pane_dead}", Some(&format!("={view}:")))
         .as_deref()
         == Some("1")
     {
         ui.respawn_pane(&format!("={view}:"), &command)
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
     }
     ui.run(&[
         "set-window-option",
@@ -164,7 +164,7 @@ fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), Ver
         "remain-on-exit",
         "on",
     ])
-    .map_err(VerbError::failed)?;
+    .map_err(VerbError::other)?;
     let dir = dir.to_string_lossy();
     for (option, value) in [
         (VIEW_OPTION, "1"),
@@ -172,7 +172,7 @@ fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), Ver
         ("status", "off"),
     ] {
         ui.set_session_option(view, option, value)
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
     }
     Ok(())
 }
@@ -280,9 +280,9 @@ fn show(
         return Ok(0);
     };
     ui.set_session_option(view, RETURN_OPTION, &return_to)
-        .map_err(VerbError::failed)?;
+        .map_err(VerbError::other)?;
     ui.run(&["switch-client", "-c", &client, "-t", &format!("={view}")])
-        .map_err(VerbError::failed)?;
+        .map_err(VerbError::other)?;
     Ok(0)
 }
 

@@ -210,7 +210,7 @@ pub fn tags_of(tags: &str) -> Vec<String> {
 /// The session the answers describe: COMMON plus the picked role, the model only when it is
 /// not the engine's default.
 pub fn create_options(reply: &Reply) -> Result<CreateOptions, VerbError> {
-    let effort: Effort = reply.effort.parse().map_err(VerbError::failed)?;
+    let effort: Effort = reply.effort.parse().map_err(VerbError::other)?;
     let mut roles = vec![COMMON_ROLE.to_owned()];
     if reply.role != NO_ROLE {
         roles.push(reply.role.clone());

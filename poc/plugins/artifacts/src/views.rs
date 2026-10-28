@@ -77,7 +77,7 @@ pub fn open(
     let name = view_name(core, artifact)?;
     let Opened { cwd, args, cleanup } = artifacts
         .open(&artifact.id, &actor)
-        .map_err(VerbError::failed)?;
+        .map_err(VerbError::other)?;
     let launch = LaunchOptions::process(editor, args);
     let mut options = CreateOptions::new(name, cwd, launch).tags(tags);
     if let Some(parent) = &opener.id {
@@ -97,13 +97,13 @@ pub fn open(
     if let Some(cleanup) = cleanup {
         artifacts
             .record_cleanup(&artifact.id, id.as_str(), cleanup)
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         // An editor that died at once ended before the step was recorded, so the end sink found
         // nothing to run: run it now (close is idempotent).
         if core.get_session(&id)?.lifecycle.is_terminal() {
             artifacts
                 .close(&artifact.id, id.as_str())
-                .map_err(VerbError::failed)?;
+                .map_err(VerbError::other)?;
         }
     }
     Ok(id)

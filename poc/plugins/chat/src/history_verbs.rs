@@ -373,7 +373,7 @@ impl Verb for HistoryHooks {
             [cmd] if cmd == "install" => self.install(io, false),
             [cmd, flag] if cmd == "install" && flag == "--dry-run" => self.install(io, true),
             [cmd] if cmd == "uninstall" => {
-                uninstall(&home_dir()?, &HISTORY_ENTRIES, io.stdout).map_err(VerbError::failed)?;
+                uninstall(&home_dir()?, &HISTORY_ENTRIES, io.stdout).map_err(VerbError::other)?;
                 Ok(0)
             }
             _ => Err(VerbError::usage(HOOKS_USAGE)),
@@ -386,7 +386,7 @@ impl HistoryHooks {
         let exe =
             std::env::current_exe().map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
         install(&home_dir()?, &exe, &HISTORY_ENTRIES, dry_run, io.stdout)
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         Ok(0)
     }
 }

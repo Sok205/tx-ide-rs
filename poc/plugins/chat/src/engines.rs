@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use tx_core::{Effort, EngineAdapter, LaunchPlan, LaunchRequest, Profile, Profiles, TxCore};
 
-use crate::ChatError;
 use crate::ext::AgentLaunch;
+use crate::{ChatError, io_err};
 
 pub const BUNDLE_TRANSCRIPT_NAME: &str = "transcript.jsonl";
 const TRANSCRIPT_SUFFIX: &str = ".jsonl";
@@ -174,7 +174,7 @@ pub fn prepare_chat_for_cwd(
     }
     let target = loc.claude_transcript(chat_id, &dst_cwd.to_string_lossy());
     if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(io(parent))?;
+        std::fs::create_dir_all(parent).map_err(io_err(parent))?;
     }
     copy2_if_absent(&source, &target)?;
     let sidecars = source.with_extension("");
@@ -184,41 +184,34 @@ pub fn prepare_chat_for_cwd(
     Ok(())
 }
 
-fn io(path: &Path) -> impl FnOnce(std::io::Error) -> ChatError + '_ {
-    move |source| ChatError::Io {
-        path: path.to_owned(),
-        source,
-    }
-}
-
 /// Content, permission bits, and access / modification times; an existing target is kept.
 fn copy2_if_absent(source: &Path, target: &Path) -> Result<(), ChatError> {
     if target.symlink_metadata().is_ok() {
         return Ok(());
     }
-    std::fs::copy(source, target).map_err(io(target))?;
+    std::fs::copy(source, target).map_err(io_err(target))?;
     copy_times(source, target)
 }
 
 fn copy_times(source: &Path, target: &Path) -> Result<(), ChatError> {
-    let metadata = std::fs::metadata(source).map_err(io(source))?;
+    let metadata = std::fs::metadata(source).map_err(io_err(source))?;
     let times = std::fs::FileTimes::new()
-        .set_accessed(metadata.accessed().map_err(io(source))?)
-        .set_modified(metadata.modified().map_err(io(source))?);
+        .set_accessed(metadata.accessed().map_err(io_err(source))?)
+        .set_modified(metadata.modified().map_err(io_err(source))?);
     let file = std::fs::File::options()
         .write(!metadata.is_dir())
         .read(metadata.is_dir())
         .open(target)
-        .map_err(io(target))?;
-    file.set_times(times).map_err(io(target))
+        .map_err(io_err(target))?;
+    file.set_times(times).map_err(io_err(target))
 }
 
 /// Recursive merge into an existing tree, symlinks followed; only missing entries are copied.
 fn copytree(source: &Path, target: &Path) -> Result<(), ChatError> {
     let created = target.symlink_metadata().is_err();
-    std::fs::create_dir_all(target).map_err(io(target))?;
-    for entry in std::fs::read_dir(source).map_err(io(source))? {
-        let entry = entry.map_err(io(source))?;
+    std::fs::create_dir_all(target).map_err(io_err(target))?;
+    for entry in std::fs::read_dir(source).map_err(io_err(source))? {
+        let entry = entry.map_err(io_err(source))?;
         let from = entry.path();
         let to = target.join(entry.file_name());
         if from.is_dir() {
@@ -230,8 +223,10 @@ fn copytree(source: &Path, target: &Path) -> Result<(), ChatError> {
     if !created {
         return Ok(());
     }
-    let permissions = std::fs::metadata(source).map_err(io(source))?.permissions();
-    std::fs::set_permissions(target, permissions).map_err(io(target))?;
+    let permissions = std::fs::metadata(source)
+        .map_err(io_err(source))?
+        .permissions();
+    std::fs::set_permissions(target, permissions).map_err(io_err(target))?;
     copy_times(source, target)
 }
 
@@ -260,7 +255,7 @@ pub fn agent_plan(
     let resolved = Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone())
         .resolve(&launch.profile)
         .map_err(tx_core::CoreError::from)?;
-    let profile = Profile::write(resolved, profile_file).map_err(io(profile_file))?;
+    let profile = Profile::write(resolved, profile_file).map_err(io_err(profile_file))?;
     let mut request = LaunchRequest::new(cwd, &profile);
     if let Some(model) = launch.model.as_deref() {
         request = request.model(model);

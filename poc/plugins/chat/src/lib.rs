@@ -77,11 +77,19 @@ pub enum ChatError {
     Ui(#[from] UiError),
 }
 
+/// `.map_err(io_err(path))`: an io failure at `path`.
+pub(crate) fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> ChatError + '_ {
+    move |source| ChatError::Io {
+        path: path.to_owned(),
+        source,
+    }
+}
+
 impl From<ChatError> for VerbError {
     fn from(error: ChatError) -> Self {
         match error {
             ChatError::Core(error) => VerbError::Core(error),
-            other => VerbError::Failed(other.to_string()),
+            other => VerbError::other(other),
         }
     }
 }
@@ -143,7 +151,7 @@ mod tests {
     #[test]
     fn chat_error_maps_to_verb_error() {
         let failed: VerbError = ChatError::NotInsideTmux.into();
-        assert!(matches!(failed, VerbError::Failed(_)));
+        assert!(matches!(failed, VerbError::Other(_)));
         let core: VerbError = ChatError::Core(CoreError::NotFound("x".into())).into();
         assert!(matches!(core, VerbError::Core(CoreError::NotFound(_))));
     }

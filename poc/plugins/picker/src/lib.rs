@@ -254,7 +254,7 @@ fn feed(
     query: &str,
     namew: i64,
 ) -> Result<String, VerbError> {
-    let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::failed)?;
+    let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::other)?;
     let targets = ui.live_targets();
     let attachments = ui.attachment_map();
     let rows: Vec<Row<'_>> = sessions
@@ -361,10 +361,10 @@ impl Verb for Pick {
         let hidden = match &options.hide {
             Some(hide) => {
                 let hidden = filter::parse_hidden(hide);
-                filter::write_hidden(&hide_file, &hidden).map_err(VerbError::failed)?;
+                filter::write_hidden(&hide_file, &hidden).map_err(VerbError::other)?;
                 hidden
             }
-            None => filter::read_hidden(&hide_file).map_err(VerbError::failed)?,
+            None => filter::read_hidden(&hide_file).map_err(VerbError::other)?,
         };
         let args = fzf_args(
             &tx,
@@ -433,7 +433,7 @@ fn open_popup(ui: &Ui, tx: &str, name: &str) -> Result<bool, VerbError> {
         tx_ui::tmux::shell_quote(name)
     );
     ui.run_shell_background(&command)
-        .map_err(VerbError::failed)?;
+        .map_err(VerbError::other)?;
     Ok(true)
 }
 
@@ -518,7 +518,7 @@ fn open(ui: &Ui, target: &str, name: &str) -> Result<(), VerbError> {
         (OpenMode::Nest, Some(pane)) => nest(ui, &pane, target)?,
         (OpenMode::Attach, _) => {
             let _ = std::io::stdout().flush();
-            return Err(VerbError::failed(ui.attach_exec(target)));
+            return Err(VerbError::other(ui.attach_exec(target)));
         }
         _ => {
             let _ = ui.switch_client(name);
@@ -548,7 +548,7 @@ fn jump(ui: &Ui, name: &str, target: &str) -> Result<bool, VerbError> {
 
 fn nest(ui: &Ui, pane: &str, target: &str) -> Result<(), VerbError> {
     ui.respawn_pane(pane, &ui.nest_attach_command(target))
-        .map_err(VerbError::failed)
+        .map_err(VerbError::other)
 }
 
 pub struct PickerKey;
@@ -569,7 +569,7 @@ impl Verb for PickerKey {
             )));
         };
         let key = argv.first().map(String::as_str).unwrap_or_default();
-        let pending = std::fs::read_to_string(&path).map_err(VerbError::failed)?;
+        let pending = std::fs::read_to_string(&path).map_err(VerbError::other)?;
         let pending = pending.trim();
         let (popup, digits) = match pending.strip_prefix(POPUP_MARK) {
             Some(digits) => (true, digits),
@@ -589,7 +589,7 @@ impl Verb for PickerKey {
                 "txc _picker-key: unknown key '{key}'"
             )));
         };
-        std::fs::write(&path, reply.pending()).map_err(VerbError::failed)?;
+        std::fs::write(&path, reply.pending()).map_err(VerbError::other)?;
         say(io.stdout, &format!("{}\n", reply.actions))?;
         Ok(0)
     }
@@ -607,7 +607,7 @@ impl Verb for Roles {
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::failed)?;
+        let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::other)?;
         let text = if argv.iter().any(|arg| arg == "--chips") {
             filter::chips_line(&hidden)
         } else {
@@ -633,9 +633,9 @@ impl Verb for ToggleHide {
         let path = hide_file(core);
         let word = argv.first().map(String::as_str).unwrap_or_default();
         if word == "--all" {
-            filter::toggle_all(&path).map_err(VerbError::failed)?;
+            filter::toggle_all(&path).map_err(VerbError::other)?;
         } else if filter::ROLES.contains(&word) {
-            filter::toggle(&path, word).map_err(VerbError::failed)?;
+            filter::toggle(&path, word).map_err(VerbError::other)?;
         }
         Ok(0)
     }
@@ -661,7 +661,7 @@ impl Verb for RolesPanel {
             "bg:{BG_DEEP_HEX},fg:{DIM_FG_HEX},pointer:{ACCENT_HEX},fg+:{FG_HEX}:regular,\
              bg+:{SELECTION_BG}:regular,header:{DIM_FG_HEX},prompt:{ACCENT_HEX}"
         );
-        let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::failed)?;
+        let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::other)?;
         let mut child = Command::new("fzf")
             .args([
                 "--ansi",
@@ -689,7 +689,7 @@ impl Verb for RolesPanel {
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(filter::panel_rows(&hidden).as_bytes());
         }
-        child.wait().map_err(VerbError::failed)?;
+        child.wait().map_err(VerbError::other)?;
         Ok(0)
     }
 }
@@ -722,7 +722,7 @@ impl Verb for PopupAttach {
             &session,
             None,
         )
-        .map_err(VerbError::failed)?;
+        .map_err(VerbError::other)?;
         Ok(0)
     }
 }

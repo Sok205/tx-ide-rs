@@ -34,7 +34,7 @@ use crate::ext::{
     AgentLaunch, ChatExt, ChatRef, Origin, Role, active_chat, agent_launch, chat_ext, history_ext,
 };
 use crate::mirror::{IngestMode, bundle_dir, ingest_session};
-use crate::{CHAT_ID, ChatError, HISTORY_ID, ensure_dir};
+use crate::{CHAT_ID, ChatError, HISTORY_ID, ensure_dir, io_err};
 use tx_core::say;
 
 /// Tag of the throwaway distiller (plus the op kind), so the in-flight helper shows in `ls`.
@@ -52,13 +52,6 @@ const DONE_FILE: &str = "done";
 const WATCH_LOCK: &str = "watch.lock";
 const FINISH_VERB: &str = "_chat-op-finish";
 const WATCH_VERB: &str = "_chat-op-watch";
-
-fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> ChatError + '_ {
-    move |source| ChatError::Io {
-        path: path.to_owned(),
-        source,
-    }
-}
 
 /// `_slug`: a filesystem-safe slug for `handover-<slug>.md`.
 pub fn slug(text: &str) -> String {

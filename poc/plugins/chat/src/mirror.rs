@@ -12,7 +12,7 @@ use tx_core::{Launch, SessionId, TxCore};
 
 use crate::engines::{BUNDLE_TRANSCRIPT_NAME, bundle_sidecars};
 use crate::ext::{chat_ext, history_ext};
-use crate::{ChatError, HISTORY_ID, ensure_dir};
+use crate::{ChatError, HISTORY_ID, ensure_dir, io_err};
 
 /// The per-(session, chat) coalescing lock, hidden inside the bundle it guards.
 pub const INGEST_LOCK_NAME: &str = ".ingest.lock";
@@ -32,13 +32,6 @@ pub enum IngestMode {
     Coalesce,
     /// Chat ops: block until the lock is free, then mirror.
     Wait,
-}
-
-fn io_err(path: &Path) -> impl FnOnce(io::Error) -> ChatError + '_ {
-    move |source| ChatError::Io {
-        path: path.to_owned(),
-        source,
-    }
 }
 
 /// `<history_dir>/<session>/<chat>/`. Pure.

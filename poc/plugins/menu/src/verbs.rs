@@ -131,7 +131,7 @@ impl Verb for Tui {
         };
         let ui = Ui::from_core(core);
         let mut menu = Menu::new(data::context(core, &ui, pane)?);
-        if let Some(action) = run::run(&mut menu, first).map_err(VerbError::failed)? {
+        if let Some(action) = run::run(&mut menu, first).map_err(VerbError::other)? {
             std::fs::write(file, action.encode())
                 .map_err(|e| VerbError::failed(format!("{file}: {e}")))?;
         }
@@ -239,7 +239,7 @@ fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result
         " tx-ide ",
         &command,
     ])
-    .map_err(VerbError::failed)?;
+    .map_err(VerbError::other)?;
     let text = std::fs::read_to_string(&choice).unwrap_or_default();
     if let Some(action) = Action::decode(&text) {
         perform(ui, &txc, pane, client, &action);

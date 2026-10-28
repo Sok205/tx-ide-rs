@@ -180,7 +180,7 @@ impl Verb for TutorVerb {
         let path = Progress::path(&tutor.data, lang);
         let mut progress = Progress::load(&path)
             .map_err(|error| VerbError::failed(format!("{}: {error}", path.display())))?
-            .ok_or_else(|| VerbError::failed(TutorError::NotStarted(lang.to_owned())))?;
+            .ok_or_else(|| VerbError::other(TutorError::NotStarted(lang.to_owned())))?;
         // `reset` must work even when `progress.current` no longer resolves in the pack (a
         // renumbered or renamed lesson): it is the only way out of that dead end.
         if action == Action::Reset {
@@ -188,12 +188,12 @@ impl Verb for TutorVerb {
         }
         let current = pack
             .index_of(&progress.current)
-            .ok_or_else(|| VerbError::failed(TutorError::StaleLesson(progress.current.clone())))?;
+            .ok_or_else(|| VerbError::other(TutorError::StaleLesson(progress.current.clone())))?;
         let moved_to = match action {
             Action::Check => return tutor.check(io, &pack, &mut progress, &path, current),
             Action::Status => {
                 write!(io.stdout, "{}", render_status(&pack, &progress, current))
-                    .map_err(VerbError::failed)?;
+                    .map_err(VerbError::other)?;
                 return Ok(0);
             }
             Action::Hint => {
@@ -202,13 +202,13 @@ impl Verb for TutorVerb {
                         let text = std::fs::read_to_string(&solution).map_err(|error| {
                             VerbError::failed(format!("{}: {error}", solution.display()))
                         })?;
-                        write!(io.stdout, "{text}").map_err(VerbError::failed)?;
+                        write!(io.stdout, "{text}").map_err(VerbError::other)?;
                     }
                     None => writeln!(
                         io.stdout,
                         "no hint for this lesson; re-read it, or ask your worker to explain"
                     )
-                    .map_err(VerbError::failed)?,
+                    .map_err(VerbError::other)?,
                 }
                 return Ok(0);
             }
@@ -217,7 +217,7 @@ impl Verb for TutorVerb {
             Action::Goto => {
                 let key = args.target.as_deref().unwrap_or_default();
                 pack.resolve(key)
-                    .ok_or_else(|| VerbError::failed(TutorError::NoLesson(key.to_owned())))?
+                    .ok_or_else(|| VerbError::other(TutorError::NoLesson(key.to_owned())))?
             }
             Action::Start | Action::Reset => unreachable!("handled above"),
         };
@@ -252,7 +252,7 @@ impl<'a> Tutor<'a> {
         let resources = self.core.resources(bundle::PREFIX);
         bundle::materialise(&packs, resources.iter().map(|r| (r.name.as_str(), r.bytes)))
             .map_err(|error| VerbError::failed(format!("{}: {error}", packs.display())))?;
-        Pack::find(&packs, lang).map_err(VerbError::failed)
+        Pack::find(&packs, lang).map_err(VerbError::other)
     }
 
     fn save(&self, progress: &Progress, path: &Path) -> Result<(), VerbError> {
@@ -275,7 +275,7 @@ impl<'a> Tutor<'a> {
         if let (Some(saved), Some(dir)) = (&saved, &requested)
             && dir != &saved.dir
         {
-            return Err(VerbError::failed(TutorError::AlreadyStarted {
+            return Err(VerbError::other(TutorError::AlreadyStarted {
                 lang: pack.lang.clone(),
                 dir: saved.dir.clone(),
                 path,
@@ -288,7 +288,7 @@ impl<'a> Tutor<'a> {
             .filter(|program| !on_path(program))
             .collect();
         if !missing.is_empty() {
-            return Err(VerbError::failed(TutorError::Missing(missing.join(", "))));
+            return Err(VerbError::other(TutorError::Missing(missing.join(", "))));
         }
         if !on_path("claude") {
             let _ = writeln!(
@@ -303,7 +303,7 @@ impl<'a> Tutor<'a> {
                 dir: match requested {
                     Some(dir) => dir,
                     None => home
-                        .ok_or_else(|| VerbError::failed(TutorError::NoHome))?
+                        .ok_or_else(|| VerbError::other(TutorError::NoHome))?
                         .join("tx-tutor")
                         .join(&pack.lang),
                 },
@@ -316,9 +316,9 @@ impl<'a> Tutor<'a> {
         }
         if !project::is_tutor_project(&progress.dir) {
             project::scaffold(&pack.skeleton(), &progress.dir, &pack.lang)
-                .map_err(VerbError::failed)?;
+                .map_err(VerbError::other)?;
             writeln!(io.stdout, "Scaffolded {}", progress.dir.display())
-                .map_err(VerbError::failed)?;
+                .map_err(VerbError::other)?;
         }
         self.save(&progress, &path)?;
 
@@ -330,10 +330,10 @@ impl<'a> Tutor<'a> {
                 self.ui.kill_session(&view);
                 return Err(error);
             }
-            writeln!(io.stdout, "{view} view created.").map_err(VerbError::failed)?;
+            writeln!(io.stdout, "{view} view created.").map_err(VerbError::other)?;
         }
         if self.ui.inside() {
-            self.ui.switch_client(&view).map_err(VerbError::failed)?;
+            self.ui.switch_client(&view).map_err(VerbError::other)?;
             return Ok(0);
         }
         if args.detach || !std::io::stdin().is_terminal() {
@@ -342,11 +342,11 @@ impl<'a> Tutor<'a> {
                 "{view} is ready: tmux -S {} attach -t ={view}",
                 shell_quote(&self.core.socket_path().to_string_lossy())
             )
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
             return Ok(0);
         }
         let _ = io.stdout.flush();
-        Err(VerbError::failed(self.ui.attach_exec(&format!("={view}"))))
+        Err(VerbError::other(self.ui.attach_exec(&format!("={view}"))))
     }
 
     /// Top left: the lesson in nvim; under it the key cheat sheet; right: a shell over a
@@ -373,14 +373,14 @@ impl<'a> Tutor<'a> {
         let shell = default_shell();
         self.ui
             .run(&["new-session", "-d", "-s", view, "-c", &cwd, &nvim])
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         self.ui
             .set_session_option(view, VIEW_OPTION, "1")
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         let session = format!("={view}:");
         self.ui
             .run(&["split-window", "-h", "-t", &session, "-c", &cwd, &shell])
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         let top_right = format!("={view}:.{{top-right}}");
         self.ui
             .run(&[
@@ -394,7 +394,7 @@ impl<'a> Tutor<'a> {
                 &cwd,
                 &shell,
             ])
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         let keys_source = self.packs().join(KEYS_FILE);
         let text = std::fs::read_to_string(&keys_source)
             .map_err(|error| VerbError::failed(format!("{}: {error}", keys_source.display())))?;
@@ -416,7 +416,7 @@ impl<'a> Tutor<'a> {
                 &cwd,
                 &show,
             ])
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         self.ui.select_pane(&top_left);
         Ok(())
     }
@@ -440,7 +440,7 @@ impl<'a> Tutor<'a> {
                 })?;
             }
             project::scaffold(&pack.skeleton(), &progress.dir, &pack.lang)
-                .map_err(VerbError::failed)?;
+                .map_err(VerbError::other)?;
         }
         progress.passed.clear();
         progress.current = pack.lessons[0].id.clone();
@@ -464,7 +464,7 @@ impl<'a> Tutor<'a> {
             pack.lessons.len(),
             lesson.id
         )
-        .map_err(VerbError::failed)?;
+        .map_err(VerbError::other)?;
         for program in lesson.requires.iter().filter(|program| !on_path(program)) {
             let _ = writeln!(
                 io.stderr,
@@ -489,13 +489,13 @@ impl<'a> Tutor<'a> {
                 },
             )
         };
-        write!(io.stdout, "{}", report.render()).map_err(VerbError::failed)?;
+        write!(io.stdout, "{}", report.render()).map_err(VerbError::other)?;
         if !report.passed() {
             writeln!(
                 io.stdout,
                 "Not yet: fix the ✗ items and run `txc tutor check` again."
             )
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
             return Ok(1);
         }
         progress.mark_passed(&lesson.id);
@@ -508,7 +508,7 @@ impl<'a> Tutor<'a> {
             }
             None => {
                 writeln!(io.stdout, "You finished the {} tutorial.", pack.meta.name)
-                    .map_err(VerbError::failed)?;
+                    .map_err(VerbError::other)?;
                 Ok(0)
             }
         }
@@ -523,7 +523,7 @@ impl<'a> Tutor<'a> {
             pack.lessons.len(),
             pack.lessons[index].id
         )
-        .map_err(VerbError::failed)?;
+        .map_err(VerbError::other)?;
         let socket = socket_path(&self.data, &pack.lang);
         if socket.exists() {
             let _ = Command::new("nvim")

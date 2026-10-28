@@ -225,7 +225,7 @@ impl Verb for Chat {
             ["hooks", "install"] => hooks_install(io, false),
             ["hooks", "install", "--dry-run"] => hooks_install(io, true),
             ["hooks", "uninstall"] => {
-                uninstall(&home_dir()?, &CHAT_ENTRIES, io.stdout).map_err(VerbError::failed)?;
+                uninstall(&home_dir()?, &CHAT_ENTRIES, io.stdout).map_err(VerbError::other)?;
                 Ok(0)
             }
             _ => Err(VerbError::usage(CHAT_USAGE)),
@@ -236,7 +236,7 @@ impl Verb for Chat {
 fn hooks_install(io: &mut VerbIo<'_>, dry_run: bool) -> Result<i32, VerbError> {
     let exe =
         std::env::current_exe().map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
-    install(&home_dir()?, &exe, &CHAT_ENTRIES, dry_run, io.stdout).map_err(VerbError::failed)?;
+    install(&home_dir()?, &exe, &CHAT_ENTRIES, dry_run, io.stdout).map_err(VerbError::other)?;
     Ok(0)
 }
 

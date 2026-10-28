@@ -305,7 +305,7 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
             }
         }
         ui.run(&["source-file", &conf.to_string_lossy()])
-            .map_err(VerbError::failed)?;
+            .map_err(VerbError::other)?;
         write_installed()?;
         out.push_str("reloaded\n");
         if previous.is_none() && legacy_conf_loaded {
@@ -377,7 +377,7 @@ fn ensure_home(ui: &Ui, assistant: Option<&str>) -> Result<(), VerbError> {
         ],
     ];
     for step in steps {
-        ui.run(step).map_err(VerbError::failed)?;
+        ui.run(step).map_err(VerbError::other)?;
     }
     Ok(())
 }
@@ -391,7 +391,7 @@ fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     match tx_core::tmux::client_socket(env.as_deref()) {
         _ if core.is_inside() => {
             ui.run(&["switch-client", "-t", &format!("={HOME_SESSION}")])
-                .map_err(VerbError::failed)?;
+                .map_err(VerbError::other)?;
             return Ok(0);
         }
         Some(socket) => {
