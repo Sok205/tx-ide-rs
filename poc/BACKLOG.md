@@ -153,15 +153,17 @@ missing source file (E7, I11 half).
 - [x] (20bfcb2) **O1.** `TxCore::resolve` loads the record(s) then returns only the id; every caller
   loads again (worst: the once-a-second pane label resolves by name, so `store.all()` + a
   load per pane per second). Add `resolve_session` returning the record.
-- [ ] **O2-O4.** Picker feed reload (every second): the sort deserializes `ext.hooks` per
+- [x] (b1135e1) **O2-O4.** Picker feed reload (every second): the sort deserializes `ext.hooks` per
   comparison; `picker_matches` lowercases the query per row and recomputes chips/location
   that rendering computes again; about 10 temporary Strings per row and the feed copied
   twice. Sort by cached keys, pre-split terms, `TAG_ANSI` table, `Cow` trunc, write into one
   `String`.
-- [ ] **O5.** Timeline clones whole `Session`s and every cached transcript row per lane
+- [x] (b1135e1) **O5.** Timeline clones whole `Session`s and every cached transcript row per lane
   every tick; borrow (`LaneSeed<'a>`, `Vec<&Row>`).
-- [ ] **O6.** Pane label builds pieces as separate Strings per pane per second; `write!`
+- [x] (b1135e1) **O6.** Pane label builds pieces as separate Strings per pane per second; `write!`
   into one buffer.
+- [ ] **O13.** timeline `lane_data` clones every cached transcript row per lane per build
+  (`cache.rows` takes `&mut self`); load all paths first, then borrow.
 - [ ] **E2 behaviour.** artifacts `ArtifactStoreError` carries no path, so load errors print
   as bare "Permission denied". Wrap with the record path.
 - [x] (e7cfb6c) **E3.** `VerbError::Failed(String)` drops every typed cause (chat stringifies 16
