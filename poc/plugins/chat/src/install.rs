@@ -97,24 +97,7 @@ fn write_json(path: &Path, value: &Value) -> Result<(), InstallError> {
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let mut text = serde_json::to_string_pretty(value).expect("JSON value");
     text.push('\n');
-    let name = target
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = target.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
-    let result = (|| {
-        let mut file = std::fs::File::create(&tmp).map_err(io(&tmp))?;
-        file.write_all(text.as_bytes()).map_err(io(&tmp))?;
-        if let Ok(meta) = std::fs::metadata(&target) {
-            file.set_permissions(meta.permissions()).map_err(io(&tmp))?;
-        }
-        file.sync_all().map_err(io(&tmp))?;
-        std::fs::rename(&tmp, &target).map_err(io(&target))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    tx_core::write_atomic(&target, text.as_bytes()).map_err(io(&target))
 }
 
 fn backup(path: &Path) -> Result<Option<PathBuf>, InstallError> {
@@ -451,7 +434,7 @@ mod tests {
         std::fs::create_dir_all(&claude).unwrap();
         let settings = claude.join("settings.json");
         std::fs::write(&settings, "{}").unwrap();
-        std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o640)).unwrap();
         let foreign = claude.join("settings.tmp");
         std::fs::write(&foreign, "hooks plugin in flight").unwrap();
         install(
@@ -467,7 +450,7 @@ mod tests {
             "hooks plugin in flight"
         );
         let mode = std::fs::metadata(&settings).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(mode & 0o777, 0o640);
         let strays: Vec<_> = std::fs::read_dir(&claude)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())

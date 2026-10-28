@@ -43,8 +43,8 @@ Status: `[ ]` open, `[x]` done (commit hash), `[?]` needs a decision.
 - [x] **H9 bug.** (fixed 5dccbb8) tx-ui popup.rs `run_shell_background` duplicates `Ui::run_shell_background`
   without `#` to `##` escaping; a `#` in the state dir is read as a tmux format. Delete it.
 - [ ] **H10.** Atomic file writes implemented 7 times (tx-core store, artifacts store, tutor
-  progress/bundle, chat lib/install, hooks install). One `tx_core::fs::write_atomic`, with a
-  permission-keeping variant for the installers.
+  progress/bundle, chat lib/install, hooks install). One `tx_core::fs::write_atomic` (keeps the
+  replaced file's mode).
 - [x] (ad8e0d5) **H11.** tx-core store.rs `all()` stats each record, then `read()` stats it again. Map
   `ReadError::NotAFile` to skip instead; move the misplaced comment.
 - [x] (ad8e0d5) **H12.** tx-core core.rs `store_io` duplicates store.rs `io_error` (4 call sites).

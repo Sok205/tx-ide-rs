@@ -12,7 +12,7 @@ use tx_core::{Launch, SessionId, TxCore};
 
 use crate::engines::{BUNDLE_TRANSCRIPT_NAME, bundle_sidecars};
 use crate::ext::{chat_ext, history_ext};
-use crate::{ChatError, HISTORY_ID, ensure_dir, write_atomic};
+use crate::{ChatError, HISTORY_ID, ensure_dir};
 
 /// The per-(session, chat) coalescing lock, hidden inside the bundle it guards.
 pub const INGEST_LOCK_NAME: &str = ".ingest.lock";
@@ -157,7 +157,7 @@ fn copy_whole(src: &Path, dst: &Path) -> Result<(), ChatError> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(io_err(parent))?;
     }
-    write_atomic(dst, &bytes).map_err(io_err(dst))
+    tx_core::write_atomic(dst, &bytes).map_err(io_err(dst))
 }
 
 fn is_prefix(src: &Path, dst: &Path, destination_size: u64) -> Result<bool, ChatError> {

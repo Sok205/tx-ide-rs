@@ -94,12 +94,7 @@ fn write_json(path: &Path, value: &Value) -> Result<(), InstallError> {
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let mut text = serde_json::to_string_pretty(value).expect("JSON value");
     text.push('\n');
-    let tmp = target.with_extension("tmp");
-    std::fs::write(&tmp, text).map_err(io(&tmp))?;
-    if let Ok(meta) = std::fs::metadata(&target) {
-        std::fs::set_permissions(&tmp, meta.permissions()).map_err(io(&tmp))?;
-    }
-    std::fs::rename(&tmp, &target).map_err(io(&target))
+    tx_core::write_atomic(&target, text.as_bytes()).map_err(io(&target))
 }
 
 fn backup(path: &Path) -> Result<Option<PathBuf>, InstallError> {
@@ -329,7 +324,7 @@ mod tests {
         std::fs::create_dir_all(&claude).unwrap();
         let real = home.path().join("dotfiles-settings.json");
         std::fs::write(&real, "{}").unwrap();
-        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o640)).unwrap();
         std::os::unix::fs::symlink(&real, claude.join("settings.json")).unwrap();
         let mut out = Vec::new();
         install(home.path(), Path::new("/opt/txc"), false, &mut out).unwrap();
@@ -344,13 +339,34 @@ mod tests {
         );
         assert_eq!(
             std::fs::metadata(&real).unwrap().permissions().mode() & 0o777,
-            0o600,
+            0o640,
             "mode preserved on the real file"
         );
         assert!(
             read(&real)["hooks"]["Stop"].is_array(),
             "written through the link"
         );
+    }
+
+    #[test]
+    fn install_leaves_a_foreign_temp_alone_and_no_strays() {
+        let home = home();
+        let claude = home.path().join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(claude.join("settings.json"), "{}").unwrap();
+        let foreign = claude.join("settings.tmp");
+        std::fs::write(&foreign, "chat plugin in flight").unwrap();
+        install(home.path(), Path::new("/opt/txc"), false, &mut Vec::new()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&foreign).unwrap(),
+            "chat plugin in flight"
+        );
+        let strays: Vec<_> = std::fs::read_dir(&claude)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".settings.json."))
+            .collect();
+        assert!(strays.is_empty(), "{strays:?}");
     }
 
     #[test]

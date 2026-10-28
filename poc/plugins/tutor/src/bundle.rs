@@ -2,7 +2,7 @@
 //! `tutor/<path>`, plus the plugin's own `lesson.lua`. `materialise` writes them into the
 //! plugin's data dir, where nvim and the scaffold read them.
 
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
 /// Every resource name starts with this.
@@ -57,12 +57,8 @@ pub fn materialise<'a>(
         if std::fs::read(&path).is_ok_and(|have| have == bytes) {
             continue;
         }
-        let parent = path.parent().unwrap_or(root);
-        std::fs::create_dir_all(parent)?;
-        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-        temp.write_all(bytes)?;
-        temp.as_file().sync_all()?;
-        temp.persist(&path).map_err(|error| error.error)?;
+        std::fs::create_dir_all(path.parent().unwrap_or(root))?;
+        tx_core::write_atomic(&path, bytes)?;
     }
     Ok(())
 }

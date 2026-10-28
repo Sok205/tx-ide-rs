@@ -6,6 +6,7 @@ pub mod core;
 pub mod engine;
 pub mod error;
 pub mod events;
+pub mod fs;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod locks;
@@ -34,6 +35,7 @@ pub use error::CoreError;
 #[doc(hidden)]
 pub use events::EventLog;
 pub use events::{Event, EventSink, EventType};
+pub use fs::write_atomic;
 #[doc(hidden)]
 pub use locks::{LockGuard, Locks};
 #[doc(hidden)]

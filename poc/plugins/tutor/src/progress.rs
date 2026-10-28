@@ -1,6 +1,6 @@
 //! `<state_dir>/plugins/tutor/<lang>.json`: where the project lives and how far the user got.
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -30,12 +30,8 @@ impl Progress {
 
     /// Atomic: a temp file in the same directory, fsynced, renamed over `path`.
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        let parent = path.parent().unwrap_or(Path::new("."));
-        std::fs::create_dir_all(parent)?;
-        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-        temp.write_all(serde_json::to_string_pretty(self)?.as_bytes())?;
-        temp.as_file().sync_all()?;
-        temp.persist(path).map(drop).map_err(|error| error.error)
+        std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
+        tx_core::write_atomic(path, serde_json::to_string_pretty(self)?.as_bytes())
     }
 
     pub fn mark_passed(&mut self, id: &str) {

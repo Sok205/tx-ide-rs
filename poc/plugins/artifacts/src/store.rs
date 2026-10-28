@@ -6,7 +6,7 @@
 //! writes goes through the same temp + rename, so a reader never sees a partial one.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
@@ -74,16 +74,11 @@ impl ArtifactStore {
         self.directory.join(format!("{artifact_id}.json"))
     }
 
-    /// Persist the record atomically: `.<id>.*.tmp` in the store dir, fsync, rename.
+    /// Persist the record atomically ([`tx_core::write_atomic`]).
     pub fn save(&self, artifact: &Artifact) -> io::Result<()> {
         fs::create_dir_all(&self.directory)?;
         let payload = serde_json::to_string_pretty(&artifact.to_value())?;
-        atomic_write(
-            &self.directory,
-            &format!(".{}.", artifact.id),
-            payload.as_bytes(),
-            &self.record_path(&artifact.id),
-        )
+        tx_core::write_atomic(&self.record_path(&artifact.id), payload.as_bytes())
     }
 
     /// One record by id; `Ok(None)` when there is no such file (or the id is not a valid one).
@@ -167,28 +162,6 @@ impl ArtifactContent {
     pub fn file_path(&self, artifact: &Artifact, name: &str) -> PathBuf {
         self.content_dir(artifact).join(name)
     }
-}
-
-fn sync_dir(dir: &Path) -> io::Result<()> {
-    fs::File::open(dir)?.sync_all()
-}
-
-/// Write `content` to a `<prefix>*.tmp` file in `dir` (mode 0600), fsync it, rename it onto
-/// `target`, fsync the directory. The temp file is removed on any failure.
-pub(crate) fn atomic_write(
-    dir: &Path,
-    prefix: &str,
-    content: &[u8],
-    target: &Path,
-) -> io::Result<()> {
-    let mut temp = tempfile::Builder::new()
-        .prefix(prefix)
-        .suffix(".tmp")
-        .tempfile_in(dir)?;
-    temp.write_all(content)?;
-    temp.as_file().sync_all()?;
-    temp.persist(target).map_err(|error| error.error)?;
-    sync_dir(dir)
 }
 
 #[cfg(test)]

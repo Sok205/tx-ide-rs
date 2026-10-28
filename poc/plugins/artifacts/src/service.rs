@@ -14,7 +14,7 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::artifact::{Artifact, Kind};
 use crate::kinds::{self, Cleanup, KindError, Opened};
-use crate::store::{ArtifactContent, ArtifactStore, ArtifactStoreError, Scan, atomic_write};
+use crate::store::{ArtifactContent, ArtifactStore, ArtifactStoreError, Scan};
 
 pub(crate) const LOG_FILE: &str = ".log.jsonl";
 /// What opens write outside the content directories: temp worktrees, the tour runtime.
@@ -266,8 +266,7 @@ impl ArtifactService {
             .collect();
         let payload =
             serde_json::to_string_pretty(&Value::Object(map)).map_err(ArtifactStoreError::from)?;
-        let dir = self.files.content_dir(artifact);
-        atomic_write(&dir, ".cleanup.", payload.as_bytes(), &path).map_err(io_at(&path))
+        tx_core::write_atomic(&path, payload.as_bytes()).map_err(io_at(&path))
     }
 
     /// Remember the close step an open left behind, keyed by the view that needs it, so whichever

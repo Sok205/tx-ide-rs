@@ -23,7 +23,7 @@ use std::process::{Command, Stdio};
 use serde_json::{Value, json};
 
 use crate::artifact::{Artifact, Kind};
-use crate::store::atomic_write;
+use tx_core::write_atomic;
 
 /// The patch a diff keeps beside its record.
 pub const DIFF_PATCH: &str = "diff.patch";
@@ -187,7 +187,7 @@ pub fn replace_content(kind: &Kind, dir: &Path, source: &Path) -> Result<(), Kin
 fn copy_file(source: &Path, dir: &Path, name: &str) -> Result<(), KindError> {
     let content = fs::read(source).map_err(io_at(source))?;
     let target = dir.join(name);
-    atomic_write(dir, &format!(".{name}."), &content, &target).map_err(io_at(&target))
+    write_atomic(&target, &content).map_err(io_at(&target))
 }
 
 /// Bring derived content up to date: a diff's patch. Documents and tours are edited in place.
@@ -205,7 +205,7 @@ fn write_patch(worktree: &Path, base: &str, dir: &Path) -> Result<(), KindError>
     }
     let patch = git(worktree, "diff", [base])?;
     let target = dir.join(DIFF_PATCH);
-    atomic_write(dir, ".diff.patch.", patch.as_bytes(), &target).map_err(io_at(&target))
+    write_atomic(&target, patch.as_bytes()).map_err(io_at(&target))
 }
 
 /// The editor launch for the artifact. `scratch` holds what an open writes outside the content
@@ -259,7 +259,7 @@ pub fn open(artifact: &Artifact, dir: &Path, scratch: &Path) -> Result<Opened, K
             let runtime = scratch.join("tx-tour.lua");
             fs::create_dir_all(scratch).map_err(io_at(scratch))?;
             // Atomic: a concurrent open never lets `dofile` read half a file.
-            atomic_write(scratch, ".tx-tour.", TOUR_RUNTIME, &runtime).map_err(io_at(&runtime))?;
+            write_atomic(&runtime, TOUR_RUNTIME).map_err(io_at(&runtime))?;
             Ok(Opened {
                 cwd: worktree.clone(),
                 args: vec![format!(

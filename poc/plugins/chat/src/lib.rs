@@ -13,7 +13,6 @@ pub mod messages;
 pub mod mirror;
 pub mod ops;
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use tx_core::{CoreError, EngineError, Plugin, PluginError, Registry, VerbError};
@@ -27,25 +26,6 @@ pub fn ensure_dir(dir: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(dir)?;
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
-}
-
-/// Temp file in the destination directory, fsync, rename: a reader never sees half a file.
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = path.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
-    let result = (|| {
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        std::fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -151,17 +131,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plugin_dir_is_pure_and_write_atomic_replaces() {
+    fn plugin_dir_is_pure() {
         let dir = tempfile::tempdir().unwrap();
         let data = tx_core::CoreConfig::new(dir.path()).plugin_dir(HISTORY_ID);
         assert_eq!(data, dir.path().join("plugins/history"));
         assert!(!data.exists());
         ensure_dir(&data).unwrap();
-        let file = data.join("x.json");
-        write_atomic(&file, b"one").unwrap();
-        write_atomic(&file, b"two").unwrap();
-        assert_eq!(std::fs::read(&file).unwrap(), b"two");
-        assert_eq!(std::fs::read_dir(&data).unwrap().count(), 1, "no temp left");
+        assert!(data.is_dir());
     }
 
     #[test]

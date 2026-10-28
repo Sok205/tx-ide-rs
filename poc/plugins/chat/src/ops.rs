@@ -33,7 +33,7 @@ use crate::ext::{
     AgentLaunch, ChatExt, ChatRef, Origin, Role, active_chat, agent_launch, chat_ext, history_ext,
 };
 use crate::mirror::{IngestMode, bundle_dir, ingest_session};
-use crate::{CHAT_ID, ChatError, HISTORY_ID, ensure_dir, write_atomic};
+use crate::{CHAT_ID, ChatError, HISTORY_ID, ensure_dir};
 use tx_core::say;
 
 /// Tag of the throwaway distiller (plus the op kind), so the in-flight helper shows in `ls`.
@@ -443,7 +443,7 @@ impl<'a> Ops<'a> {
         ensure_dir(&dir).map_err(io_err(&dir))?;
         let path = dir.join(SPEC_FILE);
         let text = serde_json::to_vec(&spec.to_value()).expect("a JSON value always serializes");
-        write_atomic(&path, &text).map_err(io_err(&path))
+        tx_core::write_atomic(&path, &text).map_err(io_err(&path))
     }
 
     fn load_spec(&self, op_id: &str) -> Result<ChatOpSpec, ChatError> {

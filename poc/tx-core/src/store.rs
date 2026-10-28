@@ -1,13 +1,12 @@
 //! `SessionStore`: `<dir>/<id>.json`, one file per record, written atomically (temp file in the
 //! same directory, then rename) so a reader never sees a half-written record.
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::session::{RecordError, Session, SessionId};
 
 const RECORD_SUFFIX: &str = ".json";
-const TEMP_SUFFIX: &str = ".tmp";
 
 /// Why one record file could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -86,32 +85,15 @@ impl SessionStore {
         self.dir.join(format!("{id}{RECORD_SUFFIX}"))
     }
 
-    /// Atomic write: `.<id>.XXXXXXXX.tmp` in the same directory (mode 0600), then rename over
-    /// `<id>.json`. The temp file is removed if anything fails before the rename.
+    /// Atomic write over `<id>.json` ([`crate::fs::write_atomic`]).
     pub fn save(&self, session: &Session) -> Result<(), StoreError> {
         let payload = session.to_json().map_err(|source| StoreError::Encode {
             id: session.id.clone(),
             source,
         })?;
         std::fs::create_dir_all(&self.dir).map_err(io_error(&self.dir))?;
-        let prefix = format!(".{}.", session.id);
-        let mut temp = tempfile::Builder::new()
-            .prefix(&prefix)
-            .suffix(TEMP_SUFFIX)
-            .rand_bytes(8)
-            .tempfile_in(&self.dir)
-            .map_err(io_error(&self.dir))?;
-        temp.write_all(payload.as_bytes())
-            .map_err(io_error(temp.path()))?;
-        temp.as_file().sync_all().map_err(io_error(temp.path()))?;
         let target = self.path(&session.id);
-        temp.persist(&target)
-            .map_err(|error| io_error(&target)(error.error))?;
-        // The rename itself is durable only once the directory is synced.
-        std::fs::File::open(&self.dir)
-            .and_then(|dir| dir.sync_all())
-            .map_err(io_error(&self.dir))?;
-        Ok(())
+        crate::fs::write_atomic(&target, payload.as_bytes()).map_err(io_error(&target))
     }
 
     /// One record by id; `None` if there is no such file.
