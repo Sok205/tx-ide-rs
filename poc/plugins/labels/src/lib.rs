@@ -5,11 +5,14 @@
 use std::sync::Arc;
 
 use tx_core::{
-    CoreError, Lifecycle, ListFilter, Plugin, PluginError, Registry, SessionId, TxCore, Verb,
-    VerbError, VerbIo,
+    CoreError, Launch, Lifecycle, ListFilter, Plugin, PluginError, Registry, SessionId, TxCore,
+    Verb, VerbError, VerbIo,
 };
 
-use tx_ui::render::tag_hex;
+use tx_core::events::now;
+use tx_ui::render::{
+    ACCENT_HEX, DIM_FG_HEX, Hooks, WARN_HEX, WORKING_HEX, hooks, reltime, tag_hex,
+};
 use tx_ui::tmux::Ui;
 
 pub const PLUGIN_ID: &str = "labels";
@@ -17,6 +20,9 @@ pub const PLUGIN_ID: &str = "labels";
 const NAME_OPTION: &str = "@tx-name";
 const REMOTE_OPTION: &str = "@remote-session";
 const NOT_NESTED: &str = "#[fg=colour240,nobold]\u{2014}#[default]";
+/// The width of " 1h ": the bar fills the slot the resting age and its spaces take.
+const WORKING_BAR: &str = "\u{1fb0b}\u{1fb0b}\u{1fb0b}\u{1fb0b}";
+const SPINNER: [char; 4] = ['\u{25d0}', '\u{25d3}', '\u{25d1}', '\u{25d2}'];
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LabelsPlugin;
@@ -182,7 +188,7 @@ impl Verb for PaneLabel {
         let label = if let Some(remote) = ui.pane_option(pane, REMOTE_OPTION) {
             format!("(r) {remote}")
         } else if let Some(inner) = ui.inner_for_pane(pane) {
-            nested_label(core, &inner)
+            nested_label(core, &inner, now())
         } else {
             NOT_NESTED.to_owned()
         };
@@ -191,8 +197,9 @@ impl Verb for PaneLabel {
     }
 }
 
-/// The record's name in bold plus a chip per tag; the raw tmux name when it has no record.
-fn nested_label(core: &TxCore, inner: &str) -> String {
+/// The record's name in bold plus a chip per tag, between the hooks state's glyph and its
+/// right-end mark; the raw tmux name when it has no record.
+fn nested_label(core: &TxCore, inner: &str, now: f64) -> String {
     let session = core
         .resolve(inner)
         .and_then(|id| core.get_session(&id))
@@ -200,12 +207,108 @@ fn nested_label(core: &TxCore, inner: &str) -> String {
     let Some(session) = session else {
         return format!("#[bold]{inner}#[default]");
     };
-    let mut label = format!("#[bold]{}#[default]", session.name);
+    // Only agents have a state worth showing; hooks seeds `idle` on every record.
+    let hooks = matches!(session.launch, Launch::Agent { .. })
+        .then(|| hooks(&session))
+        .flatten();
+    let mut label = format!(
+        "{}#[bold]{}#[default]",
+        state_glyph(hooks.as_ref(), now),
+        session.name
+    );
     for tag in &session.tags {
         label.push_str(&format!(
             " #[fg={},#{{?pane_active,bold,nobold}}][{tag}]#[default]",
             tag_hex(tag)
         ));
     }
+    label.push_str(&state_mark(hooks.as_ref(), now));
     label
+}
+
+/// Before the name: WORKING spins one step per redraw (tmux re-runs the label job once a
+/// second, so the frame is the epoch second), WAITING a filled dot in the warn colour, IDLE a
+/// hollow dot; nothing without a hooks state.
+fn state_glyph(hooks: Option<&Hooks>, now: f64) -> String {
+    match hooks.map(|hooks| hooks.state.as_str()) {
+        Some("working") => {
+            let frame = SPINNER[(now as u64 % 4) as usize];
+            format!("#[fg={ACCENT_HEX},bold]{frame}#[default] ")
+        }
+        Some("waiting") => format!("#[fg={WARN_HEX},bold]\u{25cf}#[default] "),
+        Some("idle") => format!("#[fg={DIM_FG_HEX},nobold]\u{25cb}#[default] "),
+        _ => String::new(),
+    }
+}
+
+/// At the border's right end: a green bar while WORKING, otherwise how long the session has
+/// been resting (`0m` for the first minute, then `14m`, `2h`) between spaces.
+fn state_mark(hooks: Option<&Hooks>, now: f64) -> String {
+    match hooks.map(|hooks| (hooks.state.as_str(), hooks.since)) {
+        Some(("working", _)) => format!("#[align=right]#[fg={WORKING_HEX}]{WORKING_BAR}#[default]"),
+        Some(("waiting" | "idle", since)) => {
+            let age = if now - since < 60.0 {
+                "0m".to_owned()
+            } else {
+                reltime(Some(since), now)
+            };
+            format!("#[align=right] #[fg={DIM_FG_HEX}]{age}#[default] ")
+        }
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hooks(state: &str) -> Hooks {
+        Hooks {
+            state: state.to_owned(),
+            since: 1000.0,
+        }
+    }
+
+    #[test]
+    fn state_marks_follow_the_hooks_state() {
+        let working = hooks("working");
+        assert_eq!(
+            state_glyph(Some(&working), 1001.0),
+            "#[fg=#7aa2f7,bold]\u{25d3}#[default] "
+        );
+        assert_eq!(
+            state_glyph(Some(&working), 1004.0),
+            "#[fg=#7aa2f7,bold]\u{25d0}#[default] "
+        );
+        assert!(state_mark(Some(&working), 1001.0).contains(WORKING_BAR));
+
+        let idle = hooks("idle");
+        assert_eq!(
+            state_glyph(Some(&idle), 1001.0),
+            "#[fg=#a9b1d6,nobold]\u{25cb}#[default] "
+        );
+        assert_eq!(
+            state_mark(Some(&idle), 1030.0),
+            "#[align=right] #[fg=#a9b1d6]0m#[default] "
+        );
+        assert_eq!(
+            state_mark(Some(&idle), 8200.0),
+            "#[align=right] #[fg=#a9b1d6]2h#[default] "
+        );
+
+        let waiting = hooks("waiting");
+        assert_eq!(
+            state_glyph(Some(&waiting), 1001.0),
+            "#[fg=#e0af68,bold]\u{25cf}#[default] "
+        );
+        assert_eq!(
+            state_mark(Some(&waiting), 1030.0),
+            "#[align=right] #[fg=#a9b1d6]0m#[default] "
+        );
+
+        for hooks in [None, Some(&hooks("stuck"))] {
+            assert_eq!(state_glyph(hooks, 1.0), "");
+            assert_eq!(state_mark(hooks, 1.0), "");
+        }
+    }
 }

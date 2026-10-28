@@ -2,7 +2,7 @@
 //! Pure formatting; every function takes the records and `now`, nothing reads the clock.
 
 use serde::Deserialize;
-use serde_json::{Map, Value};
+
 use tx_core::{Launch, Session};
 
 use crate::tmux::Location;
@@ -16,6 +16,10 @@ pub const RESET: &str = "\x1b[0m";
 
 // Inlined from main's `crates/tx/src/palette.rs` (tx-ui has no palette module).
 pub const DIM_FG_ANSI: &str = "\x1b[38;2;169;177;214m";
+pub const ACCENT_HEX: &str = "#7aa2f7";
+pub const WARN_HEX: &str = "#e0af68";
+pub const DIM_FG_HEX: &str = "#a9b1d6";
+pub const WORKING_HEX: &str = "#9ece6a";
 pub const INFO_ANSI: &str = "\x1b[38;2;125;207;255m";
 pub const ITALIC: &str = "\x1b[3m";
 pub const SELECTION_BG: &str = "236";
@@ -120,13 +124,20 @@ pub fn chips(tags: &[String]) -> String {
     tags.iter().map(|tag| format!(" [{tag}]")).collect()
 }
 
-/// `ext["hooks"].since`; a missing or malformed record (anything but an object) reads as absent.
+/// The hooks plugin's record: the state (`working`, `waiting`, `idle`) and the epoch it was entered.
+#[derive(Deserialize)]
+pub struct Hooks {
+    pub state: String,
+    pub since: f64,
+}
+
+/// `ext["hooks"]`; a missing or malformed record reads as absent.
+pub fn hooks(session: &Session) -> Option<Hooks> {
+    session.ext("hooks").ok().flatten()
+}
+
 fn hooks_since(session: &Session) -> Option<f64> {
-    session
-        .ext::<Map<String, Value>>("hooks")
-        .ok()
-        .flatten()
-        .and_then(|hooks| hooks.get("since")?.as_f64())
+    hooks(session).map(|hooks| hooks.since)
 }
 
 #[derive(Deserialize)]
