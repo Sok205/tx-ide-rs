@@ -205,7 +205,12 @@ impl Payload {
                     EdgeKind::Spawn => "spawn",
                     EdgeKind::Resume => "resume",
                 };
-                json!([edge.at, from, edge.to, edge.token, edge.snippet, kind])
+                // the reference carries no body on spawn / resume edges; the TUI does
+                let snippet = match edge.kind {
+                    EdgeKind::Message => edge.snippet.as_str(),
+                    EdgeKind::Spawn | EdgeKind::Resume => "",
+                };
+                json!([edge.at, from, edge.to, edge.token, snippet, kind])
             })
             .collect();
         json!({
@@ -289,6 +294,13 @@ pub fn tag_cube(key: &str) -> u8 {
     let palette = &tx_ui::render::TAG_CUBE;
     // Lossless: the remainder is below the palette size.
     palette[(tx_ui::render::tag_hash(key) % palette.len() as u64) as usize]
+}
+
+/// The body of a spawn / resume edge: the first user row at or after the record's creation.
+fn spawn_prompt(rows: &[Row], created: f64) -> String {
+    rows.iter()
+        .find(|row| row.kind == Kind::User && row.at >= created)
+        .map_or_else(String::new, |row| cap(&row.text, 120))
 }
 
 /// The user-dragged group order (mirrors the HTML view's drag & drop).
@@ -613,7 +625,7 @@ impl Builder {
 
         let mut lanes: Vec<Lane> = Vec::new();
         let mut lane_peers: Vec<Vec<(f64, String, String)>> = Vec::new();
-        let mut spawns: Vec<(f64, String, usize, EdgeKind)> = Vec::new();
+        let mut spawns: Vec<(f64, String, usize, String, EdgeKind)> = Vec::new();
         let mut seed_data: Vec<LaneData> = Vec::new();
         for seed in &seeds {
             seed_data.push(self.lane_data(seed));
@@ -759,7 +771,14 @@ impl Builder {
                 } else {
                     EdgeKind::Resume
                 };
-                spawns.push((round2(spawned), parent.to_string(), lanes.len(), kind));
+                let prompt = spawn_prompt(&rows, record.created_at);
+                spawns.push((
+                    round2(spawned),
+                    parent.to_string(),
+                    lanes.len(),
+                    prompt,
+                    kind,
+                ));
             }
 
             lane_peers.push(
@@ -845,7 +864,7 @@ impl Builder {
                 })
             })
             .collect();
-        for (at, parent_id, to, kind) in spawns {
+        for (at, parent_id, to, snippet, kind) in spawns {
             let token = names.get(parent_id.as_str()).map_or_else(
                 || parent_id.chars().take(8).collect(),
                 |name| (*name).to_owned(),
@@ -855,7 +874,7 @@ impl Builder {
                 from: resolve.get(&parent_id).copied(),
                 to,
                 token,
-                snippet: String::new(),
+                snippet,
                 kind,
             });
         }
@@ -935,6 +954,55 @@ impl Builder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn user_row(at: f64, text: &str) -> Row {
+        Row {
+            at,
+            kind: Kind::User,
+            text: text.to_owned(),
+            probe: None,
+        }
+    }
+
+    #[test]
+    fn spawn_prompt_is_the_first_user_row_of_the_record() {
+        let rows = vec![
+            user_row(100.0, "first chat"),
+            Row {
+                at: 200.0,
+                kind: Kind::Agent,
+                text: "ok".into(),
+                probe: None,
+            },
+            user_row(300.5, "resumed with this"),
+        ];
+        assert_eq!(spawn_prompt(&rows, 99.0), "first chat");
+        assert_eq!(spawn_prompt(&rows, 150.0), "resumed with this");
+        assert_eq!(spawn_prompt(&rows, 400.0), "");
+    }
+
+    #[test]
+    fn json_carries_no_body_on_spawn_edges() {
+        let payload = Payload {
+            epoch: 0.0,
+            t1: 0.0,
+            days: Vec::new(),
+            groups: Vec::new(),
+            lanes: Vec::new(),
+            edges: vec![Edge {
+                at: 1.0,
+                from: Some(0),
+                to: 1,
+                token: "hub".into(),
+                snippet: "go".into(),
+                kind: EdgeKind::Spawn,
+            }],
+        };
+        assert_eq!(
+            payload.to_json()["edges"][0],
+            json!([1.0, 0, 1, "hub", "", "spawn"])
+        );
+    }
 
     #[test]
     fn cube_hex_matches_reference() {
