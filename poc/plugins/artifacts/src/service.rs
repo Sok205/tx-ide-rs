@@ -237,7 +237,11 @@ impl ArtifactService {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
             Err(source) => return Err(io_at(&path)(source)),
         };
-        let data: Value = serde_json::from_slice(&bytes).map_err(ArtifactStoreError::from)?;
+        let data: Value =
+            serde_json::from_slice(&bytes).map_err(|source| ArtifactStoreError::Record {
+                path: path.clone(),
+                source: Box::new(source.into()),
+            })?;
         Ok(data
             .as_object()
             .into_iter()

@@ -20,6 +20,12 @@ pub enum ArtifactStoreError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Unsupported(#[from] UnsupportedArtifactError),
+    /// A named record that failed to load, with its path.
+    #[error("{}: {source}", path.display())]
+    Record {
+        path: PathBuf,
+        source: Box<ArtifactStoreError>,
+    },
 }
 
 /// A record `ArtifactStore::all` skipped; the caller prints `warning()` to stderr.
@@ -91,7 +97,12 @@ impl ArtifactStore {
         if !path.exists() {
             return Ok(None);
         }
-        read_record(&path).map(Some)
+        read_record(&path)
+            .map(Some)
+            .map_err(|source| ArtifactStoreError::Record {
+                path,
+                source: Box::new(source),
+            })
     }
 
     /// Every `*.json` record (non-hidden, name order). Unreadable records are skipped, not fatal.
@@ -242,7 +253,12 @@ mod tests {
             r#"{"artifact_schema_version": 2, "id": "old", "foo": 1}"#,
         );
         let error = f.store.load("old").unwrap_err();
-        assert!(matches!(error, ArtifactStoreError::Unsupported(_)));
+        let ArtifactStoreError::Record { path, source } = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(*path, f.store.record_path("old"));
+        assert!(matches!(**source, ArtifactStoreError::Unsupported(_)));
+        assert!(error.to_string().starts_with(&path.display().to_string()));
     }
 
     #[test]
