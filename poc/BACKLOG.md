@@ -137,7 +137,7 @@ missing source file (E7, I11 half).
 
 ### HIGH
 
-- [ ] **T1 bug.** The user envelope tx-core writes (`<from-user>…</from-user>`, no
+- [x] (3519d8c) **T1 bug.** The user envelope tx-core writes (`<from-user>…</from-user>`, no
   `session=`) is not parsed by chat's `match_envelope`, so user sends land as typed text
   with raw tags. The wire format is written in 4 places (tx-core messaging.rs, chat
   messages.rs dead `build_envelope` + tag constants, timeline rows.rs regex). One
