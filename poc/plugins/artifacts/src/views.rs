@@ -67,7 +67,6 @@ pub fn open(
     tags: Option<Vec<String>>,
     editor: &str,
 ) -> Result<SessionId, VerbError> {
-    let failed = |error: crate::service::ArtifactError| VerbError::Failed(error.to_string());
     let tags = tags
         .or_else(|| (!opener.tags.is_empty()).then(|| opener.tags.clone()))
         .unwrap_or_else(|| vec!["artifact".to_owned()]);
@@ -76,7 +75,9 @@ pub fn open(
         .as_ref()
         .map_or(USER_ACTOR.to_owned(), ToString::to_string);
     let name = view_name(core, artifact)?;
-    let Opened { cwd, args, cleanup } = artifacts.open(&artifact.id, &actor).map_err(failed)?;
+    let Opened { cwd, args, cleanup } = artifacts
+        .open(&artifact.id, &actor)
+        .map_err(VerbError::failed)?;
     let launch = LaunchOptions::process(editor, args);
     let mut options = CreateOptions::new(name, cwd, launch).tags(tags);
     if let Some(parent) = &opener.id {
@@ -96,11 +97,13 @@ pub fn open(
     if let Some(cleanup) = cleanup {
         artifacts
             .record_cleanup(&artifact.id, id.as_str(), cleanup)
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         // An editor that died at once ended before the step was recorded, so the end sink found
         // nothing to run: run it now (close is idempotent).
         if core.get_session(&id)?.lifecycle.is_terminal() {
-            artifacts.close(&artifact.id, id.as_str()).map_err(failed)?;
+            artifacts
+                .close(&artifact.id, id.as_str())
+                .map_err(VerbError::failed)?;
         }
     }
     Ok(id)

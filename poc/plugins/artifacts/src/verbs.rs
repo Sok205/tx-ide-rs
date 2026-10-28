@@ -63,10 +63,6 @@ fn help() -> String {
     out
 }
 
-fn write_failed(error: std::io::Error) -> VerbError {
-    VerbError::Failed(format!("write: {error}"))
-}
-
 /// Positionals and `--flag value` / `--switch` options, in one pass. `switches` take no value.
 struct Args {
     positionals: Vec<String>,
@@ -166,7 +162,7 @@ impl Verb for ArtifactVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some((sub, rest)) = argv.split_first() else {
-            write!(io.stdout, "{}", help()).map_err(write_failed)?;
+            write!(io.stdout, "{}", help()).map_err(VerbError::write)?;
             return Ok(0);
         };
         let mut ctx = Ctx {
@@ -177,7 +173,7 @@ impl Verb for ArtifactVerb {
         };
         let outcome = match sub.as_str() {
             "-h" | "--help" | "help" => {
-                write!(ctx.io.stdout, "{}", help()).map_err(write_failed)?;
+                write!(ctx.io.stdout, "{}", help()).map_err(VerbError::write)?;
                 return Ok(0);
             }
             "create" => ctx.create(rest)?,
@@ -242,7 +238,7 @@ impl From<String> for Outcome {
 
 impl Ctx<'_, '_> {
     fn print(&mut self, text: &str) -> Result<(), VerbError> {
-        writeln!(self.io.stdout, "{text}").map_err(write_failed)
+        writeln!(self.io.stdout, "{text}").map_err(VerbError::write)
     }
 
     /// The artifact a subcommand's single positional names.
@@ -573,14 +569,14 @@ impl Verb for GroupVerb {
                     group.unwrap_or_default()
                 )
             };
-            writeln!(io.stdout, "{line}").map_err(write_failed)?;
+            writeln!(io.stdout, "{line}").map_err(VerbError::write)?;
             return Ok(0);
         }
         let sessions = all_sessions(core);
         let artifacts = service(core).all();
         let resolved = GroupResolver::new(&sessions, &artifacts).session_group(&session);
         let own = own_group(&session).unwrap_or_else(|| "—".to_owned());
-        writeln!(io.stdout, "own:      {own}\nresolved: {resolved}").map_err(write_failed)?;
+        writeln!(io.stdout, "own:      {own}\nresolved: {resolved}").map_err(VerbError::write)?;
         Ok(0)
     }
 }

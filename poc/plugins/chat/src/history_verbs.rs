@@ -1,12 +1,13 @@
 //! The `history` plugin's verbs: `_history-ingest` (run by the agent's own Stop hooks and
 //! re-run detached), `history`, and `history-hooks`.
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use tx_core::events::now;
+use tx_core::say;
 use tx_core::{
     CoreError, Lifecycle, ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
@@ -36,11 +37,6 @@ pub fn verbs(history_dir: PathBuf) -> Vec<Arc<dyn Verb>> {
         Arc::new(History { history_dir }),
         Arc::new(HistoryHooks),
     ]
-}
-
-pub(crate) fn say(out: &mut dyn Write, text: &str) -> Result<(), VerbError> {
-    out.write_all(text.as_bytes())
-        .map_err(|e| VerbError::Failed(format!("write: {e}")))
 }
 
 /// The hook payload, tolerantly: `{}` for none / unreadable / bad JSON / non-object.
@@ -386,12 +382,11 @@ impl Verb for HistoryHooks {
     }
 
     fn run(&self, _core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let fail = |e: crate::install::InstallError| VerbError::Failed(e.to_string());
         match argv {
             [cmd] if cmd == "install" => self.install(io, false),
             [cmd, flag] if cmd == "install" && flag == "--dry-run" => self.install(io, true),
             [cmd] if cmd == "uninstall" => {
-                uninstall(&home_dir()?, &HISTORY_ENTRIES, io.stdout).map_err(fail)?;
+                uninstall(&home_dir()?, &HISTORY_ENTRIES, io.stdout).map_err(VerbError::failed)?;
                 Ok(0)
             }
             _ => {
@@ -407,7 +402,7 @@ impl HistoryHooks {
         let exe =
             std::env::current_exe().map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
         install(&home_dir()?, &exe, &HISTORY_ENTRIES, dry_run, io.stdout)
-            .map_err(|e| VerbError::Failed(e.to_string()))?;
+            .map_err(VerbError::failed)?;
         Ok(0)
     }
 }

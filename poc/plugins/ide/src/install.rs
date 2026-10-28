@@ -8,7 +8,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use tx_core::{Resource, TxCore, Verb, VerbError, VerbIo};
+use tx_core::{Resource, TxCore, Verb, VerbError, VerbIo, say};
 
 use tx_ui::tmux::Ui;
 
@@ -182,7 +182,7 @@ impl Verb for ResourceVerb {
             Some(resource) => {
                 io.stdout
                     .write_all(resource.bytes)
-                    .map_err(|e| VerbError::Failed(format!("write: {e}")))?;
+                    .map_err(VerbError::write)?;
                 Ok(0)
             }
             None => fail(io, &format!("txc _resource: no such resource: {name}")),
@@ -317,7 +317,7 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
             }
         }
         ui.run(&["source-file", &conf.to_string_lossy()])
-            .map_err(|e| VerbError::Failed(e.to_string()))?;
+            .map_err(VerbError::failed)?;
         write_installed()?;
         out.push_str("reloaded\n");
         if previous.is_none() && legacy_conf_loaded {
@@ -327,9 +327,7 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     } else {
         write_installed()?;
     }
-    io.stdout
-        .write_all(out.as_bytes())
-        .map_err(|e| VerbError::Failed(format!("write: {e}")))?;
+    say(io.stdout, &out)?;
     Ok(0)
 }
 
@@ -391,7 +389,7 @@ fn ensure_home(ui: &Ui, assistant: Option<&str>) -> Result<(), VerbError> {
         ],
     ];
     for step in steps {
-        ui.run(step).map_err(|e| VerbError::Failed(e.to_string()))?;
+        ui.run(step).map_err(VerbError::failed)?;
     }
     Ok(())
 }
@@ -405,7 +403,7 @@ fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     match tmux_env_socket(env.as_deref()) {
         Some(socket) if Path::new(socket) == core.socket_path() => {
             ui.run(&["switch-client", "-t", &format!("={HOME_SESSION}")])
-                .map_err(|e| VerbError::Failed(e.to_string()))?;
+                .map_err(VerbError::failed)?;
             return Ok(0);
         }
         Some(socket) => {

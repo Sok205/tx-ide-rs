@@ -98,12 +98,11 @@ impl Verb for Hook {
                 let exe = std::env::current_exe()
                     .map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
                 install::install(&home_dir()?, &exe, dry_run, io.stdout)
-                    .map_err(|e| VerbError::Failed(e.to_string()))?;
+                    .map_err(VerbError::failed)?;
                 Ok(0)
             }
             Some("uninstall") if argv.len() == 1 => {
-                install::uninstall(&home_dir()?, io.stdout)
-                    .map_err(|e| VerbError::Failed(e.to_string()))?;
+                install::uninstall(&home_dir()?, io.stdout).map_err(VerbError::failed)?;
                 Ok(0)
             }
             Some("status" | "install" | "uninstall") => {

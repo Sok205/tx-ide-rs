@@ -79,8 +79,7 @@ impl Verb for Assistant {
         match argv {
             [sub] if sub == "warm" => {
                 warm(core)?;
-                writeln!(io.stdout, "{SESSION_NAME}")
-                    .map_err(|error| VerbError::Failed(format!("write: {error}")))?;
+                writeln!(io.stdout, "{SESSION_NAME}").map_err(VerbError::write)?;
                 Ok(0)
             }
             _ => {

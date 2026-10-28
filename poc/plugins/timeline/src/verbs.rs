@@ -4,17 +4,16 @@
 //! diffs against main's `tx _timeline-json`).
 
 use std::fs::OpenOptions;
-use std::io::Write;
 use std::process::Stdio;
 use std::sync::Arc;
 
+use tx_core::say;
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 use tx_ui::tmux::Ui;
 
 use crate::app::DEFAULT_WINDOW_MIN;
 use crate::model::{Builder, DEFAULT_DAYS, chat_sources, is_agent, load_sessions};
 use crate::{PLUGIN_ID, run};
-use tx_chat::data_dir;
 
 pub const RESIDENT_VERB: &str = "_timeline-resident";
 /// The tmux session (a view, not a record) hosting the resident timeline.
@@ -37,14 +36,6 @@ pub fn verbs() -> Vec<Arc<dyn Verb>> {
         Arc::new(TimelineAttach),
         Arc::new(TimelineJson),
     ]
-}
-
-fn failed(error: impl std::fmt::Display) -> VerbError {
-    VerbError::Failed(error.to_string())
-}
-
-fn say(out: &mut dyn Write, text: &str) -> Result<(), VerbError> {
-    out.write_all(text.as_bytes()).map_err(failed)
 }
 
 /// `--last` as minutes: `30m`, `2h`, `90s`, `1d`, `1.5h`, or bare minutes.
@@ -127,10 +118,10 @@ pub fn parse_options(argv: &[String], allowed: &[&str]) -> Result<Options, Strin
 }
 
 pub fn builder(core: &TxCore) -> Builder {
-    let state = &core.config().state_dir;
+    let config = core.config();
     Builder::new(
-        tx_chat::data_dir(state, tx_chat::HISTORY_ID),
-        data_dir(state, PLUGIN_ID),
+        config.plugin_dir(tx_chat::HISTORY_ID),
+        config.plugin_dir(PLUGIN_ID),
     )
 }
 
@@ -185,13 +176,13 @@ impl Verb for Timeline {
         let days = options.days.max(options.window / 1440.0);
         if options.snapshot {
             let now = options.now.unwrap_or_else(tx_core::events::now);
-            let payload = run::payload(core, &mut builder, days, now).map_err(failed)?;
+            let payload = run::payload(core, &mut builder, days, now).map_err(VerbError::failed)?;
             let text = run::snapshot(payload, now, options.window, options.columns, options.rows);
-            writeln!(io.stdout, "{text}").map_err(failed)?;
+            writeln!(io.stdout, "{text}").map_err(VerbError::failed)?;
             return Ok(0);
         }
         let resident = self.resident.then_some(POPUP_SESSION);
-        run::run(core, builder, days, options.window, resident).map_err(failed)?;
+        run::run(core, builder, days, options.window, resident).map_err(VerbError::failed)?;
         Ok(0)
     }
 }
@@ -222,10 +213,10 @@ fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
         &cwd,
         &command,
     ])
-    .map_err(failed)?;
+    .map_err(VerbError::failed)?;
     for (option, value) in [("@tx-view", "1"), ("status", "off")] {
         ui.set_session_option(POPUP_SESSION, option, value)
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
     }
     Ok(())
 }
@@ -248,8 +239,9 @@ impl Verb for TimelineAttach {
             return Ok(2);
         }
         let ui = Ui::from_core(core);
-        let dir = data_dir(&core.config().state_dir, PLUGIN_ID);
-        tx_chat::ensure_dir(&dir).map_err(|error| failed(format!("{}: {error}", dir.display())))?;
+        let dir = core.config().plugin_dir(PLUGIN_ID);
+        tx_chat::ensure_dir(&dir)
+            .map_err(|error| VerbError::failed(format!("{}: {error}", dir.display())))?;
         // Two clients opening at once must reuse the same session.
         let lock_path = dir.join(POPUP_LOCK);
         let lock = OpenOptions::new()
@@ -257,8 +249,8 @@ impl Verb for TimelineAttach {
             .write(true)
             .truncate(false)
             .open(&lock_path)
-            .map_err(|error| failed(format!("{}: {error}", lock_path.display())))?;
-        lock.lock().map_err(failed)?;
+            .map_err(|error| VerbError::failed(format!("{}: {error}", lock_path.display())))?;
+        lock.lock().map_err(VerbError::failed)?;
         ensure_resident(core, &ui)?;
         drop(lock);
         let status = ui
@@ -266,7 +258,7 @@ impl Verb for TimelineAttach {
             .stdin(Stdio::inherit())
             .env_remove("TMUX")
             .status()
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         // Enter in the resident left the target behind and detached us; this process runs on
         // the outer client, so the focusing happens here.
         if let Some(target) = ui.session_option(POPUP_SESSION, run::GOTO_OPTION) {
@@ -310,9 +302,10 @@ impl Verb for TimelineJson {
             }
         };
         let now = options.now.unwrap_or_else(tx_core::events::now);
-        let payload = run::payload(core, &mut builder(core), options.days, now).map_err(failed)?;
-        let text = serde_json::to_string_pretty(&payload.to_json()).map_err(failed)?;
-        writeln!(io.stdout, "{text}").map_err(failed)?;
+        let payload =
+            run::payload(core, &mut builder(core), options.days, now).map_err(VerbError::failed)?;
+        let text = serde_json::to_string_pretty(&payload.to_json()).map_err(VerbError::failed)?;
+        writeln!(io.stdout, "{text}").map_err(VerbError::failed)?;
         Ok(0)
     }
 }
@@ -356,7 +349,7 @@ fn health(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
             session.name,
             session.lifecycle.as_str()
         )
-        .map_err(failed)?;
+        .map_err(VerbError::failed)?;
     }
     Ok(i32::from(problems > 0))
 }

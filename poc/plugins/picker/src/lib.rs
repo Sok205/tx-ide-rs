@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tx_core::events::now;
+use tx_core::say;
 use tx_core::{
     Lifecycle, ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
 };
@@ -53,21 +54,7 @@ impl Plugin for PickerPlugin {
 
 /// The roles the picker hides, remembered across runs in the plugin's state dir.
 fn hide_file(core: &TxCore) -> PathBuf {
-    core.config()
-        .state_dir
-        .join("plugins")
-        .join(PLUGIN_ID)
-        .join("hidden-roles")
-}
-
-fn failed(error: impl std::fmt::Display) -> VerbError {
-    VerbError::Failed(error.to_string())
-}
-
-fn write_out(io: &mut VerbIo<'_>, text: &str) -> Result<(), VerbError> {
-    io.stdout
-        .write_all(text.as_bytes())
-        .map_err(|e| failed(format!("write: {e}")))
+    core.config().plugin_dir(PLUGIN_ID).join("hidden-roles")
 }
 
 const DEFAULT_NAMEW: i64 = 18;
@@ -267,7 +254,7 @@ fn feed(
     query: &str,
     namew: i64,
 ) -> Result<String, VerbError> {
-    let hidden = filter::read_hidden(&hide_file(core)).map_err(failed)?;
+    let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::failed)?;
     let targets = ui.live_targets();
     let attachments = ui.attachment_map();
     let rows: Vec<Row<'_>> = sessions
@@ -306,7 +293,7 @@ impl Verb for List {
         let query = argv.first().map(String::as_str).unwrap_or_default();
         let sessions = running(core)?;
         let text = feed(core, &Ui::from_core(core), &sessions, query, namew)?;
-        write_out(io, &text)?;
+        say(io.stdout, &text)?;
         Ok(0)
     }
 }
@@ -365,7 +352,7 @@ impl Verb for Pick {
                 .prefix(prefix)
                 .rand_bytes(8)
                 .tempfile()
-                .map_err(|e| failed(format!("{prefix} file: {e}")))
+                .map_err(|e| VerbError::failed(format!("{prefix} file: {e}")))
                 .map(tempfile::NamedTempFile::into_temp_path)
         };
         // The two-press kill's arm file and the pending pick; both removed on drop.
@@ -375,10 +362,10 @@ impl Verb for Pick {
         let hidden = match &options.hide {
             Some(hide) => {
                 let hidden = filter::parse_hidden(hide);
-                filter::write_hidden(&hide_file, &hidden).map_err(failed)?;
+                filter::write_hidden(&hide_file, &hidden).map_err(VerbError::failed)?;
                 hidden
             }
-            None => filter::read_hidden(&hide_file).map_err(failed)?,
+            None => filter::read_hidden(&hide_file).map_err(VerbError::failed)?,
         };
         let args = fzf_args(
             &tx,
@@ -446,7 +433,8 @@ fn open_popup(ui: &Ui, tx: &str, name: &str) -> Result<bool, VerbError> {
         tx_ui::tmux::shell_quote(&client),
         tx_ui::tmux::shell_quote(name)
     );
-    ui.run_shell_background(&command).map_err(failed)?;
+    ui.run_shell_background(&command)
+        .map_err(VerbError::failed)?;
     Ok(true)
 }
 
@@ -531,7 +519,7 @@ fn open(ui: &Ui, target: &str, name: &str) -> Result<(), VerbError> {
         (OpenMode::Nest, Some(pane)) => nest(ui, &pane, target)?,
         (OpenMode::Attach, _) => {
             let _ = std::io::stdout().flush();
-            return Err(failed(ui.attach_exec(target)));
+            return Err(VerbError::failed(ui.attach_exec(target)));
         }
         _ => {
             let _ = ui.switch_client(name);
@@ -561,7 +549,7 @@ fn jump(ui: &Ui, name: &str, target: &str) -> Result<bool, VerbError> {
 
 fn nest(ui: &Ui, pane: &str, target: &str) -> Result<(), VerbError> {
     ui.respawn_pane(pane, &ui.nest_attach_command(target))
-        .map_err(failed)
+        .map_err(VerbError::failed)
 }
 
 pub struct PickerKey;
@@ -577,12 +565,12 @@ impl Verb for PickerKey {
 
     fn run(&self, _core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some(path) = std::env::var_os(DIGITS_FILE_ENV).filter(|path| !path.is_empty()) else {
-            return Err(failed(format!(
+            return Err(VerbError::failed(format!(
                 "{DIGITS_FILE_ENV} is not set (run from the txc pick picker)"
             )));
         };
         let key = argv.first().map(String::as_str).unwrap_or_default();
-        let pending = std::fs::read_to_string(&path).map_err(failed)?;
+        let pending = std::fs::read_to_string(&path).map_err(VerbError::failed)?;
         let pending = pending.trim();
         let (popup, digits) = match pending.strip_prefix(POPUP_MARK) {
             Some(digits) => (true, digits),
@@ -601,8 +589,8 @@ impl Verb for PickerKey {
             let _ = writeln!(io.stderr, "txc _picker-key: unknown key '{key}'");
             return Ok(2);
         };
-        std::fs::write(&path, reply.pending()).map_err(failed)?;
-        write_out(io, &format!("{}\n", reply.actions))?;
+        std::fs::write(&path, reply.pending()).map_err(VerbError::failed)?;
+        say(io.stdout, &format!("{}\n", reply.actions))?;
         Ok(0)
     }
 }
@@ -619,13 +607,13 @@ impl Verb for Roles {
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let hidden = filter::read_hidden(&hide_file(core)).map_err(failed)?;
+        let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::failed)?;
         let text = if argv.iter().any(|arg| arg == "--chips") {
             filter::chips_line(&hidden)
         } else {
             filter::panel_rows(&hidden)
         };
-        write_out(io, &format!("{text}\n"))?;
+        say(io.stdout, &format!("{text}\n"))?;
         Ok(0)
     }
 }
@@ -645,9 +633,9 @@ impl Verb for ToggleHide {
         let path = hide_file(core);
         let word = argv.first().map(String::as_str).unwrap_or_default();
         if word == "--all" {
-            filter::toggle_all(&path).map_err(failed)?;
+            filter::toggle_all(&path).map_err(VerbError::failed)?;
         } else if filter::ROLES.contains(&word) {
-            filter::toggle(&path, word).map_err(failed)?;
+            filter::toggle(&path, word).map_err(VerbError::failed)?;
         }
         Ok(0)
     }
@@ -673,7 +661,7 @@ impl Verb for RolesPanel {
             "bg:{BG_DEEP_HEX},fg:{DIM_FG_HEX},pointer:{ACCENT_HEX},fg+:{FG_HEX}:regular,\
              bg+:{SELECTION_BG}:regular,header:{DIM_FG_HEX},prompt:{ACCENT_HEX}"
         );
-        let hidden = filter::read_hidden(&hide_file(core)).map_err(failed)?;
+        let hidden = filter::read_hidden(&hide_file(core)).map_err(VerbError::failed)?;
         let mut child = Command::new("fzf")
             .args([
                 "--ansi",
@@ -697,11 +685,11 @@ impl Verb for RolesPanel {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .spawn()
-            .map_err(|e| failed(format!("could not run fzf: {e}")))?;
+            .map_err(|e| VerbError::failed(format!("could not run fzf: {e}")))?;
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(filter::panel_rows(&hidden).as_bytes());
         }
-        child.wait().map_err(failed)?;
+        child.wait().map_err(VerbError::failed)?;
         Ok(0)
     }
 }
@@ -735,7 +723,7 @@ impl Verb for PopupAttach {
             &session,
             None,
         )
-        .map_err(failed)?;
+        .map_err(VerbError::failed)?;
         Ok(0)
     }
 }

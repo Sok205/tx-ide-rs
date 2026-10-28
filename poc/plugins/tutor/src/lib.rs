@@ -62,11 +62,6 @@ impl Plugin for TutorPlugin {
     }
 }
 
-/// The plugin's store: `<state_dir>/plugins/tutor/` (D1). Created by whoever writes into it.
-pub fn data_dir(core: &TxCore) -> PathBuf {
-    core.config().state_dir.join("plugins").join(PLUGIN_ID)
-}
-
 pub fn view_name(lang: &str) -> String {
     format!("{VIEW_PREFIX}{lang}")
 }
@@ -99,10 +94,6 @@ enum TutorError {
     },
     #[error("HOME is not set; pass --dir")]
     NoHome,
-}
-
-fn failed(error: impl std::fmt::Display) -> VerbError {
-    VerbError::Failed(error.to_string())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,8 +180,8 @@ impl Verb for TutorVerb {
         }
         let path = Progress::path(&tutor.data, lang);
         let mut progress = Progress::load(&path)
-            .map_err(|error| failed(format!("{}: {error}", path.display())))?
-            .ok_or_else(|| failed(TutorError::NotStarted(lang.to_owned())))?;
+            .map_err(|error| VerbError::failed(format!("{}: {error}", path.display())))?
+            .ok_or_else(|| VerbError::failed(TutorError::NotStarted(lang.to_owned())))?;
         // `reset` must work even when `progress.current` no longer resolves in the pack (a
         // renumbered or renamed lesson): it is the only way out of that dead end.
         if action == Action::Reset {
@@ -198,26 +189,27 @@ impl Verb for TutorVerb {
         }
         let current = pack
             .index_of(&progress.current)
-            .ok_or_else(|| failed(TutorError::StaleLesson(progress.current.clone())))?;
+            .ok_or_else(|| VerbError::failed(TutorError::StaleLesson(progress.current.clone())))?;
         let moved_to = match action {
             Action::Check => return tutor.check(io, &pack, &mut progress, &path, current),
             Action::Status => {
                 write!(io.stdout, "{}", render_status(&pack, &progress, current))
-                    .map_err(failed)?;
+                    .map_err(VerbError::failed)?;
                 return Ok(0);
             }
             Action::Hint => {
                 match pack.solution_path(current) {
                     Some(solution) => {
-                        let text = std::fs::read_to_string(&solution)
-                            .map_err(|error| failed(format!("{}: {error}", solution.display())))?;
-                        write!(io.stdout, "{text}").map_err(failed)?;
+                        let text = std::fs::read_to_string(&solution).map_err(|error| {
+                            VerbError::failed(format!("{}: {error}", solution.display()))
+                        })?;
+                        write!(io.stdout, "{text}").map_err(VerbError::failed)?;
                     }
                     None => writeln!(
                         io.stdout,
                         "no hint for this lesson; re-read it, or ask your worker to explain"
                     )
-                    .map_err(failed)?,
+                    .map_err(VerbError::failed)?,
                 }
                 return Ok(0);
             }
@@ -226,7 +218,7 @@ impl Verb for TutorVerb {
             Action::Goto => {
                 let key = args.target.as_deref().unwrap_or_default();
                 pack.resolve(key)
-                    .ok_or_else(|| failed(TutorError::NoLesson(key.to_owned())))?
+                    .ok_or_else(|| VerbError::failed(TutorError::NoLesson(key.to_owned())))?
             }
             Action::Start | Action::Reset => unreachable!("handled above"),
         };
@@ -247,7 +239,7 @@ impl<'a> Tutor<'a> {
         Self {
             core,
             ui: Ui::from_core(core),
-            data: data_dir(core),
+            data: core.config().plugin_dir(PLUGIN_ID),
         }
     }
 
@@ -260,14 +252,14 @@ impl<'a> Tutor<'a> {
         let packs = self.packs();
         let resources = self.core.resources(bundle::PREFIX);
         bundle::materialise(&packs, resources.iter().map(|r| (r.name.as_str(), r.bytes)))
-            .map_err(|error| failed(format!("{}: {error}", packs.display())))?;
-        Pack::find(&packs, lang).map_err(failed)
+            .map_err(|error| VerbError::failed(format!("{}: {error}", packs.display())))?;
+        Pack::find(&packs, lang).map_err(VerbError::failed)
     }
 
     fn save(&self, progress: &Progress, path: &Path) -> Result<(), VerbError> {
         progress
             .save(path)
-            .map_err(|error| failed(format!("{}: {error}", path.display())))
+            .map_err(|error| VerbError::failed(format!("{}: {error}", path.display())))
     }
 
     fn start(&self, io: &mut VerbIo<'_>, pack: &Pack, args: &Args) -> Result<i32, VerbError> {
@@ -280,11 +272,11 @@ impl<'a> Tutor<'a> {
             None => None,
         };
         let saved = Progress::load(&path)
-            .map_err(|error| failed(format!("{}: {error}", path.display())))?;
+            .map_err(|error| VerbError::failed(format!("{}: {error}", path.display())))?;
         if let (Some(saved), Some(dir)) = (&saved, &requested)
             && dir != &saved.dir
         {
-            return Err(failed(TutorError::AlreadyStarted {
+            return Err(VerbError::failed(TutorError::AlreadyStarted {
                 lang: pack.lang.clone(),
                 dir: saved.dir.clone(),
                 path,
@@ -297,7 +289,7 @@ impl<'a> Tutor<'a> {
             .filter(|program| !on_path(program))
             .collect();
         if !missing.is_empty() {
-            return Err(failed(TutorError::Missing(missing.join(", "))));
+            return Err(VerbError::failed(TutorError::Missing(missing.join(", "))));
         }
         if !on_path("claude") {
             let _ = writeln!(
@@ -312,7 +304,7 @@ impl<'a> Tutor<'a> {
                 dir: match requested {
                     Some(dir) => dir,
                     None => home
-                        .ok_or_else(|| failed(TutorError::NoHome))?
+                        .ok_or_else(|| VerbError::failed(TutorError::NoHome))?
                         .join("tx-tutor")
                         .join(&pack.lang),
                 },
@@ -324,8 +316,10 @@ impl<'a> Tutor<'a> {
             progress.current = pack.lessons[0].id.clone();
         }
         if !project::is_tutor_project(&progress.dir) {
-            project::scaffold(&pack.skeleton(), &progress.dir, &pack.lang).map_err(failed)?;
-            writeln!(io.stdout, "Scaffolded {}", progress.dir.display()).map_err(failed)?;
+            project::scaffold(&pack.skeleton(), &progress.dir, &pack.lang)
+                .map_err(VerbError::failed)?;
+            writeln!(io.stdout, "Scaffolded {}", progress.dir.display())
+                .map_err(VerbError::failed)?;
         }
         self.save(&progress, &path)?;
 
@@ -337,10 +331,10 @@ impl<'a> Tutor<'a> {
                 self.ui.kill_session(&view);
                 return Err(error);
             }
-            writeln!(io.stdout, "{view} view created.").map_err(failed)?;
+            writeln!(io.stdout, "{view} view created.").map_err(VerbError::failed)?;
         }
         if self.ui.inside() {
-            self.ui.switch_client(&view).map_err(failed)?;
+            self.ui.switch_client(&view).map_err(VerbError::failed)?;
             return Ok(0);
         }
         if args.detach || !std::io::stdin().is_terminal() {
@@ -349,11 +343,11 @@ impl<'a> Tutor<'a> {
                 "{view} is ready: tmux -S {} attach -t ={view}",
                 shell_quote(&self.core.socket_path().to_string_lossy())
             )
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
             return Ok(0);
         }
         let _ = io.stdout.flush();
-        Err(failed(self.ui.attach_exec(&format!("={view}"))))
+        Err(VerbError::failed(self.ui.attach_exec(&format!("={view}"))))
     }
 
     /// Top left: the lesson in nvim; under it the key cheat sheet; right: a shell over a
@@ -380,14 +374,14 @@ impl<'a> Tutor<'a> {
         let shell = default_shell();
         self.ui
             .run(&["new-session", "-d", "-s", view, "-c", &cwd, &nvim])
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         self.ui
             .set_session_option(view, VIEW_OPTION, "1")
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         let session = format!("={view}:");
         self.ui
             .run(&["split-window", "-h", "-t", &session, "-c", &cwd, &shell])
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         let top_right = format!("={view}:.{{top-right}}");
         self.ui
             .run(&[
@@ -401,14 +395,14 @@ impl<'a> Tutor<'a> {
                 &cwd,
                 &shell,
             ])
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         let keys_source = self.packs().join(KEYS_FILE);
         let text = std::fs::read_to_string(&keys_source)
-            .map_err(|error| failed(format!("{}: {error}", keys_source.display())))?;
+            .map_err(|error| VerbError::failed(format!("{}: {error}", keys_source.display())))?;
         let prefix = self.ui.quiet(&["show-options", "-gv", "prefix"]).1;
         let rendered = self.data.join(KEYS_FILE);
         std::fs::write(&rendered, keys::render(&text, Some(prefix.trim())))
-            .map_err(|error| failed(format!("{}: {error}", rendered.display())))?;
+            .map_err(|error| VerbError::failed(format!("{}: {error}", rendered.display())))?;
         let show = keys_pane_command(&self.ui.argv(&[]), &rendered);
         let top_left = format!("={view}:.{{top-left}}");
         self.ui
@@ -423,7 +417,7 @@ impl<'a> Tutor<'a> {
                 &cwd,
                 &show,
             ])
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         self.ui.select_pane(&top_left);
         Ok(())
     }
@@ -442,10 +436,12 @@ impl<'a> Tutor<'a> {
                 return Ok(1);
             }
             if project::is_tutor_project(&progress.dir) {
-                std::fs::remove_dir_all(&progress.dir)
-                    .map_err(|error| failed(format!("{}: {error}", progress.dir.display())))?;
+                std::fs::remove_dir_all(&progress.dir).map_err(|error| {
+                    VerbError::failed(format!("{}: {error}", progress.dir.display()))
+                })?;
             }
-            project::scaffold(&pack.skeleton(), &progress.dir, &pack.lang).map_err(failed)?;
+            project::scaffold(&pack.skeleton(), &progress.dir, &pack.lang)
+                .map_err(VerbError::failed)?;
         }
         progress.passed.clear();
         progress.current = pack.lessons[0].id.clone();
@@ -469,7 +465,7 @@ impl<'a> Tutor<'a> {
             pack.lessons.len(),
             lesson.id
         )
-        .map_err(failed)?;
+        .map_err(VerbError::failed)?;
         for program in lesson.requires.iter().filter(|program| !on_path(program)) {
             let _ = writeln!(
                 io.stderr,
@@ -494,13 +490,13 @@ impl<'a> Tutor<'a> {
                 },
             )
         };
-        write!(io.stdout, "{}", report.render()).map_err(failed)?;
+        write!(io.stdout, "{}", report.render()).map_err(VerbError::failed)?;
         if !report.passed() {
             writeln!(
                 io.stdout,
                 "Not yet: fix the ✗ items and run `txc tutor check` again."
             )
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
             return Ok(1);
         }
         progress.mark_passed(&lesson.id);
@@ -513,7 +509,7 @@ impl<'a> Tutor<'a> {
             }
             None => {
                 writeln!(io.stdout, "You finished the {} tutorial.", pack.meta.name)
-                    .map_err(failed)?;
+                    .map_err(VerbError::failed)?;
                 Ok(0)
             }
         }
@@ -528,7 +524,7 @@ impl<'a> Tutor<'a> {
             pack.lessons.len(),
             pack.lessons[index].id
         )
-        .map_err(failed)?;
+        .map_err(VerbError::failed)?;
         let socket = socket_path(&self.data, &pack.lang);
         if socket.exists() {
             let _ = Command::new("nvim")
@@ -560,7 +556,7 @@ fn absolute_dir(dir: &str, home: Option<&Path>) -> Result<PathBuf, VerbError> {
         (Some(rest), Some(home)) if rest.starts_with('/') => home.join(&rest[1..]),
         _ => PathBuf::from(dir),
     };
-    std::path::absolute(&expanded).map_err(|error| failed(format!("{dir}: {error}")))
+    std::path::absolute(&expanded).map_err(|error| VerbError::failed(format!("{dir}: {error}")))
 }
 
 fn default_shell() -> String {

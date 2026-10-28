@@ -76,6 +76,11 @@ impl CoreConfig {
         self.state_dir.join(CONF_FILE)
     }
 
+    /// `<state_dir>/plugins/<plugin>/`, a plugin's own data. Pure: nothing is created.
+    pub fn plugin_dir(&self, plugin: &str) -> PathBuf {
+        self.state_dir.join("plugins").join(plugin)
+    }
+
     /// Fails before any file is touched when the socket path cannot fit a `sockaddr_un` or is
     /// not absolute (a relative socket would move with the caller's cwd and be exported into
     /// sessions as such).

@@ -59,7 +59,7 @@ fn ask(core: &TxCore, pane: &str, client: &str) -> Result<i32, VerbError> {
     let fork = tx_ui::txc::shell(core, &["_fork-pane", pane, client, name.trim()])?;
     let command = format!("{fork} || true");
     ui.run_shell_background(&command)
-        .map_err(|e| VerbError::Failed(e.to_string()))?;
+        .map_err(VerbError::failed)?;
     Ok(0)
 }
 

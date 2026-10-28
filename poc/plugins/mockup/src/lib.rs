@@ -13,7 +13,7 @@ use tx_core::{
     CoreError, Plugin, PluginError, Registry, SendOptions, Session, SessionId, TxCore, Verb,
     VerbError, VerbIo,
 };
-use tx_ui::tmux::{Ui, UiError};
+use tx_ui::tmux::Ui;
 
 pub mod markup;
 pub mod model;
@@ -111,14 +111,6 @@ fn agent_from_env(core: &TxCore) -> Option<SessionId> {
     std::env::var("TX_SESSION_ID").ok()?.parse().ok()
 }
 
-fn failed(error: UiError) -> VerbError {
-    VerbError::Failed(error.to_string())
-}
-
-fn write_failed(error: std::io::Error) -> VerbError {
-    VerbError::Failed(format!("write: {error}"))
-}
-
 /// The session dir `start` recorded in `ext["mockup"].dir`.
 fn session_dir(session: &Session) -> Option<PathBuf> {
     session
@@ -165,14 +157,14 @@ fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), Ver
         // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
         let project = project_of(dir)?.to_string_lossy().replace('#', "##");
         ui.run(&["new-session", "-d", "-s", view, "-c", &project, &command])
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
     } else if ui
         .display_message("#{pane_dead}", Some(&format!("={view}:")))
         .as_deref()
         == Some("1")
     {
         ui.respawn_pane(&format!("={view}:"), &command)
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
     }
     ui.run(&[
         "set-window-option",
@@ -181,14 +173,15 @@ fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), Ver
         "remain-on-exit",
         "on",
     ])
-    .map_err(failed)?;
+    .map_err(VerbError::failed)?;
     let dir = dir.to_string_lossy();
     for (option, value) in [
         (VIEW_OPTION, "1"),
         (DIR_OPTION, dir.as_ref()),
         ("status", "off"),
     ] {
-        ui.set_session_option(view, option, value).map_err(failed)?;
+        ui.set_session_option(view, option, value)
+            .map_err(VerbError::failed)?;
     }
     Ok(())
 }
@@ -266,7 +259,7 @@ fn start(
         "content_dir": content.to_string_lossy(),
         "state_dir": state.to_string_lossy(),
     });
-    writeln!(io.stdout, "{line}").map_err(write_failed)?;
+    writeln!(io.stdout, "{line}").map_err(VerbError::write)?;
     Ok(0)
 }
 
@@ -292,13 +285,13 @@ fn show(
         "#{client_name}\t#{client_session}\t#{client_activity}",
     ]);
     let Some((client, return_to)) = pick_client(&clients, &session.name, &hosts) else {
-        writeln!(io.stdout, "mockup ready in view {view}").map_err(write_failed)?;
+        writeln!(io.stdout, "mockup ready in view {view}").map_err(VerbError::write)?;
         return Ok(0);
     };
     ui.set_session_option(view, RETURN_OPTION, &return_to)
-        .map_err(failed)?;
+        .map_err(VerbError::failed)?;
     ui.run(&["switch-client", "-c", &client, "-t", &format!("={view}")])
-        .map_err(failed)?;
+        .map_err(VerbError::failed)?;
     Ok(0)
 }
 

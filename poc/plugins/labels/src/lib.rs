@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use tx_core::say;
 use tx_core::{
     CoreError, Launch, Lifecycle, ListFilter, Plugin, PluginError, Registry, Session, SessionId,
     TxCore, Verb, VerbError, VerbIo,
@@ -42,12 +43,6 @@ impl Plugin for LabelsPlugin {
     }
 }
 
-fn write_out(io: &mut VerbIo<'_>, text: &str) -> Result<(), VerbError> {
-    io.stdout
-        .write_all(text.as_bytes())
-        .map_err(|e| VerbError::Failed(format!("write: {e}")))
-}
-
 /// `None` when nothing has that name or id.
 fn resolve_or_not_found(core: &TxCore, token: &str) -> Result<Option<Session>, VerbError> {
     match core.resolve_session(token) {
@@ -77,7 +72,7 @@ impl Verb for PaneInfo {
                 || "\n\n".to_owned(),
                 |session| format!("{}\n{}\n", session.name, session.tags.join(",")),
             );
-        write_out(io, &text)?;
+        say(io.stdout, &text)?;
         Ok(0)
     }
 }
@@ -102,7 +97,7 @@ impl Verb for TmuxName {
             return Ok(0);
         };
         if let Some(target) = Ui::from_core(core).live_targets().get(&session.name) {
-            write_out(io, &format!("{target}\n"))?;
+            say(io.stdout, &format!("{target}\n"))?;
         }
         Ok(0)
     }
@@ -161,7 +156,7 @@ impl Verb for Whoami {
             Some(session) => session.name,
             None => raw,
         };
-        write_out(io, &format!("{name}\n"))?;
+        say(io.stdout, &format!("{name}\n"))?;
         Ok(0)
     }
 }
@@ -189,7 +184,7 @@ impl Verb for PaneLabel {
         } else {
             NOT_NESTED.to_owned()
         };
-        write_out(io, &label)?;
+        say(io.stdout, &label)?;
         Ok(0)
     }
 }

@@ -31,10 +31,6 @@ pub fn verbs() -> Vec<Arc<dyn Verb>> {
     ]
 }
 
-fn failed(error: impl std::fmt::Display) -> VerbError {
-    VerbError::Failed(error.to_string())
-}
-
 fn usage(io: &mut VerbIo<'_>, text: &str) -> Result<i32, VerbError> {
     let _ = writeln!(io.stderr, "usage: txc {text}");
     Ok(2)
@@ -140,8 +136,9 @@ impl Verb for Tui {
         };
         let ui = Ui::from_core(core);
         let mut menu = Menu::new(data::context(core, &ui, pane)?);
-        if let Some(action) = run::run(&mut menu, first).map_err(failed)? {
-            std::fs::write(file, action.encode()).map_err(|e| failed(format!("{file}: {e}")))?;
+        if let Some(action) = run::run(&mut menu, first).map_err(VerbError::failed)? {
+            std::fs::write(file, action.encode())
+                .map_err(|e| VerbError::failed(format!("{file}: {e}")))?;
         }
         Ok(0)
     }
@@ -217,7 +214,7 @@ fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result
     let choice = tempfile::Builder::new()
         .prefix("tx-menu-")
         .tempfile()
-        .map_err(|e| failed(format!("choice file: {e}")))?
+        .map_err(|e| VerbError::failed(format!("choice file: {e}")))?
         .into_temp_path();
     let choice_path = choice.to_string_lossy();
     let mut args = vec![TUI_VERB, pane, client, &choice_path];
@@ -247,7 +244,7 @@ fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result
         " tx-ide ",
         &command,
     ])
-    .map_err(failed)?;
+    .map_err(VerbError::failed)?;
     let text = std::fs::read_to_string(&choice).unwrap_or_default();
     if let Some(action) = Action::decode(&text) {
         perform(ui, &txc, pane, client, &action);

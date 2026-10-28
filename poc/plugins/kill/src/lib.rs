@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use tx_core::say;
 use tx_core::{
     CoreError, Plugin, PluginError, Registry, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
@@ -26,12 +27,6 @@ impl Plugin for KillPlugin {
             include_bytes!("../bin/tmux-kill-tx-session"),
         )
     }
-}
-
-fn write_out(io: &mut VerbIo<'_>, text: &str) -> Result<(), VerbError> {
-    io.stdout
-        .write_all(text.as_bytes())
-        .map_err(|e| VerbError::Failed(format!("write: {e}")))
 }
 
 /// `None` when nothing has that name or id.
@@ -70,7 +65,7 @@ impl Verb for Kill {
                 return Ok(1);
             }
         };
-        write_out(io, &format!("Killed '{name}'\n"))?;
+        say(io.stdout, &format!("Killed '{name}'\n"))?;
         Ok(0)
     }
 }

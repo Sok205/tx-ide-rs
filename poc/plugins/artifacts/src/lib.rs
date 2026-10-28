@@ -12,7 +12,6 @@
 //! Settings (`plugins.yaml`): `editor` (default `nvim`), the program an artifact's view runs; a
 //! diff or tour passes it nvim arguments.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use tx_core::{
@@ -34,11 +33,6 @@ pub mod views;
 pub const PLUGIN_ID: &str = "artifacts";
 pub const DEFAULT_EDITOR: &str = "nvim";
 
-/// `<state_dir>/plugins/artifacts/`, the plugin's own store. Created on first write.
-pub fn data_dir(config: &CoreConfig) -> PathBuf {
-    config.state_dir.join("plugins").join(PLUGIN_ID)
-}
-
 /// The acting session: `$TX_SESSION_ID` when it is a valid id, else `user`.
 pub fn actor() -> String {
     std::env::var("TX_SESSION_ID")
@@ -48,7 +42,7 @@ pub fn actor() -> String {
 }
 
 pub fn service(core: &TxCore) -> service::ArtifactService {
-    service::ArtifactService::new(data_dir(core.config()), &actor())
+    service::ArtifactService::new(core.config().plugin_dir(PLUGIN_ID), &actor())
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -113,7 +107,7 @@ impl EventSink for CloseOnEnd {
         else {
             return;
         };
-        let service = service::ArtifactService::new(data_dir(&self.config), &actor());
+        let service = service::ArtifactService::new(self.config.plugin_dir(PLUGIN_ID), &actor());
         if let Err(error) = service.close(&artifact_id, event.id.as_str()) {
             eprintln!("txc artifact: close step of {}: {error}", event.name);
         }

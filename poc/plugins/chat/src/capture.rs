@@ -10,8 +10,9 @@ use tx_ui::render::reltime;
 
 use crate::ChatError;
 use crate::ext::{ChatExt, ChatRef, HistoryExt, Role, chat_ext, history_ext, owned_elsewhere};
-use crate::history_verbs::{SESSION_ID_ENV, home_dir, read_payload, resolve, say};
+use crate::history_verbs::{SESSION_ID_ENV, home_dir, read_payload, resolve};
 use crate::install::{Entries, install, uninstall};
+use tx_core::say;
 
 pub const CHAT_ENTRIES: Entries = Entries {
     sidecar: ".tx-chat-managed.json",
@@ -228,8 +229,7 @@ impl Verb for Chat {
             ["hooks", "install"] => hooks_install(io, false),
             ["hooks", "install", "--dry-run"] => hooks_install(io, true),
             ["hooks", "uninstall"] => {
-                uninstall(&home_dir()?, &CHAT_ENTRIES, io.stdout)
-                    .map_err(|e| VerbError::Failed(e.to_string()))?;
+                uninstall(&home_dir()?, &CHAT_ENTRIES, io.stdout).map_err(VerbError::failed)?;
                 Ok(0)
             }
             _ => {
@@ -243,8 +243,7 @@ impl Verb for Chat {
 fn hooks_install(io: &mut VerbIo<'_>, dry_run: bool) -> Result<i32, VerbError> {
     let exe =
         std::env::current_exe().map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
-    install(&home_dir()?, &exe, &CHAT_ENTRIES, dry_run, io.stdout)
-        .map_err(|e| VerbError::Failed(e.to_string()))?;
+    install(&home_dir()?, &exe, &CHAT_ENTRIES, dry_run, io.stdout).map_err(VerbError::failed)?;
     Ok(0)
 }
 

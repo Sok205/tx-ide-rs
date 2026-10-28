@@ -179,10 +179,6 @@ pub struct Nav<'a> {
     pub editor: &'a str,
 }
 
-fn failed(error: impl std::fmt::Display) -> VerbError {
-    VerbError::Failed(error.to_string())
-}
-
 impl Nav<'_> {
     /// The record of the session the key fired in; `None` is reported on the status line.
     fn record(&self, session: &str, client: &str) -> Option<Session> {
@@ -218,7 +214,10 @@ impl Nav<'_> {
         };
         let back = match bound_artifact(&record) {
             Some(artifact_id) => {
-                let artifact = self.artifacts.require(&artifact_id).map_err(failed)?;
+                let artifact = self
+                    .artifacts
+                    .require(&artifact_id)
+                    .map_err(VerbError::failed)?;
                 Some(self.controlling_session(&artifact))
             }
             None => match (&record.launch, &record.parent) {
@@ -246,7 +245,7 @@ impl Nav<'_> {
                     &listing.title,
                     &tx_ui::txc::shell(self.core, &[PICK_VERB, session, client])?,
                 )
-                .map_err(failed)?;
+                .map_err(VerbError::failed)?;
                 Ok(0)
             }
             Some(None) => {
@@ -267,7 +266,8 @@ impl Nav<'_> {
             return Ok(1);
         };
         // One terminal for every round: a delete redraws without leaving the alternate screen.
-        let terminal = Terminal::open().map_err(|error| failed(format!("terminal: {error}")))?;
+        let terminal =
+            Terminal::open().map_err(|error| VerbError::failed(format!("terminal: {error}")))?;
         let mut failure: Option<String> = None;
         let (listing, mode, index) = loop {
             let listing = self.listing(&record, client);
@@ -302,7 +302,7 @@ impl Nav<'_> {
                 decline,
                 confirm_text,
             )
-            .map_err(|error| failed(format!("picker: {error}")))?;
+            .map_err(|error| VerbError::failed(format!("picker: {error}")))?;
             match chosen {
                 None => return Ok(0),
                 Some(Pick::Attach(index)) => break (listing, Mode::Attach, index),
@@ -330,7 +330,7 @@ impl Nav<'_> {
         )?;
         self.ui
             .run_shell_background(&format!("{command} || true"))
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         Ok(0)
     }
 
@@ -344,7 +344,7 @@ impl Nav<'_> {
                 .map_err(VerbError::from)
         };
         if target.kind == "session" {
-            return stop(&target.id.parse().map_err(failed)?);
+            return stop(&target.id.parse().map_err(VerbError::failed)?);
         }
         for view in self.live() {
             if bound_artifact(&view).as_deref() == Some(target.id.as_str()) {
@@ -354,7 +354,7 @@ impl Nav<'_> {
         self.artifacts
             .set_archived(&target.id, record.id.as_str(), true)
             .map(drop)
-            .map_err(failed)
+            .map_err(VerbError::failed)
     }
 
     fn client_width(&self, client: &str) -> usize {
@@ -428,7 +428,10 @@ impl Nav<'_> {
         let view = match self.live_view(artifact_id) {
             Some(view) => view,
             None => {
-                let artifact = self.artifacts.require(artifact_id).map_err(failed)?;
+                let artifact = self
+                    .artifacts
+                    .require(artifact_id)
+                    .map_err(VerbError::failed)?;
                 let opener = Opener {
                     id: Some(record.id.clone()),
                     tags: record.tags.clone(),
@@ -516,7 +519,7 @@ impl Nav<'_> {
                     target,
                     owner.ok().as_ref(),
                 )
-                .map_err(failed)?;
+                .map_err(VerbError::failed)?;
                 Ok(0)
             }
             Mode::Attach => self.rehost(session, client, target),
@@ -538,7 +541,7 @@ impl Nav<'_> {
         };
         self.ui
             .respawn_pane(&pane, &self.ui.nest_attach_command(&target.name))
-            .map_err(failed)?;
+            .map_err(VerbError::failed)?;
         Ok(0)
     }
 

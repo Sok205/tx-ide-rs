@@ -103,6 +103,23 @@ pub enum VerbError {
     Failed(String),
 }
 
+impl VerbError {
+    /// Any failure, reported by its message: `.map_err(VerbError::failed)`.
+    pub fn failed(error: impl std::fmt::Display) -> Self {
+        Self::Failed(error.to_string())
+    }
+
+    /// A failed write to the verb's output stream.
+    pub fn write(error: std::io::Error) -> Self {
+        Self::Failed(format!("write: {error}"))
+    }
+}
+
+/// Writes `text` to a verb's output stream (`io.stdout` / `io.stderr`).
+pub fn say(out: &mut dyn Write, text: &str) -> Result<(), VerbError> {
+    out.write_all(text.as_bytes()).map_err(VerbError::write)
+}
+
 /// Which plugins to skip and what settings to hand each one. Ids must name plugins in the
 /// manifest handed to [`TxCore::plug`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
