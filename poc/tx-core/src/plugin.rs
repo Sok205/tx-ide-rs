@@ -3,6 +3,7 @@
 //! Core never parses arguments or reads the environment: a [`Verb`] receives argv already split.
 //! A resource is a named static blob the core stores and lists but never reads.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -186,7 +187,7 @@ fn validate_resource_name(name: &str) -> Result<(), PluginError> {
 #[derive(Default)]
 pub(crate) struct Host {
     /// name → (plugin id, verb)
-    verbs: BTreeMap<String, (String, Arc<dyn Verb>)>,
+    verbs: VerbTable,
     /// Manifest order, then name order within a plugin.
     resources: Vec<Resource>,
     status: Vec<(String, PluginStatus)>,
@@ -258,15 +259,17 @@ fn insert_verb(
             plugin: plugin.to_owned(),
         });
     }
-    if let Some((first, _)) = table.get(&name) {
-        return Err(PluginError::DuplicateVerb {
-            verb: name,
-            first: first.clone(),
+    match table.entry(name) {
+        Entry::Vacant(slot) => {
+            slot.insert((plugin.to_owned(), verb));
+            Ok(())
+        }
+        Entry::Occupied(taken) => Err(PluginError::DuplicateVerb {
+            verb: taken.key().clone(),
+            first: taken.get().0.clone(),
             second: plugin.to_owned(),
-        });
+        }),
     }
-    table.insert(name, (plugin.to_owned(), verb));
-    Ok(())
 }
 
 /// The verbs [`TxCore::plug`] would expose for this manifest and config, without a core: for

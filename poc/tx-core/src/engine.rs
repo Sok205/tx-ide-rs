@@ -3,6 +3,7 @@
 //! process, so an adapter is unit-testable without a filesystem or tmux.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -156,11 +157,13 @@ impl EngineRegistry {
     pub fn register(&mut self, adapter: Box<dyn EngineAdapter>) -> Result<(), CoreError> {
         let id = adapter.id().to_owned();
         validate_name(&id)?;
-        if self.adapters.contains_key(&id) {
-            return Err(CoreError::EngineTaken(id));
+        match self.adapters.entry(id) {
+            Entry::Vacant(slot) => {
+                slot.insert(adapter);
+                Ok(())
+            }
+            Entry::Occupied(taken) => Err(CoreError::EngineTaken(taken.key().clone())),
         }
-        self.adapters.insert(id, adapter);
-        Ok(())
     }
 
     pub fn get(&self, id: &str) -> Option<&dyn EngineAdapter> {
@@ -173,11 +176,17 @@ impl EngineRegistry {
     }
 }
 
-fn workspace_error(path: &Path) -> impl FnOnce(io::Error) -> EngineError + '_ {
-    move |error| EngineError::Workspace {
-        path: path.to_owned(),
-        reason: error.to_string(),
+impl EngineError {
+    fn workspace(path: &Path, reason: impl std::fmt::Display) -> Self {
+        Self::Workspace {
+            path: path.to_owned(),
+            reason: reason.to_string(),
+        }
     }
+}
+
+fn workspace_error(path: &Path) -> impl FnOnce(io::Error) -> EngineError + '_ {
+    move |error| EngineError::workspace(path, error)
 }
 
 /// `path` against `cwd`, both normalized lexically (`.` and `..` folded), refused if the result
@@ -185,15 +194,12 @@ fn workspace_error(path: &Path) -> impl FnOnce(io::Error) -> EngineError + '_ {
 /// so the check happens before any write. It cannot see symlinks; adapters are trusted code and
 /// core canonicalizes `cwd` before launching, which is as far as a lexical check can go.
 pub fn resolve_in(cwd: &Path, path: &Path) -> Result<PathBuf, EngineError> {
-    let escapes = |path: &Path| EngineError::Workspace {
-        path: path.to_owned(),
-        reason: "escapes the working directory".into(),
-    };
+    let escapes = |path: &Path| EngineError::workspace(path, "escapes the working directory");
     if !cwd.is_absolute() {
-        return Err(EngineError::Workspace {
-            path: cwd.to_owned(),
-            reason: "working directory is not absolute".into(),
-        });
+        return Err(EngineError::workspace(
+            cwd,
+            "working directory is not absolute",
+        ));
     }
     let cwd = normalize(cwd).ok_or_else(|| escapes(cwd))?;
     let normalized = normalize(&cwd.join(path)).ok_or_else(|| escapes(path))?;
@@ -247,10 +253,10 @@ pub fn apply_workspace(cwd: &Path, actions: &[WorkspaceAction]) -> Result<(), En
                 if target.is_symlink() {
                     std::fs::remove_file(&target).map_err(workspace_error(&target))?;
                 } else if target.exists() {
-                    return Err(EngineError::Workspace {
-                        path: target,
-                        reason: "exists and is not a symlink".into(),
-                    });
+                    return Err(EngineError::workspace(
+                        &target,
+                        "exists and is not a symlink",
+                    ));
                 }
                 std::os::unix::fs::symlink(src, &target).map_err(workspace_error(&target))?;
             }

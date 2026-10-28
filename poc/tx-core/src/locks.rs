@@ -27,7 +27,7 @@ impl LockGuard {
     /// Whether the lock file at the path is still the inode this guard holds. Lock files are
     /// never removed by core; if something else removes one, a holder cannot be protected (a
     /// fresh file is a fresh lock), but an acquirer can at least refuse to settle on a ghost.
-    pub fn is_current(&self) -> io::Result<bool> {
+    fn is_current(&self) -> io::Result<bool> {
         use std::os::unix::fs::MetadataExt;
         let held = self.file.metadata()?;
         match std::fs::metadata(&self.path) {
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn read_only_locks_dir_is_an_error() {
-        if unsafe_is_root() {
+        if is_root() {
             return;
         }
         let dir = tempfile::tempdir().unwrap();
@@ -191,12 +191,11 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 
-    fn unsafe_is_root() -> bool {
-        std::fs::metadata("/").is_ok_and(|_| {
-            std::process::Command::new("id")
-                .arg("-u")
-                .output()
-                .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).trim() == "0")
-        })
+    /// Root ignores directory permissions, so permission tests skip under it.
+    fn is_root() -> bool {
+        std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).trim() == "0")
     }
 }

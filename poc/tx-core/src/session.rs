@@ -33,7 +33,11 @@ impl TryFrom<String> for SessionId {
     type Error = InvalidSessionId;
 
     fn try_from(id: String) -> Result<Self, Self::Error> {
-        id.parse()
+        if is_safe_fragment(&id, MAX_ID_BYTES) {
+            Ok(Self(id))
+        } else {
+            Err(InvalidSessionId(id))
+        }
     }
 }
 
@@ -61,16 +65,12 @@ impl FromStr for SessionId {
     type Err = InvalidSessionId;
 
     fn from_str(id: &str) -> Result<Self, Self::Err> {
-        if is_safe_fragment(id, MAX_ID_BYTES) {
-            Ok(Self(id.to_owned()))
-        } else {
-            Err(InvalidSessionId(id.to_owned()))
-        }
+        id.to_owned().try_into()
     }
 }
 
 /// `[A-Za-z0-9_-]{1,max}`: safe as a path fragment, a tmux exact target and an option value.
-fn is_safe_fragment(text: &str, max: usize) -> bool {
+pub(crate) fn is_safe_fragment(text: &str, max: usize) -> bool {
     !text.is_empty()
         && text.len() <= max
         && text
@@ -225,13 +225,6 @@ struct RecordOut<'a> {
     session: &'a Session,
 }
 
-#[derive(Deserialize)]
-struct RecordIn {
-    version: Option<u64>,
-    #[serde(flatten)]
-    session: Session,
-}
-
 impl Session {
     /// Pretty JSON, newline-terminated, `version` first. Fails for what JSON cannot carry: a
     /// non-UTF-8 `cwd` or a non-finite timestamp (serde_json would write `null`, which
@@ -253,8 +246,8 @@ impl Session {
     }
 
     pub fn from_json(text: &str) -> Result<Self, RecordError> {
-        let value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)?;
-        match value.get("version") {
+        let mut value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)?;
+        match value.remove("version") {
             None => return Err(RecordError::MissingVersion),
             Some(serde_json::Value::Number(version))
                 if version.as_u64() == Some(RECORD_VERSION) => {}
@@ -266,9 +259,7 @@ impl Session {
             }
             Some(other) => return Err(RecordError::InvalidVersion(other.to_string())),
         }
-        let record: RecordIn = serde_json::from_value(serde_json::Value::Object(value))?;
-        let _ = record.version;
-        Ok(record.session)
+        Ok(serde_json::from_value(serde_json::Value::Object(value))?)
     }
 
     /// A plugin's own `ext` record, typed. `Ok(None)` when the plugin never wrote one; `Err`

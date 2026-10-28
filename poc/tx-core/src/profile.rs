@@ -4,6 +4,7 @@
 //! frontmatter block whose `skills: [a, b]` line (at any indent, so `tx:` nesting works) grants
 //! skills; each resolves to `<skill_dir>/<name>/` from the last skill dir that has it.
 
+use std::borrow::Cow;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -127,13 +128,12 @@ impl Profiles {
         let mut skills: Vec<String> = Vec::new();
         for role in ordered {
             for path in self.role_files(role)? {
-                let (frontmatter, body) = split_frontmatter(&path)?;
+                let (granted, body) = read_role(&path)?;
                 let body = body.trim();
                 if !body.is_empty() {
                     bodies.push(body.to_owned());
                 }
-                let lines: Vec<&str> = frontmatter.iter().map(String::as_str).collect();
-                for skill in skills_in(&lines) {
+                for skill in granted {
                     if !skills.contains(&skill) {
                         skills.push(skill);
                     }
@@ -191,41 +191,34 @@ impl Profiles {
     }
 }
 
-/// Role and skill names are path fragments; the session-name grammar keeps them inside the
-/// search dirs (`../x`, `a/b`, `.`, `..` are all refused).
+/// Role and skill names are path fragments; the session-name grammar (without its length cap)
+/// keeps them inside the search dirs (`../x`, `a/b`, `.`, `..` are all refused).
 fn is_bare_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    crate::session::is_safe_fragment(name, usize::MAX)
 }
 
-/// A role file's `(frontmatter lines, body)`; `([], whole text)` when it has none. Universal
-/// newlines (`\r\n` and `\r` read as `\n`), a leading BOM ignored, and the opener is a line
-/// that trims to `---`, like the closer.
-fn split_frontmatter(path: &Path) -> Result<(Vec<String>, String), RoleError> {
+/// A role file's `(granted skills, body)`; no skills and the whole text when it has no
+/// frontmatter. Universal newlines (`\r\n` and `\r` read as `\n`), a leading BOM ignored, and
+/// the opener is a line that trims to `---`, like the closer.
+fn read_role(path: &Path) -> Result<(Vec<String>, String), RoleError> {
     let raw = std::fs::read_to_string(path).map_err(|source| RoleError::Read {
         path: path.to_owned(),
         source,
     })?;
     let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
-    let text = if raw.contains('\r') {
-        raw.replace("\r\n", "\n").replace('\r', "\n")
+    let text: Cow<'_, str> = if raw.contains('\r') {
+        raw.replace("\r\n", "\n").replace('\r', "\n").into()
     } else {
-        raw.to_owned()
+        raw.into()
     };
     let lines: Vec<&str> = text.split('\n').collect();
     if lines[0].trim() != FRONTMATTER_DELIMITER {
-        return Ok((Vec::new(), text));
+        return Ok((Vec::new(), text.into_owned()));
     }
     let close = (1..lines.len())
         .find(|&index| lines[index].trim() == FRONTMATTER_DELIMITER)
         .ok_or_else(|| RoleError::UnclosedFrontmatter(path.to_owned()))?;
-    let frontmatter = lines[1..close]
-        .iter()
-        .map(|line| (*line).to_owned())
-        .collect();
-    Ok((frontmatter, lines[close + 1..].join("\n")))
+    Ok((skills_in(&lines[1..close]), lines[close + 1..].join("\n")))
 }
 
 /// Every `skills: [a, b]` line in a frontmatter block, at any indent, in order.
