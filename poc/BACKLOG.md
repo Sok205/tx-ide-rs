@@ -172,9 +172,9 @@ missing source file (E7, I11 half).
   with `From<VerbError> for Outcome`.
 - [x] (a7abb05) **Q3 behaviour.** Two group cascades disagree: timeline ignores `ext.artifacts.group`
   (and its doc still says artifacts have no plugin). One resolver, with a differential test.
-- [ ] **Q4.** Picker key state machine: esc while searching, esc/enter with buffered digits,
+- [x] (4cd4f04) **Q4.** Picker key state machine: esc while searching, esc/enter with buffered digits,
   junk pending file untested. Property test over key sequences; extract `parse_pending`.
-- [ ] **Q5.** menu scrapes chat's and tutor's stdout wording and tests it against strings it
+- [x] (dcdbd8a) **Q5.** menu scrapes chat's and tutor's stdout wording and tests it against strings it
   wrote itself; move the line formats to the producers.
 
 ### MEDIUM
