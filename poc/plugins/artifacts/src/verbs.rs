@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
-use tx_core::{ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
+use tx_core::{CoreError, ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
 use tx_ui::tmux::Ui;
 
 use crate::artifact::{Artifact, KIND_NAMES, Kind, USER_ACTOR};
@@ -131,16 +131,36 @@ pub struct ArtifactVerb {
     pub editor: Arc<str>,
 }
 
-/// What a subcommand produced: an exit code, or an artifact precondition to report.
-enum Outcome {
-    Code(i32),
+/// Why a subcommand stopped short of its exit code: a usage mistake, an artifact precondition
+/// to report (exit 1), or any other verb failure.
+enum Stop {
     Usage(String),
     Artifact(ArtifactError),
+    Verb(VerbError),
 }
 
-impl From<ArtifactError> for Outcome {
+impl From<ArtifactError> for Stop {
     fn from(error: ArtifactError) -> Self {
         Self::Artifact(error)
+    }
+}
+
+impl From<VerbError> for Stop {
+    fn from(error: VerbError) -> Self {
+        Self::Verb(error)
+    }
+}
+
+/// `parse`'s argument errors are usage mistakes.
+impl From<String> for Stop {
+    fn from(message: String) -> Self {
+        Self::Usage(message)
+    }
+}
+
+impl From<CoreError> for Stop {
+    fn from(error: CoreError) -> Self {
+        Self::Verb(error.into())
     }
 }
 
@@ -171,44 +191,48 @@ impl Verb for ArtifactVerb {
             artifacts: service(core),
             editor: &self.editor,
         };
-        let outcome = match sub.as_str() {
+        let result = match sub.as_str() {
             "-h" | "--help" | "help" => {
                 write!(ctx.io.stdout, "{}", help()).map_err(VerbError::write)?;
                 return Ok(0);
             }
-            "create" => ctx.create(rest)?,
-            "modify" => ctx.modify(rest)?,
-            "open" => ctx.open(rest)?,
-            "close" => ctx.close(rest)?,
-            "path" => ctx.path(rest)?,
-            "archive" => ctx.set_archived(rest, true)?,
-            "unarchive" => ctx.set_archived(rest, false)?,
-            "ls" => ctx.ls(rest)?,
-            "show" => ctx.show(rest)?,
-            "doctor" => ctx.doctor(rest)?,
-            "migrate" => ctx.migrate(rest)?,
-            other => Outcome::Usage(format!("unknown subcommand '{other}'\n{}", help())),
+            "create" => ctx.create(rest),
+            "modify" => ctx.modify(rest),
+            "open" => ctx.open(rest),
+            "close" => ctx.close(rest),
+            "path" => ctx.path(rest),
+            "archive" => ctx.set_archived(rest, true),
+            "unarchive" => ctx.set_archived(rest, false),
+            "ls" => ctx.ls(rest),
+            "show" => ctx.show(rest),
+            "doctor" => ctx.doctor(rest),
+            "migrate" => ctx.migrate(rest),
+            other => Err(Stop::Usage(format!(
+                "unknown subcommand '{other}'\n{}",
+                help()
+            ))),
         };
-        match outcome {
-            Outcome::Code(code) => Ok(code),
-            Outcome::Usage(message) => {
+        match result {
+            Ok(code) => Ok(code),
+            Err(Stop::Usage(message)) => {
                 Err(VerbError::usage(format!("txc artifact {sub}: {message}")))
             }
-            Outcome::Artifact(error) => {
+            Err(Stop::Artifact(error)) => {
                 let _ = writeln!(ctx.io.stderr, "txc artifact: {error}");
                 Ok(1)
             }
+            Err(Stop::Verb(error)) => Err(error),
         }
     }
 }
 
-type Step = Result<Outcome, VerbError>;
+type Step = Result<i32, Stop>;
 
 /// The positionals a subcommand takes: `required` names, then up to `optional` more.
-fn positionals(args: &Args, required: usize, optional: usize) -> Result<&[String], Outcome> {
+fn positionals(args: &Args, required: usize, optional: usize) -> Result<&[String], Stop> {
     let count = args.positionals.len();
     if count < required || count > required + optional {
-        return Err(Outcome::Usage(format!(
+        return Err(Stop::Usage(format!(
             "expected {required}{} argument(s), got {count}",
             if optional > 0 {
                 format!("..{}", required + optional)
@@ -218,21 +242,6 @@ fn positionals(args: &Args, required: usize, optional: usize) -> Result<&[String
         )));
     }
     Ok(&args.positionals)
-}
-
-macro_rules! try_outcome {
-    ($expr:expr) => {
-        match $expr {
-            Ok(value) => value,
-            Err(outcome) => return Ok(Outcome::from(outcome)),
-        }
-    };
-}
-
-impl From<String> for Outcome {
-    fn from(message: String) -> Self {
-        Self::Usage(message)
-    }
 }
 
 impl Ctx<'_, '_> {
@@ -246,22 +255,22 @@ impl Ctx<'_, '_> {
         argv: &[String],
         valued: &[&str],
         switches: &[&str],
-    ) -> Result<(Args, String), Outcome> {
+    ) -> Result<(Args, String), Stop> {
         let args = parse(argv, valued, switches)?;
         let id = self.artifacts.resolve_id(&positionals(&args, 1, 0)?[0])?;
         Ok((args, id))
     }
 
     fn create(&mut self, argv: &[String]) -> Step {
-        let args = try_outcome!(parse(argv, &["title", "kind", "cwd", "base"], &[]));
-        let given = try_outcome!(positionals(&args, 0, 1));
+        let args = parse(argv, &["title", "kind", "cwd", "base"], &[])?;
+        let given = positionals(&args, 0, 1)?;
         let title = args.option("title").unwrap_or_default();
         if title.is_empty() {
-            return Ok(Outcome::Usage("--title is required".into()));
+            return Err(Stop::Usage("--title is required".into()));
         }
         let kind_name = args.option("kind").unwrap_or("document");
         if !KIND_NAMES.contains(&kind_name) {
-            return Ok(Outcome::Usage(format!(
+            return Err(Stop::Usage(format!(
                 "--kind must be one of {}",
                 KIND_NAMES.join(", ")
             )));
@@ -273,7 +282,7 @@ impl Ctx<'_, '_> {
         };
         let (kind, source) = match (kind_name, given.first()) {
             ("diff", Some(_)) => {
-                return Ok(Outcome::Usage(
+                return Err(Stop::Usage(
                     "a diff takes no file; pass --cwd and --base".into(),
                 ));
             }
@@ -282,14 +291,12 @@ impl Ctx<'_, '_> {
                 (Kind::Diff { worktree, base }, None)
             }
             (_, None) => {
-                return Ok(Outcome::Usage(format!(
-                    "a {kind_name} is created from a file"
-                )));
+                return Err(Stop::Usage(format!("a {kind_name} is created from a file")));
             }
             (_, Some(file)) => {
                 let path = Path::new(file);
                 if !path.is_file() {
-                    return Ok(Outcome::Usage(format!("no such file: {file}")));
+                    return Err(Stop::Usage(format!("no such file: {file}")));
                 }
                 let name = path
                     .file_name()
@@ -307,41 +314,42 @@ impl Ctx<'_, '_> {
             }
         };
         let actor = self.artifacts.actor().to_owned();
-        let artifact = try_outcome!(
-            self.artifacts
-                .create(&actor, kind, title.to_owned(), source)
-        );
+        let artifact = self
+            .artifacts
+            .create(&actor, kind, title.to_owned(), source)?;
         self.print(&format!(
             "Created {} artifact {} ({})",
             artifact.kind.name(),
             artifact.id,
             artifact.title
         ))?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 
     fn modify(&mut self, argv: &[String]) -> Step {
-        let args = try_outcome!(parse(argv, &[], &[]));
-        let given = try_outcome!(positionals(&args, 1, 1));
-        let artifact_id = try_outcome!(self.artifacts.resolve_id(&given[0]));
+        let args = parse(argv, &[], &[])?;
+        let given = positionals(&args, 1, 1)?;
+        let artifact_id = self.artifacts.resolve_id(&given[0])?;
         let file = given.get(1).map(Path::new);
         if let Some(file) = file.filter(|file| !file.is_file()) {
-            return Ok(Outcome::Usage(format!("no such file: {}", file.display())));
+            return Err(Stop::Usage(format!("no such file: {}", file.display())));
         }
         let actor = self.artifacts.actor().to_owned();
-        let artifact = try_outcome!(self.artifacts.modify(&artifact_id, &actor, file));
+        let artifact = self.artifacts.modify(&artifact_id, &actor, file)?;
         self.print(&format!(
             "Modified {} artifact {}",
             artifact.kind.name(),
             artifact.id
         ))?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 
     fn set_archived(&mut self, argv: &[String], archived: bool) -> Step {
-        let (_, artifact_id) = try_outcome!(self.one_artifact(argv, &[], &[]));
+        let (_, artifact_id) = self.one_artifact(argv, &[], &[])?;
         let actor = self.artifacts.actor().to_owned();
-        let artifact = try_outcome!(self.artifacts.set_archived(&artifact_id, &actor, archived));
+        let artifact = self
+            .artifacts
+            .set_archived(&artifact_id, &actor, archived)?;
         let line = if archived {
             format!(
                 "Archived artifact {artifact_id} ({}); hidden from prefix+a and ls",
@@ -351,24 +359,24 @@ impl Ctx<'_, '_> {
             format!("Unarchived artifact {artifact_id} ({})", artifact.title)
         };
         self.print(&line)?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 
     fn close(&mut self, argv: &[String]) -> Step {
-        let (_, artifact_id) = try_outcome!(self.one_artifact(argv, &[], &[]));
-        let ran = try_outcome!(self.artifacts.close_all(&artifact_id));
+        let (_, artifact_id) = self.one_artifact(argv, &[], &[])?;
+        let ran = self.artifacts.close_all(&artifact_id)?;
         self.print(&format!(
             "Closed artifact {artifact_id}: {ran} close step(s) run"
         ))?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 
     fn path(&mut self, argv: &[String]) -> Step {
-        let (_, artifact_id) = try_outcome!(self.one_artifact(argv, &[], &[]));
-        let artifact = try_outcome!(self.artifacts.require(&artifact_id));
+        let (_, artifact_id) = self.one_artifact(argv, &[], &[])?;
+        let artifact = self.artifacts.require(&artifact_id)?;
         let dir = self.artifacts.files().content_dir(&artifact);
         self.print(&dir.display().to_string())?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 
     fn resolved_group(&self, artifact: &Artifact) -> String {
@@ -378,8 +386,8 @@ impl Ctx<'_, '_> {
     }
 
     fn ls(&mut self, argv: &[String]) -> Step {
-        let args = try_outcome!(parse(argv, &["session", "kind"], &["archived"]));
-        try_outcome!(positionals(&args, 0, 0));
+        let args = parse(argv, &["session", "kind"], &["archived"])?;
+        positionals(&args, 0, 0)?;
         let scan = self.artifacts.scan();
         for skipped in &scan.skipped {
             let _ = writeln!(self.io.stderr, "{}", skipped.warning());
@@ -400,17 +408,17 @@ impl Ctx<'_, '_> {
         let names = names_for(self.core, artifacts.iter().map(|a| a.owner.as_str()));
         let text = render_artifacts(&artifacts, &names, tx_core::events::now());
         self.print(&text)?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 
     fn show(&mut self, argv: &[String]) -> Step {
-        let (_, artifact_id) = try_outcome!(self.one_artifact(argv, &[], &[]));
-        let artifact = try_outcome!(self.artifacts.require(&artifact_id));
+        let (_, artifact_id) = self.one_artifact(argv, &[], &[])?;
+        let artifact = self.artifacts.require(&artifact_id)?;
         let names = names_for(self.core, [artifact.owner.as_str()]);
         let resolved = self.resolved_group(&artifact);
         let text = render_artifact_show(&artifact, &names, tx_core::events::now(), &resolved);
         self.print(&text)?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 
     fn invoker(&self) -> Option<Session> {
@@ -422,8 +430,8 @@ impl Ctx<'_, '_> {
     }
 
     fn open(&mut self, argv: &[String]) -> Step {
-        let (args, artifact_id) = try_outcome!(self.one_artifact(argv, &["tag"], &[]));
-        let artifact = try_outcome!(self.artifacts.require(&artifact_id));
+        let (args, artifact_id) = self.one_artifact(argv, &["tag"], &[])?;
+        let artifact = self.artifacts.require(&artifact_id)?;
         let tags = match args.option("tag") {
             Some(raw) => {
                 let tags: Vec<String> = raw
@@ -432,7 +440,7 @@ impl Ctx<'_, '_> {
                     .map(str::to_owned)
                     .collect();
                 if tags.is_empty() {
-                    return Ok(Outcome::Usage("--tag requires at least one value".into()));
+                    return Err(Stop::Usage("--tag requires at least one value".into()));
                 }
                 Some(tags)
             }
@@ -458,12 +466,12 @@ impl Ctx<'_, '_> {
             view.name,
             view.cwd.display()
         ))?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 
     fn doctor(&mut self, argv: &[String]) -> Step {
-        let args = try_outcome!(parse(argv, &[], &["repair"]));
-        try_outcome!(positionals(&args, 0, 0));
+        let args = parse(argv, &[], &["repair"])?;
+        positionals(&args, 0, 0)?;
         let core = self.core;
         let view_is_alive = |view: &str| {
             view.parse::<SessionId>()
@@ -472,30 +480,30 @@ impl Ctx<'_, '_> {
                 .is_some_and(|session| !session.lifecycle.is_terminal())
         };
         if args.switch("repair") {
-            for line in try_outcome!(self.artifacts.repair(&view_is_alive)) {
+            for line in self.artifacts.repair(&view_is_alive)? {
                 self.print(&format!("  {line}"))?;
             }
         }
-        let problems = try_outcome!(self.artifacts.doctor(&view_is_alive));
+        let problems = self.artifacts.doctor(&view_is_alive)?;
         if problems.is_empty() {
             self.print("artifacts: clean")?;
-            return Ok(Outcome::Code(0));
+            return Ok(0);
         }
         for problem in &problems {
             self.print(&format!("  {problem}"))?;
         }
         self.print(&format!("artifacts: {} problem(s)", problems.len()))?;
-        Ok(Outcome::Code(1))
+        Ok(1)
     }
 
     fn migrate(&mut self, argv: &[String]) -> Step {
-        let args = try_outcome!(parse(argv, &[], &[]));
-        try_outcome!(positionals(&args, 0, 0));
+        let args = parse(argv, &[], &[])?;
+        positionals(&args, 0, 0)?;
         let report = migrate(self.artifacts.store());
         let actor = self.artifacts.actor().to_owned();
         for name in &report.migrated {
             let id = name.trim_end_matches(".json");
-            try_outcome!(self.artifacts.append("artifact-migrate", id, &actor));
+            self.artifacts.append("artifact-migrate", id, &actor)?;
             self.print(&format!("  migrated {name}"))?;
         }
         for (name, reason) in &report.skipped {
@@ -506,7 +514,7 @@ impl Ctx<'_, '_> {
             report.migrated.len(),
             report.skipped.len()
         ))?;
-        Ok(Outcome::Code(0))
+        Ok(0)
     }
 }
 
