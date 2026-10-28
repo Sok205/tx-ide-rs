@@ -107,13 +107,9 @@ impl Args {
     }
 }
 
-/// Every record the core holds; unreadable ones are skipped.
+/// Every record the core holds; none when the store cannot be read.
 fn all_sessions(core: &TxCore) -> Vec<Session> {
-    core.list_sessions(&ListFilter::new())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|id| core.get_session(id).ok())
-        .collect()
+    core.sessions(&ListFilter::new()).unwrap_or_default()
 }
 
 /// id → name for every owner that is a session.
@@ -558,14 +554,13 @@ impl Verb for GroupVerb {
                 "a group cannot be empty; use --clear to drop the override",
             );
         }
-        let id = core.resolve(token)?;
-        let session = core.get_session(&id)?;
+        let session = core.resolve_session(token)?;
         if let Err(problem) = ext_of(&session) {
             let _ = writeln!(io.stderr, "txc group: {problem}");
         }
         if clear || group.is_some() {
             let owned = group.map(str::to_owned);
-            core.update_ext(&id, PLUGIN_ID, |value| set_group(value, owned))?;
+            core.update_ext(&session.id, PLUGIN_ID, |value| set_group(value, owned))?;
             let line = if clear {
                 format!(
                     "Cleared group override on '{}' (back to derived)",

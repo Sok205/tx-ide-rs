@@ -549,10 +549,7 @@ impl<'a> Tutor<'a> {
 /// records it changed; the check needs all of them.
 fn all_sessions(core: &TxCore) -> Result<Vec<Session>, tx_core::CoreError> {
     core.refresh_all()?;
-    core.list_sessions(&ListFilter::new())?
-        .iter()
-        .map(|id| core.get_session(id))
-        .collect()
+    core.sessions(&ListFilter::new())
 }
 
 /// `~` expanded against `home`; a relative dir is taken against the caller's cwd now, so the

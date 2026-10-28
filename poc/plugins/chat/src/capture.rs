@@ -250,14 +250,13 @@ fn hooks_install(io: &mut VerbIo<'_>, dry_run: bool) -> Result<i32, VerbError> {
 
 fn ls(core: &TxCore, io: &mut VerbIo<'_>, token: &str) -> Result<i32, VerbError> {
     crate::ops::sweep_abandoned(core, io.stderr);
-    let Some(id) = resolve(core, token)? else {
+    let Some(session) = resolve(core, token)? else {
         say(
             io.stderr,
             &format!("chat ls: session '{token}' not found\n"),
         )?;
         return Ok(1);
     };
-    let session = core.get_session(&id)?;
     let ext = match chat_ext(&session) {
         Ok(ext) => ext,
         Err(error) => {

@@ -146,8 +146,7 @@ impl Hook {
     fn status(&self, core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
         let filter = ListFilter::new().lifecycle(Lifecycle::Running);
         let mut rows = Vec::new();
-        for id in core.list_sessions(&filter)? {
-            let session = core.get_session(&id)?;
+        for session in core.sessions(&filter)? {
             let (state, since) = match session.ext.get(PLUGIN_ID) {
                 Some(v) => (
                     v.get("state")

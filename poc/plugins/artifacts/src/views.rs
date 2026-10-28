@@ -46,10 +46,9 @@ pub(crate) fn view_name(core: &TxCore, artifact: &Artifact) -> Result<String, Ve
         artifact.title,
         view_suffix(&artifact.kind)
     ));
-    let running = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
-    let taken = running
+    let taken = core
+        .sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?
         .iter()
-        .filter_map(|id| core.get_session(id).ok())
         .any(|session| session.name == base);
     if taken {
         let short: String = artifact.id.chars().take(8).collect();

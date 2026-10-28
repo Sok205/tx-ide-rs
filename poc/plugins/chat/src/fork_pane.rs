@@ -94,8 +94,8 @@ fn source_in_pane(
         .inner_for_pane(pane)
         .or_else(|| ui.display_message("#{session_name}", Some(pane)))
         .filter(|target| !ui.is_view(target));
-    let source = match target.map(|target| core.resolve(&target)) {
-        Some(Ok(id)) => Some(core.get_session(&id)?),
+    let source = match target.map(|target| core.resolve_session(&target)) {
+        Some(Ok(session)) => Some(session),
         Some(Err(CoreError::NotFound(_))) | None => None,
         Some(Err(error)) => return Err(error.into()),
     };

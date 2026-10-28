@@ -113,18 +113,17 @@ impl Verb for EditSession {
             ui.display_status(client, NO_SESSION);
             return Ok(1);
         };
-        let Ok(id) = core.resolve(&target) else {
+        let Ok(before) = core.resolve_session(&target) else {
             ui.display_status(client, NOT_MANAGED);
             return Ok(1);
         };
-        let before = core.get_session(&id)?;
         let group = current_group(&before).unwrap_or_default();
         let edited = edit_session(&before.name, &before.tags.join(","), &group, "")
             .map_err(|e| VerbError::Failed(format!("editor: {e}")))?;
         let Some(edited) = edited else {
             return Ok(0);
         };
-        if let Err(error) = apply_edit(core, &id, &before, edited) {
+        if let Err(error) = apply_edit(core, &before.id, &before, edited) {
             ui.display_status(client, &format!("edit of {} failed: {error}", before.name));
             return Ok(1);
         }
@@ -149,18 +148,17 @@ impl Verb for EditTag {
             let _ = writeln!(io.stderr, "usage: txc _edit-tag <name>");
             return Ok(2);
         };
-        let Ok(id) = core.resolve(token) else {
+        let Ok(session) = core.resolve_session(token) else {
             let _ = writeln!(io.stderr, "txc: session '{token}' not found");
             return Ok(1);
         };
-        let session = core.get_session(&id)?;
         let header = format!("Tags for {ACCENT_ANSI}{BOLD}{}{RESET}", session.name);
         let Some(answer) = prompt_with_default(&header, &session.tags.join(","))
             .map_err(|e| VerbError::Failed(format!("could not run fzf: {e}")))?
         else {
             return Ok(1);
         };
-        core.set_session_tags(&id, split_tags(&answer))?;
+        core.set_session_tags(&session.id, split_tags(&answer))?;
         Ok(0)
     }
 }

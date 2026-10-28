@@ -62,9 +62,9 @@ pub(crate) fn home_dir() -> Result<PathBuf, VerbError> {
         .ok_or_else(|| VerbError::Failed("HOME is not set".into()))
 }
 
-pub(crate) fn resolve(core: &TxCore, token: &str) -> Result<Option<SessionId>, VerbError> {
-    match core.resolve(token) {
-        Ok(id) => Ok(Some(id)),
+pub(crate) fn resolve(core: &TxCore, token: &str) -> Result<Option<Session>, VerbError> {
+    match core.resolve_session(token) {
+        Ok(session) => Ok(Some(session)),
         Err(CoreError::NotFound(_)) => Ok(None),
         Err(error) => Err(error.into()),
     }
@@ -93,8 +93,8 @@ impl Verb for Ingest {
                 return Ok(2);
             }
         };
-        if let Some(id) = resolve(core, token)? {
-            ingest_session(core, &self.history_dir, &id, mode)?;
+        if let Some(session) = resolve(core, token)? {
+            ingest_session(core, &self.history_dir, &session.id, mode)?;
         }
         Ok(0)
     }
@@ -250,12 +250,7 @@ impl History {
         };
         let mut shown = Vec::new();
         for lifecycle in [Lifecycle::Exited, Lifecycle::Stopped] {
-            for id in core.list_sessions(&ListFilter::new().lifecycle(lifecycle))? {
-                let session = match core.get_session(&id) {
-                    Ok(session) => session,
-                    Err(CoreError::NotFound(_)) => continue,
-                    Err(error) => return Err(error.into()),
-                };
+            for session in core.sessions(&ListFilter::new().lifecycle(lifecycle))? {
                 let ended = ended_or_created(&session);
                 if filters
                     .tag
@@ -279,14 +274,14 @@ impl History {
     }
 
     fn bundles(&self, core: &TxCore, io: &mut VerbIo<'_>, token: &str) -> Result<i32, VerbError> {
-        let Some(id) = resolve(core, token)? else {
+        let Some(session) = resolve(core, token)? else {
             say(
                 io.stderr,
                 &format!("history: session '{token}' not found\n"),
             )?;
             return Ok(1);
         };
-        let root = self.history_dir.join(id.to_string());
+        let root = self.history_dir.join(session.id.as_str());
         let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)
             .map(|entries| {
                 entries

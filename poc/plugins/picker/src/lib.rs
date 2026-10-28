@@ -256,10 +256,7 @@ pub fn fzf_args(
 /// Reconcile with tmux, then the running sessions.
 fn running(core: &TxCore) -> Result<Vec<Session>, VerbError> {
     core.refresh_all()?;
-    let ids = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
-    ids.iter()
-        .map(|id| core.get_session(id).map_err(VerbError::from))
-        .collect()
+    Ok(core.sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?)
 }
 
 /// The picker feed for `sessions` matching `query` outside the hidden roles, newline-terminated.
@@ -726,7 +723,7 @@ impl Verb for PopupAttach {
             return Ok(2);
         };
         let ui = Ui::from_core(core);
-        let session = core.resolve(token).and_then(|id| core.get_session(&id));
+        let session = core.resolve_session(token);
         let Ok(session) = session else {
             ui.display_status(client, &format!("txc: session {token} not found"));
             return Ok(1);

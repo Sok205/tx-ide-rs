@@ -186,11 +186,7 @@ fn failed(error: impl std::fmt::Display) -> VerbError {
 impl Nav<'_> {
     /// The record of the session the key fired in; `None` is reported on the status line.
     fn record(&self, session: &str, client: &str) -> Option<Session> {
-        let record = self
-            .core
-            .resolve(session)
-            .and_then(|id| self.core.get_session(&id))
-            .ok();
+        let record = self.core.resolve_session(session).ok();
         if record.is_none() {
             self.ui.display_status(client, "prefix+a: not a tx session");
         }
@@ -200,13 +196,9 @@ impl Nav<'_> {
     /// Running records, after a refresh so a vanished session does not show (best effort).
     fn live(&self) -> Vec<Session> {
         let _ = self.core.refresh_all();
-        let ids = self
-            .core
-            .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
-            .unwrap_or_default();
-        ids.iter()
-            .filter_map(|id| self.core.get_session(id).ok())
-            .collect()
+        self.core
+            .sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
+            .unwrap_or_default()
     }
 
     fn name_of(&self, session_id: &str) -> String {
@@ -516,10 +508,7 @@ impl Nav<'_> {
                 }
             },
             Mode::Popup => {
-                let owner = self
-                    .core
-                    .resolve(session)
-                    .and_then(|id| self.core.get_session(&id));
+                let owner = self.core.resolve_session(session);
                 tm::popup_session(
                     &self.ui,
                     &self.core.socket_path().to_string_lossy(),

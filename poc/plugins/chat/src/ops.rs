@@ -337,17 +337,12 @@ impl<'a> Ops<'a> {
 
     /// `base`, `base-2`, `base-3` … : the first not carried by a Running record.
     pub fn next_free_name(&self, base: &str) -> Result<String, ChatError> {
-        let mut running = Vec::new();
-        for id in self
+        let running: Vec<String> = self
             .core
-            .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?
-        {
-            match self.core.get_session(&id) {
-                Ok(session) => running.push(session.name),
-                Err(CoreError::NotFound(_)) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
+            .sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?
+            .into_iter()
+            .map(|session| session.name)
+            .collect();
         let taken = |name: &str| running.iter().any(|n| n == name);
         if !taken(base) {
             return Ok(base.to_owned());
@@ -363,12 +358,7 @@ impl<'a> Ops<'a> {
             op: op.to_owned(),
             token: token.to_owned(),
         };
-        let id = match self.core.resolve(token) {
-            Ok(id) => id,
-            Err(CoreError::NotFound(_)) => return Err(not_found()),
-            Err(error) => return Err(error.into()),
-        };
-        match self.core.get_session(&id) {
+        match self.core.resolve_session(token) {
             Ok(session) => Ok(session),
             Err(CoreError::NotFound(_)) => Err(not_found()),
             Err(error) => Err(error.into()),
@@ -755,17 +745,11 @@ impl<'a> Ops<'a> {
     }
 
     fn running_name(&self, name: &str) -> Result<bool, ChatError> {
-        for id in self
+        Ok(self
             .core
-            .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?
-        {
-            match self.core.get_session(&id) {
-                Ok(session) if session.name == name => return Ok(true),
-                Ok(_) | Err(CoreError::NotFound(_)) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Ok(false)
+            .sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?
+            .iter()
+            .any(|session| session.name == name))
     }
 
     // ----- the idempotent finish + its watchdog ------------------------------------------
@@ -990,13 +974,10 @@ impl<'a> Ops<'a> {
     /// Stop the distiller and remove the op dir. Best effort.
     fn cleanup(&self, spec: &ChatOpSpec) {
         if !spec.distiller_name.is_empty()
-            && let Ok(id) = self.core.resolve(&spec.distiller_name)
-            && self
-                .core
-                .get_session(&id)
-                .is_ok_and(|s| s.lifecycle == Lifecycle::Running)
+            && let Ok(distiller) = self.core.resolve_session(&spec.distiller_name)
+            && distiller.lifecycle == Lifecycle::Running
         {
-            let _ = self.core.stop_session(&id);
+            let _ = self.core.stop_session(&distiller.id);
         }
         let _ = std::fs::remove_dir_all(self.op_dir(&spec.op_id));
     }

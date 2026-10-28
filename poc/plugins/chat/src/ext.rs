@@ -147,13 +147,8 @@ pub fn owned_elsewhere(core: &TxCore, me: &SessionId, chat_id: &str) -> Result<b
     };
     let in_history = |s: &Session| history_ext(s).is_ok_and(|ext| ext.chats.contains_key(chat_id));
     let mut elsewhere = false;
-    for id in core.list_sessions(&ListFilter::new())? {
-        let session = match core.get_session(&id) {
-            Ok(session) => session,
-            Err(tx_core::CoreError::NotFound(_)) => continue,
-            Err(error) => return Err(error.into()),
-        };
-        if &id == me {
+    for session in core.sessions(&ListFilter::new())? {
+        if &session.id == me {
             if in_chat(&session) {
                 return Ok(false);
             }

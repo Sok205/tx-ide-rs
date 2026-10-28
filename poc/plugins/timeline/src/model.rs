@@ -317,17 +317,9 @@ pub fn load_group_order(data_dir: &Path) -> Vec<String> {
     }
 }
 
-/// Every record that loads; one vanishing between the listing and the read is skipped.
+/// Every record; one vanishing between the scan and its read is skipped by the store.
 pub fn load_sessions(core: &TxCore) -> Result<Vec<Session>, CoreError> {
-    let mut sessions = Vec::new();
-    for id in core.list_sessions(&ListFilter::new())? {
-        match core.get_session(&id) {
-            Ok(session) => sessions.push(session),
-            Err(CoreError::NotFound(_)) => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(sessions)
+    core.sessions(&ListFilter::new())
 }
 
 /// One chat a record hosted, as the timeline needs it.

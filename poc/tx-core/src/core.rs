@@ -428,12 +428,18 @@ impl TxCore {
 
     // ----- reads: stored snapshots, never tmux ------------------------------------------------
 
+    /// Every record `filter` matches, created-order. One store scan; prefer it to
+    /// [`list_sessions`](Self::list_sessions) plus a `get_session` per id.
+    pub fn sessions(&self, filter: &ListFilter) -> Result<Vec<Session>, CoreError> {
+        let mut sessions = self.store.all()?;
+        sessions.retain(|session| filter.matches(session));
+        Ok(sessions)
+    }
+
     pub fn list_sessions(&self, filter: &ListFilter) -> Result<Vec<SessionId>, CoreError> {
         Ok(self
-            .store
-            .all()?
+            .sessions(filter)?
             .into_iter()
-            .filter(|session| filter.matches(session))
             .map(|session| session.id)
             .collect())
     }
@@ -446,10 +452,15 @@ impl TxCore {
 
     /// An id first, then a name: the `Running` record with it, else the most recently created.
     pub fn resolve(&self, name_or_id: &str) -> Result<SessionId, CoreError> {
+        self.resolve_session(name_or_id).map(|session| session.id)
+    }
+
+    /// [`resolve`](Self::resolve), returning the record it read instead of only its id.
+    pub fn resolve_session(&self, name_or_id: &str) -> Result<Session, CoreError> {
         if let Ok(id) = name_or_id.parse::<SessionId>()
-            && self.store.load(&id)?.is_some()
+            && let Some(session) = self.store.load(&id)?
         {
-            return Ok(id);
+            return Ok(session);
         }
         // `all()` is created-order, so the last match is the most recently created.
         let mut newest = None;
@@ -458,9 +469,9 @@ impl TxCore {
                 continue;
             }
             if session.lifecycle == Lifecycle::Running {
-                return Ok(session.id);
+                return Ok(session);
             }
-            newest = Some(session.id);
+            newest = Some(session);
         }
         newest.ok_or_else(|| CoreError::NotFound(name_or_id.to_owned()))
     }

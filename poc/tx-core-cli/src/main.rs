@@ -313,8 +313,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             if let Some(lifecycle) = lifecycle {
                 filter = filter.lifecycle(lifecycle);
             }
-            for id in core.list_sessions(&filter)? {
-                let session = core.get_session(&id)?;
+            for session in core.sessions(&filter)? {
                 writeln!(
                     out,
                     "{}\t{}\t{}\t{}",
@@ -327,7 +326,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
         }
         Verb::Show { target } => {
-            let session = core.get_session(&core.resolve(&target)?)?;
+            let session = core.resolve_session(&target)?;
             let text = session.to_json().map_err(|error| {
                 CoreError::Store(tx_core::StoreError::Encode {
                     id: session.id.clone(),

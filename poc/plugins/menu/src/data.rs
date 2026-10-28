@@ -82,14 +82,8 @@ fn resumable(session: &Session) -> bool {
 pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
     let mut sessions = Vec::new();
     for lifecycle in [Lifecycle::Exited, Lifecycle::Stopped] {
-        for id in core.list_sessions(&ListFilter::new().lifecycle(lifecycle))? {
-            match core.get_session(&id) {
-                Ok(session) if resumable(&session) => sessions.push(session),
-                Ok(_) => {}
-                Err(CoreError::NotFound(_)) => {}
-                Err(error) => return Err(error),
-            }
-        }
+        let ended = core.sessions(&ListFilter::new().lifecycle(lifecycle))?;
+        sessions.extend(ended.into_iter().filter(resumable));
     }
     sessions.sort_by(|a, b| ended_or_created(b).total_cmp(&ended_or_created(a)));
     Ok(sessions
@@ -111,8 +105,7 @@ pub fn session_in_pane(core: &TxCore, ui: &Ui, pane: &str) -> Option<Session> {
         .inner_for_pane(pane)
         .or_else(|| ui.display_message("#{session_name}", Some(pane)))
         .filter(|name| !ui.is_view(name))?;
-    let id = core.resolve(&name).ok()?;
-    core.get_session(&id).ok()
+    core.resolve_session(&name).ok()
 }
 
 pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, CoreError> {

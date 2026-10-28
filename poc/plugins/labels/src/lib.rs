@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use tx_core::{
-    CoreError, Launch, Lifecycle, ListFilter, Plugin, PluginError, Registry, SessionId, TxCore,
-    Verb, VerbError, VerbIo,
+    CoreError, Launch, Lifecycle, ListFilter, Plugin, PluginError, Registry, Session, SessionId,
+    TxCore, Verb, VerbError, VerbIo,
 };
 
 use tx_core::events::now;
@@ -49,9 +49,9 @@ fn write_out(io: &mut VerbIo<'_>, text: &str) -> Result<(), VerbError> {
 }
 
 /// `None` when nothing has that name or id.
-fn resolve_or_not_found(core: &TxCore, token: &str) -> Result<Option<SessionId>, VerbError> {
-    match core.resolve(token) {
-        Ok(id) => Ok(Some(id)),
+fn resolve_or_not_found(core: &TxCore, token: &str) -> Result<Option<Session>, VerbError> {
+    match core.resolve_session(token) {
+        Ok(session) => Ok(Some(session)),
         Err(CoreError::NotFound(_)) => Ok(None),
         Err(error) => Err(error.into()),
     }
@@ -98,10 +98,9 @@ impl Verb for TmuxName {
             let _ = writeln!(io.stderr, "usage: txc _tmux-name <name>");
             return Ok(2);
         };
-        let Some(id) = resolve_or_not_found(core, token)? else {
+        let Some(session) = resolve_or_not_found(core, token)? else {
             return Ok(0);
         };
-        let session = core.get_session(&id)?;
         if let Some(target) = Ui::from_core(core).live_targets().get(&session.name) {
             write_out(io, &format!("{target}\n"))?;
         }
@@ -123,9 +122,7 @@ impl Verb for Relabel {
     fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, _argv: &[String]) -> Result<i32, VerbError> {
         let ui = Ui::from_core(core);
         let live = ui.live_targets();
-        let ids = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
-        for id in ids {
-            let session = core.get_session(&id)?;
+        for session in core.sessions(&ListFilter::new().lifecycle(Lifecycle::Running))? {
             if !live.contains_key(&session.name) {
                 continue;
             }
@@ -161,7 +158,7 @@ impl Verb for Whoami {
             .current_session_name()
             .ok_or_else(|| VerbError::Failed("could not read the tmux session name".into()))?;
         let name = match resolve_or_not_found(core, &raw)? {
-            Some(id) => core.get_session(&id)?.name,
+            Some(session) => session.name,
             None => raw,
         };
         write_out(io, &format!("{name}\n"))?;
@@ -200,10 +197,7 @@ impl Verb for PaneLabel {
 /// The record's name in bold plus a chip per tag, between the hooks state's glyph and its
 /// right-end mark; the raw tmux name when it has no record.
 fn nested_label(core: &TxCore, inner: &str, now: f64) -> String {
-    let session = core
-        .resolve(inner)
-        .and_then(|id| core.get_session(&id))
-        .ok();
+    let session = core.resolve_session(inner).ok();
     let Some(session) = session else {
         return format!("#[bold]{inner}#[default]");
     };
