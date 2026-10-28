@@ -163,7 +163,7 @@ missing source file (E7, I11 half).
   into one buffer.
 - [ ] **E2 behaviour.** artifacts `ArtifactStoreError` carries no path, so load errors print
   as bare "Permission denied". Wrap with the record path.
-- [ ] **E3.** `VerbError::Failed(String)` drops every typed cause (chat stringifies 16
+- [x] (e7cfb6c) **E3.** `VerbError::Failed(String)` drops every typed cause (chat stringifies 16
   variants). Add a boxed `Plugin` source variant; land with H4.
 - [ ] **I4.** artifacts `try_outcome!` re-implements `?`; steps return `Result<i32, Outcome>`
   with `From<VerbError> for Outcome`.
@@ -205,7 +205,8 @@ missing source file (E7, I11 half).
 - [ ] **T9b.** Registry boxes verbs/engines/sinks itself.
 - [ ] **E4 behaviour.** io errors without `#[source]` or path: `CoreError::Lock` (no lock
   file named), `UiError::Spawn`, `ReadError::Utf8`, tutor `PackError::Toml` flattened.
-- [ ] **E5.** "io error with path" helper copied in 7 plugins; `VerbError::Io { path, source }`.
+- [x] (e7cfb6c) **E5.** "io error with path" helper copied in 7 plugins; `VerbError::Io { path, source }`.
+  Done: chat's 3 copies merged; the rest each wrap their own enum and stay.
 - [ ] **E6 bug.** `let _ =` drops failures users should see: mockup `notify` drops
   `send_message` (the waiting agent never hears); hooks Seed, labels, chat detach, mockup
   events reset silently. Report mockup's; comment the deliberate best-effort ones.
