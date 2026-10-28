@@ -27,7 +27,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/ide` (`tx-ide`) | plugin: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core, tx-ui |
 | `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-ui |
 | `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-ui |
-| `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-ui |
+| `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick` (normal mode, numbered rows, popup opens, role filter), prefix+t | tx-core, tx-ui |
 | `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `fork`, `handover`, `rollover`, `resume`, `chat ls\|hooks`, prefix+f; captures chat ids through its own agent hooks | tx-core, tx-ui, tx-engine-claude, tx-engine-codex |
 | `plugins/chat` (`tx-chat`, plugin `history`) | plugin: the transcript mirror under `plugins/history/`, `history`, `history-hooks`; same crate as `chat` | tx-core, tx-ui |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-ui |
@@ -211,7 +211,7 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `ide` | `txc ui install\|attach` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, status line, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
 | `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label, the after-new-window hook) |
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
-| `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
+| `picker` | `txc pick [--hide ROLES]` (the fzf session picker: vim normal mode with numbered rows, `p` / alt-p opens the row in a popup, TAB hides roles, remembered in `plugins/picker/hidden-roles`) and the internal `_list [QUERY]`, `_picker-key`, `_roles`, `_toggle-hide`, `_roles-panel`, `_popup-attach`; resource `keys/picker.tmux` (prefix+t). Its t / Ctrl-T and d / y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
 | `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_session`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
 | `chat` | `fork`, `handover`, `rollover`, `resume`, `chat ls <session>`, `chat hooks install\|uninstall`, and the internal `_fork-pane`, `_chat-hook`, `_chat-op-finish`, `_chat-op-watch`; resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session`; owns `ext.chat` |

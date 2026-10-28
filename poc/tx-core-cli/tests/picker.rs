@@ -128,3 +128,50 @@ fn disabled_picker_hides_its_verbs() {
         cli.ok(&["plugins"])
     );
 }
+
+#[test]
+fn list_filters_by_query_and_by_hidden_roles() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create("alpha");
+    cli.create("beta");
+    assert_rows(&cli.ok(&["_list", "bet"]), 1);
+    assert_rows(&cli.ok(&["_list", "ALPHA"]), 1);
+    assert_eq!(cli.ok(&["_list", "nothing-like-it"]), "\n");
+    // the created sessions are shells: hiding that role empties the feed
+    cli.ok(&["_toggle-hide", "shell"]);
+    assert_eq!(cli.ok(&["_list"]), "\n");
+    assert!(cli.ok(&["_roles", "--chips"]).contains("○ shell"));
+    assert!(cli.ok(&["_roles"]).starts_with("llm\t"));
+    cli.ok(&["_toggle-hide", "bogus"]);
+    cli.ok(&["_toggle-hide", "--all"]);
+    assert_rows(&cli.ok(&["_list"]), 2);
+}
+
+#[test]
+fn picker_key_prints_fzf_actions_and_keeps_the_pending_pick() {
+    let cli = Cli::new();
+    std::fs::create_dir_all(cli.state()).unwrap();
+    let digits = cli.state().join("digits");
+    std::fs::write(&digits, "").unwrap();
+    let env = [
+        ("TX_DIGITS_FILE", digits.to_str().unwrap()),
+        ("FZF_TOTAL_COUNT", "3"),
+    ];
+    let output = cli.run(&["_picker-key", "2"], &env, "");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "pos(2)+accept\n");
+    let output = cli.run(&["_picker-key", "p"], &env, "");
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("change-footer:"));
+    assert_eq!(std::fs::read_to_string(&digits).unwrap(), "p");
+    let output = cli.run(&["_picker-key", "enter"], &env, "");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "print(popup)+accept\n"
+    );
+    assert_eq!(std::fs::read_to_string(&digits).unwrap(), "");
+    assert_eq!(
+        cli.run(&["_picker-key", "x"], &env, "").status.code(),
+        Some(2)
+    );
+    assert!(!cli.run(&["_picker-key", "1"], &[], "").status.success());
+}

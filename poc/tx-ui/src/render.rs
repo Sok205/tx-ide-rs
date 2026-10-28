@@ -194,8 +194,8 @@ fn trunc(text: &str, width: i64) -> String {
     }
 }
 
-/// One fzf row: `name \t plain_chips \t L \t target \t visual`.
-fn picker_row(row: &Row<'_>, namew: i64, now: f64) -> String {
+/// The visual (fifth) field of a picker row, before its number.
+fn picker_visual(row: &Row<'_>, namew: i64, now: f64) -> String {
     let session = row.session;
     let role = role_of(session);
     let name_disp = trunc(&session.name, namew);
@@ -209,26 +209,48 @@ fn picker_row(row: &Row<'_>, namew: i64, now: f64) -> String {
     let idle = idle_cell(session, now);
     let role_cell = format!("{}{role:<ROLE_W$}{RESET_FG}", tag_ansi(role));
     let location = location_text(row.attached);
-    let visual = format!(
+    format!(
         "{name_disp}{pad}   {location:<LOCATION_W$} {started:<7} {WARN_ANSI}{idle:<6}{RESET_FG} {role_cell}{colored_chips}"
-    );
-    [
-        session.name.as_str(),
-        &chips(&session.tags),
-        "L",
-        row.target,
-        &visual,
-    ]
-    .join("\t")
+    )
 }
 
-/// The fzf picker feed, newest activity first (stable for ties).
+/// Every whitespace-separated term of `query` appears, case-insensitively, in the row.
+pub fn picker_matches(row: &Row<'_>, query: &str) -> bool {
+    let haystack = format!(
+        "{}{} {} {}",
+        row.session.name,
+        chips(&row.session.tags),
+        location_text(row.attached),
+        role_of(row.session)
+    )
+    .to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|term| haystack.contains(term))
+}
+
+pub const PICKER_NUMBER_W: usize = 2;
+
+/// The fzf picker feed, newest activity first (stable for ties), numbered 1..n ahead of the
+/// visual so the picker's digits address the rows as shown.
 pub fn picker_rows(rows: &[Row<'_>], namew: i64, now: f64) -> String {
     let mut ordered: Vec<&Row<'_>> = rows.iter().collect();
     ordered.sort_by(|a, b| activity_at(b.session).total_cmp(&activity_at(a.session)));
     ordered
         .into_iter()
-        .map(|row| picker_row(row, namew, now))
+        .enumerate()
+        .map(|(index, row)| {
+            // One fzf row: `name \t plain_chips \t L \t target \t number visual`.
+            let number = index + 1;
+            format!(
+                "{}\t{}\tL\t{}\t{ACCENT_ANSI}{number:>PICKER_NUMBER_W$}{RESET_FG} {}",
+                row.session.name,
+                chips(&row.session.tags),
+                row.target,
+                picker_visual(row, namew, now)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -424,6 +446,10 @@ mod tests {
             " [a]\t",
             "L\t",
             "$3\t",
+            "\x1b[38;2;122;162;247m",
+            " 1",
+            "\x1b[39m",
+            " ",
             "worker-1",
             "    ",
             "   ",
@@ -467,7 +493,7 @@ mod tests {
             .collect();
         assert_eq!(names, ["f", "a-very-long-session-name", "o"]);
         let visual = out.lines().nth(1).unwrap().split('\t').nth(4).unwrap();
-        assert!(visual.starts_with("a-very-long…   —"), "{visual:?}");
+        assert!(visual.contains(" 2\x1b[39m a-very-long…   —"), "{visual:?}");
         assert!(visual.contains(" —      "), "{visual:?}");
     }
 
