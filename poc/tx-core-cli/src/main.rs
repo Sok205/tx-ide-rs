@@ -13,7 +13,7 @@ use std::sync::Arc;
 use args::{Invocation, LaunchSpec, Verb};
 use tx_core::{
     CoreConfig, CoreError, CreateOptions, LaunchOptions, ListFilter, PluginConfig, RefreshResult,
-    SendOptions, SessionId, TxCore,
+    SendOptions, TxCore,
 };
 
 const HOME_ENV: &str = "TX_CORE_HOME";
@@ -185,18 +185,6 @@ fn open(invocation: &Invocation) -> Result<TxCore, Failure> {
     Ok(core)
 }
 
-/// The caller's own session id, only when this process runs inside tx's tmux server: `$TMUX`
-/// names the server socket, and `$TX_SESSION_ID` was set by `create_session`. Anywhere else the
-/// sender is the user.
-fn sender_from_env(core: &TxCore) -> Option<SessionId> {
-    let tmux = std::env::var("TMUX").ok()?;
-    let socket = tmux.split(',').next()?;
-    if std::path::Path::new(socket) != core.socket_path() {
-        return None;
-    }
-    std::env::var("TX_SESSION_ID").ok()?.parse().ok()
-}
-
 fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     if invocation.verb == Verb::Help {
         print!("{}", args::USAGE);
@@ -348,7 +336,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             writeln!(out, "{}\t{}", session.id, session.tags.join(",")).ok();
         }
         Verb::Send { target, text } => {
-            let sender = sender_from_env(&core);
+            // Anywhere but inside tx's server the sender is the user.
+            let sender = core.session_from_env();
             let options = sender.map_or_else(SendOptions::default, SendOptions::from_agent);
             let receipt = core.send_message(&core.resolve(&target)?, &text, options)?;
             writeln!(out, "{}\t{}", receipt.recipient, receipt.pane).ok();

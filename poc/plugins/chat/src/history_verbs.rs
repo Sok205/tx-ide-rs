@@ -20,8 +20,6 @@ use crate::ext::{HistoryChat, HistoryExt, chat_ext, history_ext, owned_elsewhere
 use crate::install::{install, uninstall};
 use crate::mirror::{HISTORY_ENTRIES, IngestMode, ingest_session};
 
-pub(crate) const SESSION_ID_ENV: &str = "TX_SESSION_ID";
-
 const INGEST_USAGE: &str = "usage: txc _history-ingest [--wait] [<session>]\n";
 const HISTORY_USAGE: &str = "\
 usage: txc history [--tag T] [--cwd S] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
@@ -99,10 +97,7 @@ impl Ingest {
     /// Hook mode: record the chat the agent reports, then mirror it detached. "Not ours" and
     /// bad payloads are silent successes.
     fn hook(&self, core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
-        let Some(id) = std::env::var(SESSION_ID_ENV)
-            .ok()
-            .and_then(|raw| raw.parse::<SessionId>().ok())
-        else {
+        let Some(id) = tx_core::env_session_id() else {
             return Ok(0);
         };
         let payload = read_payload(io.stdin);

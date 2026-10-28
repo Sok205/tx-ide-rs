@@ -11,10 +11,10 @@ use serde_json::{Value, json};
 use tx_core::events::now;
 use tx_core::{
     CoreConfig, Event, EventSink, EventType, Lifecycle, ListFilter, Plugin, PluginError, Registry,
-    SessionId, TxCore, Verb, VerbError, VerbIo,
+    TxCore, Verb, VerbError, VerbIo,
 };
 
-pub use state::{PLUGIN_ID, SESSION_ID_ENV, State, read_payload, state_for};
+pub use state::{PLUGIN_ID, State, read_payload, state_for};
 
 pub const DEFAULT_STUCK_AFTER_SECONDS: u64 = 600;
 
@@ -116,10 +116,7 @@ impl Verb for Hook {
 impl Hook {
     /// "Not ours" (no env var, malformed id, no record, unknown event) is a silent success.
     fn apply(&self, core: &TxCore, io: &mut VerbIo<'_>, event: &str) -> Result<(), VerbError> {
-        let Some(id) = std::env::var(SESSION_ID_ENV)
-            .ok()
-            .and_then(|raw| raw.parse::<SessionId>().ok())
-        else {
+        let Some(id) = tx_core::env_session_id() else {
             return Ok(());
         };
         let payload = read_payload(io.stdin);

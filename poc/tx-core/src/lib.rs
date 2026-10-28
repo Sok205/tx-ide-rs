@@ -25,7 +25,7 @@ pub mod tmux;
 pub use config::{CoreConfig, MAX_SOCKET_PATH_BYTES};
 pub use core::{
     CreateOptions, DeliveryReceipt, ExecutionLocation, LaunchOptions, ListFilter, RefreshResult,
-    SendOptions, TxCore,
+    SendOptions, TxCore, env_session_id,
 };
 #[doc(hidden)]
 pub use engine::EngineRegistry;

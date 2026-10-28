@@ -5,7 +5,6 @@ use std::io::Read;
 use serde_json::{Map, Value};
 
 pub const PLUGIN_ID: &str = "hooks";
-pub const SESSION_ID_ENV: &str = "TX_SESSION_ID";
 
 /// `Notification` subtypes meaning "the agent yielded — needs you".
 const WAITING_NOTIFICATION_TYPES: [&str; 3] =

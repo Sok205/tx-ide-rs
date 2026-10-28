@@ -10,7 +10,7 @@ use tx_ui::render::reltime;
 
 use crate::ChatError;
 use crate::ext::{ChatExt, ChatRef, HistoryExt, Role, chat_ext, history_ext, owned_elsewhere};
-use crate::history_verbs::{SESSION_ID_ENV, home_dir, read_payload, resolve};
+use crate::history_verbs::{home_dir, read_payload, resolve};
 use crate::install::{Entries, install, uninstall};
 use tx_core::say;
 
@@ -193,10 +193,7 @@ impl Verb for ChatHook {
         if !HOOK_EVENTS.contains(&event.as_str()) {
             return Ok(0);
         }
-        let Some(id) = std::env::var(SESSION_ID_ENV)
-            .ok()
-            .and_then(|raw| raw.parse::<SessionId>().ok())
-        else {
+        let Some(id) = tx_core::env_session_id() else {
             return Ok(0);
         };
         let payload = read_payload(io.stdin);

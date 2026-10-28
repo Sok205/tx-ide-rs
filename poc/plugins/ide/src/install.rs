@@ -116,12 +116,6 @@ fn is_unsafe_path(path: &Path) -> bool {
         .any(|c| c.is_whitespace() || "\"'$#;`\\".contains(c))
 }
 
-/// The socket path in a `$TMUX` value (`<socket>,<pid>,<session>`).
-fn tmux_env_socket(env: Option<&str>) -> Option<&str> {
-    env.and_then(|value| value.split(',').next())
-        .filter(|socket| !socket.is_empty())
-}
-
 /// The words of `before` that `now` no longer lists; all of them when the fragment is gone.
 fn dropped(before: &[String], now: Option<&[String]>) -> Vec<String> {
     before
@@ -393,9 +387,9 @@ fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     // Always: the assistant is part of the IDE being up, whether or not `home` is new.
     let assistant = warm_assistant(core, io);
     ensure_home(&ui, assistant.as_deref())?;
-    let env = std::env::var("TMUX").ok();
-    match tmux_env_socket(env.as_deref()) {
-        Some(socket) if Path::new(socket) == core.socket_path() => {
+    let env = std::env::var(tx_core::tmux::TMUX_ENV).ok();
+    match tx_core::tmux::client_socket(env.as_deref()) {
+        _ if core.is_inside() => {
             ui.run(&["switch-client", "-t", &format!("={HOME_SESSION}")])
                 .map_err(VerbError::failed)?;
             return Ok(0);
@@ -516,14 +510,5 @@ mod tests {
         ] {
             assert!(!is_unsafe_path(Path::new(good)), "{good:?}");
         }
-    }
-
-    #[test]
-    fn tmux_env_socket_is_the_text_before_the_first_comma() {
-        assert_eq!(tmux_env_socket(Some("/a/b.sock,12,0")), Some("/a/b.sock"));
-        assert_eq!(tmux_env_socket(Some("/a/b.sock")), Some("/a/b.sock"));
-        assert_eq!(tmux_env_socket(Some("")), None);
-        assert_eq!(tmux_env_socket(Some(",1,0")), None);
-        assert_eq!(tmux_env_socket(None), None);
     }
 }

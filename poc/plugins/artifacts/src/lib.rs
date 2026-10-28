@@ -14,9 +14,7 @@
 
 use std::sync::Arc;
 
-use tx_core::{
-    CoreConfig, Event, EventSink, EventType, Plugin, PluginError, Registry, SessionId, TxCore,
-};
+use tx_core::{CoreConfig, Event, EventSink, EventType, Plugin, PluginError, Registry, TxCore};
 
 pub mod artifact;
 pub mod grouping;
@@ -35,10 +33,7 @@ pub const DEFAULT_EDITOR: &str = "nvim";
 
 /// The acting session: `$TX_SESSION_ID` when it is a valid id, else `user`.
 pub fn actor() -> String {
-    std::env::var("TX_SESSION_ID")
-        .ok()
-        .and_then(|id| id.parse::<SessionId>().ok())
-        .map_or_else(|| artifact::USER_ACTOR.to_owned(), |id| id.to_string())
+    tx_core::env_session_id().map_or_else(|| artifact::USER_ACTOR.to_owned(), |id| id.to_string())
 }
 
 pub fn service(core: &TxCore) -> service::ArtifactService {

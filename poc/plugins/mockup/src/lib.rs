@@ -98,17 +98,8 @@ fn parse_args(argv: &[String]) -> Option<Args> {
 fn resolve_agent(core: &TxCore, token: Option<&str>) -> Result<Option<SessionId>, CoreError> {
     match token {
         Some(token) => core.resolve(token).map(Some),
-        None => Ok(agent_from_env(core)),
+        None => Ok(core.session_from_env()),
     }
-}
-
-fn agent_from_env(core: &TxCore) -> Option<SessionId> {
-    let tmux = std::env::var("TMUX").ok()?;
-    let socket = tmux.split(',').next()?;
-    if Path::new(socket) != core.socket_path() {
-        return None;
-    }
-    std::env::var("TX_SESSION_ID").ok()?.parse().ok()
 }
 
 /// The session dir `start` recorded in `ext["mockup"].dir`.

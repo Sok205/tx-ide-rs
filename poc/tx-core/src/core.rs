@@ -335,6 +335,11 @@ impl std::fmt::Debug for TxCore {
     }
 }
 
+/// The session `$TX_SESSION_ID` names, when it holds a valid id.
+pub fn env_session_id() -> Option<SessionId> {
+    std::env::var(SESSION_ID_ENV).ok()?.parse().ok()
+}
+
 impl TxCore {
     /// Checks the socket path, creates the state layout, writes a default `tmux.conf` if none.
     /// Does not start tmux.
@@ -368,6 +373,20 @@ impl TxCore {
 
     pub fn socket_path(&self) -> &Path {
         self.tmux.socket()
+    }
+
+    /// Whether this process runs in a pane of this core's server (`$TMUX`'s socket); `Ui::inside`
+    /// is the same check for a `Ui`.
+    pub fn is_inside(&self) -> bool {
+        crate::tmux::is_client_of(
+            self.socket_path(),
+            std::env::var(crate::tmux::TMUX_ENV).ok().as_deref(),
+        )
+    }
+
+    /// [`env_session_id`], trusted only inside this core's server.
+    pub fn session_from_env(&self) -> Option<SessionId> {
+        self.is_inside().then(env_session_id).flatten()
     }
 
     pub fn register_engine(&mut self, adapter: Box<dyn EngineAdapter>) -> Result<(), CoreError> {

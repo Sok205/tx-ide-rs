@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use tx_core::TxCore;
@@ -96,13 +96,10 @@ impl Ui {
 
     /// Whether this process runs inside a client of the core's server (`$TMUX`'s socket).
     pub fn inside(&self) -> bool {
-        self.inside_with(std::env::var("TMUX").ok().as_deref())
-    }
-
-    fn inside_with(&self, tmux_env: Option<&str>) -> bool {
-        tmux_env
-            .and_then(|value| value.split(',').next())
-            .is_some_and(|socket| !socket.is_empty() && Path::new(socket) == self.socket)
+        tx_core::tmux::is_client_of(
+            &self.socket,
+            std::env::var(tx_core::tmux::TMUX_ENV).ok().as_deref(),
+        )
     }
 
     pub fn display_message(&self, fmt: &str, target: Option<&str>) -> Option<String> {
@@ -458,15 +455,6 @@ mod tests {
         assert_eq!(shell_quote("a'b"), r"'a'\''b'");
         assert_eq!(shell_quote("plain"), "'plain'");
         assert_eq!(shell_quote(""), "''");
-    }
-
-    #[test]
-    fn inside_requires_matching_socket() {
-        let ui = ui();
-        assert!(ui.inside_with(Some("/s/tmux.sock,123,0")));
-        assert!(!ui.inside_with(Some("/other/tmux.sock,123,0")));
-        assert!(!ui.inside_with(Some("")));
-        assert!(!ui.inside_with(None));
     }
 
     #[test]

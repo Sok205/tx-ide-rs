@@ -120,6 +120,21 @@ pub(crate) fn escape_trailing_semicolon(arg: &str) -> String {
     format!("{stem}{};", "\\".repeat(backslashes + 1))
 }
 
+/// Set by tmux in its panes: `<socket>,<pid>,<session>`.
+pub const TMUX_ENV: &str = "TMUX";
+
+/// The socket path in a `$TMUX` value (`<socket>,<pid>,<session>`).
+pub fn client_socket(tmux_env: Option<&str>) -> Option<&str> {
+    tmux_env
+        .and_then(|value| value.split(',').next())
+        .filter(|socket| !socket.is_empty())
+}
+
+/// Whether `tmux_env` (a `$TMUX` value) names the server at `socket`.
+pub fn is_client_of(socket: &Path, tmux_env: Option<&str>) -> bool {
+    client_socket(tmux_env).is_some_and(|client| Path::new(client) == socket)
+}
+
 /// An exact session target: tmux otherwise prefix-matches names.
 pub fn exact(name: &str) -> String {
     format!("={name}")
@@ -334,6 +349,24 @@ mod tests {
 
     fn strs(argv: &[OsString]) -> Vec<&str> {
         argv.iter().map(|a| a.to_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn client_socket_is_the_text_before_the_first_comma() {
+        assert_eq!(client_socket(Some("/a/b.sock,12,0")), Some("/a/b.sock"));
+        assert_eq!(client_socket(Some("/a/b.sock")), Some("/a/b.sock"));
+        assert_eq!(client_socket(Some("")), None);
+        assert_eq!(client_socket(Some(",1,0")), None);
+        assert_eq!(client_socket(None), None);
+    }
+
+    #[test]
+    fn is_client_of_requires_matching_socket() {
+        let socket = Path::new("/s/tmux.sock");
+        assert!(is_client_of(socket, Some("/s/tmux.sock,123,0")));
+        assert!(!is_client_of(socket, Some("/other/tmux.sock,123,0")));
+        assert!(!is_client_of(socket, Some("")));
+        assert!(!is_client_of(socket, None));
     }
 
     #[test]
