@@ -21,7 +21,7 @@ use tx_core::{
     Lifecycle, ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
 };
 
-use keys::{DIGITS_FILE_ENV, KeyState, NORMAL_PROMPT, POPUP_LINE, POPUP_MARK, SEARCH_PROMPT};
+use keys::{DIGITS_FILE_ENV, KeyState, NORMAL_PROMPT, POPUP_LINE, SEARCH_PROMPT};
 use tx_ui::popup::popup_session;
 use tx_ui::render::{
     ACCENT_ANSI, ACCENT_HEX, BG_DEEP_HEX, BOLD, DIM_FG_HEX, FG_ANSI, FG_HEX, LOCATION_W,
@@ -575,11 +575,7 @@ impl Verb for PickerKey {
         };
         let key = argv.first().map(String::as_str).unwrap_or_default();
         let pending = std::fs::read_to_string(&path).map_err(VerbError::other)?;
-        let pending = pending.trim();
-        let (popup, digits) = match pending.strip_prefix(POPUP_MARK) {
-            Some(digits) => (true, digits),
-            None => (false, pending),
-        };
+        let (popup, digits) = keys::parse_pending(&pending);
         let state = KeyState {
             searching: std::env::var("FZF_PROMPT").ok().as_deref() == Some(SEARCH_PROMPT),
             total: std::env::var("FZF_TOTAL_COUNT")

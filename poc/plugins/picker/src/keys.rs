@@ -64,6 +64,25 @@ impl Reply {
     }
 }
 
+/// Reads what [`Reply::pending`] wrote: the popup mark, then buffered digits. Anything else (a
+/// junk or stale file) reads as nothing pending.
+pub fn parse_pending(text: &str) -> (bool, &str) {
+    let text = text.trim();
+    let (popup, digits) = match text.strip_prefix(POPUP_MARK) {
+        Some(digits) => (true, digits),
+        None => (false, text),
+    };
+    if digits.is_empty()
+        || digits
+            .parse::<usize>()
+            .is_ok_and(|_| !digits.starts_with('+'))
+    {
+        (popup, digits)
+    } else {
+        (false, "")
+    }
+}
+
 pub fn normal_footer(popup: bool, digits: &str) -> String {
     let digits = if digits.is_empty() {
         String::new()
@@ -165,6 +184,98 @@ mod tests {
         let reply = press("7", &state(5, false, "")).unwrap();
         assert_eq!(reply.pending(), "");
         assert!(reply.actions.starts_with("change-footer:"));
+    }
+
+    #[test]
+    fn esc_leaves_search_then_clears_then_aborts() {
+        let searching = KeyState {
+            searching: true,
+            ..state(5, true, "1")
+        };
+        let reply = press("esc", &searching).unwrap();
+        assert!(
+            reply.actions.starts_with("change-prompt("),
+            "{}",
+            reply.actions
+        );
+        assert_eq!(reply.pending(), "");
+        let reply = press("esc", &state(12, false, "1")).unwrap();
+        assert!(reply.actions.starts_with("change-footer:"));
+        assert_eq!(reply.pending(), "");
+        assert_eq!(
+            press("esc", &state(12, false, "")).unwrap().actions,
+            "abort"
+        );
+    }
+
+    #[test]
+    fn enter_opens_the_buffered_row_or_the_current_one() {
+        assert_eq!(
+            press("enter", &state(12, false, "1")).unwrap().actions,
+            "pos(1)+accept"
+        );
+        assert_eq!(
+            press("enter", &state(12, false, "")).unwrap().actions,
+            "accept"
+        );
+        assert_eq!(
+            press("enter", &state(12, true, "")).unwrap().actions,
+            "print(popup)+accept"
+        );
+    }
+
+    #[test]
+    fn pending_round_trips_and_junk_reads_as_nothing() {
+        for (popup, digits) in [(false, ""), (true, ""), (false, "1"), (true, "12")] {
+            let reply = Reply {
+                popup,
+                digits: digits.to_owned(),
+                actions: String::new(),
+            };
+            assert_eq!(parse_pending(&reply.pending()), (popup, digits));
+        }
+        assert_eq!(parse_pending("1\n"), (false, "1"));
+        for junk in ["abc", "p1x", "-3", "+3", "1 2", "99999999999999999999999"] {
+            assert_eq!(parse_pending(junk), (false, ""), "{junk:?}");
+        }
+    }
+
+    proptest::proptest! {
+        /// Any key sequence from an empty file: digits never fail, a pick names a real row,
+        /// and what is left buffered is an ambiguous prefix of one.
+        #[test]
+        fn key_sequences_stay_in_range(
+            total in 0usize..40,
+            searching: bool,
+            keys in proptest::collection::vec(
+                proptest::sample::select(vec!["0", "1", "2", "3", "9", "enter", "esc", "p"]),
+                0..12,
+            ),
+        ) {
+            let mut file = String::new();
+            for key in keys {
+                let (popup, digits) = parse_pending(&file);
+                let state = KeyState {
+                    searching,
+                    ..state(total, popup, digits)
+                };
+                let reply = press(key, &state).unwrap();
+                let written = reply.pending();
+                proptest::prop_assert_eq!(
+                    parse_pending(&written),
+                    (reply.popup, reply.digits.as_str())
+                );
+                if let Some(rest) = reply.actions.strip_prefix("pos(") {
+                    let row: usize = rest.split(')').next().unwrap().parse().unwrap();
+                    proptest::prop_assert!((1..=total).contains(&row), "{row} of {total}");
+                }
+                if !reply.digits.is_empty() {
+                    let number: usize = reply.digits.parse().unwrap();
+                    proptest::prop_assert!(number >= 1 && number * 10 <= total);
+                }
+                file = reply.pending();
+            }
+        }
     }
 
     #[test]

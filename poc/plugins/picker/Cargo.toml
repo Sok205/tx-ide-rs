@@ -12,5 +12,8 @@ tx-ui.workspace = true
 libc = "0.2"
 tempfile.workspace = true
 
+[dev-dependencies]
+proptest = "1"
+
 [lints]
 workspace = true

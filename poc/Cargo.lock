@@ -1886,7 +1886,9 @@ dependencies = [
  "ratatui",
  "serde_json",
  "tempfile",
+ "tx-chat",
  "tx-core",
+ "tx-tutor",
  "tx-ui",
 ]
 
@@ -1908,6 +1910,7 @@ name = "tx-picker"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "proptest",
  "tempfile",
  "tx-core",
  "tx-ui",
