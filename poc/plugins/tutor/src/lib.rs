@@ -165,8 +165,7 @@ impl Verb for TutorVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some((action, args)) = parse_args(argv) else {
-            let _ = writeln!(io.stderr, "{USAGE}");
-            return Ok(2);
+            return Err(VerbError::usage(USAGE));
         };
         let lang = match action {
             Action::Start => args.target.as_deref(),

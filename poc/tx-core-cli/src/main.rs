@@ -44,6 +44,10 @@ fn main() -> ExitCode {
             eprintln!("txc: {error}\n{}", args::USAGE);
             ExitCode::from(2)
         }
+        Err(Failure::Verb(tx_core::VerbError::Usage(text))) => {
+            eprintln!("{}", text.trim_end());
+            ExitCode::from(2)
+        }
         Err(error) => {
             eprintln!("txc: {error}");
             ExitCode::from(1)

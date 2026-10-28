@@ -136,11 +136,6 @@ fn fail(io: &mut VerbIo<'_>, message: &str) -> Result<i32, VerbError> {
     Ok(1)
 }
 
-fn usage(io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
-    let _ = writeln!(io.stderr, "usage: txc ui install | attach");
-    Ok(2)
-}
-
 pub struct UiVerb;
 
 impl Verb for UiVerb {
@@ -156,7 +151,7 @@ impl Verb for UiVerb {
         match argv {
             [sub] if sub == "attach" => attach(core, io),
             [sub] if sub == "install" => install(core, io),
-            _ => usage(io),
+            _ => Err(self.usage_error()),
         }
     }
 }
@@ -175,8 +170,7 @@ impl Verb for ResourceVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [name] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _resource NAME");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         match core.resources("").into_iter().find(|r| &r.name == name) {
             Some(resource) => {

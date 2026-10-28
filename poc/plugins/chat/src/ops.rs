@@ -1122,8 +1122,7 @@ impl Verb for Fork {
             Some((&[source], false)) => (source, None),
             Some((&[source, name], false)) => (source, Some(name)),
             _ => {
-                say(io.stderr, FORK_USAGE)?;
-                return Ok(2);
+                return Err(VerbError::usage(FORK_USAGE));
             }
         };
         sweep_abandoned(core, io.stderr);
@@ -1163,8 +1162,7 @@ impl Verb for Handover {
             Some((&[source, task], c)) => (source, task, None, c),
             Some((&[source, task, name], c)) => (source, task, Some(name), c),
             _ => {
-                say(io.stderr, HANDOVER_USAGE)?;
-                return Ok(2);
+                return Err(VerbError::usage(HANDOVER_USAGE));
             }
         };
         sweep_abandoned(core, io.stderr);
@@ -1207,8 +1205,7 @@ impl Verb for Rollover {
             Some((&[], c)) => (None, c),
             Some((&[target], c)) => (Some(target), c),
             _ => {
-                say(io.stderr, ROLLOVER_USAGE)?;
-                return Ok(2);
+                return Err(VerbError::usage(ROLLOVER_USAGE));
             }
         };
         sweep_abandoned(core, io.stderr);
@@ -1274,8 +1271,7 @@ impl Verb for Resume {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some((target, as_name, cwd)) = parse_resume(argv) else {
-            say(io.stderr, RESUME_USAGE)?;
-            return Ok(2);
+            return Err(VerbError::usage(RESUME_USAGE));
         };
         sweep_abandoned(core, io.stderr);
         let loc = Locator::from_env();
@@ -1329,8 +1325,7 @@ impl Verb for OpFinish {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [op_id] = argv else {
-            say(io.stderr, "usage: txc _chat-op-finish <op>\n")?;
-            return Ok(2);
+            return Err(self.usage_error());
         };
         let detached = std::env::var_os(DETACHED_ENV).is_some();
         match ops(core)?.finish_verb(op_id, detached) {
@@ -1353,8 +1348,7 @@ impl Verb for OpWatch {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [op_id] = argv else {
-            say(io.stderr, "usage: txc _chat-op-watch <op>\n")?;
-            return Ok(2);
+            return Err(self.usage_error());
         };
         match ops(core)?.watch(op_id, WatchTimings::from_env()) {
             Ok(()) => Ok(0),

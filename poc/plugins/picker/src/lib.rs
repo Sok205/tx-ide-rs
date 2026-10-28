@@ -334,10 +334,9 @@ impl Verb for Pick {
         "pick [-f QUERY] [-j] [--hide ROLES]   fzf session picker (prefix+t)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some(options) = parse_pick(argv) else {
-            let _ = write!(io.stderr, "{PICK_USAGE}");
-            return Ok(2);
+            return Err(VerbError::usage(PICK_USAGE));
         };
         let ui = Ui::from_core(core);
         let longest = running(core)?
@@ -586,8 +585,9 @@ impl Verb for PickerKey {
             digits,
         };
         let Some(reply) = keys::press(key, &state) else {
-            let _ = writeln!(io.stderr, "txc _picker-key: unknown key '{key}'");
-            return Ok(2);
+            return Err(VerbError::usage(format!(
+                "txc _picker-key: unknown key '{key}'"
+            )));
         };
         std::fs::write(&path, reply.pending()).map_err(VerbError::failed)?;
         say(io.stdout, &format!("{}\n", reply.actions))?;
@@ -705,10 +705,9 @@ impl Verb for PopupAttach {
         "_popup-attach <client> <session>   nest-attach the session in a popup over the client (internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [client, token] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _popup-attach <client> <session>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         let ui = Ui::from_core(core);
         let session = core.resolve_session(token);

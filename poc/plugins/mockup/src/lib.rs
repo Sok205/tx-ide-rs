@@ -324,12 +324,10 @@ impl Verb for MockupVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some(args) = parse_args(argv) else {
-            let _ = writeln!(io.stderr, "{USAGE}");
-            return Ok(2);
+            return Err(VerbError::usage(USAGE));
         };
         let Some(id) = resolve_agent(core, args.agent.as_deref())? else {
-            let _ = writeln!(io.stderr, "txc mockup: no agent session (use --for)");
-            return Ok(2);
+            return Err(VerbError::usage("txc mockup: no agent session (use --for)"));
         };
         let session = core.get_session(&id)?;
         let view = view_name(&session.name);
@@ -393,10 +391,9 @@ impl Verb for ViewVerb {
         "_mockup-view <session_dir> <view>   the viewer (internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [dir, view] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc {VIEW_VERB} <session_dir> <view>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         let ui = Ui::from_core(core);
         let dir = Path::new(dir);

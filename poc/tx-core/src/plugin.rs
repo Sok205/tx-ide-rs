@@ -85,8 +85,15 @@ pub trait Verb: Send + Sync {
     fn name(&self) -> &'static str;
     /// One usage line, shown under the front end's own verbs.
     fn usage(&self) -> &'static str;
-    /// Returns the exit code. Usage mistakes: write to `io.stderr`, return `Ok(2)`.
+    /// Returns the exit code. Usage mistakes: [`VerbError::Usage`].
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError>;
+
+    /// `usage: txc <synopsis>`, the synopsis being [`usage`](Self::usage) before its
+    /// three-space gap.
+    fn usage_error(&self) -> VerbError {
+        let synopsis = self.usage().split("   ").next().unwrap_or_default();
+        VerbError::usage(format!("usage: txc {synopsis}"))
+    }
 }
 
 pub struct VerbIo<'a> {
@@ -101,12 +108,19 @@ pub enum VerbError {
     Core(#[from] CoreError),
     #[error("{0}")]
     Failed(String),
+    /// A usage mistake: the host writes the text to stderr and exits 2.
+    #[error("{0}")]
+    Usage(String),
 }
 
 impl VerbError {
     /// Any failure, reported by its message: `.map_err(VerbError::failed)`.
     pub fn failed(error: impl std::fmt::Display) -> Self {
         Self::Failed(error.to_string())
+    }
+
+    pub fn usage(text: impl Into<String>) -> Self {
+        Self::Usage(text.into())
     }
 
     /// A failed write to the verb's output stream.

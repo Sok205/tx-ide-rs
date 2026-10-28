@@ -51,8 +51,7 @@ impl Verb for Kill {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [token] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc kill <name>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         let ui = Ui::from_core(core);
         let name = match resolve_or_not_found(core, token)? {

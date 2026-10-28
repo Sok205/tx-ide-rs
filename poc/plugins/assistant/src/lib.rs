@@ -82,10 +82,7 @@ impl Verb for Assistant {
                 writeln!(io.stdout, "{SESSION_NAME}").map_err(VerbError::write)?;
                 Ok(0)
             }
-            _ => {
-                let _ = writeln!(io.stderr, "usage: txc assistant warm");
-                Ok(2)
-            }
+            _ => Err(self.usage_error()),
         }
     }
 }

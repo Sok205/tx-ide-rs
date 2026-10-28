@@ -7,7 +7,6 @@ use std::fs::OpenOptions;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use tx_core::say;
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 use tx_ui::tmux::Ui;
 
@@ -149,8 +148,7 @@ impl Verb for Timeline {
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         if !self.resident && argv.first().map(String::as_str) == Some("health") {
             if argv.len() > 1 {
-                say(io.stderr, USAGE)?;
-                return Ok(2);
+                return Err(VerbError::usage(USAGE));
             }
             return health(core, io);
         }
@@ -165,11 +163,10 @@ impl Verb for Timeline {
         let options = match parse_options(argv, &allowed) {
             Ok(options) => options,
             Err(message) => {
-                say(
-                    io.stderr,
-                    &format!("txc {}: {message}\n{USAGE}", self.name()),
-                )?;
-                return Ok(2);
+                return Err(VerbError::usage(format!(
+                    "txc {}: {message}\n{USAGE}",
+                    self.name()
+                )));
             }
         };
         let mut builder = builder(core);
@@ -233,10 +230,9 @@ impl Verb for TimelineAttach {
         "_timeline-attach   start or attach the resident timeline; q detaches (prefix+T, internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         if !argv.is_empty() {
-            say(io.stderr, "usage: txc _timeline-attach\n")?;
-            return Ok(2);
+            return Err(self.usage_error());
         }
         let ui = Ui::from_core(core);
         let dir = core.config().plugin_dir(PLUGIN_ID);
@@ -294,11 +290,9 @@ impl Verb for TimelineJson {
         let options = match parse_options(argv, &["--days", "--now"]) {
             Ok(options) => options,
             Err(message) => {
-                say(
-                    io.stderr,
-                    &format!("txc _timeline-json: {message}\n{JSON_USAGE}"),
-                )?;
-                return Ok(2);
+                return Err(VerbError::usage(format!(
+                    "txc _timeline-json: {message}\n{JSON_USAGE}"
+                )));
             }
         };
         let now = options.now.unwrap_or_else(tx_core::events::now);

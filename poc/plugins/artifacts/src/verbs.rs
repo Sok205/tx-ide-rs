@@ -192,8 +192,7 @@ impl Verb for ArtifactVerb {
         match outcome {
             Outcome::Code(code) => Ok(code),
             Outcome::Usage(message) => {
-                let _ = writeln!(ctx.io.stderr, "txc artifact {sub}: {message}");
-                Ok(2)
+                Err(VerbError::usage(format!("txc artifact {sub}: {message}")))
             }
             Outcome::Artifact(error) => {
                 let _ = writeln!(ctx.io.stderr, "txc artifact: {error}");
@@ -527,28 +526,26 @@ impl Verb for GroupVerb {
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let usage = |io: &mut VerbIo<'_>, message: &str| {
-            let _ = writeln!(io.stderr, "txc group: {message}\n{GROUP_USAGE}");
-            Ok(2)
+        let usage = |message: &str| {
+            Err(VerbError::usage(format!(
+                "txc group: {message}\n{GROUP_USAGE}"
+            )))
         };
         let args = match parse(argv, &[], &["clear"]) {
             Ok(args) => args,
-            Err(message) => return usage(io, &message),
+            Err(message) => return usage(&message),
         };
         let clear = args.switch("clear");
         let (token, group) = match args.positionals.as_slice() {
             [token] => (token, None),
             [token, group] => (token, Some(group.as_str())),
-            _ => return usage(io, "expected a session and at most one group"),
+            _ => return usage("expected a session and at most one group"),
         };
         if clear && group.is_some() {
-            return usage(io, "give a group or --clear, not both");
+            return usage("give a group or --clear, not both");
         }
         if group == Some("") {
-            return usage(
-                io,
-                "a group cannot be empty; use --clear to drop the override",
-            );
+            return usage("a group cannot be empty; use --clear to drop the override");
         }
         let session = core.resolve_session(token)?;
         if let Err(problem) = ext_of(&session) {
@@ -634,10 +631,9 @@ impl Verb for MenuVerb {
         "_artifact-menu <session> <client>   prefix+a: the artifacts picker, or back from a view (internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [session, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc {MENU_VERB} <session> <client>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         nav(core, &self.editor).menu(session, client)
     }
@@ -652,10 +648,9 @@ impl Verb for PickVerb {
         "_artifact-pick <session> <client>   the picker inside prefix+a's popup (internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [session, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc {PICK_VERB} <session> <client>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         nav(core, &self.editor).pick(session, client)
     }
@@ -670,26 +665,19 @@ impl Verb for GoVerb {
         "_artifact-go <session> <client> attach|focus|popup artifact|session <id>   show a view (internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let words: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let usage = |io: &mut VerbIo<'_>| {
-            let _ = writeln!(
-                io.stderr,
-                "usage: txc {GO_VERB} <session> <client> attach|focus|popup artifact|session <id>"
-            );
-            Ok(2)
-        };
         let [session, client, mode, kind, id] = words[..] else {
-            return usage(io);
+            return Err(self.usage_error());
         };
         let Some(mode) = Mode::parse(mode) else {
-            return usage(io);
+            return Err(self.usage_error());
         };
         let nav = nav(core, &self.editor);
         match kind {
             "artifact" => nav.go_artifact(session, client, mode, id),
             "session" => nav.go_session(session, client, mode, id),
-            _ => usage(io),
+            _ => Err(self.usage_error()),
         }
     }
 }

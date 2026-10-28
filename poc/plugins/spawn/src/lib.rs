@@ -277,10 +277,9 @@ impl Verb for NewAgent {
         "_new-agent <pane> <client>   the new-agent form, then create the agent (prefix+n, internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [pane, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _new-agent <pane> <client>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         let ui = Ui::from_core(core);
         let path = ui

@@ -188,8 +188,7 @@ impl Verb for ChatHook {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [event] = argv else {
-            say(io.stderr, HOOK_USAGE)?;
-            return Ok(2);
+            return Err(VerbError::usage(HOOK_USAGE));
         };
         if !HOOK_EVENTS.contains(&event.as_str()) {
             return Ok(0);
@@ -232,10 +231,7 @@ impl Verb for Chat {
                 uninstall(&home_dir()?, &CHAT_ENTRIES, io.stdout).map_err(VerbError::failed)?;
                 Ok(0)
             }
-            _ => {
-                say(io.stderr, CHAT_USAGE)?;
-                Ok(2)
-            }
+            _ => Err(VerbError::usage(CHAT_USAGE)),
         }
     }
 }

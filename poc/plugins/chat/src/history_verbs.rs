@@ -85,8 +85,7 @@ impl Verb for Ingest {
             [token] if token != "--wait" => (IngestMode::Coalesce, token),
             [flag, token] if flag == "--wait" => (IngestMode::Wait, token),
             _ => {
-                say(io.stderr, INGEST_USAGE)?;
-                return Ok(2);
+                return Err(VerbError::usage(INGEST_USAGE));
             }
         };
         if let Some(session) = resolve(core, token)? {
@@ -231,19 +230,12 @@ fn ended_or_created(session: &Session) -> f64 {
 impl History {
     fn list(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some(filters) = parse_filters(argv) else {
-            say(io.stderr, HISTORY_USAGE)?;
-            return Ok(2);
+            return Err(VerbError::usage(HISTORY_USAGE));
         };
         let bounds = date_bound(filters.since.as_deref(), "--since", false).and_then(|since| {
             date_bound(filters.until.as_deref(), "--until", true).map(|until| (since, until))
         });
-        let (since, until) = match bounds {
-            Ok(bounds) => bounds,
-            Err(message) => {
-                say(io.stderr, &format!("{message}\n"))?;
-                return Ok(2);
-            }
-        };
+        let (since, until) = bounds.map_err(VerbError::usage)?;
         let mut shown = Vec::new();
         for lifecycle in [Lifecycle::Exited, Lifecycle::Stopped] {
             for session in core.sessions(&ListFilter::new().lifecycle(lifecycle))? {
@@ -389,10 +381,7 @@ impl Verb for HistoryHooks {
                 uninstall(&home_dir()?, &HISTORY_ENTRIES, io.stdout).map_err(VerbError::failed)?;
                 Ok(0)
             }
-            _ => {
-                say(io.stderr, HOOKS_USAGE)?;
-                Ok(2)
-            }
+            _ => Err(VerbError::usage(HOOKS_USAGE)),
         }
     }
 }

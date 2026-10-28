@@ -100,10 +100,9 @@ impl Verb for EditSession {
         "_edit-session <pane> <client>   modal session editor (prefix+e, internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [pane, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _edit-session <pane> <client>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         let ui = Ui::from_core(core);
         let target = ui
@@ -145,8 +144,7 @@ impl Verb for EditTag {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [token] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _edit-tag <name>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         let Ok(session) = core.resolve_session(token) else {
             let _ = writeln!(io.stderr, "txc: session '{token}' not found");

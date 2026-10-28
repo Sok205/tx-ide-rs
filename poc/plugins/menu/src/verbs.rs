@@ -31,11 +31,6 @@ pub fn verbs() -> Vec<Arc<dyn Verb>> {
     ]
 }
 
-fn usage(io: &mut VerbIo<'_>, text: &str) -> Result<i32, VerbError> {
-    let _ = writeln!(io.stderr, "usage: txc {text}");
-    Ok(2)
-}
-
 /// `menu`: open the start menu on the terminal this runs in.
 struct MenuVerb;
 
@@ -50,7 +45,7 @@ impl Verb for MenuVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         if !argv.is_empty() {
-            return usage(io, "menu");
+            return Err(self.usage_error());
         }
         let ui = Ui::from_core(core);
         let here = ui.inside().then(|| {
@@ -82,9 +77,9 @@ impl Verb for Open {
         "_menu-open <pane> <client>   the start menu in a popup, then its choice (prefix+m, internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [pane, client] = argv else {
-            return usage(io, "_menu-open <pane> <client>");
+            return Err(self.usage_error());
         };
         let ui = Ui::from_core(core);
         reported(&ui, client, open(core, &ui, pane, client, false))
@@ -103,9 +98,9 @@ impl Verb for First {
         "_menu-first <pane> <client>   the start menu, once per server (client-attached hook, internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [pane, client] = argv else {
-            return usage(io, "_menu-first <pane> <client>");
+            return Err(self.usage_error());
         };
         let ui = Ui::from_core(core);
         if is_nested(&ui, client) || !claim_first(&ui) {
@@ -128,11 +123,11 @@ impl Verb for Tui {
         "_menu-tui <pane> <client> <file> [--first]   the menu in the popup; writes the choice (internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let (pane, file, first) = match argv {
             [pane, _client, file] => (pane, file, false),
             [pane, _client, file, flag] if flag == "--first" => (pane, file, true),
-            _ => return usage(io, "_menu-tui <pane> <client> <file> [--first]"),
+            _ => return Err(self.usage_error()),
         };
         let ui = Ui::from_core(core);
         let mut menu = Menu::new(data::context(core, &ui, pane)?);

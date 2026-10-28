@@ -90,8 +90,7 @@ impl Verb for TmuxName {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some(token) = argv.first() else {
-            let _ = writeln!(io.stderr, "usage: txc _tmux-name <name>");
-            return Ok(2);
+            return Err(self.usage_error());
         };
         let Some(session) = resolve_or_not_found(core, token)? else {
             return Ok(0);

@@ -88,10 +88,7 @@ impl Verb for Hook {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         match argv.first().map(String::as_str) {
-            None | Some("-h" | "--help") => {
-                let _ = write!(io.stderr, "{USAGE}");
-                Ok(2)
-            }
+            None | Some("-h" | "--help") => Err(VerbError::usage(USAGE)),
             Some("status") if argv.len() == 1 => self.status(core, io),
             Some("install") if argv.len() <= 2 && argv.get(1).is_none_or(|a| a == "--dry-run") => {
                 let dry_run = argv.len() == 2;
@@ -105,10 +102,7 @@ impl Verb for Hook {
                 install::uninstall(&home_dir()?, io.stdout).map_err(VerbError::failed)?;
                 Ok(0)
             }
-            Some("status" | "install" | "uninstall") => {
-                let _ = write!(io.stderr, "{USAGE}");
-                Ok(2)
-            }
+            Some("status" | "install" | "uninstall") => Err(VerbError::usage(USAGE)),
             // An event: extra arguments are ignored rather than refused, because a hook must
             // never block the agent (exit 2) over its own command line.
             Some(event) => {

@@ -27,14 +27,11 @@ impl Verb for ForkPane {
         "_fork-pane PANE CLIENT [NAME]   prefix+f: fork the pane's tx session (internal)"
     }
 
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+    fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         match argv {
             [pane, client] => ask(core, pane, client),
             [pane, client, name] => fork(core, pane, client, name),
-            _ => {
-                let _ = writeln!(io.stderr, "usage: txc _fork-pane PANE CLIENT [NAME]");
-                Ok(2)
-            }
+            _ => Err(self.usage_error()),
         }
     }
 }
