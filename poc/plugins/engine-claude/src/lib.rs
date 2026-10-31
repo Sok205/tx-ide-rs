@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use tx_core::{Effort, EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+use tx_core::{Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction};
 
 pub const CLAUDE_BIN: &str = "claude";
 pub const SKILLS_DIR: &str = ".claude/skills";
@@ -17,9 +17,9 @@ pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
 pub const DEFAULT_EFFORT: Effort = Effort::High;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Claude;
+pub struct ClaudeAdapter;
 
-impl EngineAdapter for Claude {
+impl LlmEngine for ClaudeAdapter {
     fn id(&self) -> &str {
         "claude"
     }
@@ -69,7 +69,7 @@ pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAct
         .collect()
 }
 
-/// The plugin wrapper: registers [`Claude`] under the plugin id `engine-claude`.
+/// The plugin wrapper: registers [`ClaudeAdapter`] under the plugin id `engine-claude`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ClaudePlugin;
 
@@ -79,7 +79,7 @@ impl tx_core::Plugin for ClaudePlugin {
     }
 
     fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
-        r.engine(Box::new(Claude));
+        r.engine(Box::new(ClaudeAdapter));
         Ok(())
     }
 }
@@ -109,13 +109,13 @@ mod tests {
 
     #[test]
     fn id_is_claude() {
-        assert_eq!(Claude.id(), "claude");
+        assert_eq!(ClaudeAdapter.id(), "claude");
     }
 
     #[test]
     fn defaults() {
         let (dir, profile) = profile("", &[]);
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(&LaunchRequest::new(dir.path(), &profile))
             .unwrap();
         assert_eq!(plan.program, "claude");
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn every_option() {
         let (dir, profile) = profile("# Role\nbe good", &["/skills/one", "/other/two"]);
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .model("opus")
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn empty_model_and_prompt_are_absent() {
         let (dir, profile) = profile("", &[]);
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .model("")
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn resume_continues_a_conversation() {
         let (dir, profile) = profile("role", &[]);
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .resume("chat-42")
@@ -218,7 +218,7 @@ mod tests {
                 "more",
             ])
         );
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(&LaunchRequest::new(dir.path(), &profile).resume(""))
             .unwrap();
         assert!(

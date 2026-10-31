@@ -12,7 +12,7 @@ Plan and the decisions the spec left open: `../../docs/superpowers/plans/2026-10
 | crate | what |
 |---|---|
 | `tx-core` | the library: `TxCore` and the public operations |
-| `tx-engine-claude`, `tx-engine-codex` | one `EngineAdapter` each, depending only on `tx-core` |
+| `tx-engine-claude`, `tx-engine-codex` | one `LlmEngine` each, depending only on `tx-core` |
 | `tx-core-cli` | `txc`, a thin CLI that registers the bundled engines |
 
 ## Layout of `state_dir` (default `~/.tx-core`)
@@ -50,7 +50,7 @@ let at = core.get_execution_location(&id)?;   // tmux -S <socket> attach -t <ses
 ```rust
 struct Aider;
 
-impl EngineAdapter for Aider {
+impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
     fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         let mut args = vec!["--read".into(), r.profile.file().display().to_string()];

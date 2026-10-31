@@ -21,8 +21,8 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | crate | role | depends on |
 |---|---|---|
 | `tx-core` | the library: `TxCore` and the public operations | serde, serde_json, thiserror, uuid, tempfile |
-| `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `EngineAdapter` for Claude Code | tx-core |
-| `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `EngineAdapter` for Codex | tx-core |
+| `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `LlmEngine` for Claude Code | tx-core |
+| `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `LlmEngine` for Codex | tx-core |
 | `plugins/hooks` (`tx-hooks`) | plugin: `txc hook …`, the agent's hooks → a per-session working / waiting / idle state | tx-core |
 | `plugins/ide` (`tx-ide`) | plugin: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core, tx-ui |
 | `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-ui |
@@ -58,7 +58,7 @@ and `<state_dir>/user-agents` (yours, never pruned), with skills under each one'
           |  store    SessionStore   <state_dir>/sessions/<id>.json
           |  tmux     Tmux           tmux -S <state_dir>/tmux.sock -f <state_dir>/tmux.conf
           |  events   EventLog       <state_dir>/log.jsonl
-          |  engines  EngineRegistry id -> Box<dyn EngineAdapter>
+          |  engines  EngineRegistry id -> Box<dyn LlmEngine>
           |  profiles Profiles       role + skill search dirs
           |  locks    Locks          <state_dir>/locks/{create,<id>}.lock
           +---------------------------------+
@@ -137,11 +137,11 @@ Lock order is always `create.lock` before `<id>.lock`. Locks are `std::fs::File:
 ### An engine today (20 lines, no change to core)
 
 ```rust
-use tx_core::{EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+use tx_core::{LlmEngine, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
 
 pub struct Aider;
 
-impl EngineAdapter for Aider {
+impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
 
     fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
@@ -356,13 +356,13 @@ add now and breaking to add later.
 | point | shape | guardrail |
 |---|---|---|
 | Lifecycle hooks | `trait EventSink: Send + Sync { fn on_event(&self, e: &Event); }` + `TxCore::subscribe(Box<dyn EventSink>)`; `Event` carries the session id | called after locks drop; no `Result` (hooks cannot veto); no `&TxCore` (re-entry would deadlock on flock) |
-| Engine envelope | default method `EngineAdapter::envelope(&self, sender, text) -> String` | pure; core still types it |
+| Engine envelope | default method `LlmEngine::envelope(&self, sender, text) -> String` | pure; core still types it |
 | Chat ops (resume, fork, transcripts) | separate crate with a second registry keyed by engine id, `trait EngineChatOps` | one future `resume` field on `LaunchRequest` |
 | Workspace preparers (worktrees) | a function run by the caller before `create_session`; cleanup via an `EventSink` on `Stopped`/`Exited` | not a core concern (spec non-goal) |
 | Declarative engines | one plugin `Declared { id, program, args }` with `{profile_file}`/`{model}`/`{prompt}` substitution, registered N times from `plugins.yaml` settings | ids validated by the registry |
 | Launch decorators | a fourth registry slot letting a plugin edit a `LaunchPlan` (per-session hook injection without touching `~/.claude`) | pure, ordered by manifest |
 
-Before freezing the API: add `Send + Sync` to `EngineAdapter`, put a session id in every log
+Before freezing the API: add `Send + Sync` to `LlmEngine`, put a session id in every log
 line, mark `CoreError`, `EventType`, `WorkspaceAction`, `LaunchRequest`, `LaunchPlan`,
 `CreateOptions`, `Session` and `CoreConfig` `#[non_exhaustive]` with builder constructors, and
 re-export only the types a plugin author needs.

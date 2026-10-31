@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::CoreConfig;
-use crate::engine::{EngineAdapter, EngineRegistry, LaunchRequest, apply_workspace};
+use crate::engine::{EngineRegistry, LaunchRequest, LlmEngine, apply_workspace};
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
@@ -369,7 +369,7 @@ impl TxCore {
         self.tmux.socket()
     }
 
-    pub fn register_engine(&mut self, adapter: Box<dyn EngineAdapter>) -> Result<(), CoreError> {
+    pub fn register_engine(&mut self, adapter: Box<dyn LlmEngine>) -> Result<(), CoreError> {
         self.engines.register(adapter)
     }
 
@@ -981,7 +981,7 @@ mod tests {
     }
 
     struct Stub;
-    impl EngineAdapter for Stub {
+    impl LlmEngine for Stub {
         fn id(&self) -> &str {
             "stub"
         }

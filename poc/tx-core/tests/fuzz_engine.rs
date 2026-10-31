@@ -7,8 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use proptest::prelude::*;
 use tx_core::engine::{apply_workspace, resolve_in};
 use tx_core::{
-    CoreError, Effort, EngineAdapter, EngineError, EngineRegistry, LaunchPlan, LaunchRequest,
-    Profile, ResolvedProfile, WorkspaceAction,
+    CoreError, Effort, EngineError, EngineRegistry, LaunchPlan, LaunchRequest, LlmEngine, Profile,
+    ResolvedProfile, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -17,7 +17,7 @@ use tx_core::{
 
 struct Stub(String);
 
-impl EngineAdapter for Stub {
+impl LlmEngine for Stub {
     fn id(&self) -> &str {
         &self.0
     }
@@ -27,7 +27,7 @@ impl EngineAdapter for Stub {
     }
 }
 
-fn stub(id: &str) -> Box<dyn EngineAdapter> {
+fn stub(id: &str) -> Box<dyn LlmEngine> {
     Box::new(Stub(id.to_owned()))
 }
 

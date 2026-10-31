@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use tx_core::{Effort, EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+use tx_core::{Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction};
 
 pub const CODEX_BIN: &str = "codex";
 pub const SKILLS_DIR: &str = ".agents/skills";
@@ -17,9 +17,9 @@ pub const BYPASS_HOOK_TRUST_FLAG: &str = "--dangerously-bypass-hook-trust";
 pub const DEFAULT_EFFORT: Effort = Effort::High;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Codex;
+pub struct CodexAdapter;
 
-impl EngineAdapter for Codex {
+impl LlmEngine for CodexAdapter {
     fn id(&self) -> &str {
         "codex"
     }
@@ -75,7 +75,7 @@ pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAct
         .collect()
 }
 
-/// The plugin wrapper: registers [`Codex`] under the plugin id `engine-codex`.
+/// The plugin wrapper: registers [`CodexAdapter`] under the plugin id `engine-codex`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CodexPlugin;
 
@@ -85,7 +85,7 @@ impl tx_core::Plugin for CodexPlugin {
     }
 
     fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
-        r.engine(Box::new(Codex));
+        r.engine(Box::new(CodexAdapter));
         Ok(())
     }
 }
@@ -114,13 +114,13 @@ mod tests {
 
     #[test]
     fn id_is_codex() {
-        assert_eq!(Codex.id(), "codex");
+        assert_eq!(CodexAdapter.id(), "codex");
     }
 
     #[test]
     fn defaults() {
         let (dir, profile) = profile("", &[]);
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(&LaunchRequest::new(dir.path(), &profile))
             .unwrap();
         assert_eq!(plan.program, "codex");
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn every_option() {
         let (dir, profile) = profile("be good", &["/skills/one"]);
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .model("o3")
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn resume_is_the_subcommand() {
         let (dir, profile) = profile("", &[]);
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .resume("sess-7")
@@ -195,7 +195,7 @@ mod tests {
                 "--dangerously-bypass-hook-trust",
             ])
         );
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(&LaunchRequest::new(dir.path(), &profile).resume(""))
             .unwrap();
         assert_eq!(plan.args[0], "-m", "empty resume is absent");
@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn empty_model_and_prompt_fall_back() {
         let (dir, profile) = profile("", &[]);
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .model("")

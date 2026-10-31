@@ -29,7 +29,7 @@ pub use core::{
 };
 #[doc(hidden)]
 pub use engine::EngineRegistry;
-pub use engine::{EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+pub use engine::{EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction};
 pub use error::CoreError;
 #[doc(hidden)]
 pub use events::EventLog;
@@ -38,7 +38,7 @@ pub use events::{Event, EventSink, EventType};
 pub use locks::{LockGuard, Locks};
 #[doc(hidden)]
 pub use messaging::DELIVERY_PAUSE;
-/// The default envelope; an `EngineAdapter::envelope` override may wrap it.
+/// The default envelope; an `LlmEngine::envelope` override may wrap it.
 pub use messaging::build_envelope;
 pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,

@@ -1,4 +1,4 @@
-//! Engines as plugins: one `EngineAdapter` per coding-agent CLI, each a pure function from a
+//! Engines as plugins: one `LlmEngine` per coding-agent CLI, each a pure function from a
 //! `LaunchRequest` to a `LaunchPlan`. Core applies the plan's workspace actions and starts the
 //! process, so an adapter is unit-testable without a filesystem or tmux.
 
@@ -128,7 +128,7 @@ impl LaunchPlan {
 
 /// One coding-agent engine. Two required methods; no I/O in `launch`. `Send + Sync` so a core
 /// can be shared across threads.
-pub trait EngineAdapter: Send + Sync {
+pub trait LlmEngine: Send + Sync {
     /// A bare name (`[A-Za-z0-9_-]+`); stored in every record this engine launches.
     fn id(&self) -> &str;
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError>;
@@ -144,7 +144,7 @@ pub trait EngineAdapter: Send + Sync {
 /// id → adapter. Ids are unique; registration order does not matter.
 #[derive(Default)]
 pub struct EngineRegistry {
-    adapters: BTreeMap<String, Box<dyn EngineAdapter>>,
+    adapters: BTreeMap<String, Box<dyn LlmEngine>>,
 }
 
 impl EngineRegistry {
@@ -153,7 +153,7 @@ impl EngineRegistry {
     }
 
     /// `EngineTaken` on a duplicate id; `InvalidName` when the id is not a bare name.
-    pub fn register(&mut self, adapter: Box<dyn EngineAdapter>) -> Result<(), CoreError> {
+    pub fn register(&mut self, adapter: Box<dyn LlmEngine>) -> Result<(), CoreError> {
         let id = adapter.id().to_owned();
         validate_name(&id)?;
         if self.adapters.contains_key(&id) {
@@ -163,7 +163,7 @@ impl EngineRegistry {
         Ok(())
     }
 
-    pub fn get(&self, id: &str) -> Option<&dyn EngineAdapter> {
+    pub fn get(&self, id: &str) -> Option<&dyn LlmEngine> {
         self.adapters.get(id).map(Box::as_ref)
     }
 
@@ -266,7 +266,7 @@ mod tests {
 
     struct Stub(&'static str);
 
-    impl EngineAdapter for Stub {
+    impl LlmEngine for Stub {
         fn id(&self) -> &str {
             self.0
         }

@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use tx_core::{
-    CoreConfig, CreateOptions, Effort, EngineAdapter, EventType, LaunchOptions, LaunchPlan,
-    LaunchRequest, Lifecycle, ListFilter, Profile, ResolvedProfile, SendOptions, SessionId, TxCore,
+    CoreConfig, CreateOptions, Effort, EventType, LaunchOptions, LaunchPlan, LaunchRequest,
+    Lifecycle, ListFilter, LlmEngine, Profile, ResolvedProfile, SendOptions, SessionId, TxCore,
     WorkspaceAction,
 };
 
@@ -14,7 +14,7 @@ fn assert_send_sync<T: Send + Sync>() {}
 #[test]
 fn core_and_adapters_are_send_and_sync() {
     assert_send_sync::<TxCore>();
-    assert_send_sync::<Box<dyn EngineAdapter>>();
+    assert_send_sync::<Box<dyn LlmEngine>>();
 }
 
 #[test]

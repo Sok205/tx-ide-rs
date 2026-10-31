@@ -7,13 +7,12 @@ use std::time::Duration;
 
 use common::{Harness, STUB_ID, agent, process, typed, wait_for};
 use tx_core::{
-    CreateOptions, EngineAdapter, EngineError, LaunchOptions, LaunchPlan, LaunchRequest,
-    SendOptions,
+    CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine, SendOptions,
 };
 
 struct Shout;
 
-impl EngineAdapter for Shout {
+impl LlmEngine for Shout {
     fn id(&self) -> &str {
         "shout"
     }

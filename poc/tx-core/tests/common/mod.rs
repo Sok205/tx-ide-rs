@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use tx_core::{
-    CoreConfig, CreateOptions, EngineAdapter, EngineError, LaunchOptions, LaunchPlan,
-    LaunchRequest, SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine,
+    SessionId, TxCore, WorkspaceAction,
 };
 
 /// `None` when tmux is not installed; callers skip.
@@ -144,7 +144,7 @@ pub struct ShellStub;
 
 pub const STUB_ID: &str = "stub";
 
-impl EngineAdapter for ShellStub {
+impl LlmEngine for ShellStub {
     fn id(&self) -> &str {
         STUB_ID
     }
