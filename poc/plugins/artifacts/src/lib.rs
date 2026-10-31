@@ -3,7 +3,9 @@
 //!
 //! The store lives under `<data>/plugins/artifacts/`: `<id>.json` records,
 //! `<id>/current<ext>` working copies, `<id>/revs/<n><ext>` snapshots, plus the plugin's own
-//! `.log.jsonl` and `.locks/`. Per-session state is `ext["artifacts"] = {"bound", "group"}`.
+//! `.log.jsonl` and `.locks/`. Per-session state is `ext["artifacts"] = {"group"}` (records
+//! written before tx-client views may also carry a legacy `bound`, read until PR 11). An
+//! artifact's nvim view is a tx-client view of kind `editor` bound to it (`@tx-view-bound`).
 //! The touching session is `$TX_SESSION_ID`, else `user`.
 //!
 //! Settings (`plugins.yaml`): `editor` (default `nvim`), the program an artifact's view runs.

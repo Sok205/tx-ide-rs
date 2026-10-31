@@ -169,7 +169,8 @@ pub fn run_shell_background(ui: &Ui, command: &str) -> Result<(), UiError> {
 /// Focus the pane hosting `session` for the terminal `client` is shown on. `client` may be a
 /// nested client, so the client to move is its outer one. A pane in the outer client's session is
 /// selected in place; one in another plain session gets the outer client switched to it; one in
-/// another view is reported, not switched to. `Err` is the reason, for the user.
+/// another home base (a view that hosts nested attaches: home, tutor) is reported, not switched
+/// to. `Err` is the reason, for the user.
 pub fn focus_hosting_pane(ui: &Ui, client: &str, session: &str) -> Result<(), String> {
     let (outer, outer_session) =
         outer_client(ui, client).ok_or_else(|| "no terminal client to move".to_owned())?;
@@ -179,7 +180,7 @@ pub fn focus_hosting_pane(ui: &Ui, client: &str, session: &str) -> Result<(), St
     let host = pane.split(':').next().unwrap_or_default();
     let focused = if host == outer_session {
         ui.select_window(&pane) && ui.select_pane(&pane)
-    } else if ui.is_view(host) {
+    } else if ui.hosts_nested_attaches(host) {
         return Err(format!("attached in view {host}, not in {outer_session}"));
     } else {
         ui.quiet(&["switch-client", "-c", &outer, "-t", &format!("={pane}")])

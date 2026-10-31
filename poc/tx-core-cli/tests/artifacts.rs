@@ -362,6 +362,10 @@ fn a_malformed_ext_is_reported_and_never_breaks_ls_or_show() {
     cli.ok(&["artifact", "show", &artifact]);
 }
 
+fn view_option(cli: &Cli, view: &str, option: &str) -> String {
+    cli.tmux_out(&["show-options", "-vt", &format!("={view}:"), option])
+}
+
 /// A plugins.yaml naming a stand-in editor that just stays alive.
 fn fake_editor(cli: &Cli) -> String {
     let path = cli.shim_path(&[("fake-nvim", "exec sleep 60")]);
@@ -390,26 +394,59 @@ fn artifact_open_starts_a_bound_view() {
             current.display()
         )
     );
-    let view: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "plan-md"])).unwrap();
-    assert_eq!(view["ext"]["artifacts"]["bound"], id.as_str());
-    assert_eq!(view["parent"], worker.as_str());
-    assert_eq!(view["tags"], serde_json::json!(["feat-x"]));
-    assert_eq!(view["launch"]["program"], editor.as_str());
-    assert_eq!(view["launch"]["args"][0], current.to_str().unwrap());
-    // A view takes its artifact's group.
+    // A tx-client view: no core record, its fields in tmux options.
+    assert!(!cli.ok(&["ls"]).contains("plan-md"));
+    let sessions = std::fs::read_dir(cli.state().join("sessions"))
+        .unwrap()
+        .count();
+    assert_eq!(sessions, 1, "only the worker's record");
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view"), "1");
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-kind"), "editor");
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-bound"), id);
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-parent"), worker);
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-tags"), "feat-x");
+    assert_eq!(
+        cli.tmux_out(&[
+            "display-message",
+            "-p",
+            "-t",
+            "=plan-md:",
+            "#{pane_start_command}"
+        ]),
+        format!("{editor} {}", current.display())
+    );
+    assert!(cli.ok(&["ui", "view", "ls"]).contains("plan-md"));
+    // A view takes its artifact's group; it has no override of its own.
     cli.ok(&["group", "worker", "effort"]);
     assert_eq!(
         cli.ok(&["group", "plan-md"]),
         "own:      —\nresolved: effort\n"
     );
-    // A second open while the first runs gets a disambiguated name.
-    let out = cli.ok(&["artifact", "open", &id, "--tag", "x,y"]);
+    let output = cli.run(&["group", "plan-md", "other"], &[], "");
+    assert_eq!(output.status.code(), Some(1));
     assert!(
-        out.contains(&format!("nvim view 'plan-md-{}'", &id[..8])),
+        String::from_utf8_lossy(&output.stderr).contains("'plan-md' is a view"),
+        "{output:?}"
+    );
+    cli.fails(&["group", "nosuch"], 1);
+    // A second open shows the view already open; no second view, no second open logged.
+    let out = cli.ok(&["artifact", "open", &id, "--tag", "x,y"]);
+    assert_eq!(
+        out,
+        format!("Artifact {id} is already open in nvim view 'plan-md'\n")
+    );
+    let views = cli.ok(&["ui", "view", "ls"]);
+    assert_eq!(views.lines().count(), 1, "{views}");
+    let log = std::fs::read_to_string(data_dir(&cli).join(".log.jsonl")).unwrap();
+    assert_eq!(log.matches("\"artifact-open\"").count(), 1, "{log}");
+    // Another artifact with the same title finds the name taken in tmux: the id suffix.
+    let other = create(&cli, &worker, "plan.md", "y");
+    let out = cli.ok(&["artifact", "open", &other]);
+    assert!(
+        out.contains(&format!("nvim view 'plan-md-{}'", &other[..8])),
         "{out}"
     );
-    let log = std::fs::read_to_string(data_dir(&cli).join(".log.jsonl")).unwrap();
-    assert_eq!(log.matches("\"artifact-open\"").count(), 2, "{log}");
+    assert_eq!(cli.ok(&["ui", "view", "ls"]).lines().count(), 2);
 }
 
 // ----- prefix+a ---------------------------------------------------------------------------
@@ -531,9 +568,9 @@ fn prefix_a_in_an_agent_pane_attaches_the_chosen_artifact() {
         "{:?}",
         client_sessions(&cli)
     );
-    let view: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "plan-md"])).unwrap();
-    assert_eq!(view["ext"]["artifacts"]["bound"], artifact.as_str());
-    assert_eq!(view["parent"], a.as_str());
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-kind"), "editor");
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-bound"), artifact);
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-parent"), a);
     // The agent keeps running, detached.
     assert_eq!(common::lifecycle_of(&cli, "a"), "running");
 
@@ -544,6 +581,22 @@ fn prefix_a_in_an_agent_pane_attaches_the_chosen_artifact() {
         "{:?}",
         client_sessions(&cli)
     );
+
+    // prefix+a on the same artifact again shows the view already open; no second one.
+    outer_keys(&cli, &["C-a", "a"]);
+    assert!(
+        cli.wait_for(10, || running_pick(&cli)),
+        "the picker never opened"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    outer_keys(&cli, &["Enter"]);
+    assert!(
+        cli.wait_for(10, || client_sessions(&cli) == ["home", "plan-md"]),
+        "{:?}",
+        client_sessions(&cli)
+    );
+    let views = cli.ok(&["ui", "view", "ls"]);
+    assert_eq!(views.matches("plan-md").count(), 1, "{views}");
 }
 
 /// Gate: a pick in focus mode moves the terminal to the pane already showing the view.
@@ -585,6 +638,18 @@ fn artifact_go_focus_moves_to_the_pane_showing_the_view() {
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("lone: not attached to any pane"),
+        "{output:?}"
+    );
+    // A view row: shown by name, reported once it is gone.
+    cli.ok(&["_artifact-go", "a", &client, "focus", "view", "plan-md"]);
+    let output = cli.run(
+        &["_artifact-go", "a", &client, "focus", "view", "gone"],
+        &[],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("gone has ended"),
         "{output:?}"
     );
 }
