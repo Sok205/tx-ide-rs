@@ -35,6 +35,7 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_mockup::MockupPlugin),
     || Box::new(tx_tutor::TutorPlugin),
     || Box::new(tx_artifacts::ArtifactsPlugin),
+    || Box::new(tx_tour::TourPlugin),
     || Box::new(tx_timeline::TimelinePlugin),
     || Box::new(tx_menu::MenuPlugin),
 ];

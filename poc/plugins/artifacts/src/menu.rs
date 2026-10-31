@@ -17,7 +17,7 @@ use tx_client::render::{
 };
 use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::View;
-use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
+use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError, VerbIo};
 
 use crate::artifact::{Artifact, Kind, USER_ACTOR};
 use crate::grouping::bound_artifact;
@@ -462,6 +462,14 @@ impl Nav<'_> {
             Some(shown) => shown,
             None => {
                 let artifact = self.artifacts.require(artifact_id).map_err(failed)?;
+                if let Kind::Other { kind, .. } = &artifact.kind {
+                    let Some(shown) =
+                        self.open_by_convention(client, kind, artifact_id, &record.tags)?
+                    else {
+                        return Ok(1);
+                    };
+                    return self.show(session, client, mode, &shown);
+                }
                 let opener = Opener {
                     id: Some(record.id.clone()),
                     tags: record.tags.clone(),
@@ -479,6 +487,50 @@ impl Nav<'_> {
             }
         };
         self.show(session, client, mode, &shown)
+    }
+
+    /// Open-by-convention, as `artifact open` does: runs `txc <kind> open <id> [--tag …]`
+    /// in-process, then finds the view it bound to the artifact. A missing opener or a failed
+    /// open goes to the client's status line (`None`).
+    fn open_by_convention(
+        &self,
+        client: &str,
+        kind: &str,
+        artifact_id: &str,
+        tags: &[String],
+    ) -> Result<Option<Shown>, VerbError> {
+        let Some(verb) = self.core.verb(kind) else {
+            self.ui.display_status(
+                client,
+                &format!("prefix+a: no opener for kind `{kind}` (expected verb `txc {kind} open`)"),
+            );
+            return Ok(None);
+        };
+        let mut argv = vec!["open".to_owned(), artifact_id.to_owned()];
+        if !tags.is_empty() {
+            argv.extend(["--tag".to_owned(), tags.join(",")]);
+        }
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = VerbIo {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+        };
+        let code = match verb.run(self.core, &mut io, &argv) {
+            Ok(code) => code,
+            Err(error) => {
+                self.ui
+                    .display_status(client, &format!("prefix+a: {kind} open: {error}"));
+                return Ok(None);
+            }
+        };
+        if code != 0 {
+            let reason = String::from_utf8_lossy(&stderr);
+            self.ui
+                .display_status(client, &format!("prefix+a: {kind} open: {}", reason.trim()));
+            return Ok(None);
+        }
+        self.live_view(artifact_id)
     }
 
     pub fn go_session(

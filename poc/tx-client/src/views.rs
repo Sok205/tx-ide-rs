@@ -28,6 +28,8 @@ pub enum ViewKind {
     Editor,
     /// nvim showing a diff artifact in diffview.
     Diff,
+    /// nvim showing a tour artifact's stops as diagnostics and a quickfix list.
+    Tour,
     Shell,
     Timeline,
     Tutor,
@@ -35,10 +37,11 @@ pub enum ViewKind {
 }
 
 impl ViewKind {
-    pub const ALL: [ViewKind; 7] = [
+    pub const ALL: [ViewKind; 8] = [
         ViewKind::Home,
         ViewKind::Editor,
         ViewKind::Diff,
+        ViewKind::Tour,
         ViewKind::Shell,
         ViewKind::Timeline,
         ViewKind::Tutor,
@@ -50,6 +53,7 @@ impl ViewKind {
             ViewKind::Home => "home",
             ViewKind::Editor => "editor",
             ViewKind::Diff => "diff",
+            ViewKind::Tour => "tour",
             ViewKind::Shell => "shell",
             ViewKind::Timeline => "timeline",
             ViewKind::Tutor => "tutor",
@@ -59,14 +63,17 @@ impl ViewKind {
 
     /// Whether the picker's Enter may replace one of this view's shell panes with a nested
     /// attach: the home base and the tutor (its viewer pane) are built for that; a shell,
-    /// editor, diff, mockup or timeline view is the operator's own and gets the client switched.
+    /// editor, diff, tour, mockup or timeline view is the operator's own and gets the client
+    /// switched.
     pub fn hosts_nested_attaches(self) -> bool {
         matches!(self, ViewKind::Home | ViewKind::Tutor)
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("unknown view kind {0:?} (expected home, editor, diff, shell, timeline, tutor or mockup)")]
+#[error(
+    "unknown view kind {0:?} (expected home, editor, diff, tour, shell, timeline, tutor or mockup)"
+)]
 pub struct InvalidViewKind(pub String);
 
 impl FromStr for ViewKind {
@@ -328,6 +335,7 @@ mod tests {
             ViewKind::Shell,
             ViewKind::Editor,
             ViewKind::Diff,
+            ViewKind::Tour,
             ViewKind::Mockup,
             ViewKind::Timeline,
         ] {
