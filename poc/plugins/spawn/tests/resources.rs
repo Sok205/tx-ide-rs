@@ -55,6 +55,8 @@ fn the_shipped_roles_and_their_skills_are_resources() {
         [
             "agents/COMMON.md",
             "agents/DEVELOPER.md",
+            "agents/ORCHESTRATOR.md",
+            "agents/QA.md",
             "agents/skills/tx-artifacts/SKILL.md",
             "agents/skills/tx-code-tours/SKILL.md",
             "agents/skills/tx-code-tours/scripts/apply_tour.py",
@@ -70,4 +72,61 @@ fn a_disabled_plugin_publishes_nothing() {
     config.disabled.insert("spawn".to_owned());
     let (_dir, core) = core(&config);
     assert!(core.resources("").is_empty());
+}
+
+fn bare_tx() -> regex::Regex {
+    regex::Regex::new(r"(^\s*(?:[-*]\s+|\d+\.\s+)?|`|\$\()tx\s").unwrap()
+}
+
+/// A bare `tx ` command word: at a line's start (after indentation or a list marker), after a
+/// backtick, or inside `$(`. The shipped roles and skills are the txc editions and must name
+/// `txc` commands only; `tx:` frontmatter and `tx-…` skill names are not command words.
+#[test]
+fn the_shipped_roles_and_skills_name_no_tx_command() {
+    let bare_tx = bare_tx();
+    let (_dir, core) = core(&PluginConfig::default());
+    let resources = core.resources("agents/");
+    assert!(!resources.is_empty());
+    let offending: Vec<String> = resources
+        .iter()
+        .flat_map(|resource| {
+            std::str::from_utf8(resource.bytes)
+                .unwrap()
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| bare_tx.is_match(line))
+                .map(|(index, line)| format!("{}:{}: {line}", resource.name, index + 1))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "bare tx commands:\n{}",
+        offending.join("\n")
+    );
+}
+
+#[test]
+fn the_checker_catches_a_bare_tx_command() {
+    let bare_tx = bare_tx();
+    for line in [
+        "tx spawn worker --role DEVELOPER",
+        "  tx artifact modify <id>",
+        "- tx ls",
+        "2. tx kill it",
+        "run `tx send-message orchestrator`",
+        "SELF=$(tx whoami)",
+    ] {
+        assert!(bare_tx.is_match(line), "{line}");
+    }
+    for line in [
+        "tx:",
+        "  skills: [tx-sessions, tx-artifacts]",
+        "txc create worker --prompt hi",
+        "`txc artifact path <id>`",
+        "SELF=$(txc whoami)",
+        "the tx-tour runtime",
+    ] {
+        assert!(!bare_tx.is_match(line), "{line}");
+    }
 }
