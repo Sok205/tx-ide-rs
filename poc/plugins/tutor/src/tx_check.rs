@@ -3,11 +3,10 @@
 //! Main's record fields map onto core's as follows. `role` is `llm` (or `agent`): every core
 //! record is an agent, so `shell` matches nothing. `state` is any of the names a record
 //! answers to: a running record is `alive` and `running`, plus its agent state (`starting` /
-//! `idle` / `working` / `ended`); an ended record is `archived` and its lifecycle (`exited` /
-//! `stopped`). `chat_origin` needs a
+//! `idle` / `working`); an ended record is `archived` and `ended`. `chat_origin` needs a
 //! chat plugin, which this port does not have yet, so it matches nothing.
 
-use tx_core::{Launch, Lifecycle, Session};
+use tx_core::{LlmEngineState, Session};
 
 use crate::pack::{SessionFilter, TxCheck};
 
@@ -16,21 +15,18 @@ fn role_matches(_: &Session, role: &str) -> bool {
 }
 
 fn engine_of(session: &Session) -> &str {
-    let Launch::Agent { engine, .. } = &session.launch;
-    engine.as_str()
+    session.engine.as_str()
 }
 
 /// Every state name the record answers to.
 pub fn states(session: &Session) -> Vec<String> {
-    match session.lifecycle {
-        Lifecycle::Running => {
-            vec![
-                "alive".to_owned(),
-                "running".to_owned(),
-                session.state.as_str().to_owned(),
-            ]
-        }
-        ended => vec!["archived".to_owned(), ended.as_str().to_owned()],
+    match session.state {
+        LlmEngineState::Ended => vec!["archived".to_owned(), "ended".to_owned()],
+        state => vec![
+            "alive".to_owned(),
+            "running".to_owned(),
+            state.as_str().to_owned(),
+        ],
     }
 }
 
@@ -57,7 +53,7 @@ pub fn matches(filter: &SessionFilter, session: &Session) -> bool {
         })
         && filter
             .has_parent
-            .is_none_or(|want| session.parent.is_some() == want)
+            .is_none_or(|want| session.parent_id.is_some() == want)
         && filter.chat_origin.is_none()
 }
 
@@ -93,29 +89,25 @@ pub fn evaluate(check: &TxCheck, sessions: &[Session]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     use super::*;
 
-    fn record(
-        name: &str,
-        launch: Value,
-        lifecycle: &str,
-        tags: &[&str],
-        parent: Option<&str>,
-    ) -> Session {
+    /// A record whose `state` is `state` (`"running"` stands for a running record at `idle`;
+    /// `"stopped"` and `"exited"` for an ended one).
+    fn agent(name: &str, state: &str, tags: &[&str], parent: Option<&str>) -> Session {
+        let state = match state {
+            "running" => "idle",
+            "stopped" | "exited" => "ended",
+            other => other,
+        };
         Session::from_json(
-            &json!({"version": 1, "id": format!("id-{name}"), "name": name, "parent": parent,
-                "tags": tags, "cwd": "/r", "created_at": 1.0, "ended_at": null,
-                "lifecycle": lifecycle, "launch": launch})
+            &json!({"version": 2, "id": format!("id-{name}"), "name": name, "engine": "claude",
+                "working_directory": "/r", "roles": [], "state": state, "created_at": 1.0,
+                "last_modified_at": 1.0, "archived_at": null, "tags": tags, "parent_id": parent})
             .to_string(),
         )
         .unwrap()
-    }
-
-    fn agent(name: &str, lifecycle: &str, tags: &[&str], parent: Option<&str>) -> Session {
-        let launch = json!({"kind": "agent", "engine": "claude", "profile": [], "model": null, "effort": null});
-        record(name, launch, lifecycle, tags, parent)
     }
 
     fn check(session: SessionFilter) -> TxCheck {
@@ -184,14 +176,13 @@ mod tests {
 
     #[test]
     fn the_agent_state_adds_a_state_name() {
-        // A record written before agent state existed reads as idle.
         let mut worker = agent("w", "running", &[], None);
         assert_eq!(states(&worker), ["alive", "running", "idle"]);
         worker.state = tx_core::LlmEngineState::Working;
         assert_eq!(states(&worker), ["alive", "running", "working"]);
         assert_eq!(
             states(&agent("x", "stopped", &[], None)),
-            ["archived", "stopped"]
+            ["archived", "ended"]
         );
     }
 

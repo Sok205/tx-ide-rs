@@ -33,6 +33,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tx_core::migrate::version_one_conversation;
 use tx_core::{
     Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
     LlmEngineChange, LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data,
@@ -313,6 +314,35 @@ impl LlmEngine for CodexAdapter {
     /// answered. `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the
     /// process lives, and its payload cannot tell the two apart; core ends the session when the
     /// process is gone.
+    /// `model` and `effort` from the version-1 launch (an effort Codex does not accept is
+    /// dropped), and the conversation the record names with the rollout path the chat plugin
+    /// recorded; a conversation without a recorded path gets the id alone (the rollout's name
+    /// carries its creation time, so nothing can rebuild it).
+    fn upgrade_version_one(
+        &self,
+        record: &serde_json::Map<String, Value>,
+        launch: &serde_json::Map<String, Value>,
+    ) -> Value {
+        let mut data = serde_json::Map::new();
+        if let Some(model) = launch.get(MODEL_KEY).and_then(Value::as_str) {
+            data.insert(MODEL_KEY.into(), model.into());
+        }
+        if let Some(effort) = launch
+            .get(EFFORT_KEY)
+            .and_then(Value::as_str)
+            .and_then(|effort| effort.parse::<Effort>().ok())
+        {
+            data.insert(EFFORT_KEY.into(), effort.as_str().into());
+        }
+        if let Some((conversation, transcript)) = version_one_conversation(record, launch) {
+            data.insert(CONVERSATION_ID_KEY.into(), conversation.into());
+            if let Some(transcript) = transcript {
+                data.insert(TRANSCRIPT_PATH_KEY.into(), transcript.into());
+            }
+        }
+        Value::Object(data)
+    }
+
     fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange {
         let state = match hook.name.as_str() {
             "SessionStart" | "Stop" | "Interrupt" | "PermissionRequest" => {
@@ -340,7 +370,7 @@ impl LlmEngine for CodexAdapter {
             return Ok(());
         }
         let archived = archived_rollout(archive_directory, conversation);
-        if session.lifecycle.is_terminal() {
+        if session.state == LlmEngineState::Ended {
             mirror_file_exact(transcript, &archived)
         } else {
             mirror_file(transcript, &archived)
@@ -502,7 +532,7 @@ mod tests {
 
     /// An agent record in `state` whose `ext.CodexAdapter` is `data` (absent when `Null`).
     fn session(state: LlmEngineState, data: serde_json::Value) -> Session {
-        use tx_core::{Launch, Lifecycle, SessionId};
+        use tx_core::SessionId;
         let mut ext = std::collections::BTreeMap::new();
         if !data.is_null() {
             ext.insert(EXT_KEY.to_owned(), data);
@@ -510,23 +540,17 @@ mod tests {
         Session {
             id: SessionId::mint(),
             name: "agent".into(),
-            parent: None,
-            tags: Vec::new(),
-            cwd: "/tmp".into(),
-            created_at: 1.0,
-            ended_at: None,
-            archived_at: None,
-            last_modified_at: 1.0,
-            lifecycle: Lifecycle::Running,
-            launch: Launch::Agent {
-                engine: adapter().kind(),
-                profile: Vec::new(),
-                model: None,
-                effort: None,
-                resume: None,
-            },
+            engine: adapter().kind(),
+            working_directory: "/tmp".into(),
+            roles: Vec::new(),
             state,
+            created_at: 1.0,
+            last_modified_at: 1.0,
+            archived_at: None,
+            tags: Vec::new(),
+            parent_id: None,
             ext,
+            other: serde_json::Map::new(),
         }
     }
 
@@ -1088,7 +1112,6 @@ mod tests {
 
     #[test]
     fn a_terminal_record_archives_by_whole_compare_a_running_one_by_offset() {
-        use tx_core::Lifecycle;
         let dir = tempfile::tempdir().unwrap();
         let transcript = rollout(dir.path(), "2026/10/31", "c1");
         let data = rollout_bytes();
@@ -1107,7 +1130,7 @@ mod tests {
         assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), data);
         // ...and the archive of a stopped record is exact.
         let stopped = Session {
-            lifecycle: Lifecycle::Stopped,
+            state: LlmEngineState::Ended,
             ..recorded("c1", &transcript)
         };
         engine.archive(&stopped, &archive).unwrap();
@@ -1249,5 +1272,43 @@ mod tests {
                 "{partial}"
             );
         }
+    }
+
+    /// `txc migrate`: the version-1 launch's options (an effort Codex does not accept dropped),
+    /// and the conversation the chat plugin captured with its rollout; a resume id alone names
+    /// the conversation without a path, since nothing can rebuild a rollout's name.
+    #[test]
+    fn upgrade_version_one_builds_the_engine_data() {
+        let engine = adapter();
+        let object = |value: serde_json::Value| value.as_object().unwrap().clone();
+        let record = object(serde_json::json!({
+            "id": "a", "cwd": "/w",
+            "ext": {"chat": {"chats": [{"id": "c1", "transcript": "/h/sessions/rollout-c1.jsonl"}]}},
+        }));
+        let launch = object(serde_json::json!({
+            "kind": "agent", "engine": "codex", "model": "gpt-6.1-sol", "effort": "medium",
+        }));
+        assert_eq!(
+            engine.upgrade_version_one(&record, &launch),
+            serde_json::json!({"model": "gpt-6.1-sol", "effort": "medium", "conversation_id": "c1", "transcript_path": "/h/sessions/rollout-c1.jsonl"})
+        );
+        let launch = object(
+            serde_json::json!({"kind": "agent", "engine": "codex", "effort": "extreme", "resume": "r1"}),
+        );
+        assert_eq!(
+            engine.upgrade_version_one(
+                &object(serde_json::json!({"id": "a", "cwd": "/w"})),
+                &launch
+            ),
+            serde_json::json!({"conversation_id": "r1"}),
+            "an effort Codex refuses is dropped; a resume id has no rollout path"
+        );
+        assert_eq!(
+            engine.upgrade_version_one(
+                &object(serde_json::json!({"id": "a"})),
+                &object(serde_json::json!({"kind": "agent"}))
+            ),
+            serde_json::json!({})
+        );
     }
 }

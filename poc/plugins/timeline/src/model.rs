@@ -24,7 +24,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
-use tx_core::{CoreError, Launch, Lifecycle, ListFilter, Session, SessionId, TxCore};
+use tx_core::{CoreError, ListFilter, LlmEngineState, Session, SessionId, TxCore};
 
 use super::cache::TranscriptCache;
 use super::clock;
@@ -333,17 +333,15 @@ pub fn transcripts(core: &TxCore, sessions: &[Session]) -> Transcripts {
 
 /// The engine the record runs.
 pub fn engine_of(session: &Session) -> String {
-    let Launch::Agent { engine, .. } = &session.launch;
-    engine.to_string()
+    session.engine.to_string()
 }
 
 /// `(model, effort)` the record was launched with: its engine data (`ext.<engine>`, PR 12a).
 fn launch_options(session: &Session) -> (Option<String>, Option<String>) {
-    let Launch::Agent { engine, .. } = &session.launch;
     let option = |key: &str| {
         session
             .ext
-            .get(engine.as_str())?
+            .get(session.engine.as_str())?
             .get(key)?
             .as_str()
             .map(str::to_owned)
@@ -352,7 +350,7 @@ fn launch_options(session: &Session) -> (Option<String>, Option<String>) {
 }
 
 pub fn is_alive(session: &Session) -> bool {
-    session.lifecycle == Lifecycle::Running
+    session.state != LlmEngineState::Ended
 }
 
 /// The latest sign of life: the record's last write (creation, a state change, the end, a
@@ -388,7 +386,7 @@ pub fn session_group(session: &Session, by_id: &HashMap<&str, &Session>) -> Stri
     if !is_hub(session) {
         let mut visited = HashSet::from([session.id.as_str()]);
         let mut ancestor = session
-            .parent
+            .parent_id
             .as_ref()
             .and_then(|parent| by_id.get(parent.as_str()));
         while let Some(current) = ancestor {
@@ -402,7 +400,7 @@ pub fn session_group(session: &Session, by_id: &HashMap<&str, &Session>) -> Stri
                 break;
             }
             ancestor = current
-                .parent
+                .parent_id
                 .as_ref()
                 .and_then(|parent| by_id.get(parent.as_str()));
         }
@@ -564,12 +562,7 @@ impl Builder {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .expect("a lane has at least one record");
-            let kill = (!live).then(|| {
-                records
-                    .iter()
-                    .map(|record| record.ended_at.unwrap_or_else(|| activity_at(record)))
-                    .fold(f64::MIN, f64::max)
-            });
+            let kill = (!live).then(|| records.iter().map(activity_at).fold(f64::MIN, f64::max));
             let mut engines: Vec<String> = records
                 .iter()
                 .filter(|record| transcripts.contains_key(&record.id))
@@ -675,7 +668,7 @@ impl Builder {
 
             for (index, record) in records.iter().enumerate() {
                 let spawned = minutes(record.created_at);
-                let Some(parent) = &record.parent else {
+                let Some(parent) = &record.parent_id else {
                     continue;
                 };
                 if spawned < 0.0 {

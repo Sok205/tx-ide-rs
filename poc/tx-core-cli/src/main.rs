@@ -14,8 +14,8 @@ use tx_core::{
 use tx_core_cli::args::{self, Invocation, Verb};
 
 use tx_core_cli::setup::{
-    Failure, VERSION_ONE_HOME, VERSION_ONE_HOME_ENV, absolute, core_config, open, open_with,
-    preview_verbs, process_environment,
+    Failure, VERSION_ONE_HOME, VERSION_ONE_HOME_ENV, absolute, core_config, open,
+    open_for_migration_with, preview_verbs, process_environment,
 };
 
 fn main() -> ExitCode {
@@ -181,7 +181,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         Verb::Ls {
             parent,
             tag,
-            lifecycle,
+            ended,
             archived,
             json,
         } => {
@@ -196,8 +196,10 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             if let Some(tag) = tag {
                 filter = filter.tag(tag);
             }
-            if let Some(lifecycle) = lifecycle {
-                filter = filter.lifecycle(lifecycle);
+            match ended {
+                Some(true) => filter = filter.ended(),
+                Some(false) => filter = filter.running(),
+                None => {}
             }
             if archived {
                 filter = filter.archived();
@@ -211,7 +213,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                         "id": session.id.as_str(),
                         "name": session.name,
                         "state": session.state.as_str(),
-                        "working_directory": session.cwd,
+                        "working_directory": session.working_directory,
                         "tags": session.tags,
                     }));
                 }
@@ -224,8 +226,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                         "{}\t{}\t{}\t{}",
                         session.id,
                         session.name,
-                        session.lifecycle.as_str(),
-                        session.cwd.display()
+                        session.state.as_str(),
+                        session.working_directory.display()
                     )
                     .ok();
                 }
@@ -268,7 +270,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                     "{}\t{}\t{}",
                     session.id,
                     session.name,
-                    session.lifecycle.as_str()
+                    session.state.as_str()
                 )
                 .ok();
             }
@@ -302,7 +304,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         }
         Verb::Stop { target } => {
             let session = core.stop_session(&core.resolve(&target)?)?;
-            writeln!(out, "{}\t{}", session.id, session.lifecycle.as_str()).ok();
+            writeln!(out, "{}\t{}", session.id, session.state.as_str()).ok();
         }
         Verb::Interrupt { target } => {
             let id = core.resolve(&target)?;
@@ -321,9 +323,12 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Moves a version-1 home into the five directories, then regenerates the server config with
+/// Moves a version-1 home into the five directories (when `--from` names one, or the default
+/// old home is still there to move), then upgrades every version-1 record in the data directory
+/// to version 2, and prints what happened. After a move the server config is regenerated with
 /// `ui install`: the moved one embeds the old paths.
 fn migrate(global: &args::Global, from: Option<PathBuf>) -> Result<ExitCode, Failure> {
+    let explicit = from.is_some();
     let from = absolute(from.unwrap_or_else(|| {
         process_environment(VERSION_ONE_HOME_ENV)
             .map(PathBuf::from)
@@ -335,22 +340,49 @@ fn migrate(global: &args::Global, from: Option<PathBuf>) -> Result<ExitCode, Fai
             })
     }));
     let config = core_config(global)?;
-    let report =
-        tx_core::migrate::migrate_home(&from, &config.directories).map_err(Failure::Migration)?;
     let mut out = std::io::stdout().lock();
-    for (moved_from, moved_to) in &report.moved {
-        writeln!(
-            out,
-            "moved\t{}\t{}",
-            moved_from.display(),
-            moved_to.display()
-        )
-        .ok();
+    let move_home = explicit
+        || (from.join(tx_core::core::SESSIONS_DIR).is_dir()
+            && !from.join(tx_core::migrate::MOVED_TO_FILE).exists());
+    if move_home {
+        let report = tx_core::migrate::migrate_home(&from, &config.directories)
+            .map_err(Failure::Migration)?;
+        for (moved_from, moved_to) in &report.moved {
+            writeln!(
+                out,
+                "moved\t{}\t{}",
+                moved_from.display(),
+                moved_to.display()
+            )
+            .ok();
+        }
+        for left in &report.left {
+            writeln!(out, "left\t{}", left.display()).ok();
+        }
     }
-    for left in &report.left {
-        writeln!(out, "left\t{}", left.display()).ok();
+    let core = open_for_migration_with(global, config)?;
+    let records = tx_core::migrate::upgrade_records(&core).map_err(Failure::Migration)?;
+    for (id, name) in &records.migrated {
+        writeln!(out, "migrated\t{id}\t{name}").ok();
     }
-    let core = open_with(global, config)?;
+    for (id, name) in &records.without_conversation {
+        writeln!(out, "migrated-no-conversation\t{id}\t{name}").ok();
+    }
+    for (file, reason) in &records.legacy {
+        writeln!(out, "legacy\t{file}\t{reason}").ok();
+    }
+    for id in &records.skipped {
+        writeln!(out, "skipped\t{id}\talready at version 2").ok();
+    }
+    for (id, reason) in &records.deferred {
+        writeln!(out, "deferred\t{id}\t{reason}").ok();
+    }
+    if !move_home {
+        if records.is_empty() {
+            writeln!(out, "nothing to do").ok();
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let Some(install) = core.verb("ui") else {
         writeln!(
             out,

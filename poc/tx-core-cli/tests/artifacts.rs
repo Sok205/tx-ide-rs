@@ -338,7 +338,7 @@ fn a_malformed_ext_is_reported_and_never_breaks_ls_or_show() {
     require_tmux!();
     let cli = Cli::new();
     let id = cli.create("worker");
-    let path = cli.state().join("sessions").join(format!("{id}.json"));
+    let path = common::record_path(&cli, &id);
     let mut json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     json["ext"] = serde_json::json!({"artifacts": {"group": 5}});
@@ -396,7 +396,7 @@ fn artifact_open_starts_a_bound_view() {
     );
     // A tx-client view: no core record, its fields in tmux options.
     assert!(!cli.ok(&["ls"]).contains("plan-md"));
-    let sessions = std::fs::read_dir(cli.state().join("sessions"))
+    let sessions = std::fs::read_dir(cli.state().join("agents"))
         .unwrap()
         .count();
     assert_eq!(sessions, 1, "only the worker's record");
@@ -592,7 +592,7 @@ fn prefix_a_in_an_agent_pane_attaches_the_chosen_artifact() {
     assert_eq!(view_option(&cli, "plan-md", "@tx-view-bound"), artifact);
     assert_eq!(view_option(&cli, "plan-md", "@tx-view-parent"), a);
     // The agent keeps running, detached.
-    assert_eq!(common::lifecycle_of(&cli, "a"), "running");
+    assert_ne!(common::state_of(&cli, "a"), "ended");
 
     // prefix+a in the view goes back to the controlling session, in the same pane.
     outer_keys(&cli, &["C-a", "a"]);

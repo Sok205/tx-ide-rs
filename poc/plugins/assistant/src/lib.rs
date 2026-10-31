@@ -16,9 +16,9 @@ use std::time::{Duration, Instant};
 
 use tx_client::tmux::Ui;
 use tx_core::{
-    CoreError, CreateOptions, EngineKind, Launch, LaunchOptions, Lifecycle, ListFilter,
-    LlmEngineState, Plugin, PluginError, Registry, SendOptions, Sender, Session, SessionId,
-    TxCore, Verb, VerbError, VerbIo,
+    CoreError, CreateOptions, EngineKind, LaunchOptions, ListFilter, LlmEngineState, Plugin,
+    PluginError, Registry, SendOptions, Sender, Session, SessionId, TxCore, Verb, VerbError,
+    VerbIo,
 };
 
 pub const PLUGIN_ID: &str = "assistant";
@@ -126,17 +126,17 @@ pub fn create_options(core: &TxCore) -> Result<CreateOptions, CoreError> {
 
 /// An agent launched with the TX-ASSISTANT role, whatever its name ended up as.
 fn is_assistant(session: &Session) -> bool {
-    matches!(&session.launch, Launch::Agent { profile, .. } if profile.iter().any(|role| role == ROLE))
+    session.roles.iter().any(|role| role == ROLE)
 }
 
 /// The running assistant's id, after a liveness check; `None` when there is none. Found by its
 /// tag and role, not its name: a restart after a stop is `tx-assistant-2`, the stopped one
 /// keeping its name and its worktree.
 pub fn running(core: &TxCore) -> Result<Option<SessionId>, CoreError> {
-    let filter = ListFilter::new().tag(TAG).lifecycle(Lifecycle::Running);
+    let filter = ListFilter::new().tag(TAG).running();
     for id in core.list_sessions(&filter)? {
         let session = core.refresh_session(&id)?.session().clone();
-        if session.lifecycle == Lifecycle::Running && is_assistant(&session) {
+        if session.state != LlmEngineState::Ended && is_assistant(&session) {
             return Ok(Some(id));
         }
     }

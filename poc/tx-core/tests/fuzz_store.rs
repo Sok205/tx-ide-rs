@@ -1,4 +1,4 @@
-//! Property-based and adversarial tests for `SessionStore`.
+//! Property-based and adversarial tests for `SessionStore`: `<dir>/<id>/agent.json`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::fs::PermissionsExt;
@@ -8,14 +8,12 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use proptest::prelude::*;
-use tx_core::{
-    EngineKind, Launch, Lifecycle, LlmEngineState, ReadError, RecordError, Session, SessionId,
-    StoreError,
-};
+use tx_core::store::RECORD_FILE;
+use tx_core::{EngineKind, LlmEngineState, ReadError, RecordError, Session, SessionId, StoreError};
 
 fn store() -> (tempfile::TempDir, tx_core::SessionStore) {
     let dir = tempfile::tempdir().unwrap();
-    let store = tx_core::SessionStore::new(dir.path().join("sessions"));
+    let store = tx_core::SessionStore::new(dir.path().join("agents"));
     (dir, store)
 }
 
@@ -27,28 +25,33 @@ fn session(id: &str, created_at: f64) -> Session {
     Session {
         id: sid(id),
         name: format!("n-{id}"),
-        parent: None,
-        tags: vec![],
-        cwd: PathBuf::from("/"),
-        created_at,
-        ended_at: None,
-        archived_at: None,
-        last_modified_at: created_at,
-        lifecycle: Lifecycle::Running,
-        launch: Launch::Agent {
-            engine: EngineKind::Claude,
-            profile: vec![],
-            model: None,
-            effort: None,
-            resume: None,
-        },
-        ext: std::collections::BTreeMap::new(),
+        engine: EngineKind::Claude,
+        working_directory: PathBuf::from("/"),
+        roles: vec![],
         state: LlmEngineState::Idle,
+        created_at,
+        last_modified_at: created_at,
+        archived_at: None,
+        tags: vec![],
+        parent_id: None,
+        ext: std::collections::BTreeMap::new(),
+        other: serde_json::Map::new(),
     }
 }
 
 fn record_text(id: &str, created_at: f64) -> String {
     session(id, created_at).to_json().unwrap()
+}
+
+/// `<id>/agent.json`: how the store names a record in its errors.
+fn record_name(id: &str) -> String {
+    format!("{id}/{RECORD_FILE}")
+}
+
+/// Writes `text` where the record of `id` belongs, creating the agent's directory.
+fn plant(store: &tx_core::SessionStore, id: &str, text: impl AsRef<[u8]>) {
+    std::fs::create_dir_all(store.agent_dir(&sid(id))).unwrap();
+    std::fs::write(store.path(&sid(id)), text).unwrap();
 }
 
 fn entries(dir: &Path) -> BTreeSet<String> {
@@ -79,37 +82,30 @@ fn finite_f64() -> impl Strategy<Value = f64> {
     use proptest::num::f64::{NEGATIVE, NORMAL, POSITIVE, SUBNORMAL, ZERO};
     prop_oneof![
         5 => POSITIVE | NEGATIVE | NORMAL | SUBNORMAL | ZERO,
-        1 => Just(-0.0),
         1 => Just(0.0),
-        1 => Just(f64::MIN_POSITIVE / 4.0),
+        1 => Just(-0.0),
+        1 => Just(f64::MIN_POSITIVE),
+        1 => Just(f64::from_bits(1)),
         1 => Just(f64::MAX),
-        1 => Just(1_727_000_000.123_456_7),
+        1 => Just(f64::MIN),
     ]
 }
 
-/// Ids inside the grammar, lowercase so two ids never collide on a case-insensitive filesystem.
+fn text() -> impl Strategy<Value = String> {
+    prop_oneof![
+        3 => "[^\0]{0,32}",
+        1 => any::<String>(),
+        1 => Just(String::new()),
+    ]
+}
+
+/// Lower-case ids only: APFS and NTFS fold case, so `A` and `a` would share one directory.
 fn lower_id() -> impl Strategy<Value = String> {
     "[a-z0-9_\\-]{1,64}"
 }
 
-fn text() -> impl Strategy<Value = String> {
-    "\\PC{0,48}"
-}
-
-fn launch() -> impl Strategy<Value = Launch> {
-    (
-        0..EngineKind::ALL.len(),
-        prop::collection::vec(text(), 0..4),
-        prop::option::of(text()),
-        prop::option::of(text()),
-    )
-        .prop_map(|(engine, profile, model, effort)| Launch::Agent {
-            engine: EngineKind::ALL[engine],
-            profile,
-            model,
-            effort,
-            resume: None,
-        })
+fn engine() -> impl Strategy<Value = EngineKind> {
+    prop::sample::select(EngineKind::ALL.to_vec())
 }
 
 fn state() -> impl Strategy<Value = LlmEngineState> {
@@ -125,26 +121,26 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Sessi
         "[^\0]{0,64}",
         finite_f64(),
         prop::option::of(finite_f64()),
-        prop::sample::select(Lifecycle::ALL.to_vec()),
-        launch(),
+        engine(),
+        prop::collection::vec(text(), 0..4),
         state(),
     )
         .prop_map(
-            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch, state)| {
+            |(id, name, parent, tags, cwd, created_at, archived_at, engine, roles, state)| {
                 Session {
                     id: sid(&id),
                     name,
-                    parent: parent.map(|p| sid(&p)),
-                    tags,
-                    cwd: PathBuf::from(cwd),
-                    created_at,
-                    ended_at,
-                    archived_at: None,
-                    last_modified_at: created_at,
-                    lifecycle,
-                    launch,
-                    ext: std::collections::BTreeMap::new(),
+                    engine,
+                    working_directory: PathBuf::from(cwd),
+                    roles,
                     state,
+                    created_at,
+                    last_modified_at: created_at,
+                    archived_at,
+                    tags,
+                    parent_id: parent.map(|p| sid(&p)),
+                    ext: std::collections::BTreeMap::new(),
+                    other: serde_json::Map::new(),
                 }
             },
         )
@@ -159,9 +155,9 @@ fn assert_bitwise_eq(a: &Session, b: &Session) {
         "created_at bits"
     );
     assert_eq!(
-        a.ended_at.map(f64::to_bits),
-        b.ended_at.map(f64::to_bits),
-        "ended_at bits"
+        a.archived_at.map(f64::to_bits),
+        b.archived_at.map(f64::to_bits),
+        "archived_at bits"
     );
 }
 
@@ -189,7 +185,8 @@ proptest! {
         let all = store.all().unwrap();
         prop_assert_eq!(all.len(), 1);
         assert_bitwise_eq(&session, &all[0]);
-        prop_assert_eq!(entries(store.dir()), BTreeSet::from([format!("{}.json", session.id)]));
+        prop_assert_eq!(entries(store.dir()), BTreeSet::from([session.id.to_string()]));
+        prop_assert_eq!(entries(&store.agent_dir(&session.id)), BTreeSet::from([RECORD_FILE.to_owned()]));
     }
 
     #[test]
@@ -199,7 +196,8 @@ proptest! {
         store.save(&a).unwrap();
         store.save(&b).unwrap();
         assert_bitwise_eq(&b, &store.load(&a.id).unwrap().unwrap());
-        prop_assert_eq!(entries(store.dir()), BTreeSet::from(["same.json".to_owned()]));
+        prop_assert_eq!(entries(store.dir()), BTreeSet::from(["same".to_owned()]));
+        prop_assert_eq!(entries(&store.agent_dir(&a.id)), BTreeSet::from([RECORD_FILE.to_owned()]));
     }
 }
 
@@ -214,13 +212,13 @@ fn non_finite_timestamps_are_refused_by_save_without_touching_disk() {
             "{error:?}"
         );
         let mut s = session("nf", 1.0);
-        s.ended_at = Some(value);
+        s.archived_at = Some(value);
         let error = store.save(&s).unwrap_err();
         assert!(
             matches!(
                 &error,
                 StoreError::Encode {
-                    source: RecordError::NonFiniteTime("ended_at"),
+                    source: RecordError::NonFiniteTime("archived_at"),
                     ..
                 }
             ),
@@ -236,11 +234,11 @@ fn non_finite_timestamps_are_refused_by_save_without_touching_disk() {
 }
 
 #[test]
-fn non_utf8_cwd_is_refused_by_save() {
+fn non_utf8_working_directory_is_refused_by_save() {
     use std::os::unix::ffi::OsStrExt;
     let (_dir, store) = store();
     let mut s = session("cwd", 1.0);
-    s.cwd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/\xff"));
+    s.working_directory = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/\xff"));
     let error = store.save(&s).unwrap_err();
     assert!(
         matches!(
@@ -258,10 +256,9 @@ fn non_utf8_cwd_is_refused_by_save() {
 #[test]
 fn null_created_at_on_disk_is_unreadable() {
     let (_dir, store) = store();
-    std::fs::create_dir_all(store.dir()).unwrap();
     let text = record_text("x", 1.0).replace("\"created_at\": 1.0", "\"created_at\": null");
     assert!(text.contains("\"created_at\": null"), "{text}");
-    std::fs::write(store.path(&sid("x")), text).unwrap();
+    plant(&store, "x", text);
     let error = store.load(&sid("x")).unwrap_err();
     assert!(
         matches!(
@@ -297,15 +294,20 @@ fn ops() -> impl Strategy<Value = Vec<Op>> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
 
+    /// The agent directory outlives its record (the engine's archive lives in it), so the set
+    /// of directories only grows while the set of records is exactly what was saved and not
+    /// deleted.
     #[test]
     fn all_is_the_saved_set_in_total_order(ops in ops()) {
         let (_dir, store) = store();
         let mut model: BTreeMap<String, Session> = BTreeMap::new();
+        let mut touched: BTreeSet<String> = BTreeSet::new();
         for op in ops {
             match op {
                 Op::Save(i, at) => {
                     let s = session(&format!("s{i}"), at);
                     store.save(&s).unwrap();
+                    touched.insert(s.id.to_string());
                     model.insert(s.id.to_string(), s);
                 }
                 Op::Delete(i) => {
@@ -319,8 +321,7 @@ proptest! {
             for s in &all {
                 assert_bitwise_eq(s, &model[s.id.as_str()]);
             }
-            let want: BTreeSet<String> = model.keys().map(|k| format!("{k}.json")).collect();
-            prop_assert_eq!(entries(store.dir()), want);
+            prop_assert_eq!(entries(store.dir()), touched.clone());
         }
     }
 
@@ -416,10 +417,15 @@ fn concurrent_writers_never_expose_partial_or_temp_records() {
     }
 
     let mut want: BTreeSet<String> = (0..WRITERS)
-        .flat_map(|w| (0..ROUNDS).map(move |r| format!("w{w}-{r}.json")))
+        .flat_map(|w| (0..ROUNDS).map(move |r| format!("w{w}-{r}")))
         .collect();
-    want.insert("shared.json".into());
+    want.insert("shared".into());
     assert_eq!(entries(store.dir()), want);
+    assert_eq!(
+        entries(&store.agent_dir(&sid("shared"))),
+        BTreeSet::from([RECORD_FILE.to_owned()]),
+        "no temp file left behind"
+    );
     assert_eq!(store.all().unwrap().len(), WRITERS * ROUNDS + 1);
 }
 
@@ -445,9 +451,9 @@ fn concurrent_save_and_delete_of_one_id_leave_no_temp_files() {
     for h in handles {
         h.join().unwrap();
     }
-    let left = entries(store.dir());
+    let left = entries(&store.agent_dir(&sid("x")));
     assert!(
-        left.is_subset(&BTreeSet::from(["x.json".to_owned()])),
+        left.is_subset(&BTreeSet::from([RECORD_FILE.to_owned()])),
         "{left:?}"
     );
 }
@@ -509,27 +515,26 @@ fn longest_id_saves_and_lists_with_room_for_the_temp_name() {
     let id = "a".repeat(64);
     store.save(&session(&id, 1.0)).unwrap();
     assert_eq!(ids(&store.all().unwrap()), std::slice::from_ref(&id));
-    assert_eq!(entries(store.dir()), BTreeSet::from([format!("{id}.json")]));
+    assert_eq!(entries(store.dir()), BTreeSet::from([id]));
 }
 
 #[test]
 fn record_with_out_of_grammar_id_on_disk_is_unreadable() {
     let (_dir, store) = store();
-    std::fs::create_dir_all(store.dir()).unwrap();
     for bad in ["a/b", "..", "", "a b", ".h"] {
         let text = record_text("x", 1.0).replace(
             "\"id\": \"x\"",
             &format!("\"id\": {}", serde_json::json!(bad)),
         );
-        std::fs::write(store.path(&sid("x")), text).unwrap();
+        plant(&store, "x", text);
         let error = store.load(&sid("x")).unwrap_err();
         assert!(
-            matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::Json(_)) } if file == "x.json"),
+            matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::Json(_)) } if *file == record_name("x")),
             "{bad:?}: {error:?}"
         );
         let error = store.all().unwrap_err();
         assert!(
-            matches!(&error, StoreError::Unreadable { file, .. } if file == "x.json"),
+            matches!(&error, StoreError::Unreadable { file, .. } if *file == record_name("x")),
             "{bad:?}: {error:?}"
         );
     }
@@ -547,7 +552,7 @@ fn case_variant_ids_may_collide_on_case_insensitive_fs() {
         // of answering with the wrong record.
         let err = store.all().unwrap_err();
         assert!(
-            matches!(&err, StoreError::Unreadable { file, source: ReadError::IdMismatch { found } } if file == "CaseId.json" && found == "caseid"),
+            matches!(&err, StoreError::Unreadable { file, source: ReadError::IdMismatch { found } } if *file == record_name("CaseId") && found == "caseid"),
             "{err:?}"
         );
         assert!(store.load(&sid("CaseId")).is_err());
@@ -573,62 +578,75 @@ proptest! {
     fn random_bytes_record_is_unreadable_by_name(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
         let (_dir, store) = store();
         store.save(&session("ok", 1.0)).unwrap();
-        std::fs::write(store.dir().join("bad.json"), &bytes).unwrap();
-        let source = unreadable_named(store.all(), "bad.json");
+        plant(&store, "bad", &bytes);
+        let source = unreadable_named(store.all(), &record_name("bad"));
         let kind_ok = matches!(source, ReadError::Utf8(_) | ReadError::Record(_));
         prop_assert!(kind_ok, "{:?}", source);
         let error = store.load(&sid("bad")).unwrap_err();
-        let named = matches!(error, StoreError::Unreadable { ref file, .. } if file == "bad.json");
+        let named = matches!(error, StoreError::Unreadable { ref file, .. } if *file == record_name("bad"));
         prop_assert!(named, "load: {:?}", error);
         prop_assert_eq!(store.load(&sid("ok")).unwrap(), Some(session("ok", 1.0)));
     }
 
+    /// Wrong shapes, version-1 records included: all a `RecordError`, never a panic or a skip.
     #[test]
     fn wrong_shape_json_is_unreadable(text in prop::sample::select(vec![
         "null",
         "[]",
         "{}",
-        "{\"version\": 1}",
-        "{\"version\": \"1\", \"id\": \"x\"}",
-        "{\"version\": 1, \"id\": 5}",
+        "{\"version\": 2}",
+        "{\"version\": \"2\", \"id\": \"x\"}",
+        "{\"version\": 2, \"id\": 5}",
         "{\"version\": -1}",
         "{\"version\": 1.5}",
         "{\"version\": 18446744073709551616}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": \"1\", \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": []}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"Running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": []}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"shell\"}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": [], \"model\": null, \"effort\": 7}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": \"p/q\", \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": []}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": []}} trailing",
+        "{\"version\": 1, \"id\": \"bad\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"claude\", \"profile\": []}}",
+        "{\"version\": 1, \"id\": \"bad\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"process\", \"program\": \"sh\"}}",
+        "{\"version\": 2, \"id\": \"bad\", \"name\": \"n\", \"engine\": \"claude\", \"working_directory\": \"/\", \"roles\": [], \"state\": \"idle\", \"created_at\": \"1\", \"last_modified_at\": 1, \"tags\": []}",
+        "{\"version\": 2, \"id\": \"bad\", \"name\": \"n\", \"engine\": \"claude\", \"working_directory\": \"/\", \"roles\": [], \"state\": \"Idle\", \"created_at\": 1, \"last_modified_at\": 1, \"tags\": []}",
+        "{\"version\": 2, \"id\": \"bad\", \"name\": \"n\", \"engine\": 7, \"working_directory\": \"/\", \"roles\": [], \"state\": \"idle\", \"created_at\": 1, \"last_modified_at\": 1, \"tags\": []}",
+        "{\"version\": 2, \"id\": \"bad\", \"name\": \"n\", \"engine\": \"claude\", \"working_directory\": \"/\", \"roles\": [], \"state\": \"idle\", \"created_at\": 1, \"last_modified_at\": 1, \"tags\": [], \"parent_id\": \"p/q\"}",
+        "{\"version\": 2, \"id\": \"bad\", \"name\": \"n\", \"engine\": \"claude\", \"working_directory\": \"/\", \"roles\": [], \"state\": \"idle\", \"created_at\": 1, \"last_modified_at\": 1, \"tags\": []} trailing",
     ])) {
         let (_dir, store) = store();
-        std::fs::create_dir_all(store.dir()).unwrap();
-        std::fs::write(store.dir().join("bad.json"), text).unwrap();
-        let source = unreadable_named(store.all(), "bad.json");
+        plant(&store, "bad", text);
+        let source = unreadable_named(store.all(), &record_name("bad"));
         let kind_ok = matches!(source, ReadError::Record(_));
         prop_assert!(kind_ok, "{:?}", source);
     }
 }
 
-/// A `"kind": "process"` record, written before core held agents only: not a failure of the
-/// scan but a skip, and `skipped` names it, whatever else the record says.
+/// A version-1 record where a version-2 one belongs is refused with the pointer to
+/// `txc migrate`, whatever else it says, and never skipped.
 #[test]
-fn process_records_are_skipped_and_named() {
+fn version_one_records_need_migration() {
     let (_dir, store) = store();
-    std::fs::create_dir_all(store.dir()).unwrap();
     store.save(&session("a", 1.0)).unwrap();
-    let process = record_text("p", 2.0).replace(
-        r#""launch": {
-    "kind": "agent","#,
-        r#""launch": {
-    "kind": "process",
-    "program": "sh",
-    "args": [],"#,
-    );
-    assert!(process.contains("\"kind\": \"process\""), "{process}");
-    std::fs::write(store.path(&sid("p")), process).unwrap();
+    let agent = "{\"version\": 1, \"id\": \"p\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"claude\", \"profile\": []}}";
+    plant(&store, "p", agent);
     let odd = "{\"version\": 1, \"id\": \"q\", \"name\": \"n\", \"created_at\": \"1\", \"lifecycle\": \"Running\", \"launch\": {\"kind\": \"process\"}}";
-    std::fs::write(store.path(&sid("q")), odd).unwrap();
+    plant(&store, "q", odd);
+    for id in ["p", "q"] {
+        let error = store.load(&sid(id)).unwrap_err();
+        assert!(
+            matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::NeedsMigration(1)) } if *file == record_name(id)),
+            "{error:?}"
+        );
+    }
+    assert!(store.all().is_err());
+    assert!(store.skipped().is_err());
+}
+
+/// A record naming an engine this build lacks is skipped and named, not an error.
+#[test]
+fn unknown_engine_records_are_skipped_and_named() {
+    let (_dir, store) = store();
+    store.save(&session("a", 1.0)).unwrap();
+    plant(
+        &store,
+        "k",
+        record_text("k", 2.0).replace("\"claude\"", "\"kodex\""),
+    );
     assert_eq!(ids(&store.all().unwrap()), ["a"]);
     let skipped: Vec<_> = store
         .skipped()
@@ -636,27 +654,24 @@ fn process_records_are_skipped_and_named() {
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    assert_eq!(skipped, [sid("p"), sid("q")]);
-    assert_eq!(store.load(&sid("p")).unwrap(), None);
-    assert_eq!(store.load(&sid("q")).unwrap(), None);
+    assert_eq!(skipped, [sid("k")]);
+    assert_eq!(store.load(&sid("k")).unwrap(), None);
 }
 
 #[test]
 fn integer_created_at_is_accepted() {
     let (_dir, store) = store();
-    std::fs::create_dir_all(store.dir()).unwrap();
     let text = record_text("x", 1.0).replace("\"created_at\": 1.0", "\"created_at\": 1");
     assert!(text.contains("\"created_at\": 1,"), "{text}");
-    std::fs::write(store.path(&sid("x")), text).unwrap();
+    plant(&store, "x", text);
     assert_eq!(store.load(&sid("x")).unwrap().unwrap().created_at, 1.0);
 }
 
 #[test]
 fn empty_file_is_unreadable_by_name() {
     let (_dir, store) = store();
-    std::fs::create_dir_all(store.dir()).unwrap();
-    std::fs::write(store.dir().join("empty.json"), b"").unwrap();
-    let source = unreadable_named(store.all(), "empty.json");
+    plant(&store, "empty", b"");
+    let source = unreadable_named(store.all(), &record_name("empty"));
     assert!(
         matches!(source, ReadError::Record(RecordError::Json(_))),
         "{source:?}"
@@ -664,35 +679,33 @@ fn empty_file_is_unreadable_by_name() {
 }
 
 #[test]
-fn symlink_to_dir_is_skipped() {
+fn record_that_is_a_directory_is_skipped() {
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
-    std::fs::create_dir(store.dir().join("real_dir")).unwrap();
-    std::os::unix::fs::symlink(store.dir().join("real_dir"), store.dir().join("link.json"))
-        .unwrap();
+    std::fs::create_dir_all(store.path(&sid("link"))).unwrap();
     assert_eq!(ids(&store.all().unwrap()), ["a"]);
+    assert!(store.load(&sid("link")).is_err());
 }
 
 #[test]
-fn symlink_alias_of_a_record_is_unreadable_by_its_own_name() {
+fn symlink_alias_of_an_agent_directory_is_unreadable_by_its_own_name() {
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
-    std::os::unix::fs::symlink(store.path(&sid("a")), store.dir().join("alias.json")).unwrap();
+    std::os::unix::fs::symlink(store.agent_dir(&sid("a")), store.dir().join("alias")).unwrap();
     let err = store.all().unwrap_err();
     assert!(
-        matches!(&err, StoreError::Unreadable { file, .. } if file == "alias.json"),
+        matches!(&err, StoreError::Unreadable { file, .. } if *file == record_name("alias")),
         "{err:?}"
     );
 }
 
 #[test]
-fn record_whose_id_disagrees_with_file_name_is_unreadable() {
+fn record_whose_id_disagrees_with_its_directory_is_unreadable() {
     let (_dir, store) = store();
-    std::fs::create_dir_all(store.dir()).unwrap();
-    std::fs::write(store.path(&sid("file")), record_text("inner", 1.0)).unwrap();
+    plant(&store, "file", record_text("inner", 1.0));
     let err = store.load(&sid("file")).unwrap_err();
     assert!(
-        matches!(&err, StoreError::Unreadable { file, .. } if file == "file.json"),
+        matches!(&err, StoreError::Unreadable { file, .. } if *file == record_name("file")),
         "{err:?}"
     );
     assert!(store.all().is_err());
@@ -706,16 +719,18 @@ fn unreadable_permissions_are_reported_by_name() {
     }
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
-    let locked = store.dir().join("locked.json");
-    std::fs::write(&locked, record_text("locked", 1.0)).unwrap();
+    plant(&store, "locked", record_text("locked", 1.0));
+    let locked = store.path(&sid("locked"));
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let source = unreadable_named(store.all(), "locked.json");
+    let source = unreadable_named(store.all(), &record_name("locked"));
     assert!(
         matches!(&source, ReadError::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied),
         "{source:?}"
     );
     let error = store.load(&sid("locked")).unwrap_err();
-    assert!(matches!(&error, StoreError::Unreadable { file, .. } if file == "locked.json"));
+    assert!(
+        matches!(&error, StoreError::Unreadable { file, .. } if *file == record_name("locked"))
+    );
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(ids(&store.all().unwrap()), ["a", "locked"]);
 }
@@ -724,7 +739,8 @@ fn unreadable_permissions_are_reported_by_name() {
 fn fifo_record_is_skipped_without_blocking() {
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
-    let fifo = store.dir().join("pipe.json");
+    std::fs::create_dir_all(store.agent_dir(&sid("pipe"))).unwrap();
+    let fifo = store.path(&sid("pipe"));
     assert!(
         std::process::Command::new("mkfifo")
             .arg(&fifo)
@@ -749,35 +765,38 @@ fn fifo_record_is_skipped_without_blocking() {
 }
 
 #[test]
-fn non_utf8_file_name_is_skipped() {
+fn non_utf8_directory_name_is_skipped() {
     use std::os::unix::ffi::OsStrExt;
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
-    let name = std::ffi::OsStr::from_bytes(b"\xff\xfe.json");
-    if std::fs::write(store.dir().join(name), "garbage").is_err() {
+    let name = std::ffi::OsStr::from_bytes(b"\xff\xfe");
+    if std::fs::create_dir(store.dir().join(name)).is_err() {
         return; // APFS refuses invalid UTF-8 names (EILSEQ); nothing to scan.
     }
+    std::fs::write(store.dir().join(name).join(RECORD_FILE), "garbage").unwrap();
     assert_eq!(ids(&store.all().unwrap()), ["a"]);
 }
 
 #[test]
-fn files_without_json_suffix_hidden_files_and_dirs_are_ignored() {
+fn files_hidden_entries_and_foreign_dirs_are_ignored() {
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
-    std::fs::write(store.dir().join("a.json.bak"), "x").unwrap();
-    std::fs::write(store.dir().join("b.JSON"), "x").unwrap();
-    std::fs::write(store.dir().join("json"), "x").unwrap();
-    std::fs::write(store.dir().join(".a.deadbeef.tmp"), "x").unwrap();
-    std::fs::write(store.dir().join(".hidden.json"), "x").unwrap();
-    std::fs::create_dir(store.dir().join("d.json")).unwrap();
-    std::fs::create_dir(store.dir().join("plain")).unwrap();
+    std::fs::write(store.dir().join("a.json"), "x").unwrap();
+    std::fs::write(store.dir().join("b"), "x").unwrap();
+    std::fs::write(store.dir().join(".hidden"), "x").unwrap();
+    std::fs::create_dir(store.dir().join(".hidden-dir")).unwrap();
+    std::fs::write(store.dir().join(".hidden-dir").join(RECORD_FILE), "x").unwrap();
+    std::fs::create_dir(store.dir().join("not an id")).unwrap();
+    std::fs::write(store.dir().join("not an id").join(RECORD_FILE), "x").unwrap();
+    std::fs::create_dir(store.dir().join("empty")).unwrap();
+    std::fs::write(store.agent_dir(&sid("a")).join(".agent.deadbeef.tmp"), "x").unwrap();
     assert_eq!(ids(&store.all().unwrap()), ["a"]);
 }
 
 // ---- 6. unwritable directory -----------------------------------------------------------------
 
 #[test]
-fn unwritable_dir_fails_save_with_io_naming_the_dir_and_leaves_nothing() {
+fn unwritable_dir_fails_save_with_io_and_leaves_nothing() {
     if is_root() {
         return;
     }
@@ -786,12 +805,14 @@ fn unwritable_dir_fails_save_with_io_naming_the_dir_and_leaves_nothing() {
     std::fs::set_permissions(store.dir(), std::fs::Permissions::from_mode(0o500)).unwrap();
     let error = store.save(&session("a", 1.0)).unwrap_err();
     assert!(
-        matches!(&error, StoreError::Io { path, .. } if path == store.dir()),
+        matches!(&error, StoreError::Io { path, .. } if *path == store.agent_dir(&sid("a"))),
         "{error:?}"
     );
+    let existing = store.agent_dir(&sid("existing"));
+    std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o500)).unwrap();
     let overwrite = store.save(&session("existing", 2.0)).unwrap_err();
     assert!(
-        matches!(&overwrite, StoreError::Io { path, .. } if path == store.dir()),
+        matches!(&overwrite, StoreError::Io { path, .. } if *path == existing),
         "{overwrite:?}"
     );
     let error = store.delete(&sid("existing")).unwrap_err();
@@ -801,9 +822,11 @@ fn unwritable_dir_fails_save_with_io_naming_the_dir_and_leaves_nothing() {
     );
     assert_eq!(
         entries(store.dir()),
-        BTreeSet::from(["existing.json".to_owned()])
+        BTreeSet::from(["existing".to_owned()])
     );
+    assert_eq!(entries(&existing), BTreeSet::from([RECORD_FILE.to_owned()]));
     assert_eq!(store.all().unwrap()[0].created_at, 1.0);
+    std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::set_permissions(store.dir(), std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
@@ -822,7 +845,7 @@ fn unlistable_dir_fails_all_with_io_naming_the_dir() {
     );
     let error = store.load(&sid("a")).unwrap_err();
     assert!(
-        matches!(&error, StoreError::Unreadable { file, source: ReadError::Io(_) } if file == "a.json"),
+        matches!(&error, StoreError::Unreadable { file, source: ReadError::Io(_) } if *file == record_name("a")),
         "{error:?}"
     );
     std::fs::set_permissions(store.dir(), std::fs::Permissions::from_mode(0o700)).unwrap();

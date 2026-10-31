@@ -108,5 +108,5 @@ fn overlong_socket_path_fails_before_any_file_exists() {
     let mut config = CoreConfig::new(directories.clone());
     config.tmux_socket = Some(root.path().join("s.sock"));
     TxCore::open(config).unwrap();
-    assert!(directories.data.join("sessions").is_dir());
+    assert!(directories.data.join("agents").is_dir());
 }

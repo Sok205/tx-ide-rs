@@ -255,7 +255,7 @@ pub fn picker_rows(rows: &[Row<'_>], namew: i64, now: f64) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use tx_core::{Launch, Lifecycle, SessionId};
+    use tx_core::SessionId;
 
     use super::*;
     use crate::views::ViewKind;
@@ -276,23 +276,17 @@ mod tests {
         Session {
             id: format!("id-{name}").parse::<SessionId>().unwrap(),
             name: name.into(),
-            parent: None,
-            tags: vec![],
-            cwd: PathBuf::from("/r"),
-            created_at,
-            ended_at: None,
-            archived_at: None,
-            last_modified_at: created_at,
-            lifecycle: Lifecycle::Running,
-            launch: Launch::Agent {
-                engine: tx_core::EngineKind::Claude,
-                profile: vec![],
-                model: None,
-                effort: None,
-                resume: None,
-            },
-            ext: Default::default(),
+            engine: tx_core::EngineKind::Claude,
+            working_directory: PathBuf::from("/r"),
+            roles: vec![],
             state: tx_core::LlmEngineState::Idle,
+            created_at,
+            last_modified_at: created_at,
+            archived_at: None,
+            tags: vec![],
+            parent_id: None,
+            ext: Default::default(),
+            other: Default::default(),
         }
     }
 

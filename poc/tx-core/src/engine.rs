@@ -39,7 +39,8 @@ pub enum EngineError {
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct LaunchRequest<'a> {
-    /// The record being launched: the engine reads its id, `cwd` and its own `ext[ext_key]`.
+    /// The record being launched: the engine reads its id, `working_directory` and its own
+    /// `ext[ext_key]`.
     pub session: &'a Session,
     /// Combined role text, the file holding it, and the granted skill dirs.
     pub profile: &'a Profile,
@@ -326,7 +327,7 @@ pub trait LlmEngine: Send + Sync {
     /// [`crate::mirror::mirror_tree`]), keyed by conversation so every past conversation of the
     /// session is kept. Core calls it after every hook, outside the session lock, under a
     /// non-blocking per-session lock of its own, so it must be cheap when nothing changed; and
-    /// once more after a stop or an exit, when `session.lifecycle` is terminal: the process is
+    /// once more after a stop or an exit, when `session.state` is `Ended`: the process is
     /// gone, the transcript final, and the copy must be exact, so the engine compares it whole
     /// ([`crate::mirror::mirror_file_exact`]) rather than by its trailing window. Idempotent; a
     /// missing live transcript archives nothing. The default archives nothing.
@@ -349,6 +350,22 @@ pub trait LlmEngine: Send + Sync {
     fn conversation(&self, session: &Session) -> Option<Conversation> {
         let _ = session;
         None
+    }
+
+    /// The engine data of a version-1 record, for `txc migrate`: `record` is the whole
+    /// version-1 JSON object (`id`, `cwd`, the retired chat plugin's `ext.chat`, …) and
+    /// `launch` its agent launch (`engine`, `profile`, `model`, `effort`, `resume`: the record's
+    /// own `launch`, or `ext.chat.launch` for a fork disguised as a process). Returns the
+    /// complete value of `ext[self.ext_key()]`: the options the engine still accepts and, when
+    /// the record names one ([`crate::migrate::version_one_conversation`]), the conversation.
+    /// Pure. The default knows no version-1 records and answers an empty object.
+    fn upgrade_version_one(
+        &self,
+        record: &serde_json::Map<String, serde_json::Value>,
+        launch: &serde_json::Map<String, serde_json::Value>,
+    ) -> serde_json::Value {
+        let _ = (record, launch);
+        serde_json::Value::Object(serde_json::Map::new())
     }
 }
 
@@ -505,6 +522,7 @@ pub fn apply_workspace(cwd: &Path, actions: &[WorkspaceAction]) -> Result<(), En
 mod tests {
     use super::*;
     use crate::profile::{Profile, ResolvedProfile};
+    use crate::session::SessionId;
 
     /// An engine of the kind, owning the ext key of the same name.
     struct Stub(EngineKind);
@@ -679,27 +697,20 @@ mod tests {
     }
 
     fn record(cwd: &Path) -> Session {
-        use crate::session::{Launch, Lifecycle, SessionId};
         Session {
             id: SessionId::mint(),
-            name: "s".into(),
-            parent: None,
-            tags: Vec::new(),
-            cwd: cwd.to_owned(),
+            name: "n".into(),
+            engine: EngineKind::Claude,
+            working_directory: cwd.to_owned(),
+            roles: Vec::new(),
+            state: LlmEngineState::Starting,
             created_at: 0.0,
-            ended_at: None,
-            archived_at: None,
             last_modified_at: 0.0,
-            lifecycle: Lifecycle::Running,
-            launch: Launch::Agent {
-                engine: EngineKind::Claude,
-                profile: Vec::new(),
-                model: None,
-                effort: None,
-                resume: None,
-            },
-            state: crate::state::LlmEngineState::Starting,
+            archived_at: None,
+            tags: Vec::new(),
+            parent_id: None,
             ext: BTreeMap::new(),
+            other: serde_json::Map::new(),
         }
     }
 

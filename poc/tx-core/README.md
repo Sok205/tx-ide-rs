@@ -22,7 +22,8 @@ run }`); the front end resolves them (XDG, `TX_APPNAME`; see `../README.md`), th
 reads the environment.
 
 ```
-<data>/sessions/<id>.json   the record; atomic temp-file + rename writes, mode 0600
+<data>/agents/<id>/agent.json  the record (version 2); atomic temp-file + rename writes, mode 0600
+<data>/agents/<id>/archive/    the engine's archive of the agent's conversations
 <data>/log.jsonl            one {"ts","actor","type","msg"} line per mutation, ≤ 512 bytes, O_APPEND
 <data>/tmux.conf            written once if absent; `ui install` replaces it
 <data>/plugins/<id>/        a plugin's own data (CoreConfig::plugin_data_dir)
@@ -31,7 +32,9 @@ reads the environment.
 <run>/tmux.sock             the private server (must stay ≤ 100 bytes; set CoreConfig::tmux_socket)
 ```
 
-`tx_core::migrate::migrate_home` moves a version-1 home (everything in one directory) into them.
+`tx_core::migrate::migrate_home` moves a version-1 home (everything in one directory) into them,
+and `tx_core::migrate::upgrade_records` turns the version-1 records left in `<data>/sessions/`
+into version-2 ones; `TxCore::open` refuses while any are there.
 
 Disk is the record. tmux holds only the session option `@tx-id`; `$N` / `%N` targets are looked
 up by it on every call and never stored, so a rename behind core's back changes nothing.

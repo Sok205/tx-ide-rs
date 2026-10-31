@@ -276,7 +276,7 @@ pub fn close_orphans(ui: &Ui, core: &TxCore) -> Result<Vec<String>, ViewError> {
             continue;
         };
         let orphaned = match core.refresh_session(parent) {
-            Ok(refreshed) => refreshed.session().lifecycle.is_terminal(),
+            Ok(refreshed) => refreshed.session().state == tx_core::LlmEngineState::Ended,
             Err(CoreError::NotFound(_)) => true,
             Err(error) => return Err(error.into()),
         };
@@ -295,8 +295,7 @@ pub fn parse_views(listing: &str) -> Vec<View> {
         .lines()
         .filter_map(|line| {
             let fields: Vec<&str> = line.split('\t').collect();
-            let [name, marker, kind, parent, bound, tags, created, path] = fields.as_slice()
-            else {
+            let [name, marker, kind, parent, bound, tags, created, path] = fields.as_slice() else {
                 return None;
             };
             if *marker != "1" {
@@ -445,9 +444,15 @@ mod tests {
         assert_eq!(opened.kind, ViewKind::Shell);
         assert!(matches!(open(&ui, &request), Err(ViewError::NameTaken(name)) if name == "sh1"));
         assert_eq!(
-            ui.run(&["display-message", "-p", "-t", "=sh1:", "#{pane_start_command}"])
-                .unwrap()
-                .trim(),
+            ui.run(&[
+                "display-message",
+                "-p",
+                "-t",
+                "=sh1:",
+                "#{pane_start_command}"
+            ])
+            .unwrap()
+            .trim(),
             "sleep 30"
         );
 
@@ -468,13 +473,25 @@ mod tests {
             .unwrap();
         ui.run(&["new-session", "-d", "-s", "plain", "sleep", "30"])
             .unwrap();
-        assert!(matches!(close(&ui, "agent"), Err(ViewError::OwnedByCore(name)) if name == "agent"));
-        assert!(matches!(rename(&ui, "agent", "x"), Err(ViewError::OwnedByCore(_))));
+        assert!(
+            matches!(close(&ui, "agent"), Err(ViewError::OwnedByCore(name)) if name == "agent")
+        );
+        assert!(matches!(
+            rename(&ui, "agent", "x"),
+            Err(ViewError::OwnedByCore(_))
+        ));
         assert!(matches!(close(&ui, "plain"), Err(ViewError::NotAView(_))));
         assert!(matches!(close(&ui, "nope"), Err(ViewError::NotFound(_))));
-        assert!(matches!(rename(&ui, "sh1", "agent"), Err(ViewError::NameTaken(_))));
+        assert!(matches!(
+            rename(&ui, "sh1", "agent"),
+            Err(ViewError::NameTaken(_))
+        ));
         assert_eq!(
-            list(&ui).unwrap().iter().map(|view| view.name.as_str()).collect::<Vec<_>>(),
+            list(&ui)
+                .unwrap()
+                .iter()
+                .map(|view| view.name.as_str())
+                .collect::<Vec<_>>(),
             ["sh1"]
         );
 

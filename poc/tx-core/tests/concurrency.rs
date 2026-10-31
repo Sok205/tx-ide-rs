@@ -140,7 +140,7 @@ fn concurrent_tag_and_rename_lose_no_update() {
     let tagged = log.iter().filter(|l| l["type"] == "tagged").count();
     let renamed = log.iter().filter(|l| l["type"] == "renamed").count();
     assert_eq!((tagged, renamed), (50, 50));
-    let temp_files = std::fs::read_dir(h.data_dir().join("sessions"))
+    let temp_files = std::fs::read_dir(h.data_dir().join("agents").join(session.id.as_str()))
         .unwrap()
         .filter(|e| {
             e.as_ref()
@@ -252,9 +252,9 @@ fn refresh_all_never_marks_a_freshly_created_session_exited() {
     );
     assert_eq!(h.live_names().len(), 24);
     for id in &ids {
-        assert_eq!(
-            core.get_session(id).unwrap().lifecycle,
-            tx_core::Lifecycle::Running
+        assert_ne!(
+            core.get_session(id).unwrap().state,
+            tx_core::LlmEngineState::Ended
         );
     }
 }

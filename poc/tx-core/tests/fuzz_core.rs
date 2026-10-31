@@ -13,9 +13,7 @@ use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, typed, wait_for};
 use proptest::prelude::*;
-use tx_core::{
-    CoreError, EngineKind, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TxCore,
-};
+use tx_core::{CoreError, EngineKind, ListFilter, RefreshResult, SendOptions, SessionId, TxCore};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -134,12 +132,11 @@ fn arb_op() -> impl Strategy<Value = Op> {
 #[derive(Clone, Debug)]
 struct Rec {
     name: String,
-    lifecycle: Lifecycle,
+    /// The record's `state` is `Ended`.
+    ended: bool,
     tags: Vec<String>,
     parent: Option<SessionId>,
-    /// First observed `ended_at`; must never change afterwards.
-    ended_at: Option<f64>,
-    /// The tmux session was killed behind core's back; the record still says `Running`.
+    /// The tmux session was killed behind core's back; the record still says running.
     killed: bool,
     /// Archived: hidden from the default listing, its name free; never deleted.
     archived: bool,
@@ -147,7 +144,7 @@ struct Rec {
 
 impl Rec {
     fn live(&self) -> bool {
-        self.lifecycle == Lifecycle::Running && !self.killed
+        !self.ended && !self.killed
     }
 }
 
@@ -223,7 +220,7 @@ impl Model {
             .collect();
         named
             .iter()
-            .find(|id| self.recs[*id].lifecycle == Lifecycle::Running)
+            .find(|id| !self.recs[*id].ended)
             .or(named.iter().rev().find(|id| !self.recs[*id].archived))
             .or(named.last())
             .map(|id| (*id).clone())
@@ -259,13 +256,10 @@ fn check_model(
         step
     );
 
-    let running = sorted(
-        core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
-            .unwrap(),
-    );
+    let running = sorted(core.list_sessions(&ListFilter::new().running()).unwrap());
     prop_assert_eq!(
         running,
-        model.listed(false, |rec| rec.lifecycle == Lifecycle::Running),
+        model.listed(false, |rec| rec.state != LlmEngineState::Ended),
         "step {}: running filter",
         step
     );
@@ -305,9 +299,9 @@ fn check_model(
         let session = core.get_session(id).unwrap();
         prop_assert_eq!(&session.name, &rec.name, "step {}: name of {}", step, id);
         prop_assert_eq!(
-            session.lifecycle,
-            rec.lifecycle,
-            "step {}: lifecycle of {}",
+            session.state == LlmEngineState::Ended,
+            rec.ended,
+            "step {}: ended of {}",
             step,
             id
         );
@@ -320,28 +314,12 @@ fn check_model(
             id
         );
         prop_assert_eq!(
-            &session.parent,
+            &session.parent_id,
             &rec.parent,
             "step {}: parent of {}",
             step,
             id
         );
-        prop_assert_eq!(
-            session.ended_at.is_some(),
-            rec.lifecycle.is_terminal(),
-            "step {}: ended_at presence of {}",
-            step,
-            id
-        );
-        match rec.ended_at {
-            None => rec.ended_at = session.ended_at,
-            Some(at) => prop_assert_eq!(
-                session.ended_at,
-                Some(at),
-                "step {}: ended_at changed",
-                step
-            ),
-        }
     }
 
     prop_assert_eq!(
@@ -402,10 +380,9 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                         id,
                         Rec {
                             name,
-                            lifecycle: Lifecycle::Running,
+                            ended: false,
                             tags: opts.tags,
                             parent: opts.parent,
-                            ended_at: None,
                             killed: false,
                             archived: false,
                         },
@@ -470,26 +447,20 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 let id = model.id_for(*who);
                 let expected = match model.recs.get(&id) {
                     None => "NotFound",
-                    Some(rec) if rec.lifecycle.is_terminal() => "NotRunning",
+                    Some(rec) if rec.ended => "NotRunning",
                     Some(_) => "Ok",
                 };
                 let result = core.stop_session(&id);
                 prop_assert_eq!(verdict(&result), expected, "step {}: stop {}", step, id);
                 if let Ok(session) = result {
                     let rec = model.recs.get_mut(&id).unwrap();
-                    let wanted = if rec.killed {
-                        Lifecycle::Exited
-                    } else {
-                        Lifecycle::Stopped
-                    };
                     prop_assert_eq!(
-                        session.lifecycle,
-                        wanted,
+                        session.state,
+                        LlmEngineState::Ended,
                         "step {}: stop of a killed session",
                         step
                     );
-                    prop_assert!(session.ended_at.is_some());
-                    rec.lifecycle = wanted;
+                    rec.ended = true;
                     rec.killed = false;
                     model.log_len += 1;
                     touched.insert(id);
@@ -509,12 +480,8 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                     if !rec.archived {
                         // A running one is stopped first: `Stopped`, or `Exited` when its
                         // tmux session was already gone.
-                        if !rec.lifecycle.is_terminal() {
-                            rec.lifecycle = if rec.killed {
-                                Lifecycle::Exited
-                            } else {
-                                Lifecycle::Stopped
-                            };
+                        if !rec.ended {
+                            rec.ended = true;
                             rec.killed = false;
                             model.log_len += 1;
                         }
@@ -522,7 +489,12 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                         model.log_len += 1;
                         touched.insert(id);
                     }
-                    prop_assert_eq!(session.lifecycle, rec.lifecycle, "step {}: archive", step);
+                    prop_assert_eq!(
+                        session.state == LlmEngineState::Ended,
+                        rec.ended,
+                        "step {}: archive",
+                        step
+                    );
                     prop_assert!(session.archived_at.is_some());
                 }
             }
@@ -541,15 +513,11 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                         let exited = matches!(result, RefreshResult::Exited(_));
                         prop_assert_eq!(exited, rec.killed, "step {}: refresh {}", step, id);
                         prop_assert_eq!(
-                            result.session().lifecycle,
-                            if rec.killed {
-                                Lifecycle::Exited
-                            } else {
-                                rec.lifecycle
-                            }
+                            result.session().state == LlmEngineState::Ended,
+                            rec.killed || rec.ended
                         );
                         if rec.killed {
-                            rec.lifecycle = Lifecycle::Exited;
+                            rec.ended = true;
                             rec.killed = false;
                             model.log_len += 1;
                             touched.insert(id);
@@ -574,7 +542,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                     "step {}: refresh_all changed set",
                     step
                 );
-                let all_exited = changed.iter().all(|s| s.lifecycle == Lifecycle::Exited);
+                let all_exited = changed.iter().all(|s| s.state == LlmEngineState::Ended);
                 prop_assert!(
                     all_exited,
                     "step {}: refresh_all returned a non-Exited record",
@@ -582,7 +550,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 );
                 for id in expected {
                     let rec = model.recs.get_mut(&id).unwrap();
-                    rec.lifecycle = Lifecycle::Exited;
+                    rec.ended = true;
                     rec.killed = false;
                     model.log_len += 1;
                     touched.insert(id);
@@ -747,7 +715,7 @@ fn resolve_prefers_an_id_over_a_name_equal_to_it() {
         "an archived id still resolves as an id"
     );
     // Once the id record is gone (deleted by hand: core never deletes one), the name surfaces.
-    std::fs::remove_file(h.data_dir().join(format!("sessions/{a}.json"))).unwrap();
+    std::fs::remove_file(h.data_dir().join(format!("agents/{a}/agent.json"))).unwrap();
     assert_eq!(
         core.resolve(a.as_str()).unwrap(),
         b,
@@ -781,8 +749,8 @@ fn resolve_three_records_one_name() {
     assert_eq!(core.resolve("n").unwrap(), third);
     core.stop_session(&third).unwrap();
     assert_eq!(
-        core.get_session(&third).unwrap().lifecycle,
-        Lifecycle::Exited
+        core.get_session(&third).unwrap().state,
+        LlmEngineState::Ended
     );
     assert_eq!(
         core.resolve("n").unwrap(),
@@ -832,7 +800,7 @@ fn parent_is_never_validated_and_tags_are_verbatim() {
     let id = core.create_session(opts.clone()).unwrap();
     let session = core.get_session(&id).unwrap();
     assert_eq!(
-        session.parent,
+        session.parent_id,
         Some(ghost.clone()),
         "dangling parent accepted verbatim"
     );
@@ -989,10 +957,22 @@ fn eight_cores_create_distinct_names_in_parallel() {
     ids.sort();
     assert_eq!(listed, ids);
     assert_eq!(log_types(&h), vec!["created"; 8]);
-    let leftovers: Vec<String> = std::fs::read_dir(h.data_dir().join("sessions"))
+    // Every entry under `agents/` is an id's directory holding exactly `agent.json`.
+    let leftovers: Vec<String> = std::fs::read_dir(h.data_dir().join("agents"))
         .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| !n.ends_with(".json") || n.starts_with('.'))
+        .flat_map(|e| {
+            let e = e.unwrap();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.parse::<SessionId>().is_err() {
+                return vec![name];
+            }
+            std::fs::read_dir(e.path())
+                .unwrap()
+                .map(|f| f.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|f| f != "agent.json")
+                .map(|f| format!("{name}/{f}"))
+                .collect()
+        })
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
     assert!(h.state_dir().join("locks/create.lock").exists());
@@ -1014,7 +994,7 @@ fn archive_of_a_live_session_stops_it_and_frees_its_name() {
     let core = h.open_with_engine();
     let id = core.create_session(agent("f", &h.repository("a"))).unwrap();
     let archived = core.archive_session(&id).unwrap();
-    assert_eq!(archived.lifecycle, Lifecycle::Stopped);
+    assert_eq!(archived.state, LlmEngineState::Ended);
     assert!(
         h.live_names().is_empty(),
         "stopped first: no orphan in tmux"
@@ -1136,7 +1116,7 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     assert_eq!(h.record_bytes(&a), bytes_a);
     assert_eq!(h.record_bytes(&b), bytes_b);
     assert_eq!(h.log_lines().len(), log_before);
-    assert_eq!(core.get_session(&a).unwrap().lifecycle, Lifecycle::Running);
+    assert_ne!(core.get_session(&a).unwrap().state, LlmEngineState::Ended);
 
     // A rename on a Running record with no live session is record-only.
     assert_eq!(core.rename_session(&a, "renamed").unwrap().name, "renamed");
@@ -1147,11 +1127,7 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     let mut expected = vec![a.clone(), b.clone()];
     expected.sort();
     assert_eq!(ids, expected);
-    assert!(
-        changed
-            .iter()
-            .all(|s| s.lifecycle == Lifecycle::Exited && s.ended_at.is_some())
-    );
+    assert!(changed.iter().all(|s| s.state == LlmEngineState::Ended));
     assert!(
         h.live_names().is_empty(),
         "refresh did not restart the server"
@@ -1171,7 +1147,7 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     let c = core.create_session(agent("renamed", &repository)).unwrap();
     assert_eq!(h.live_names(), ["renamed"]);
     assert_eq!(core.resolve("renamed").unwrap(), c);
-    assert_eq!(core.get_session(&a).unwrap().lifecycle, Lifecycle::Exited);
+    assert_eq!(core.get_session(&a).unwrap().state, LlmEngineState::Ended);
 }
 
 #[test]
@@ -1183,11 +1159,10 @@ fn stop_after_server_death_reports_exited() {
     h.tmux(&["kill-server"]);
     let session = core.stop_session(&id).unwrap();
     assert_eq!(
-        session.lifecycle,
-        Lifecycle::Exited,
+        session.state,
+        LlmEngineState::Ended,
         "what happened, not what was asked"
     );
-    assert!(session.ended_at.is_some());
     assert!(h.live_names().is_empty());
     assert_eq!(log_types(&h), ["created", "exited"]);
     assert_eq!(kind(&core.stop_session(&id).unwrap_err()), "NotRunning");
@@ -1208,17 +1183,13 @@ fn terminal_records_never_revive() {
     core.stop_session(&stopped).unwrap();
     h.tmux_ok(&["kill-session", "-t", "=e"]);
     core.refresh_session(&exited).unwrap();
-    let ended: Vec<f64> = [&stopped, &exited]
-        .iter()
-        .map(|id| core.get_session(id).unwrap().ended_at.unwrap())
-        .collect();
     // A foreign tmux session with the record's name and even its @tx-id must not revive it.
     h.tmux_ok(&["new-session", "-d", "-s", "s", "sleep", "30"]);
     h.tmux_ok(&["set-option", "-t", "=s:", "@tx-id", stopped.as_str()]);
     h.tmux_ok(&["new-session", "-d", "-s", "e", "sleep", "30"]);
     h.tmux_ok(&["set-option", "-t", "=e:", "@tx-id", exited.as_str()]);
     assert!(core.refresh_all().unwrap().is_empty());
-    for (index, (id, at)) in [&stopped, &exited].into_iter().zip(ended).enumerate() {
+    for (index, id) in [&stopped, &exited].into_iter().enumerate() {
         assert!(matches!(
             core.refresh_session(id).unwrap(),
             RefreshResult::Unchanged(_)
@@ -1228,12 +1199,7 @@ fn terminal_records_never_revive() {
         core.rename_session(id, &format!("back{index}")).unwrap();
         core.set_session_tags(id, vec!["t".into()]).unwrap();
         let session = core.get_session(id).unwrap();
-        assert!(session.lifecycle.is_terminal());
-        assert_eq!(
-            session.ended_at,
-            Some(at),
-            "ended_at is never cleared or rewritten"
-        );
+        assert_eq!(session.state, LlmEngineState::Ended);
         assert_eq!(kind(&core.stop_session(id).unwrap_err()), "NotRunning");
         assert_eq!(
             kind(

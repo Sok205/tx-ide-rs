@@ -81,22 +81,14 @@ fn core_errors_exit_1() {
     assert_eq!(stderr, "txc: engine codex is disabled\n");
 }
 
-/// `plugins.yaml: engine-codex: { enabled: false }` leaves `codex` unregistered: `engines` omits
-/// it, a create and a respawn of that kind are refused with the same message, and an existing
-/// Codex record still lists and shows. Re-enabled, the respawn gets past the engine check.
+/// A disabled engine plugin leaves its kind unregistered: `engines` does not list it, a create
+/// and a respawn of that kind are refused with the same message, and an existing Codex record
+/// still lists and shows. Re-enabled, the respawn gets past the engine check.
 #[test]
 fn a_disabled_engine_plugin_leaves_its_kind_unregistered_but_its_records_listed() {
     let cli = Cli::new();
     let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f2";
-    let sessions = cli.state().join("sessions");
-    std::fs::create_dir_all(&sessions).unwrap();
-    std::fs::write(
-        sessions.join(format!("{id}.json")),
-        format!(
-            r#"{{"version":1,"id":"{id}","name":"old-codex","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":2.0,"lifecycle":"exited","launch":{{"kind":"agent","engine":"codex","profile":[]}},"state":"ended"}}"#
-        ),
-    )
-    .unwrap();
+    common::plant_record(&cli, id, "old-codex", "codex");
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
     assert_eq!(cli.ok(&["engines"]), "claude\n");
     assert!(cli.ok(&["plugins"]).contains("engine-codex\tdisabled"));
@@ -115,56 +107,13 @@ fn a_disabled_engine_plugin_leaves_its_kind_unregistered_but_its_records_listed(
     assert!(stderr.contains("codex cannot resume old-codex"), "{stderr}");
 }
 
-/// A `"kind": "process"` record left by a build before core held agents only is skipped by every
-/// read, and named on stderr once per invocation.
-#[test]
-fn process_records_on_disk_are_skipped_and_named_on_stderr() {
-    let cli = Cli::new();
-    let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
-    let sessions = cli.state().join("sessions");
-    std::fs::create_dir_all(&sessions).unwrap();
-    std::fs::write(
-        sessions.join(format!("{id}.json")),
-        format!(
-            r#"{{"version":1,"id":"{id}","name":"old-shell","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{{"kind":"process","program":"sh","args":[]}}}}"#
-        ),
-    )
-    .unwrap();
-    let output = cli.run(&["ls"], &[], "");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "{stderr}");
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
-    assert!(
-        stderr.contains(&format!("skipped record {id}: a process record")),
-        "{stderr}"
-    );
-    assert_eq!(stderr.lines().count(), 1, "{stderr}");
-    assert!(
-        cli.fails(&["show", "old-shell"], 1)
-            .ends_with("no session \"old-shell\"\n")
-    );
-    assert!(
-        sessions.join(format!("{id}.json")).is_file(),
-        "nothing is deleted"
-    );
-}
-
 /// A record naming an engine this build does not know (hand-edited, or another build's) is
-/// skipped like a process record: the other records list, stderr names it with the known
-/// engines, nothing is deleted.
+/// skipped: the other records list, stderr names it with the known engines, nothing is deleted.
 #[test]
 fn records_with_an_unknown_engine_are_skipped_and_named_on_stderr() {
     let cli = Cli::new();
     let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f1";
-    let sessions = cli.state().join("sessions");
-    std::fs::create_dir_all(&sessions).unwrap();
-    std::fs::write(
-        sessions.join(format!("{id}.json")),
-        format!(
-            r#"{{"version":1,"id":"{id}","name":"odd","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{{"kind":"agent","engine":"kodex","profile":[]}},"state":"ended"}}"#
-        ),
-    )
-    .unwrap();
+    let path = common::plant_record(&cli, id, "odd", "kodex");
     let output = cli.run(&["ls"], &[], "");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
@@ -180,10 +129,262 @@ fn records_with_an_unknown_engine_are_skipped_and_named_on_stderr() {
         cli.fails(&["show", "odd"], 1)
             .ends_with("no session \"odd\"\n")
     );
-    assert!(
-        sessions.join(format!("{id}.json")).is_file(),
-        "nothing is deleted"
+    assert!(path.is_file(), "nothing is deleted");
+}
+
+/// The version-1 records a migration test starts from, as the builds before this one wrote
+/// them: one row of the mapping table each.
+mod version_one {
+    use serde_json::{Value, json};
+
+    pub const CLAUDE: &str = "a0000000-0000-4000-8000-00000000000a";
+    pub const CODEX: &str = "b0000000-0000-4000-8000-00000000000b";
+    pub const FORK: &str = "c0000000-0000-4000-8000-00000000000c";
+    pub const VIEW: &str = "d0000000-0000-4000-8000-00000000000d";
+    pub const SILENT: &str = "e0000000-0000-4000-8000-00000000000e";
+    pub const ANCIENT: &str = "f0000000-0000-4000-8000-00000000000f";
+
+    fn base(id: &str, name: &str, lifecycle: &str) -> Value {
+        json!({
+            "version": 1, "id": id, "name": name, "parent": null, "tags": ["t"], "cwd": "/w",
+            "created_at": 1.0, "ended_at": null, "last_modified_at": 5.0, "lifecycle": lifecycle,
+        })
+    }
+
+    /// A running Claude agent of PR 12a vintage: options in `launch`, a running `state`, the
+    /// chat plugin's capture of its conversation, a retired `hooks` entry and a plugin's own.
+    pub fn claude() -> Value {
+        let mut record = base(CLAUDE, "lead", "running");
+        record["state"] = json!("working");
+        record["launch"] = json!({"kind": "agent", "engine": "claude", "profile": ["COMMON", "DEVELOPER"], "model": "sonnet", "effort": "max"});
+        record["ext"] = json!({
+            "chat": {"engine": "claude", "chats": [
+                {"id": "old-1", "role": "primary", "how": "spawn", "since": 1.0, "ended_at": 2.0, "transcript": "/t/old-1.jsonl"},
+                {"id": "c1", "role": "primary", "how": "spawn", "since": 2.0, "transcript": "/t/c1.jsonl"},
+            ]},
+            "hooks": {"state": "idle"},
+            "artifacts": {"group": "g"},
+        });
+        record
+    }
+
+    /// A stopped Codex agent from before `state` existed, with an effort Codex does not accept.
+    pub fn codex() -> Value {
+        let mut record = base(CODEX, "helper", "stopped");
+        record["ended_at"] = json!(4.0);
+        record["launch"] = json!({"kind": "agent", "engine": "codex", "profile": [], "model": "gpt-6.1-sol", "effort": "extreme", "resume": "r1"});
+        record
+    }
+
+    /// A fork from before core fork: a process record running the engine, the agent launch kept
+    /// by the chat plugin.
+    pub fn fork() -> Value {
+        let mut record = base(FORK, "lead-fork", "exited");
+        record["parent"] = json!(CLAUDE);
+        record["launch"] = json!({"kind": "process", "program": "claude", "args": ["--resume", "c1", "--fork-session"]});
+        record["ext"] = json!({"chat": {
+            "launch": {"engine": "claude", "profile": ["COMMON"], "model": "opus"},
+            "chats": [{"id": "c2", "role": "fork", "how": "fork", "since": 3.0, "transcript": "/t/c2.jsonl"}],
+        }});
+        record
+    }
+
+    /// An nvim view: a process record that is not an agent.
+    pub fn view() -> Value {
+        let mut record = base(VIEW, "plan-md", "running");
+        record["launch"] = json!({"kind": "process", "program": "nvim", "args": ["plan.md"]});
+        record
+    }
+
+    /// A running agent that never reported a conversation.
+    pub fn silent() -> Value {
+        let mut record = base(SILENT, "quiet", "running");
+        record["launch"] = json!({"kind": "agent", "engine": "codex", "profile": []});
+        record
+    }
+
+    /// A record from before `last_modified_at` existed.
+    pub fn ancient() -> Value {
+        let mut record = base(ANCIENT, "elder", "exited");
+        record.as_object_mut().unwrap().remove("last_modified_at");
+        record["launch"] =
+            json!({"kind": "agent", "engine": "claude", "profile": [], "resume": "c3"});
+        record
+    }
+}
+
+/// Acceptance 1 and 2 of Storage PR 14: version-1 records refuse every verb with the pointer to
+/// `txc migrate`; `txc migrate` upgrades them row by row of the mapping table, moves the
+/// non-agents to `legacy/`, backs the originals up, and reports; a second run has nothing to
+/// do; a key this build does not know survives a rename.
+#[test]
+fn version_one_records_refuse_until_migrated_then_match_the_mapping() {
+    let cli = Cli::new();
+    let sessions = cli.state().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let records = [
+        version_one::claude(),
+        version_one::codex(),
+        version_one::fork(),
+        version_one::view(),
+        version_one::silent(),
+        version_one::ancient(),
+    ];
+    for record in &records {
+        let id = record["id"].as_str().unwrap();
+        std::fs::write(sessions.join(format!("{id}.json")), record.to_string()).unwrap();
+    }
+    std::fs::write(sessions.join("notes.json"), "{not json").unwrap();
+    let stderr = cli.fails(&["ls"], 1);
+    assert_eq!(
+        stderr,
+        format!(
+            "txc: 7 version-1 record(s) in {}: run `txc migrate`\n",
+            sessions.display()
+        )
     );
+    assert!(
+        cli.fails(&["show", "lead"], 1)
+            .contains("run `txc migrate`")
+    );
+
+    let report = cli.ok(&["migrate"]);
+    for line in [
+        format!("migrated\t{}\tlead", version_one::CLAUDE),
+        format!("migrated\t{}\tlead-fork", version_one::FORK),
+        format!("migrated\t{}\telder", version_one::ANCIENT),
+        format!("migrated-no-conversation\t{}\tquiet", version_one::SILENT),
+        format!(
+            "legacy\t{}.json\ta process record (nvim), not an agent",
+            version_one::VIEW
+        ),
+        "legacy\tnotes.json\tnot a JSON record".to_owned(),
+    ] {
+        assert!(report.contains(&line), "{line:?} not in:\n{report}");
+    }
+    // A resume id without a rollout path: Codex can `resume` it, but names no conversation
+    // (`LlmEngine::conversation` wants the path too, PR 8b), so the report says so.
+    assert!(
+        report.contains(&format!(
+            "migrated-no-conversation\t{}\thelper",
+            version_one::CODEX
+        )),
+        "{report}"
+    );
+    assert!(!report.contains("nothing to do"), "{report}");
+    assert!(!sessions.exists(), "sessions/ is removed once empty");
+    for record in records
+        .iter()
+        .filter(|record| record["id"] != version_one::VIEW)
+    {
+        let id = record["id"].as_str().unwrap();
+        let backup = cli.state().join(format!("migration-backup/{id}.v1.json"));
+        assert!(backup.is_file(), "{id}");
+        let kept: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&backup).unwrap()).unwrap();
+        assert_eq!(&kept, record, "the backup is the original, byte for byte");
+    }
+    assert!(
+        cli.state()
+            .join("legacy")
+            .join(format!("{}.json", version_one::VIEW))
+            .is_file()
+    );
+    assert!(cli.state().join("legacy/notes.json").is_file());
+
+    let listed = cli.ok(&["ls"]);
+    for name in ["lead", "helper", "lead-fork", "quiet", "elder"] {
+        assert!(listed.contains(name), "{name} missing from:\n{listed}");
+    }
+    assert!(!listed.contains("plan-md"), "{listed}");
+    let show = |name: &str| -> serde_json::Value {
+        serde_json::from_str(&cli.ok(&["show", name])).unwrap()
+    };
+
+    let lead = show("lead");
+    assert_eq!(lead["version"], 2);
+    assert_eq!(lead["engine"], "claude");
+    assert_eq!(lead["working_directory"], "/w");
+    assert_eq!(lead["roles"], serde_json::json!(["COMMON", "DEVELOPER"]));
+    assert_eq!(lead["state"], "working");
+    assert_eq!(lead["last_modified_at"], 5.0);
+    assert_eq!(lead["archived_at"], serde_json::Value::Null);
+    assert_eq!(lead["tags"], serde_json::json!(["t"]));
+    assert_eq!(lead["parent_id"], serde_json::Value::Null);
+    assert_eq!(
+        lead["ext"]["claude"],
+        serde_json::json!({"model": "sonnet", "effort": "max", "conversation_id": "c1", "transcript_path": "/t/c1.jsonl"})
+    );
+    assert_eq!(lead["ext"]["artifacts"], serde_json::json!({"group": "g"}));
+    assert!(lead["ext"].get("chat").is_none() && lead["ext"].get("hooks").is_none());
+    for gone in ["lifecycle", "launch", "ended_at", "cwd", "parent"] {
+        assert!(lead.get(gone).is_none(), "{gone}: {lead}");
+    }
+
+    let helper = show("helper");
+    assert_eq!(helper["engine"], "codex");
+    assert_eq!(helper["state"], "ended");
+    assert_eq!(
+        helper["ext"]["codex"],
+        serde_json::json!({"model": "gpt-6.1-sol", "conversation_id": "r1"}),
+        "an effort Codex refuses is dropped; the resume id is the conversation"
+    );
+
+    let fork = show("lead-fork");
+    assert_eq!(fork["engine"], "claude");
+    assert_eq!(fork["roles"], serde_json::json!(["COMMON"]));
+    assert_eq!(fork["parent_id"], version_one::CLAUDE);
+    assert_eq!(fork["state"], "ended");
+    assert_eq!(
+        fork["ext"]["claude"],
+        serde_json::json!({"model": "opus", "conversation_id": "c2", "transcript_path": "/t/c2.jsonl"})
+    );
+
+    let quiet = show("quiet");
+    assert_eq!(
+        quiet["state"], "starting",
+        "running without a state starts over"
+    );
+    assert!(quiet.get("ext").is_none(), "{quiet}");
+
+    let elder = show("elder");
+    assert_eq!(elder["state"], "ended");
+    let mtime = std::fs::metadata(
+        cli.state()
+            .join(format!("migration-backup/{}.v1.json", version_one::ANCIENT)),
+    )
+    .unwrap()
+    .modified()
+    .unwrap()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap()
+    .as_secs_f64();
+    let stamped = elder["last_modified_at"].as_f64().unwrap();
+    assert!(
+        (stamped - mtime).abs() < 5.0,
+        "{stamped} vs the file's {mtime}"
+    );
+    assert_eq!(elder["ext"]["claude"]["conversation_id"], "c3");
+    assert!(
+        elder["ext"]["claude"]["transcript_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("/c3.jsonl"),
+        "{elder}"
+    );
+
+    assert_eq!(cli.ok(&["migrate"]), "nothing to do\n");
+
+    // Acceptance 5: an unknown top-level key survives a rewrite.
+    let path = common::record_path(&cli, version_one::CODEX);
+    let mut record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    record["future_field"] = serde_json::json!(1);
+    std::fs::write(&path, record.to_string()).unwrap();
+    cli.ok(&["rename", "helper", "helper-2"]);
+    let renamed = show("helper-2");
+    assert_eq!(renamed["future_field"], 1);
+    assert_eq!(renamed["version"], 2);
 }
 
 #[test]
@@ -229,10 +430,11 @@ fn agent_session_round_trip() {
     let fields: Vec<&str> = ls.trim().split('\t').collect();
     assert_eq!(fields[0], id);
     assert_eq!(fields[1], "ag-1");
-    assert_eq!(fields[2], "running");
+    assert_eq!(fields[2], "starting");
     assert_eq!(fields[3], cwd.to_str().unwrap());
     assert_eq!(cli.ok(&["ls", "--tag", "zzz"]), "");
-    assert_eq!(cli.ok(&["ls", "--lifecycle", "running"]).lines().count(), 1);
+    assert_eq!(cli.ok(&["ls", "--running"]).lines().count(), 1);
+    assert_eq!(cli.ok(&["ls", "--ended"]), "");
 
     let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "ag-1"])).unwrap();
     assert_eq!(shown["id"], id);
@@ -316,7 +518,7 @@ fn agent_session_round_trip() {
 
     assert_eq!(cli.ok(&["refresh"]), "");
     assert_eq!(cli.ok(&["refresh", "ag-2"]), "");
-    assert_eq!(cli.ok(&["stop", "ag-2"]).trim(), format!("{id}\tstopped"));
+    assert_eq!(cli.ok(&["stop", "ag-2"]).trim(), format!("{id}\tended"));
     assert!(cli.fails(&["where", "ag-2"], 1).contains("not running"));
     assert!(!cli.tmux(&["has-session", "-t", "=ag-2"]).status.success());
     assert_eq!(
@@ -326,7 +528,7 @@ fn agent_session_round_trip() {
     assert_eq!(cli.ok(&["ls"]), "");
     assert!(
         cli.ok(&["ls", "--archived"])
-            .starts_with(&format!("{id}\tag-2\tstopped\t"))
+            .starts_with(&format!("{id}\tag-2\tended\t"))
     );
     assert!(cli.ok(&["show", "ag-2"]).contains("\"archived_at\""));
     assert_eq!(
@@ -366,7 +568,7 @@ fn ls_json_lists_running_agents_with_exactly_five_keys() {
     );
 
     let ended: serde_json::Value =
-        serde_json::from_str(&cli.ok(&["ls", "--json", "--lifecycle", "stopped"])).unwrap();
+        serde_json::from_str(&cli.ok(&["ls", "--json", "--ended"])).unwrap();
     assert_eq!(ended[0]["id"], stopped.as_str());
 }
 
@@ -420,7 +622,7 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
     let shown = relative(&["show", "me"]);
     assert!(shown.status.success());
     let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
-    let cwd = Path::new(shown["cwd"].as_str().unwrap());
+    let cwd = Path::new(shown["working_directory"].as_str().unwrap());
     let env = wait_for(&cwd.join("env.txt"), Duration::from_secs(5));
     let get = |key: &str| {
         env.lines()
@@ -495,6 +697,6 @@ fn refresh_reports_vanished_sessions() {
     let cli = Cli::new();
     let id = cli.create("v");
     assert!(cli.tmux(&["kill-session", "-t", "=v"]).status.success());
-    assert_eq!(cli.ok(&["refresh"]).trim(), format!("{id}\tv\texited"));
+    assert_eq!(cli.ok(&["refresh"]).trim(), format!("{id}\tv\tended"));
     assert_eq!(cli.ok(&["refresh"]), "");
 }

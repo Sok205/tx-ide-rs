@@ -294,13 +294,26 @@ pub fn open(global: &Global) -> Result<TxCore, Failure> {
     open_with(global, core_config(global)?)
 }
 
-/// Opens the core from an already resolved config. Records this build skips (process records
-/// left by a build before PR 11, records naming an engine it does not know) are skipped by
-/// every read; this names each on stderr, once per invocation, until Storage PR 14's migration
-/// moves them.
+/// Opens the core from an already resolved config, with its plugins. Records this build skips
+/// (those naming an engine it does not know) are skipped by every read; this names each on
+/// stderr, once per invocation.
 pub fn open_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
+    open_core(global, config, TxCore::open)
+}
+
+/// [`open_with`] for `txc migrate`: the version-1 records in `<data>/sessions/` do not refuse
+/// the open, since upgrading them is the point.
+pub fn open_for_migration_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
+    open_core(global, config, TxCore::open_for_migration)
+}
+
+fn open_core(
+    global: &Global,
+    config: CoreConfig,
+    open: fn(CoreConfig) -> Result<TxCore, CoreError>,
+) -> Result<TxCore, Failure> {
     let cfg = plugin_config(global, &config)?;
-    let mut core = TxCore::open(config)?;
+    let mut core = open(config)?;
     core.plug(plugins::manifest(), &cfg)
         .map_err(Failure::Plugin)?;
     for (id, reason) in core.skipped_records()? {

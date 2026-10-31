@@ -332,15 +332,39 @@ macro_rules! require_tmux {
     };
 }
 
-pub fn lifecycle_of(cli: &Cli, token: &str) -> String {
+/// The record's `state`: `starting`, `idle`, `working` or `ended`.
+pub fn state_of(cli: &Cli, token: &str) -> String {
     let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", token])).unwrap();
-    json["lifecycle"].as_str().unwrap().to_owned()
+    json["state"].as_str().unwrap().to_owned()
 }
 
-/// Where a session runs: its record's `cwd`, the agent's worktree.
+/// Where a session runs: its record's `working_directory`, the agent's worktree.
 pub fn cwd_of(cli: &Cli, token: &str) -> PathBuf {
     let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", token])).unwrap();
-    PathBuf::from(json["cwd"].as_str().unwrap())
+    PathBuf::from(json["working_directory"].as_str().unwrap())
+}
+
+/// `<data>/agents/<id>/agent.json`: where the record of `id` lives.
+pub fn record_path(cli: &Cli, id: &str) -> PathBuf {
+    cli.state().join("agents").join(id).join("agent.json")
+}
+
+/// Writes a version-2 record of an ended agent by hand, as a build before this one might have
+/// left it: `engine` is any string, so an unknown engine can be planted too.
+pub fn plant_record(cli: &Cli, id: &str, name: &str, engine: &str) -> PathBuf {
+    let path = record_path(cli, id);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "version": 2, "id": id, "name": name, "engine": engine, "working_directory": "/",
+            "roles": [], "state": "ended", "created_at": 1.0, "last_modified_at": 2.0,
+            "archived_at": null, "tags": [], "parent_id": null,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    path
 }
 
 pub fn pane_id_of(cli: &Cli, name: &str) -> String {

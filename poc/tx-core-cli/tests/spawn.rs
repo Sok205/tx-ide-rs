@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{Cli, lifecycle_of};
+use common::{Cli, state_of};
 
 /// An `nvim` that answers the form from `$TX_NEW_AGENT_ANSWERS` (cancels when it is unset).
 fn fake_nvim() -> &'static str {
@@ -45,22 +45,17 @@ fn new_agent_creates_the_session_the_form_describes() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stderr), "spawned health\n");
-    assert_eq!(lifecycle_of(&cli, "health"), "running");
+    assert_ne!(state_of(&cli, "health"), "ended");
     let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "health"])).unwrap();
     assert_eq!(json["tags"], serde_json::json!(["tutor", "api"]));
     // The agent runs in its own worktree of the form's directory, not in that directory.
-    let worktree = std::path::PathBuf::from(json["cwd"].as_str().unwrap());
+    let worktree = std::path::PathBuf::from(json["working_directory"].as_str().unwrap());
     assert!(worktree.starts_with(cli.worktrees_dir()), "{worktree:?}");
     assert!(worktree.ends_with("proj--health"), "{worktree:?}");
     assert!(worktree.join("README.md").is_file());
-    assert_eq!(json["launch"]["engine"], "claude");
-    assert_eq!(
-        json["launch"]["profile"],
-        serde_json::json!(["COMMON", "DEVELOPER"])
-    );
+    assert_eq!(json["engine"], "claude");
+    assert_eq!(json["roles"], serde_json::json!(["COMMON", "DEVELOPER"]));
     // Options are engine data: the default model passes nothing, the effort lands in `ext`.
-    assert_eq!(json["launch"].get("model"), None);
-    assert_eq!(json["launch"].get("effort"), None);
     assert_eq!(json["ext"]["claude"]["effort"], "low");
     assert_eq!(json["ext"]["claude"].get("model"), None);
     assert!(worktree.join(".claude/skills/tx-diff-review").exists());

@@ -350,7 +350,7 @@ fn health(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
             io.stdout,
             "{}\t{}\t{found}/{known} transcripts\t{notes}",
             session.name,
-            session.lifecycle.as_str()
+            session.state.as_str()
         )
         .map_err(failed)?;
     }

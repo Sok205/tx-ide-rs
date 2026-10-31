@@ -41,14 +41,11 @@ pub fn set_utc() {
     });
 }
 
-/// One world session as a tx-core record (`version: 1`): lifecycle and `status` from `state`,
-/// the engine data (options and conversation), the edit plugin's group.
+/// One world session as a tx-core record (`version: 2`): `state` from the world's `state`, the
+/// engine data (options and conversation), the edit plugin's group.
 pub fn record(session: &Value, transcripts: &Path) -> Value {
     let engine = session["engine"].as_str().unwrap();
     let state = session["state"].as_str().unwrap();
-    let launch = json!({
-        "kind": "agent", "engine": engine, "profile": [], "resume": null,
-    });
     let mut ext = Map::new();
     // Model, effort and the conversation are engine data (PR 12a, Engine 8c), under the
     // engine's own `ext` key.
@@ -81,14 +78,15 @@ pub fn record(session: &Value, transcripts: &Path) -> Value {
         .filter_map(|key| session.get(*key).and_then(Value::as_f64))
         .fold(f64::MIN, f64::max);
     json!({
-        "version": 1,
+        "version": 2,
         "id": session["id"], "name": session["name"],
-        "parent": session.get("parent"), "tags": session["tags"], "cwd": "/tmp",
-        "created_at": session["created_at"], "ended_at": session.get("ended_at"),
-        "last_modified_at": last_modified_at,
-        "lifecycle": if state == "exited" { "exited" } else { "running" },
-        "launch": launch, "ext": ext,
+        "engine": engine, "working_directory": "/tmp", "roles": [],
         "state": if state == "exited" { "ended" } else { state },
+        "created_at": session["created_at"],
+        "last_modified_at": last_modified_at,
+        "archived_at": null,
+        "tags": session["tags"], "parent_id": session.get("parent"),
+        "ext": ext,
     })
 }
 
@@ -108,10 +106,9 @@ pub fn transcripts(sessions: &[tx_core::Session]) -> tx_timeline::model::Transcr
     sessions
         .iter()
         .filter_map(|session| {
-            let tx_core::Launch::Agent { engine, .. } = &session.launch;
             let path = session
                 .ext
-                .get(engine.as_str())?
+                .get(session.engine.as_str())?
                 .get("transcript_path")?
                 .as_str()?;
             Some((session.id.clone(), PathBuf::from(path)))

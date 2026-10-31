@@ -18,11 +18,11 @@ fn fixtures() -> PathBuf {
 
 /// The fixture world's records in the state dir.
 fn seed(cli: &Cli) -> Value {
-    let dir = cli.state().join("sessions");
-    std::fs::create_dir_all(&dir).unwrap();
     for record in world::records(&fixtures()) {
         let id = record["id"].as_str().unwrap();
-        std::fs::write(dir.join(format!("{id}.json")), record.to_string()).unwrap();
+        let path = common::record_path(cli, id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, record.to_string()).unwrap();
     }
     world::world(&fixtures())
 }
@@ -98,13 +98,6 @@ fn a_disabled_engine_never_fails_the_view_and_health_reports_it() {
     seed(&cli);
     // The lead's engine plugin is disabled: core cannot ask it for the conversation.
     cli.write_yaml("plugins:\n  engine-claude: { enabled: false }\n");
-    let path = cli
-        .state()
-        .join("sessions/a0000000-0000-4000-8000-00000000000a.json");
-    let mut record: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    // A record without a state (written before agent state existed) reads as idle.
-    record.as_object_mut().unwrap().remove("state");
-    std::fs::write(&path, record.to_string()).unwrap();
     let out = stdout(&utc(
         &cli,
         &["_timeline-json", "--days", "1", "--now", "1791720000"],
@@ -116,7 +109,7 @@ fn a_disabled_engine_never_fails_the_view_and_health_reports_it() {
         .iter()
         .find(|lane| lane["id"] == "lead")
         .expect("the lane survives without its transcript");
-    assert_eq!(lead["state"], "idle");
+    assert_eq!(lead["state"], "working");
     let snapshot = utc(&cli, &["timeline", "--snapshot", "--now", "1791720000"]);
     stdout(&snapshot);
     let health = cli.run(&["timeline", "health"], &[], "");

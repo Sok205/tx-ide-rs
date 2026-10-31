@@ -14,7 +14,7 @@ impl Cli {
         serde_json::from_str(&self.ok(&["show", name])).unwrap()
     }
     fn record_path(&self, id: &str) -> std::path::PathBuf {
-        self.state().join("sessions").join(format!("{id}.json"))
+        self.state().join("agents").join(id).join("agent.json")
     }
     fn create_agent(&self, name: &str) -> String {
         let cwd = self.repository(name);
@@ -103,10 +103,13 @@ impl Cli {
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
     fn records_named(&self, name: &str) -> Vec<Value> {
-        std::fs::read_dir(self.state().join("sessions"))
+        std::fs::read_dir(self.state().join("agents"))
             .unwrap()
             .filter_map(Result::ok)
-            .filter_map(|e| serde_json::from_slice::<Value>(&std::fs::read(e.path()).ok()?).ok())
+            .filter_map(|e| {
+                serde_json::from_slice::<Value>(&std::fs::read(e.path().join("agent.json")).ok()?)
+                    .ok()
+            })
             .filter(|record| record["name"] == name)
             .collect()
     }
@@ -207,12 +210,14 @@ fn fork_launches_the_source_conversation_forked_in_a_new_worktree() {
     let fork_id = fork_id.trim();
     let fork = cli.show("a-fork");
     assert_eq!(fork["id"], fork_id);
-    assert_eq!(fork["parent"], id.as_str());
-    assert_eq!(fork["launch"]["kind"], "agent");
-    assert_eq!(fork["launch"]["engine"], "claude");
+    assert_eq!(fork["parent_id"], id.as_str());
+    assert_eq!(fork["engine"], "claude");
     assert_eq!(fork["state"], "starting");
-    let cwd = Path::new(fork["cwd"].as_str().unwrap());
-    assert_ne!(cwd, Path::new(source["cwd"].as_str().unwrap()));
+    let cwd = Path::new(fork["working_directory"].as_str().unwrap());
+    assert_ne!(
+        cwd,
+        Path::new(source["working_directory"].as_str().unwrap())
+    );
     assert!(cwd.starts_with(cli.worktrees_dir().canonicalize().unwrap()));
     assert!(cwd.join(".git").exists(), "{}", cwd.display());
     assert_eq!(fork["ext"]["claude"]["conversation_id"], fork_id);
@@ -262,7 +267,7 @@ fn fork_pane_background_half_forks_the_pane_session_and_reports() {
         "{output:?}"
     );
     let fork = cli.show("a-f");
-    assert_eq!(fork["parent"], id.as_str());
+    assert_eq!(fork["parent_id"], id.as_str());
 }
 
 #[test]

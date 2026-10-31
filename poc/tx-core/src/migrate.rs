@@ -1,22 +1,38 @@
-//! The one-time move of a version-1 home (`~/.tx-core`, everything in one directory) into the
-//! five XDG directories. Records are moved as they are; upgrading them is a later step.
-//!
-//! The move refuses, before touching anything, while the old home's tmux server has sessions
-//! (their agents still carry the old paths), when the old home was already moved, and when any
-//! destination is occupied, so two homes are never merged.
+//! `txc migrate`, in two steps. First the one-time move of a version-1 home (`~/.tx-core`,
+//! everything in one directory) into the five XDG directories ([`migrate_home`]); it refuses,
+//! before touching anything, while the old home's tmux server has sessions (their agents still
+//! carry the old paths), when the old home was already moved, and when any destination is
+//! occupied, so two homes are never merged. Then the upgrade of every version-1 record left in
+//! `<data>/sessions/<id>.json` to a version-2 `<data>/agents/<id>/agent.json`
+//! ([`upgrade_records`]), which `TxCore::open` insists on before it reads anything.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde_json::{Map, Value};
+
 use crate::config::{AGENTS_DIR, CONF_FILE, Directories, SOCKET_FILE};
-use crate::core::{DEFAULT_TMUX_CONF, SESSIONS_DIR, TMUX_BINARY};
+use crate::core::{DEFAULT_TMUX_CONF, SESSIONS_DIR, TMUX_BINARY, TxCore};
+use crate::engine::EngineKind;
 use crate::events::now;
+use crate::session::{Session, SessionId};
+use crate::state::LlmEngineState;
+use crate::store::StoreError;
 
 /// Left in the old home after a move: where everything went.
 pub const MOVED_TO_FILE: &str = "MOVED-TO";
 /// Written into the data directory after a move: where everything came from.
 pub const MIGRATED_FROM_FILE: &str = "MIGRATED-FROM";
+/// Under the data directory: version-1 records that are not agents (process records of nvim
+/// views and shells, unknown engines, unreadable files), moved out of the way as they were.
+pub const LEGACY_DIR: &str = "legacy";
+/// Under the data directory: every upgraded version-1 record as it was, `<id>.v1.json`.
+pub const BACKUP_DIR: &str = "migration-backup";
+/// The retired chat plugin's `ext` key: where version-1 records kept their conversations.
+pub const CHAT_EXT_KEY: &str = "chat";
+/// The retired hooks plugin's `ext` key; dropped by the upgrade.
+pub const HOOKS_EXT_KEY: &str = "hooks";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Destination {
@@ -65,6 +81,10 @@ pub enum MigrationError {
     Occupied(Vec<PathBuf>),
     #[error("{}: {source}", .path.display())]
     Io { path: PathBuf, source: io::Error },
+    #[error("lock: {0}")]
+    Lock(io::Error),
+    #[error(transparent)]
+    Store(#[from] StoreError),
 }
 
 fn io_error(path: &Path) -> impl FnOnce(io::Error) -> MigrationError + '_ {
@@ -110,9 +130,10 @@ pub fn migrate_home(
         .filter(|(from, _)| from.symlink_metadata().is_ok())
         .collect();
     let mut occupied = Vec::new();
-    // The agent records of a later version live here; a home that has them was set up anew.
+    // The agent records live here; a home that has any was set up anew (an empty `agents/`,
+    // which `TxCore::open` creates, is free).
     let agents = directories.data.join(AGENTS_DIR);
-    if agents.symlink_metadata().is_ok() {
+    if is_occupied(&agents)? {
         occupied.push(agents);
     }
     for (_, to) in &moves {
@@ -247,6 +268,366 @@ fn remove_entry(path: &Path) -> Result<(), MigrationError> {
     }
 }
 
+// ----- the record step ----------------------------------------------------------------------
+
+/// The version-1 record files in `<data>/sessions/`: every `*.json` regular file, sorted by
+/// name. Empty when the directory is missing. What `TxCore::open` refuses on.
+pub fn version_one_records(data: &Path) -> io::Result<Vec<PathBuf>> {
+    let sessions = data.join(SESSIONS_DIR);
+    let entries = match std::fs::read_dir(&sessions) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.starts_with('.') || !name.ends_with(".json") {
+            continue;
+        }
+        if entry.path().is_file() {
+            files.push(entry.path());
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// What the record step did, for the report.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RecordReport {
+    /// `(id, name)` of the agents now at `agents/<id>/agent.json`, their conversation known.
+    pub migrated: Vec<(SessionId, String)>,
+    /// Migrated too, but their engine names no conversation for them
+    /// (`LlmEngine::conversation` is `None`): nothing recorded, or an id without a transcript.
+    pub without_conversation: Vec<(SessionId, String)>,
+    /// `(file name, why)` of the records moved to `legacy/`.
+    pub legacy: Vec<(String, String)>,
+    /// Records that were already at version 2 under `agents/`; their stale version-1 file was
+    /// backed up and removed.
+    pub skipped: Vec<SessionId>,
+    /// `(id, why)` of the records left in `sessions/` for a later run: their engine's plugin is
+    /// disabled, so nobody can build their engine data.
+    pub deferred: Vec<(SessionId, String)>,
+}
+
+impl RecordReport {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The conversation a version-1 record names, for `LlmEngine::upgrade_version_one`: the active
+/// chat the retired chat plugin captured in `ext.chat.chats` (the last one with an id and no
+/// `ended_at`, else the last one with an id), as `(id, transcript path)`; else `launch.resume`
+/// with no path.
+pub fn version_one_conversation<'a>(
+    record: &'a Map<String, Value>,
+    launch: &'a Map<String, Value>,
+) -> Option<(&'a str, Option<&'a str>)> {
+    let chats = record
+        .get("ext")
+        .and_then(|ext| ext.get(CHAT_EXT_KEY))
+        .and_then(|chat| chat.get("chats"))
+        .and_then(Value::as_array);
+    if let Some(chats) = chats {
+        let with_id = || {
+            chats.iter().filter_map(|chat| {
+                let id = chat.get("id")?.as_str()?;
+                let transcript = chat.get("transcript").and_then(Value::as_str);
+                let ended = chat.get("ended_at").is_some_and(|at| !at.is_null());
+                Some((id, transcript, ended))
+            })
+        };
+        let active = with_id()
+            .rev()
+            .find(|(_, _, ended)| !ended)
+            .or_else(|| with_id().next_back());
+        if let Some((id, transcript, _)) = active {
+            return Some((id, transcript));
+        }
+    }
+    launch
+        .get("resume")
+        .and_then(Value::as_str)
+        .map(|resume| (resume, None))
+}
+
+/// Why one version-1 file is not an agent of this build.
+#[derive(Debug)]
+enum Outcome {
+    Agent(Box<Session>),
+    Legacy(String),
+    Deferred(SessionId, String),
+}
+
+/// The top-level keys of a version-1 record this build knows; the rest survive in `other`.
+const VERSION_ONE_KEYS: [&str; 14] = [
+    "version",
+    "id",
+    "name",
+    "parent",
+    "tags",
+    "cwd",
+    "created_at",
+    "ended_at",
+    "archived_at",
+    "last_modified_at",
+    "lifecycle",
+    "launch",
+    "state",
+    "ext",
+];
+
+fn text_of(record: &Map<String, Value>, key: &str) -> Option<String> {
+    record.get(key)?.as_str().map(str::to_owned)
+}
+
+/// The version-2 record a version-1 one maps to, per the Storage plan's table, or why it is
+/// not an agent. `path` is the file (its mtime stands in for a missing `last_modified_at`).
+fn upgrade_one(core: &TxCore, path: &Path, record: &Map<String, Value>, id: &SessionId) -> Outcome {
+    match record.get("version") {
+        Some(Value::Number(version)) if version.as_u64() == Some(1) => {}
+        other => {
+            return Outcome::Legacy(format!(
+                "record version {} is not 1",
+                other
+                    .map(Value::to_string)
+                    .unwrap_or_else(|| "missing".to_owned())
+            ));
+        }
+    }
+    let ext = record
+        .get("ext")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let launch = record.get("launch").and_then(Value::as_object);
+    let launch = match launch
+        .and_then(|launch| launch.get("kind"))
+        .and_then(Value::as_str)
+    {
+        Some("agent") => launch.cloned().unwrap_or_default(),
+        // A fork from before core fork: a process record running the engine's resume, with the
+        // agent launch the chat plugin kept under `ext.chat.launch`.
+        Some("process") => match ext
+            .get(CHAT_EXT_KEY)
+            .and_then(|chat| chat.get("launch"))
+            .and_then(Value::as_object)
+        {
+            Some(launch) => launch.clone(),
+            None => {
+                let program = launch
+                    .and_then(|launch| launch.get("program"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
+                return Outcome::Legacy(format!("a process record ({program}), not an agent"));
+            }
+        },
+        Some(kind) => return Outcome::Legacy(format!("launch kind {kind:?}")),
+        None => return Outcome::Legacy("no launch".to_owned()),
+    };
+    let Some(engine_name) = launch.get("engine").and_then(Value::as_str) else {
+        return Outcome::Legacy("no engine".to_owned());
+    };
+    let Ok(engine) = engine_name.parse::<EngineKind>() else {
+        return Outcome::Legacy(format!(
+            "names engine {engine_name:?}, which this build does not know (known: {})",
+            EngineKind::names()
+        ));
+    };
+    let Some(adapter) = core.engines().get(engine) else {
+        return Outcome::Deferred(
+            id.clone(),
+            format!("engine {engine} is disabled; enable it and run `txc migrate` again"),
+        );
+    };
+    let Some(name) = text_of(record, "name") else {
+        return Outcome::Legacy("no name".to_owned());
+    };
+    let Some(working_directory) = text_of(record, "cwd") else {
+        return Outcome::Legacy("no cwd".to_owned());
+    };
+    let Some(created_at) = record.get("created_at").and_then(Value::as_f64) else {
+        return Outcome::Legacy("no created_at".to_owned());
+    };
+    let last_modified_at = record
+        .get("last_modified_at")
+        .and_then(Value::as_f64)
+        .unwrap_or_else(|| file_mtime(path).unwrap_or(created_at));
+    let recorded_state = record
+        .get("state")
+        .cloned()
+        .and_then(|state| serde_json::from_value::<LlmEngineState>(state).ok());
+    let state = match record.get("lifecycle").and_then(Value::as_str) {
+        Some("running") => recorded_state.unwrap_or(LlmEngineState::Starting),
+        _ => LlmEngineState::Ended,
+    };
+    let strings = |value: Option<&Value>| -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    // The engine's data: what it builds from the version-1 launch and chat, under what a
+    // build since PR 1 already recorded (that is newer, and wins key by key).
+    let mut engine_data = ext
+        .get(adapter.ext_key())
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Value::Object(upgraded) = adapter.upgrade_version_one(record, &launch) {
+        for (key, value) in upgraded {
+            engine_data.entry(key).or_insert(value);
+        }
+    }
+    let mut ext: std::collections::BTreeMap<String, Value> = ext.into_iter().collect();
+    ext.remove(CHAT_EXT_KEY);
+    ext.remove(HOOKS_EXT_KEY);
+    if !engine_data.is_empty() {
+        ext.insert(adapter.ext_key().to_owned(), Value::Object(engine_data));
+    }
+    let other: Map<String, Value> = record
+        .iter()
+        .filter(|(key, _)| !VERSION_ONE_KEYS.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    Outcome::Agent(Box::new(Session {
+        id: id.clone(),
+        name,
+        engine,
+        working_directory: PathBuf::from(working_directory),
+        roles: strings(launch.get("profile")),
+        state,
+        created_at,
+        last_modified_at,
+        archived_at: record.get("archived_at").and_then(Value::as_f64),
+        tags: strings(record.get("tags")),
+        parent_id: text_of(record, "parent").and_then(|parent| parent.parse().ok()),
+        ext,
+        other,
+    }))
+}
+
+/// Seconds since the epoch of the file's last write.
+fn file_mtime(path: &Path) -> Option<f64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(since.as_secs_f64())
+}
+
+/// Upgrades every version-1 record in `<data>/sessions/` to `<data>/agents/<id>/agent.json`,
+/// under the create lock and each agent's lock: the record is written through the store, the
+/// original kept as `<data>/migration-backup/<id>.v1.json`, and the version-1 file deleted only
+/// then. A record already at version 2 under `agents/` is skipped. Files that are not agents
+/// (process records of views and shells, unknown engines, unreadable JSON, a file not named
+/// after its record's id) are moved to `<data>/legacy/` and reported; one bad file never stops
+/// the run. `sessions/` is removed once empty. Profiles in `<state>/profiles/` are left alone;
+/// the next launch rebuilds them.
+pub fn upgrade_records(core: &TxCore) -> Result<RecordReport, MigrationError> {
+    let data = &core.config().directories.data;
+    let files = version_one_records(data).map_err(io_error(&data.join(SESSIONS_DIR)))?;
+    let mut report = RecordReport::default();
+    if files.is_empty() {
+        return Ok(report);
+    }
+    let _create = core.locks().create().map_err(MigrationError::Lock)?;
+    let legacy = |path: &Path, report: &mut RecordReport, reason: String| {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let destination = data.join(LEGACY_DIR).join(&name);
+        std::fs::create_dir_all(data.join(LEGACY_DIR)).map_err(io_error(data))?;
+        move_entry(path, &destination)?;
+        report.legacy.push((name, reason));
+        Ok::<(), MigrationError>(())
+    };
+    for path in &files {
+        let stem = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                legacy(path, &mut report, format!("unreadable: {error}"))?;
+                continue;
+            }
+        };
+        let record: Map<String, Value> = match serde_json::from_str(&text) {
+            Ok(record) => record,
+            Err(error) => {
+                legacy(path, &mut report, format!("not a JSON record: {error}"))?;
+                continue;
+            }
+        };
+        let Ok(id) = stem.parse::<SessionId>() else {
+            legacy(
+                path,
+                &mut report,
+                format!("file name {stem:?} is not a session id"),
+            )?;
+            continue;
+        };
+        if record.get("id").and_then(Value::as_str) != Some(id.as_str()) {
+            legacy(
+                path,
+                &mut report,
+                format!(
+                    "record carries id {}, which is not the file's name",
+                    record.get("id").map(Value::to_string).unwrap_or_default()
+                ),
+            )?;
+            continue;
+        }
+        let _session = core.locks().session(&id).map_err(MigrationError::Lock)?;
+        let backup = data.join(BACKUP_DIR).join(format!("{id}.v1.json"));
+        if core.store().load(&id)?.is_some() {
+            retire(path, &backup, &text, data)?;
+            report.skipped.push(id);
+            continue;
+        }
+        match upgrade_one(core, path, &record, &id) {
+            Outcome::Legacy(reason) => legacy(path, &mut report, reason)?,
+            Outcome::Deferred(id, reason) => report.deferred.push((id, reason)),
+            Outcome::Agent(session) => {
+                core.store().save(&session)?;
+                retire(path, &backup, &text, data)?;
+                let entry = (session.id.clone(), session.name.clone());
+                let conversation = core
+                    .engines()
+                    .get(session.engine)
+                    .and_then(|adapter| adapter.conversation(&session));
+                if conversation.is_some() {
+                    report.migrated.push(entry);
+                } else {
+                    report.without_conversation.push(entry);
+                }
+            }
+        }
+    }
+    // Empty once every record is upgraded or moved; a deferred record keeps it.
+    let _ = std::fs::remove_dir(data.join(SESSIONS_DIR));
+    Ok(report)
+}
+
+/// Keeps the version-1 file's text as `backup`, then deletes the file.
+fn retire(path: &Path, backup: &Path, text: &str, data: &Path) -> Result<(), MigrationError> {
+    let backups = data.join(BACKUP_DIR);
+    std::fs::create_dir_all(&backups).map_err(io_error(&backups))?;
+    std::fs::write(backup, text).map_err(io_error(backup))?;
+    std::fs::remove_file(path).map_err(io_error(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,7 +712,7 @@ mod tests {
         let old = version_one_home(root.path());
         let directories = Directories::under(root.path().join("new"));
         write(&directories.data.join("sessions/b.json"), "{}");
-        std::fs::create_dir_all(directories.data.join("agents")).unwrap();
+        write(&directories.data.join("agents/x/agent.json"), "{}");
         let error = migrate_home(&old, &directories).unwrap_err();
         let MigrationError::Occupied(paths) = &error else {
             panic!("{error:?}")
@@ -380,5 +761,402 @@ mod tests {
             Path::new("bin/script")
         );
         assert!(!from.exists());
+    }
+
+    // ----- the record step -------------------------------------------------------------------
+
+    use crate::config::CoreConfig;
+    use crate::engine::{EngineError, LaunchPlan, LaunchRequest, LlmEngine};
+    use crate::error::CoreError;
+    use crate::state::LlmEngineChange;
+    use serde_json::json;
+
+    /// A Claude-kind engine for the record step: `upgrade_version_one` answers the launch's
+    /// `model` and the conversation `version_one_conversation` finds, under the keys the real
+    /// adapters use; `conversation` answers it back.
+    struct Stub;
+
+    impl LlmEngine for Stub {
+        fn on_hook(&self, _: &Session, _: &crate::LlmEngineHook) -> LlmEngineChange {
+            LlmEngineChange::NONE
+        }
+
+        fn kind(&self) -> EngineKind {
+            EngineKind::Claude
+        }
+
+        fn ext_key(&self) -> &'static str {
+            "claude"
+        }
+
+        fn configure(&self, _: &Session, options: &Value) -> Result<Value, EngineError> {
+            Ok(options.clone())
+        }
+
+        fn start(&self, _: &LaunchRequest<'_>, _: &str) -> Result<LaunchPlan, EngineError> {
+            Ok(LaunchPlan::default())
+        }
+
+        fn resume(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+            Ok(LaunchPlan::default())
+        }
+
+        fn fork(
+            &self,
+            _: &LaunchRequest<'_>,
+            _: &Session,
+            _: &str,
+        ) -> Result<LaunchPlan, EngineError> {
+            Ok(LaunchPlan::default())
+        }
+
+        fn conversation(&self, session: &Session) -> Option<crate::engine::Conversation> {
+            let data = session.ext.get("claude")?;
+            Some(crate::engine::Conversation {
+                id: data.get("conversation_id")?.as_str()?.to_owned(),
+                transcript_path: PathBuf::from(data.get("transcript_path")?.as_str()?),
+            })
+        }
+
+        fn upgrade_version_one(
+            &self,
+            record: &Map<String, Value>,
+            launch: &Map<String, Value>,
+        ) -> Value {
+            let mut data = Map::new();
+            if let Some(model) = launch.get("model").and_then(Value::as_str) {
+                data.insert("model".into(), model.into());
+            }
+            if let Some((conversation, transcript)) = version_one_conversation(record, launch) {
+                data.insert("conversation_id".into(), conversation.into());
+                data.insert(
+                    "transcript_path".into(),
+                    transcript.unwrap_or("/computed.jsonl").into(),
+                );
+            }
+            Value::Object(data)
+        }
+    }
+
+    fn core_with_stub(root: &Path) -> TxCore {
+        let mut core =
+            TxCore::open_for_migration(CoreConfig::new(Directories::under(root))).unwrap();
+        core.register_engine(Box::new(Stub)).unwrap();
+        core
+    }
+
+    fn plant(core: &TxCore, name: &str, record: &Value) -> PathBuf {
+        let path = core
+            .config()
+            .directories
+            .data
+            .join(SESSIONS_DIR)
+            .join(format!("{name}.json"));
+        write(&path, &record.to_string());
+        path
+    }
+
+    fn version_one(id: &str, name: &str, lifecycle: &str) -> Value {
+        json!({
+            "version": 1, "id": id, "name": name, "parent": null, "tags": ["t"], "cwd": "/w",
+            "created_at": 1.0, "ended_at": null, "last_modified_at": 5.0, "lifecycle": lifecycle,
+            "launch": {"kind": "agent", "engine": "claude", "profile": ["COMMON"]},
+        })
+    }
+
+    #[test]
+    fn open_refuses_version_one_records_until_the_record_step_ran() {
+        let root = tempfile::tempdir().unwrap();
+        let directories = Directories::under(root.path());
+        write(
+            &directories.data.join("sessions/a.json"),
+            &version_one("a", "a", "running").to_string(),
+        );
+        write(&directories.data.join("sessions/.a.1234.tmp"), "{}");
+        let error = TxCore::open(CoreConfig::new(directories.clone())).unwrap_err();
+        assert!(
+            matches!(&error, CoreError::NeedsMigration { records: 1, .. }),
+            "{error:?}"
+        );
+        assert!(error.to_string().ends_with("run `txc migrate`"), "{error}");
+        let core = core_with_stub(root.path());
+        let report = upgrade_records(&core).unwrap();
+        assert_eq!(report.without_conversation.len(), 1);
+        drop(core);
+        TxCore::open(CoreConfig::new(directories)).unwrap();
+    }
+
+    /// Every row of the mapping table, on one record each.
+    #[test]
+    fn upgrades_each_row_of_the_mapping() {
+        let root = tempfile::tempdir().unwrap();
+        let core = core_with_stub(root.path());
+        let mut lead = version_one("a", "lead", "running");
+        lead["state"] = json!("working");
+        lead["launch"]["model"] = json!("sonnet");
+        lead["launch"]["effort"] = json!("max");
+        lead["ext"] = json!({
+            "chat": {"chats": [
+                {"id": "old", "ended_at": 2.0, "transcript": "/t/old.jsonl"},
+                {"id": "c1", "transcript": "/t/c1.jsonl"},
+                {"id": null, "role": "fork"},
+            ]},
+            "hooks": {"state": "idle"},
+            "artifacts": {"group": "g"},
+            "claude": {"effort": "high"},
+        });
+        lead["future"] = json!({"x": 1});
+        plant(&core, "a", &lead);
+        let mut stopped = version_one("b", "stopped", "stopped");
+        stopped["ended_at"] = json!(4.0);
+        stopped["parent"] = json!("a");
+        stopped["archived_at"] = json!(6.0);
+        stopped["launch"]["resume"] = json!("r1");
+        plant(&core, "b", &stopped);
+        let mut quiet = version_one("c", "quiet", "running");
+        quiet.as_object_mut().unwrap().remove("last_modified_at");
+        plant(&core, "c", &quiet);
+        let mut fork = version_one("d", "fork", "exited");
+        fork["launch"] = json!({"kind": "process", "program": "claude", "args": []});
+        fork["ext"] = json!({"chat": {
+            "launch": {"engine": "claude", "profile": ["DEV"], "model": "opus"},
+            "chats": [{"id": "c2", "transcript": "/t/c2.jsonl"}],
+        }});
+        plant(&core, "d", &fork);
+        let mut view = version_one("e", "view", "running");
+        view["launch"] = json!({"kind": "process", "program": "nvim", "args": []});
+        plant(&core, "e", &view);
+        let mut odd = version_one("f", "odd", "running");
+        odd["launch"]["engine"] = json!("kodex");
+        plant(&core, "f", &odd);
+        let mut disabled = version_one("g", "disabled", "running");
+        disabled["launch"]["engine"] = json!("codex");
+        plant(&core, "g", &disabled);
+        plant(
+            &core,
+            "h",
+            &json!({"version": 1, "id": "not-h", "name": "n"}),
+        );
+        plant(&core, "i", &json!({"version": 2, "id": "i", "name": "n"}));
+        write(
+            &core.config().directories.data.join("sessions/garbage.json"),
+            "{",
+        );
+        write(
+            &core
+                .config()
+                .directories
+                .data
+                .join("sessions/not an id.json"),
+            &version_one("x", "x", "running").to_string(),
+        );
+
+        let report = upgrade_records(&core).unwrap();
+        let names = |entries: &[(SessionId, String)]| -> Vec<String> {
+            entries.iter().map(|(_, name)| name.clone()).collect()
+        };
+        assert_eq!(names(&report.migrated), ["lead", "stopped", "fork"]);
+        assert_eq!(names(&report.without_conversation), ["quiet"]);
+        assert_eq!(
+            report.legacy,
+            [
+                (
+                    "e.json".to_owned(),
+                    "a process record (nvim), not an agent".to_owned()
+                ),
+                (
+                    "f.json".to_owned(),
+                    format!(
+                        "names engine \"kodex\", which this build does not know (known: {})",
+                        EngineKind::names()
+                    )
+                ),
+                (
+                    "garbage.json".to_owned(),
+                    "not a JSON record: EOF while parsing an object at line 1 column 1".to_owned()
+                ),
+                (
+                    "h.json".to_owned(),
+                    "record carries id \"not-h\", which is not the file's name".to_owned()
+                ),
+                ("i.json".to_owned(), "record version 2 is not 1".to_owned()),
+                (
+                    "not an id.json".to_owned(),
+                    "file name \"not an id\" is not a session id".to_owned()
+                ),
+            ]
+        );
+        assert!(report.skipped.is_empty());
+        assert_eq!(report.deferred.len(), 1);
+        assert_eq!(report.deferred[0].0.as_str(), "g");
+        assert!(report.deferred[0].1.contains("engine codex is disabled"));
+
+        let data = &core.config().directories.data;
+        let lead = core.store().load(&"a".parse().unwrap()).unwrap().unwrap();
+        assert_eq!(lead.name, "lead");
+        assert_eq!(lead.engine, EngineKind::Claude);
+        assert_eq!(lead.working_directory, PathBuf::from("/w"));
+        assert_eq!(lead.roles, ["COMMON"]);
+        assert_eq!(lead.state, LlmEngineState::Working);
+        assert_eq!(lead.created_at, 1.0);
+        assert_eq!(lead.last_modified_at, 5.0);
+        assert_eq!(lead.archived_at, None);
+        assert_eq!(lead.tags, ["t"]);
+        assert_eq!(lead.parent_id, None);
+        // The engine's own data, under what a later build already recorded (`effort`).
+        assert_eq!(
+            lead.ext["claude"],
+            json!({"effort": "high", "model": "sonnet", "conversation_id": "c1", "transcript_path": "/t/c1.jsonl"})
+        );
+        assert_eq!(lead.ext["artifacts"], json!({"group": "g"}));
+        assert_eq!(lead.ext.keys().collect::<Vec<_>>(), ["artifacts", "claude"]);
+        assert_eq!(lead.other["future"], json!({"x": 1}));
+        assert_eq!(lead.other.len(), 1);
+
+        let stopped = core.store().load(&"b".parse().unwrap()).unwrap().unwrap();
+        assert_eq!(stopped.state, LlmEngineState::Ended);
+        assert_eq!(stopped.parent_id, Some("a".parse().unwrap()));
+        assert_eq!(stopped.archived_at, Some(6.0));
+        assert_eq!(
+            stopped.ext["claude"],
+            json!({"conversation_id": "r1", "transcript_path": "/computed.jsonl"}),
+            "the resume id names the conversation when no chat was captured"
+        );
+        assert!(stopped.other.is_empty(), "`ended_at` is dropped, not kept");
+
+        let quiet = core.store().load(&"c".parse().unwrap()).unwrap().unwrap();
+        assert_eq!(quiet.state, LlmEngineState::Starting);
+        assert!(quiet.ext.is_empty());
+        let mtime = file_mtime(&data.join("migration-backup/c.v1.json")).unwrap();
+        assert!((quiet.last_modified_at - mtime).abs() < 5.0, "{quiet:?}");
+
+        let fork = core.store().load(&"d".parse().unwrap()).unwrap().unwrap();
+        assert_eq!(fork.engine, EngineKind::Claude);
+        assert_eq!(fork.roles, ["DEV"]);
+        assert_eq!(fork.state, LlmEngineState::Ended);
+        assert_eq!(
+            fork.ext["claude"],
+            json!({"model": "opus", "conversation_id": "c2", "transcript_path": "/t/c2.jsonl"})
+        );
+
+        for id in ["a", "b", "c", "d"] {
+            assert!(
+                data.join(format!("migration-backup/{id}.v1.json"))
+                    .is_file(),
+                "{id}"
+            );
+            assert!(!data.join(format!("sessions/{id}.json")).exists(), "{id}");
+        }
+        for name in [
+            "e.json",
+            "f.json",
+            "garbage.json",
+            "h.json",
+            "i.json",
+            "not an id.json",
+        ] {
+            assert!(data.join(LEGACY_DIR).join(name).is_file(), "{name}");
+        }
+        assert!(
+            data.join("sessions/g.json").is_file(),
+            "a deferred record stays where it was"
+        );
+        assert_eq!(
+            std::fs::read_dir(data.join(SESSIONS_DIR)).unwrap().count(),
+            1,
+            "only the deferred record is left"
+        );
+        assert_eq!(
+            std::fs::read_to_string(data.join("migration-backup/a.v1.json")).unwrap(),
+            plant_text(&lead_text(&core))
+        );
+    }
+
+    /// The text `plant` wrote for `a` in the test above, read back from the backup's source.
+    fn lead_text(core: &TxCore) -> String {
+        std::fs::read_to_string(
+            core.config()
+                .directories
+                .data
+                .join("migration-backup/a.v1.json"),
+        )
+        .unwrap()
+    }
+
+    fn plant_text(text: &str) -> String {
+        text.to_owned()
+    }
+
+    /// A second run has nothing to do; a version-1 file left next to a record that is already at
+    /// version 2 is backed up and removed, the record untouched.
+    #[test]
+    fn a_second_run_changes_nothing_and_an_upgraded_record_is_skipped() {
+        let root = tempfile::tempdir().unwrap();
+        let core = core_with_stub(root.path());
+        plant(&core, "a", &version_one("a", "lead", "running"));
+        let first = upgrade_records(&core).unwrap();
+        assert_eq!(first.without_conversation.len(), 1);
+        let data = &core.config().directories.data;
+        assert!(!data.join(SESSIONS_DIR).exists(), "removed once empty");
+        assert_eq!(upgrade_records(&core).unwrap(), RecordReport::default());
+
+        let mut renamed = core.store().load(&"a".parse().unwrap()).unwrap().unwrap();
+        renamed.name = "renamed".into();
+        core.store().save(&renamed).unwrap();
+        plant(&core, "a", &version_one("a", "lead", "running"));
+        let again = upgrade_records(&core).unwrap();
+        assert_eq!(again.skipped, ["a".parse::<SessionId>().unwrap()]);
+        assert!(again.migrated.is_empty() && again.without_conversation.is_empty());
+        assert_eq!(
+            core.store().load(&"a".parse().unwrap()).unwrap().unwrap(),
+            renamed
+        );
+        assert!(!data.join("sessions/a.json").exists());
+        assert!(data.join("migration-backup/a.v1.json").is_file());
+    }
+
+    #[test]
+    fn version_one_conversation_prefers_the_active_captured_chat_then_the_resume() {
+        let launch = json!({"kind": "agent", "engine": "claude", "resume": "r"});
+        let launch = launch.as_object().unwrap();
+        let record = |chats: Value| -> Map<String, Value> {
+            json!({"ext": {"chat": {"chats": chats}}})
+                .as_object()
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            version_one_conversation(&Map::new(), launch),
+            Some(("r", None))
+        );
+        assert_eq!(
+            version_one_conversation(&record(json!([])), launch),
+            Some(("r", None))
+        );
+        assert_eq!(
+            version_one_conversation(&record(json!([{"id": null}])), launch),
+            Some(("r", None))
+        );
+        assert_eq!(
+            version_one_conversation(
+                &record(json!([
+                    {"id": "a", "transcript": "/a"},
+                    {"id": "b", "ended_at": 1.0, "transcript": "/b"},
+                    {"id": null},
+                ])),
+                launch
+            ),
+            Some(("a", Some("/a"))),
+            "the last chat with an id and no end"
+        );
+        assert_eq!(
+            version_one_conversation(
+                &record(json!([{"id": "a", "ended_at": 1.0}, {"id": "b", "ended_at": 2.0}])),
+                launch
+            ),
+            Some(("b", None)),
+            "every chat ended: the last one with an id"
+        );
+        assert_eq!(version_one_conversation(&Map::new(), &Map::new()), None);
     }
 }

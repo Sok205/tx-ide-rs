@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{Cli, cwd_of, lifecycle_of};
+use common::{Cli, cwd_of, state_of};
 
 #[test]
 fn warm_creates_once_and_reuses() {
@@ -19,7 +19,7 @@ fn warm_creates_once_and_reuses() {
         String::from_utf8_lossy(&first.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&first.stdout), "tx-assistant\n");
-    assert_eq!(lifecycle_of(&cli, "tx-assistant"), "running");
+    assert_ne!(state_of(&cli, "tx-assistant"), "ended");
     let id = cli.ok(&["ls", "--tag", "tx-system"]);
     assert_eq!(id.lines().count(), 1, "{id:?}");
     let second = cli.run(&["assistant", "warm"], &env, "");
@@ -67,13 +67,13 @@ fn warm_restarts_a_vanished_assistant() {
     let listed = cli.ok(&["ls", "--tag", "tx-system"]);
     assert_eq!(listed.lines().count(), 2, "{listed:?}");
     assert_ne!(listed, first);
-    assert_eq!(lifecycle_of(&cli, "tx-assistant"), "exited");
+    assert_eq!(state_of(&cli, "tx-assistant"), "ended");
     assert_eq!(cwd_of(&cli, "tx-assistant"), first_cwd);
     assert_eq!(
         std::fs::read_to_string(first_cwd.join("note.txt")).unwrap(),
         "keep me\n"
     );
-    assert_eq!(lifecycle_of(&cli, "tx-assistant-2"), "running");
+    assert_ne!(state_of(&cli, "tx-assistant-2"), "ended");
     let second_cwd = cwd_of(&cli, "tx-assistant-2");
     assert_ne!(second_cwd, first_cwd);
     assert!(

@@ -16,9 +16,7 @@ use std::time::Duration;
 use common::{Harness, agent, exiting, wait_for};
 use proptest::prelude::*;
 use serde_json::Value;
-use tx_core::{
-    CoreError, Event, EventSink, EventType, Lifecycle, Locks, SendOptions, SessionId, TxCore,
-};
+use tx_core::{CoreError, Event, EventSink, EventType, Locks, SendOptions, SessionId, TxCore};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -155,8 +153,8 @@ fn await_exit(core: &TxCore, id: &SessionId) {
             .refresh_session(id)
             .unwrap()
             .session()
-            .lifecycle
-            == Lifecycle::Exited),
+            .state
+            == LlmEngineState::Ended),
         "{id} never exited"
     );
 }
@@ -419,7 +417,7 @@ fn every_lock_is_free_when_sinks_run() {
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&relocker)));
     let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
-    let cwd = core.get_session(&a).unwrap().cwd;
+    let cwd = core.get_session(&a).unwrap().working_directory;
     let b = core.create_session(agent("b", &h.repository("b"))).unwrap();
     let c = core
         .create_session(exiting("c", &h.repository("c")))
@@ -492,8 +490,8 @@ fn a_sink_may_stop_the_session_it_was_told_about() {
     );
     let session = worker.join().unwrap().unwrap();
     assert_eq!(
-        session.lifecycle,
-        Lifecycle::Stopped,
+        session.state,
+        LlmEngineState::Ended,
         "the caller reads a stopped record"
     );
     assert_eq!(*stopper.outcome.lock().unwrap(), ["Ok"]);
@@ -517,7 +515,7 @@ fn a_sink_may_archive_the_session_it_was_told_about() {
     }));
     let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
     let session = core.get_session(&id).unwrap();
-    assert_eq!(session.lifecycle, Lifecycle::Stopped);
+    assert_eq!(session.state, LlmEngineState::Ended);
     assert!(session.archived_at.is_some());
     assert_eq!(log_types(&h), ["created", "stopped", "archived"]);
     // Archive stops first: no orphan in tmux.
@@ -635,12 +633,6 @@ fn fifty_ops_through_alternating_panicking_and_recording_sinks() {
         let seen: Vec<Line> = recorder.events().iter().map(Line::from_event).collect();
         assert_eq!(seen, lines);
     }
-    assert_eq!(
-        core.get_session(&ids[0]).map(|s| s.lifecycle).ok(),
-        None.or(Some(Lifecycle::Stopped))
-            .filter(|_| false)
-            .or(core.get_session(&ids[0]).map(|s| s.lifecycle).ok())
-    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -673,9 +665,9 @@ fn a_failure_after_the_lock_is_taken_emits_nothing_and_leaves_the_record() {
         Err(CoreError::NotRunning(_))
     );
     assert!(not_live);
-    assert_eq!(
-        core.get_session(&a).unwrap().lifecycle,
-        Lifecycle::Running,
+    assert_ne!(
+        core.get_session(&a).unwrap().state,
+        LlmEngineState::Ended,
         "send never marks exited"
     );
 
@@ -939,7 +931,7 @@ fn sinks_still_run_when_the_log_cannot_be_appended() {
     std::fs::remove_file(&path).unwrap();
     std::fs::create_dir(&path).unwrap();
     core.stop_session(&id).unwrap();
-    assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Stopped);
+    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
     assert_eq!(
         types(&recorder.events()),
         [EventType::Created, EventType::Stopped]

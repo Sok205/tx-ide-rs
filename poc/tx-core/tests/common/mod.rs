@@ -164,7 +164,7 @@ impl Harness {
     }
 
     pub fn record_bytes(&self, id: &SessionId) -> Vec<u8> {
-        std::fs::read(self.data_dir().join(format!("sessions/{id}.json"))).unwrap()
+        std::fs::read(self.data_dir().join(format!("agents/{id}/agent.json"))).unwrap()
     }
 }
 
@@ -212,7 +212,7 @@ pub fn git_worktrees(directory: &Path) -> Vec<PathBuf> {
 
 /// Where a session runs: its record's `cwd`, the agent's worktree.
 pub fn cwd_of(core: &TxCore, id: &SessionId) -> PathBuf {
-    core.get_session(id).unwrap().cwd
+    core.get_session(id).unwrap().working_directory
 }
 
 /// Waits up to `timeout` for `condition`.
@@ -339,7 +339,7 @@ impl LlmEngine for ShellStub {
             return Ok(());
         }
         let archived = archive_directory.join(format!("{conversation}.jsonl"));
-        if session.lifecycle.is_terminal() {
+        if session.state == tx_core::LlmEngineState::Ended {
             tx_core::mirror_file_exact(&transcript, &archived)
         } else {
             tx_core::mirror_file(&transcript, &archived)

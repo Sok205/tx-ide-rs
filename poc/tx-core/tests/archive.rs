@@ -147,7 +147,7 @@ fn respawn_restores_a_deleted_transcript_from_the_archive() {
         "the live transcript is back before the resume"
     );
     assert!(wait_for(Duration::from_secs(5), || {
-        std::fs::read_to_string(session.cwd.join("env.txt"))
+        std::fs::read_to_string(session.working_directory.join("env.txt"))
             .unwrap_or_default()
             .contains("STUB_MODE=resume")
     }));
