@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, EventType, Launch, LaunchMode, LaunchOptions,
+    CoreConfig, CreateOptions, Directories, EventType, Input, Key, Launch, LaunchOptions,
     LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState, Profile,
     ResolvedProfile, SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
 };
@@ -46,21 +46,27 @@ fn launch_request_builder() {
     )
     .unwrap();
     let session = record(dir.path());
-    let source = record(dir.path());
-    let request = LaunchRequest::new(&session, &profile)
-        .initial_prompt("go")
-        .mode(LaunchMode::Fork { source: &source });
+    let hooks = ["txi".to_owned(), "hook".to_owned()];
+    let request = LaunchRequest::new(&session, &profile).hook_command(&hooks);
     assert_eq!(request.session.id, session.id);
     assert_eq!(request.session.cwd, dir.path());
     assert_eq!(request.profile.text(), "t");
-    assert_eq!(request.initial_prompt, Some("go"));
-    assert!(matches!(request.mode, LaunchMode::Fork { source: forked } if forked.id == source.id));
+    assert_eq!(request.hook_command, &hooks);
     let bare = LaunchRequest::new(&session, &profile);
-    assert!(bare.initial_prompt.is_none() && matches!(bare.mode, LaunchMode::Start));
-    assert!(matches!(
-        bare.mode(LaunchMode::Resume).mode,
-        LaunchMode::Resume
-    ));
+    assert!(bare.hook_command.is_empty());
+}
+
+#[test]
+fn input_is_a_line_or_a_key() {
+    assert_eq!(
+        Input::line("hi"),
+        Input::Text {
+            text: "hi".into(),
+            submit: true
+        }
+    );
+    assert_ne!(Input::line("hi"), Input::Key(Key::Enter));
+    assert_eq!(Key::ControlC.tmux_name(), "C-c");
 }
 
 /// A minimal agent record in `cwd`.

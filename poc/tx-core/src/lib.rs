@@ -34,7 +34,7 @@ pub use core::{
 #[doc(hidden)]
 pub use engine::EngineRegistry;
 pub use engine::{
-    Conversation, EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction,
+    Conversation, EngineError, Input, Key, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction,
     engine_data, hook_shell_command,
 };
 pub use error::CoreError;

@@ -6,8 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::CoreConfig;
 use crate::engine::{
-    Conversation, EngineError, EngineRegistry, LaunchMode, LaunchRequest, LlmEngine,
-    apply_workspace,
+    Conversation, EngineError, EngineRegistry, Input, LaunchRequest, LlmEngine, apply_workspace,
 };
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
@@ -430,7 +429,8 @@ fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
     session.state = LlmEngineState::Ended;
 }
 
-/// How long `stop` waits for the pane's process after `kill-session` before killing it outright.
+/// How long `stop` waits for the pane's process to exit on its own: first after the engine's
+/// own stop input, then after `kill-session`, before killing it outright.
 const STOP_WAIT: Duration = Duration::from_secs(10);
 /// How long `stop` waits after `SIGKILL`.
 const KILL_WAIT: Duration = Duration::from_secs(2);
@@ -472,8 +472,19 @@ fn wait_or_kill(pid: u32) -> bool {
 struct EngineLaunch<'a> {
     adapter: &'a dyn LlmEngine,
     resolved: ResolvedProfile,
-    mode: LaunchMode<'a>,
-    initial_prompt: Option<String>,
+    opening: Opening<'a>,
+}
+
+/// Which of the engine's launch methods opens the conversation, with its arguments.
+enum Opening<'a> {
+    Start {
+        prompt: &'a str,
+    },
+    Resume,
+    Fork {
+        source: &'a Session,
+        prompt: &'a str,
+    },
 }
 
 fn store_io(path: &Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {
@@ -766,7 +777,7 @@ impl TxCore {
 
     /// Under the create lock, with `opts.name` free and `opts.cwd` the directory the session
     /// runs in: a fresh record, its engine data, then the shared launch path. A fork
-    /// (`fork_of`) is launched in `LaunchMode::Fork` and announced as `Forked`, not `Created`.
+    /// (`fork_of`) is launched by the engine's `fork` and announced as `Forked`, not `Created`.
     fn launch_locked(
         &self,
         opts: CreateOptions,
@@ -823,11 +834,15 @@ impl TxCore {
         let engine = EngineLaunch {
             adapter,
             resolved,
-            mode: match fork_of {
-                Some(source) => LaunchMode::Fork { source },
-                None => LaunchMode::Start,
+            opening: match fork_of {
+                Some(source) => Opening::Fork {
+                    source,
+                    prompt: &initial_prompt,
+                },
+                None => Opening::Start {
+                    prompt: &initial_prompt,
+                },
             },
-            initial_prompt: Some(initial_prompt),
         };
         let exited_at_once = self.start_locked(&mut session, engine, &opts.env)?;
         let mut events = vec![match fork_of {
@@ -878,15 +893,15 @@ impl TxCore {
             Profile::write(engine.resolved, &profile_file).map_err(store_io(&profile_file))?;
         let request = LaunchRequest {
             session,
-            mode: engine.mode,
             profile: &profile,
-            initial_prompt: engine.initial_prompt.as_deref(),
             hook_command: &self.config.hook_command,
         };
-        let plan = engine
-            .adapter
-            .launch(&request)
-            .inspect_err(|_| cleanup_profile())?;
+        let plan = match engine.opening {
+            Opening::Start { prompt } => engine.adapter.start(&request, prompt),
+            Opening::Resume => engine.adapter.resume(&request),
+            Opening::Fork { source, prompt } => engine.adapter.fork(&request, source, prompt),
+        }
+        .inspect_err(|_| cleanup_profile())?;
         apply_workspace(&session.cwd, &plan.workspace).inspect_err(|_| cleanup_profile())?;
         validate_env(&plan.env).inspect_err(|_| cleanup_profile())?;
         merge_env(&mut env, &plan.env);
@@ -934,8 +949,8 @@ impl TxCore {
     }
 
     /// Starts a new process for an ended agent in its own record: the same id, worktree and
-    /// conversation (the engine continues the one it recorded under its `ext` key, in
-    /// `LaunchMode::Resume`). `StillRunning` while the record is `Running` or tmux still has the
+    /// conversation (the engine's `resume` continues the one it recorded under its `ext`
+    /// key). `StillRunning` while the record is `Running` or tmux still has the
     /// session; `WorktreeMissing` when `cwd` is gone, since a respawn never recreates one;
     /// `NameHeld` when an unarchived record took the name meanwhile. Comes back `Running` and `Starting`, with `ended_at` and `archived_at` cleared, and
     /// announced as `Respawned`.
@@ -978,8 +993,7 @@ impl TxCore {
         let engine = EngineLaunch {
             adapter,
             resolved,
-            mode: LaunchMode::Resume,
-            initial_prompt: None,
+            opening: Opening::Resume,
         };
         let exited_at_once = self.start_locked(&mut session, engine, &[])?;
         let mut events = vec![event(
@@ -1276,14 +1290,48 @@ impl TxCore {
         })
     }
 
-    /// The recipient's engine frames the message when it is registered here; an agent whose
-    /// engine this core does not know gets the default envelope.
-    fn envelope_for(&self, recipient: &Session, sender: &EnvelopeSender<'_>, text: &str) -> String {
+    /// The recipient's engine says what to type for a message when it is registered here; an
+    /// agent whose engine this core does not know gets the default envelope, submitted.
+    fn input_for(&self, recipient: &Session, sender: &EnvelopeSender<'_>, text: &str) -> Input {
         let Launch::Agent { engine, .. } = &recipient.launch;
         match self.engines.get(engine) {
-            Some(adapter) => adapter.envelope(sender, text),
-            None => build_envelope(sender, text),
+            Some(adapter) => adapter.receive_message(sender, text),
+            None => Input::line(build_envelope(sender, text)),
         }
+    }
+
+    /// Aborts the agent's running turn with its engine's `interrupt` input, and applies the
+    /// state the engine says the agent is in afterwards (an aborted turn fires no end-of-turn
+    /// hook on Claude), with its `StateChanged`, as for a hook. `NotRunning` when the record or
+    /// tmux says so; `Engine(Refused)` when the engine has no such input.
+    pub fn interrupt_session(&self, id: &SessionId) -> Result<(), CoreError> {
+        let changed = {
+            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+            let mut session = self.get_session(id)?;
+            if session.lifecycle != Lifecycle::Running {
+                return Err(CoreError::NotRunning(id.clone()));
+            }
+            let Launch::Agent { engine, .. } = &session.launch;
+            let adapter = self
+                .engines
+                .get(engine)
+                .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+            let (input, state) = adapter.interrupt(&session).ok_or_else(|| {
+                EngineError::Refused(format!("{engine} has no way to interrupt a turn"))
+            })?;
+            let live = self.live_or_not_running(id)?;
+            deliver(&self.tmux, &live.pane_target, &input, DELIVERY_PAUSE)?;
+            let current = session.state;
+            let Some(to) = state.filter(|to| *to != current) else {
+                return Ok(());
+            };
+            session.state = to;
+            self.save(&mut session)?;
+            let detail = format!("{} → {}", current.as_str(), to.as_str());
+            event(EventType::StateChanged, &session, None, detail)
+        };
+        self.emit(vec![changed]);
+        Ok(())
     }
 
     fn live_or_not_running(&self, id: &SessionId) -> Result<Live, CoreError> {
@@ -1292,13 +1340,15 @@ impl TxCore {
             .ok_or_else(|| CoreError::NotRunning(id.clone()))
     }
 
-    /// `kill-session`, `Stopped`, then a wait until the pane's process has really exited
-    /// (killed outright after `STOP_WAIT`), so a late hook from the old process can never
-    /// reach a respawn. The record is saved and the session lock released before the wait: the
-    /// process's own exit hooks need that lock, and they find the record `Stopped` and are
-    /// ignored. The create lock is held across the wait instead, which is the lock a respawn
-    /// takes first. A record whose session had already vanished becomes `Exited` instead (what
-    /// happened, not what was asked).
+    /// The engine's own stop input (or `kill-session` when it has none), `Stopped`, then a
+    /// wait until the pane's process has really exited: `STOP_WAIT` for the CLI to leave by
+    /// itself, then `kill-session` and `STOP_WAIT` more, then killed outright; so a late hook
+    /// from the old process can never reach a respawn. The record is saved and the session lock
+    /// released before the wait: the process's own exit hooks need that lock, and they find the
+    /// record `Stopped` and are ignored. The create lock is held across the wait instead, which
+    /// is the lock a respawn takes first. The `Stopped` event's detail is empty when the CLI
+    /// left by itself and `killed` when it had to be killed. A record whose session had already
+    /// vanished becomes `Exited` instead (what happened, not what was asked).
     pub fn stop_session(&self, id: &SessionId) -> Result<Session, CoreError> {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
         let (session, ended) = self.stop_locked(id)?;
@@ -1310,32 +1360,49 @@ impl TxCore {
     /// `stop_session` under the create lock the caller holds, the wait included; the caller
     /// emits the returned event.
     fn stop_locked(&self, id: &SessionId) -> Result<(Session, Event), CoreError> {
-        let (session, ended, pid) = {
+        let (session, live) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
             if session.lifecycle.is_terminal() {
                 return Err(CoreError::NotRunning(id.clone()));
             }
-            match self.tmux.is_live(id)? {
+            let Some(live) = self.tmux.is_live(id)? else {
+                let (session, exited) = self.mark_exited(session)?;
+                return Ok((session, exited));
+            };
+            let Launch::Agent { engine, .. } = &session.launch;
+            let stop = self
+                .engines
+                .get(engine)
+                .and_then(|adapter| adapter.stop(&session));
+            let pid = self.tmux.pane_pid(&live.pane_target)?;
+            match &stop {
+                Some(input) => deliver(&self.tmux, &live.pane_target, input, DELIVERY_PAUSE)?,
                 None => {
-                    let (session, exited) = self.mark_exited(session)?;
-                    (session, exited, None)
-                }
-                Some(live) => {
-                    let pid = self.tmux.pane_pid(&live.pane_target)?;
                     self.tmux.kill_session(&live.session_target)?;
-                    mark_ended(&mut session, Lifecycle::Stopped);
-                    self.save(&mut session)?;
-                    let stopped = event(EventType::Stopped, &session, None, "");
-                    (session, stopped, pid)
                 }
             }
+            mark_ended(&mut session, Lifecycle::Stopped);
+            self.save(&mut session)?;
+            (
+                session,
+                pid.map(|pid| (pid, live.session_target, stop.is_some())),
+            )
         };
-        if let Some(pid) = pid {
-            wait_or_kill(pid);
+        let mut detail = "";
+        if let Some((pid, target, asked_to_leave)) = live {
+            let left = asked_to_leave && wait_for_exit(pid, STOP_WAIT);
+            if !left {
+                detail = "killed";
+                if asked_to_leave {
+                    self.tmux.kill_session(&target)?;
+                }
+                wait_or_kill(pid);
+            }
             self.archive_conversation(&session);
         }
-        Ok((session, ended))
+        let stopped = event(EventType::Stopped, &session, None, detail);
+        Ok((session, stopped))
     }
 
     /// Hides the session from listings and frees its name; nothing is deleted (record,
@@ -1407,8 +1474,8 @@ impl TxCore {
                 return Err(CoreError::NotRunning(to.clone()));
             }
             let live = self.live_or_not_running(to)?;
-            let envelope = self.envelope_for(&recipient, &envelope_sender, text);
-            deliver(&self.tmux, &live.pane_target, &envelope, DELIVERY_PAUSE)?;
+            let input = self.input_for(&recipient, &envelope_sender, text);
+            deliver(&self.tmux, &live.pane_target, &input, DELIVERY_PAUSE)?;
             let submitted_at = now();
             let sent = event(EventType::MessageSent, &recipient, from, detail);
             (
@@ -1524,7 +1591,20 @@ mod tests {
             Ok(options.clone())
         }
 
-        fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        fn start(&self, _: &LaunchRequest<'_>, _: &str) -> Result<LaunchPlan, EngineError> {
+            Ok(LaunchPlan::default())
+        }
+
+        fn resume(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+            Ok(LaunchPlan::default())
+        }
+
+        fn fork(
+            &self,
+            _: &LaunchRequest<'_>,
+            _: &Session,
+            _: &str,
+        ) -> Result<LaunchPlan, EngineError> {
             Ok(LaunchPlan::default())
         }
     }

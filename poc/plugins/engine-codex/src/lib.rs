@@ -34,7 +34,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Conversation, EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
+    Conversation, EngineError, Input, Key, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
     LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
     mirror_file, mirror_file_exact,
 };
@@ -52,6 +52,9 @@ pub const REASONING_EFFORT_KEY: &str = "model_reasoning_effort";
 pub const DEVELOPER_INSTRUCTIONS_KEY: &str = "developer_instructions";
 pub const BYPASS_APPROVALS_FLAG: &str = "--dangerously-bypass-approvals-and-sandbox";
 pub const BYPASS_HOOK_TRUST_FLAG: &str = "--dangerously-bypass-hook-trust";
+/// The slash command that exits the CLI cleanly, idle or mid-turn (codex-cli 0.164.0: exit 0
+/// within half a second). Not Ctrl-C: idle it exits at once, but mid-turn it opens a menu.
+pub const QUIT_COMMAND: &str = "/quit";
 pub const DEFAULT_EFFORT: Effort = Effort::High;
 /// The `ext` key this engine owns.
 pub const EXT_KEY: &str = "codex";
@@ -143,6 +146,49 @@ pub struct CodexAdapter {
 }
 
 impl CodexAdapter {
+    /// The command line every launch shares after the `args` that name the conversation:
+    /// model and effort from the data, the profile, the hooks, the bypass flags, and the
+    /// prompt (none when empty); `stored_data` is what the plan stores.
+    fn plan(
+        &self,
+        request: &LaunchRequest<'_>,
+        mut args: Vec<String>,
+        stored_data: Option<Value>,
+        prompt: &str,
+    ) -> LaunchPlan {
+        let data = engine_data(self, request.session);
+        let option = |key: &str| data.get(key).and_then(Value::as_str);
+        let effort = option(EFFORT_KEY).unwrap_or(DEFAULT_EFFORT.as_str());
+        if let Some(model) = option(MODEL_KEY) {
+            args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
+        }
+        args.extend(["-c".to_owned(), format!("{REASONING_EFFORT_KEY}={effort}")]);
+        if !request.profile.text().is_empty() {
+            args.extend([
+                "-c".to_owned(),
+                format!("{DEVELOPER_INSTRUCTIONS_KEY}={}", request.profile.text()),
+            ]);
+        }
+        if !request.hook_command.is_empty() {
+            for event in HOOK_EVENTS {
+                args.extend(["-c".to_owned(), hook_override(request.hook_command, event)]);
+            }
+        }
+        args.extend([
+            BYPASS_APPROVALS_FLAG.to_owned(),
+            BYPASS_HOOK_TRUST_FLAG.to_owned(),
+        ]);
+        if !prompt.is_empty() {
+            args.push(prompt.to_owned());
+        }
+        let mut plan = LaunchPlan::new(CODEX_BIN).args(args);
+        plan.engine_data = stored_data;
+        for link in skill_links(SKILLS_DIR, request.profile.skill_dirs()) {
+            plan = plan.workspace(link);
+        }
+        plan
+    }
+
     pub fn new(codex_home: impl Into<PathBuf>) -> Self {
         Self {
             codex_home: codex_home.into(),
@@ -223,56 +269,44 @@ impl LlmEngine for CodexAdapter {
         Ok(Value::Object(data))
     }
 
-    fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        let data = engine_data(self, req.session);
-        let option = |key: &str| data.get(key).and_then(Value::as_str);
-        let effort = option(EFFORT_KEY).unwrap_or(DEFAULT_EFFORT.as_str());
-        let mut args = Vec::new();
-        let mut fork_data = None;
-        match req.mode {
-            LaunchMode::Start => {}
-            LaunchMode::Resume => args.extend([
-                RESUME_SUBCOMMAND.to_owned(),
-                self.conversation_of(req.session, "resume")?.to_owned(),
-            ]),
-            LaunchMode::Fork { source } => {
-                args.extend([
-                    FORK_SUBCOMMAND.to_owned(),
-                    self.conversation_of(source, "fork")?.to_owned(),
-                    "-c".to_owned(),
-                    FORK_CWD_OVERRIDE.to_owned(),
-                ]);
-                fork_data = Some(without_conversation(data));
-            }
-        }
-        if let Some(model) = option(MODEL_KEY) {
-            args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
-        }
-        args.extend(["-c".to_owned(), format!("{REASONING_EFFORT_KEY}={effort}")]);
-        if !req.profile.text().is_empty() {
-            args.extend([
-                "-c".to_owned(),
-                format!("{DEVELOPER_INSTRUCTIONS_KEY}={}", req.profile.text()),
-            ]);
-        }
-        if !req.hook_command.is_empty() {
-            for event in HOOK_EVENTS {
-                args.extend(["-c".to_owned(), hook_override(req.hook_command, event)]);
-            }
-        }
-        args.extend([
-            BYPASS_APPROVALS_FLAG.to_owned(),
-            BYPASS_HOOK_TRUST_FLAG.to_owned(),
-        ]);
-        if let Some(prompt) = req.initial_prompt.filter(|prompt| !prompt.is_empty()) {
-            args.push(prompt.to_owned());
-        }
-        let mut plan = LaunchPlan::new(CODEX_BIN).args(args);
-        plan.engine_data = fork_data;
-        for link in skill_links(SKILLS_DIR, req.profile.skill_dirs()) {
-            plan = plan.workspace(link);
-        }
-        Ok(plan)
+    fn start(&self, request: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {
+        Ok(self.plan(request, Vec::new(), None, prompt))
+    }
+
+    fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        let args = vec![
+            RESUME_SUBCOMMAND.to_owned(),
+            self.conversation_of(request.session, "resume")?.to_owned(),
+        ];
+        Ok(self.plan(request, args, None, ""))
+    }
+
+    /// The fork record's data starts as a copy of the source's, so the plan stores it minus
+    /// the source's conversation: the fork's own arrives on `SessionStart`.
+    fn fork(
+        &self,
+        request: &LaunchRequest<'_>,
+        source: &Session,
+        prompt: &str,
+    ) -> Result<LaunchPlan, EngineError> {
+        let args = vec![
+            FORK_SUBCOMMAND.to_owned(),
+            self.conversation_of(source, "fork")?.to_owned(),
+            "-c".to_owned(),
+            FORK_CWD_OVERRIDE.to_owned(),
+        ];
+        let fork_data = without_conversation(engine_data(self, request.session));
+        Ok(self.plan(request, args, Some(fork_data), prompt))
+    }
+
+    fn stop(&self, _: &Session) -> Option<Input> {
+        Some(Input::line(QUIT_COMMAND))
+    }
+
+    /// Escape, as the status line says ("esc to interrupt"); Ctrl-C mid-turn opens a menu. The
+    /// agent is at its prompt afterwards.
+    fn interrupt(&self, _: &Session) -> Option<(Input, Option<LlmEngineState>)> {
+        Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
     /// An approval stops the turn on the operator (`Idle`); the next `PostToolUse` means they
@@ -677,7 +711,7 @@ mod tests {
         let (_dir, profile) = profile("", &[]);
         let session = record(serde_json::Value::Null);
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile))
+            .start(&LaunchRequest::new(&session, &profile), "")
             .unwrap();
         assert_eq!(plan.program, "codex");
         // No `-m`: Codex runs the model its own configuration names.
@@ -698,7 +732,7 @@ mod tests {
         let (_dir, profile) = profile("be good", &["/skills/one"]);
         let session = record(serde_json::json!({"model": "o3", "effort": "low"}));
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile).initial_prompt("go"))
+            .start(&LaunchRequest::new(&session, &profile), "go")
             .unwrap();
         assert_eq!(
             plan.args,
@@ -728,7 +762,7 @@ mod tests {
         let (_dir, profile) = profile("", &[]);
         let session = record(serde_json::Value::Null);
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile).initial_prompt("hi"))
+            .start(&LaunchRequest::new(&session, &profile), "hi")
             .unwrap();
         assert_eq!(plan.args[0], "-c");
         assert_eq!(plan.args.last().map(String::as_str), Some("hi"));
@@ -740,11 +774,7 @@ mod tests {
         let (_dir, profile) = profile("", &[]);
         let session = record(serde_json::json!({"conversation_id": "sess-7", "model": "o3"}));
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .mode(LaunchMode::Resume)
-                    .initial_prompt("more"),
-            )
+            .resume(&LaunchRequest::new(&session, &profile))
             .unwrap();
         assert_eq!(
             plan.args,
@@ -757,7 +787,6 @@ mod tests {
                 "model_reasoning_effort=high",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
-                "more",
             ])
         );
         assert_eq!(plan.engine_data, None);
@@ -769,11 +798,7 @@ mod tests {
         let source = record(serde_json::json!({"conversation_id": "sess-7"}));
         let session = record(serde_json::Value::Null);
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .mode(LaunchMode::Fork { source: &source })
-                    .initial_prompt("go"),
-            )
+            .fork(&LaunchRequest::new(&session, &profile), &source, "go")
             .unwrap();
         assert_eq!(
             plan.args,
@@ -809,11 +834,7 @@ mod tests {
         fork_data["effort"] = json!("medium");
         let session = record(fork_data);
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .mode(LaunchMode::Fork { source: &source })
-                    .initial_prompt("go"),
-            )
+            .fork(&LaunchRequest::new(&session, &profile), &source, "go")
             .unwrap();
         assert_eq!(
             plan.args[..4],
@@ -826,17 +847,29 @@ mod tests {
     }
 
     #[test]
+    fn stop_is_quit_submitted_and_interrupt_is_escape() {
+        let session = record(serde_json::Value::Null);
+        assert_eq!(adapter().stop(&session), Some(Input::line("/quit")));
+        assert_eq!(
+            adapter().interrupt(&session),
+            Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
+        );
+        assert_eq!(
+            adapter().receive_message(&tx_core::EnvelopeSender::User { via: Some("notes") }, "hi"),
+            Input::line("<from-user session=\"notes\">hi</from-user>")
+        );
+    }
+
+    #[test]
     fn only_a_fork_overrides_the_working_directory_prompt() {
         let (_dir, profile) = profile("", &[]);
         let session = record(serde_json::json!({"conversation_id": "sess-7"}));
-        for mode in [LaunchMode::Start, LaunchMode::Resume] {
-            let plan = adapter()
-                .launch(&LaunchRequest::new(&session, &profile).mode(mode))
-                .unwrap();
-            assert!(
-                !plan.args.contains(&FORK_CWD_OVERRIDE.to_owned()),
-                "{mode:?}"
-            );
+        let request = LaunchRequest::new(&session, &profile);
+        for (name, plan) in [
+            ("start", adapter().start(&request, "go").unwrap()),
+            ("resume", adapter().resume(&request).unwrap()),
+        ] {
+            assert!(!plan.args.contains(&FORK_CWD_OVERRIDE.to_owned()), "{name}");
         }
     }
 
@@ -850,7 +883,7 @@ mod tests {
         ] {
             let session = record(data);
             let error = adapter()
-                .launch(&LaunchRequest::new(&session, &profile).mode(LaunchMode::Resume))
+                .resume(&LaunchRequest::new(&session, &profile))
                 .unwrap_err();
             assert!(
                 matches!(&error, EngineError::Refused(text) if text.contains("cannot resume agent")),
@@ -858,10 +891,7 @@ mod tests {
             );
             let target = record(serde_json::Value::Null);
             let error = adapter()
-                .launch(
-                    &LaunchRequest::new(&target, &profile)
-                        .mode(LaunchMode::Fork { source: &session }),
-                )
+                .fork(&LaunchRequest::new(&target, &profile), &session, "go")
                 .unwrap_err();
             assert!(
                 matches!(&error, EngineError::Refused(text) if text.contains("cannot fork agent")),
@@ -875,7 +905,7 @@ mod tests {
         let (_dir, profile) = profile("", &[]);
         let session = record(serde_json::Value::Null);
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile).initial_prompt(""))
+            .start(&LaunchRequest::new(&session, &profile), "")
             .unwrap();
         assert_eq!(plan.args.len(), 4);
         assert!(!plan.args.contains(&"-m".to_owned()));
@@ -946,7 +976,10 @@ mod tests {
         let hook_command = ["/x\"y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
         let session = record(serde_json::Value::Null);
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile).hook_command(&hook_command))
+            .start(
+                &LaunchRequest::new(&session, &profile).hook_command(&hook_command),
+                "",
+            )
             .unwrap();
         let overrides: Vec<&str> = plan
             .args

@@ -304,6 +304,11 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             let session = core.stop_session(&core.resolve(&target)?)?;
             writeln!(out, "{}\t{}", session.id, session.lifecycle.as_str()).ok();
         }
+        Verb::Interrupt { target } => {
+            let id = core.resolve(&target)?;
+            core.interrupt_session(&id)?;
+            writeln!(out, "{id}\tinterrupted").ok();
+        }
         Verb::Respawn { target } => {
             let session = core.respawn_session(&core.resolve(&target)?)?;
             writeln!(out, "{}\t{}", session.id, session.name).ok();

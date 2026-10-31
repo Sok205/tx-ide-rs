@@ -37,7 +37,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Conversation, EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
+    Conversation, EngineError, Input, Key, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
     LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
     mirror_file, mirror_file_exact, mirror_tree,
 };
@@ -53,6 +53,9 @@ pub const NO_CHROME_FLAG: &str = "--no-chrome";
 pub const APPEND_SYSTEM_PROMPT_FLAG: &str = "--append-system-prompt";
 pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
 pub const SETTINGS_FLAG: &str = "--settings";
+/// The slash command that exits the CLI cleanly: its `SessionEnd` hook fires and the
+/// transcript closes.
+pub const EXIT_COMMAND: &str = "/exit";
 /// The hooks wired per launch; each runs `<hook_command> <Event>`, so `on_hook` sees Claude's
 /// own event names.
 pub const HOOK_EVENTS: [&str; 8] = [
@@ -151,6 +154,52 @@ impl ClaudeAdapter {
         }
     }
 
+    /// The command line every launch shares after the `args` that name the conversation:
+    /// model and effort from the data, the profile, the hooks, the permissions flag, and the
+    /// prompt (none when empty); `stored_data` is what the plan stores.
+    fn plan(
+        &self,
+        request: &LaunchRequest<'_>,
+        mut args: Vec<String>,
+        stored_data: Option<Value>,
+        prompt: &str,
+    ) -> LaunchPlan {
+        let data = engine_data(self, request.session);
+        let option = |key: &str| data.get(key).and_then(Value::as_str);
+        if let Some(model) = option(MODEL_KEY) {
+            args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
+        }
+        args.extend([
+            EFFORT_FLAG.to_owned(),
+            option(EFFORT_KEY)
+                .unwrap_or(DEFAULT_EFFORT.as_str())
+                .to_owned(),
+            NO_CHROME_FLAG.to_owned(),
+        ]);
+        if !request.profile.text().is_empty() {
+            args.extend([
+                APPEND_SYSTEM_PROMPT_FLAG.to_owned(),
+                request.profile.text().to_owned(),
+            ]);
+        }
+        if !request.hook_command.is_empty() {
+            args.extend([
+                SETTINGS_FLAG.to_owned(),
+                hook_settings(request.hook_command),
+            ]);
+        }
+        args.push(SKIP_PERMISSIONS_FLAG.to_owned());
+        if !prompt.is_empty() {
+            args.push(prompt.to_owned());
+        }
+        let mut plan = LaunchPlan::new(CLAUDE_BIN).args(args);
+        plan.engine_data = stored_data;
+        for link in skill_links(SKILLS_DIR, request.profile.skill_dirs()) {
+            plan = plan.workspace(link);
+        }
+        plan
+    }
+
     /// Where Claude writes conversation `id` of a process started in `cwd`.
     pub fn transcript_path(&self, cwd: &Path, id: &str) -> PathBuf {
         self.claude_home
@@ -247,62 +296,53 @@ impl LlmEngine for ClaudeAdapter {
         Ok(Value::Object(data))
     }
 
-    fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        let session_id = req.session.id.to_string();
-        let data = engine_data(self, req.session);
-        let option = |key: &str| data.get(key).and_then(Value::as_str);
-        let (mut args, engine_data) = match req.mode {
-            LaunchMode::Start => (
-                vec![SESSION_ID_FLAG.to_owned(), session_id],
-                Some(self.named_after(req.session)),
-            ),
-            LaunchMode::Resume => (
-                vec![
-                    RESUME_FLAG.to_owned(),
-                    self.conversation_of(req.session).to_owned(),
-                ],
-                None,
-            ),
-            LaunchMode::Fork { source } => (
-                vec![
-                    RESUME_FLAG.to_owned(),
-                    self.conversation_of(source).to_owned(),
-                    FORK_SESSION_FLAG.to_owned(),
-                    SESSION_ID_FLAG.to_owned(),
-                    session_id,
-                ],
-                Some(self.named_after(req.session)),
-            ),
-        };
-        if let Some(model) = option(MODEL_KEY) {
-            args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
-        }
-        args.extend([
-            EFFORT_FLAG.to_owned(),
-            option(EFFORT_KEY)
-                .unwrap_or(DEFAULT_EFFORT.as_str())
-                .to_owned(),
-            NO_CHROME_FLAG.to_owned(),
-        ]);
-        if !req.profile.text().is_empty() {
-            args.extend([
-                APPEND_SYSTEM_PROMPT_FLAG.to_owned(),
-                req.profile.text().to_owned(),
-            ]);
-        }
-        if !req.hook_command.is_empty() {
-            args.extend([SETTINGS_FLAG.to_owned(), hook_settings(req.hook_command)]);
-        }
-        args.push(SKIP_PERMISSIONS_FLAG.to_owned());
-        if let Some(prompt) = req.initial_prompt.filter(|prompt| !prompt.is_empty()) {
-            args.push(prompt.to_owned());
-        }
-        let mut plan = LaunchPlan::new(CLAUDE_BIN).args(args);
-        plan.engine_data = engine_data;
-        for link in skill_links(SKILLS_DIR, req.profile.skill_dirs()) {
-            plan = plan.workspace(link);
-        }
-        Ok(plan)
+    fn start(&self, request: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {
+        let args = vec![SESSION_ID_FLAG.to_owned(), request.session.id.to_string()];
+        Ok(self.plan(
+            request,
+            args,
+            Some(self.named_after(request.session)),
+            prompt,
+        ))
+    }
+
+    fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        let args = vec![
+            RESUME_FLAG.to_owned(),
+            self.conversation_of(request.session).to_owned(),
+        ];
+        Ok(self.plan(request, args, None, ""))
+    }
+
+    fn fork(
+        &self,
+        request: &LaunchRequest<'_>,
+        source: &Session,
+        prompt: &str,
+    ) -> Result<LaunchPlan, EngineError> {
+        let args = vec![
+            RESUME_FLAG.to_owned(),
+            self.conversation_of(source).to_owned(),
+            FORK_SESSION_FLAG.to_owned(),
+            SESSION_ID_FLAG.to_owned(),
+            request.session.id.to_string(),
+        ];
+        Ok(self.plan(
+            request,
+            args,
+            Some(self.named_after(request.session)),
+            prompt,
+        ))
+    }
+
+    fn stop(&self, _: &Session) -> Option<Input> {
+        Some(Input::line(EXIT_COMMAND))
+    }
+
+    /// Escape; Claude's `Stop` hook does not run for an interrupted turn, so the engine says
+    /// the agent is at its prompt.
+    fn interrupt(&self, _: &Session) -> Option<(Input, Option<LlmEngineState>)> {
+        Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
     fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange {
@@ -822,7 +862,7 @@ mod tests {
         let session = record(&cwd, serde_json::Value::Null);
         let id = session.id.to_string();
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile))
+            .start(&LaunchRequest::new(&session, &profile), "")
             .unwrap();
         assert_eq!(plan.program, "claude");
         assert_eq!(plan.args, with_tail(&["--session-id", &id]));
@@ -862,11 +902,7 @@ mod tests {
             serde_json::json!({"conversation_id": "chat-42", "transcript_path": "/x"}),
         );
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .mode(LaunchMode::Resume)
-                    .initial_prompt("more"),
-            )
+            .resume(&LaunchRequest::new(&session, &profile))
             .unwrap();
         assert_eq!(
             plan.args,
@@ -879,7 +915,6 @@ mod tests {
                 "--append-system-prompt",
                 "role",
                 "--dangerously-skip-permissions",
-                "more",
             ])
         );
         assert_eq!(plan.engine_data, None, "a resume keeps the data as it is");
@@ -887,7 +922,7 @@ mod tests {
         for data in [serde_json::Value::Null, serde_json::json!("junk")] {
             let session = record(dir.path(), data);
             let plan = adapter()
-                .launch(&LaunchRequest::new(&session, &profile).mode(LaunchMode::Resume))
+                .resume(&LaunchRequest::new(&session, &profile))
                 .unwrap();
             assert_eq!(plan.args[..2], argv(&["--resume", session.id.as_str()]));
             assert_eq!(plan.engine_data, None);
@@ -902,11 +937,7 @@ mod tests {
         let session = record(&cwd, serde_json::Value::Null);
         let id = session.id.to_string();
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .mode(LaunchMode::Fork { source: &source })
-                    .initial_prompt("go"),
-            )
+            .fork(&LaunchRequest::new(&session, &profile), &source, "go")
             .unwrap();
         let mut expected = with_tail(&[
             "--resume",
@@ -927,9 +958,7 @@ mod tests {
         // A source without data: its conversation is the one named after it.
         let source = record(&cwd, serde_json::Value::Null);
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile).mode(LaunchMode::Fork { source: &source }),
-            )
+            .fork(&LaunchRequest::new(&session, &profile), &source, "")
             .unwrap();
         assert_eq!(plan.args[..2], argv(&["--resume", source.id.as_str()]));
     }
@@ -942,7 +971,7 @@ mod tests {
             serde_json::json!({"model": "opus", "effort": "medium"}),
         );
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile).initial_prompt("go"))
+            .start(&LaunchRequest::new(&session, &profile), "go")
             .unwrap();
         assert_eq!(
             plan.args,
@@ -991,7 +1020,7 @@ mod tests {
         let (dir, profile) = profile("", &[]);
         let session = record(dir.path(), serde_json::json!({"effort": "max"}));
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile).initial_prompt(""))
+            .start(&LaunchRequest::new(&session, &profile), "")
             .unwrap();
         assert_eq!(
             plan.args,
@@ -1003,6 +1032,21 @@ mod tests {
                 "--no-chrome",
                 "--dangerously-skip-permissions"
             ])
+        );
+    }
+
+    #[test]
+    fn stop_is_exit_submitted_and_interrupt_is_escape() {
+        let (dir, _) = profile("", &[]);
+        let session = record(dir.path(), serde_json::Value::Null);
+        assert_eq!(adapter().stop(&session), Some(Input::line("/exit")));
+        assert_eq!(
+            adapter().interrupt(&session),
+            Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
+        );
+        assert_eq!(
+            adapter().receive_message(&tx_core::EnvelopeSender::Agent { name: "peer" }, "hi"),
+            Input::line("<from-agent session=\"peer\">hi</from-agent>")
         );
     }
 
@@ -1077,7 +1121,10 @@ mod tests {
         let session = record(dir.path(), serde_json::Value::Null);
         let hook_command = ["/x y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
         let plan = adapter()
-            .launch(&LaunchRequest::new(&session, &profile).hook_command(&hook_command))
+            .start(
+                &LaunchRequest::new(&session, &profile).hook_command(&hook_command),
+                "",
+            )
             .unwrap();
         let at = plan
             .args

@@ -181,16 +181,32 @@ fn refresh_all_returns_only_changed_records() {
 }
 
 #[test]
-fn stop_kills_and_keeps_the_record() {
+fn stop_asks_the_engine_and_keeps_the_record() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core.create_session(agent("s", &h.repository("a"))).unwrap();
     let other = core.create_session(agent("o", &h.repository("b"))).unwrap();
+    let cwd = core.get_session(&id).unwrap().cwd;
+    assert!(wait_for(Duration::from_secs(5), || cwd
+        .join("env.txt")
+        .exists()));
+    let started = std::time::Instant::now();
     let session = core.stop_session(&id).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the stub left on the engine's stop input, no grace period: {:?}",
+        started.elapsed()
+    );
     assert_eq!(session.lifecycle, Lifecycle::Stopped);
     assert!(session.ended_at.is_some());
     assert_eq!(h.live_names(), ["o"]);
+    let stopped = h
+        .log_lines()
+        .into_iter()
+        .find(|line| line["type"] == "stopped")
+        .unwrap();
+    assert_eq!(stopped["msg"], "", "left by itself, not killed");
     assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Stopped);
     assert!(matches!(
         core.stop_session(&id).unwrap_err(),
@@ -241,9 +257,65 @@ fn stop_waits_for_an_agent_that_survives_the_pane_and_then_kills_it() {
         "the process is gone once stop returns"
     );
     assert!(
-        waited >= Duration::from_secs(10) && waited < Duration::from_secs(14),
-        "stop waited {waited:?}: the full grace period, then the kill"
+        waited >= Duration::from_secs(20) && waited < Duration::from_secs(26),
+        "stop waited {waited:?}: the grace period after the engine's stop input, kill-session, \
+         the grace period again, then the kill"
     );
+    let stopped = h
+        .log_lines()
+        .into_iter()
+        .find(|line| line["type"] == "stopped")
+        .unwrap();
+    assert_eq!(stopped["msg"], "killed");
+}
+
+#[test]
+fn interrupt_types_the_engines_input_into_a_running_agent() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("i", &h.repository("a"))).unwrap();
+    let cwd = core.get_session(&id).unwrap().cwd;
+    assert!(wait_for(Duration::from_secs(5), || cwd
+        .join("env.txt")
+        .exists()));
+    // The input is typed, and the state the engine says follows, as for a hook.
+    core.interrupt_session(&id).unwrap();
+    assert!(wait_for(Duration::from_secs(5), || !typed(&cwd).is_empty()));
+    assert_eq!(typed(&cwd), "INTERRUPT\n");
+    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Idle);
+    // Mid-turn: idle again, one state-changed each time the state moved.
+    core.hook(
+        &id,
+        tx_core::LlmEngineHook {
+            name: "working".into(),
+            payload: serde_json::json!({}),
+            at: 1.0,
+        },
+    )
+    .unwrap();
+    core.interrupt_session(&id).unwrap();
+    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Idle);
+    let states: Vec<String> = h
+        .log_lines()
+        .iter()
+        .filter(|line| line["type"] == "state-changed")
+        .map(|line| line["msg"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        states,
+        ["starting → idle", "idle → working", "working → idle"]
+    );
+    assert!(matches!(
+        core.interrupt_session(&"zz".parse::<SessionId>().unwrap())
+            .unwrap_err(),
+        CoreError::NotFound(_)
+    ));
+    core.stop_session(&id).unwrap();
+    assert!(matches!(
+        core.interrupt_session(&id).unwrap_err(),
+        CoreError::NotRunning(_)
+    ));
 }
 
 #[test]

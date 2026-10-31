@@ -37,7 +37,9 @@ verbs:
   refresh [TARGET]                                                  mark vanished sessions exited
   where TARGET                                                      socket, session target, pane target
   attach TARGET                                                     attach the terminal to the session
-  stop TARGET                                                       kill the session; waits for its process to exit
+  stop TARGET                                                       exit the agent (its engine's own way, else kill);
+                                                                    waits for its process to be gone
+  interrupt TARGET                                                  abort the agent's running turn
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
   archive TARGET                                                    stop it if running, then hide it from ls; nothing
@@ -141,6 +143,9 @@ pub enum Verb {
         target: String,
     },
     Stop {
+        target: String,
+    },
+    Interrupt {
         target: String,
     },
     Respawn {
@@ -371,6 +376,9 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         },
         Some("stop") => Verb::Stop {
             target: target(&mut cursor, "stop")?,
+        },
+        Some("interrupt") => Verb::Interrupt {
+            target: target(&mut cursor, "interrupt")?,
         },
         Some("respawn") => Verb::Respawn {
             target: target(&mut cursor, "respawn")?,
@@ -841,6 +849,10 @@ mod tests {
         assert_eq!(
             parse_str("stop x").unwrap().verb,
             Verb::Stop { target: "x".into() }
+        );
+        assert_eq!(
+            parse_str("interrupt x").unwrap().verb,
+            Verb::Interrupt { target: "x".into() }
         );
         assert_eq!(
             parse_str("respawn x").unwrap().verb,
