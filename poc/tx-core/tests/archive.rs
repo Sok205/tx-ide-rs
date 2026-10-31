@@ -79,10 +79,7 @@ fn every_hook_archives_the_conversation_and_a_failure_is_an_event() {
         core.hook(&id, hook("idle", json!({}), 17.0)).unwrap(),
         Some(LlmEngineState::Idle)
     );
-    assert_eq!(
-        core.get_session(&id).unwrap().state,
-        Some(LlmEngineState::Idle)
-    );
+    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Idle);
     assert_eq!(archive_lines(&h), ["archive refused", "archive refused"]);
     assert_eq!(std::fs::read(&copy).unwrap(), b"one\ntwo\nthree\n");
 }
@@ -213,7 +210,7 @@ fn a_stop_and_an_exit_archive_the_final_transcript_exactly() {
     core.refresh_all().unwrap();
     assert_eq!(
         core.get_session(&exited).unwrap().state,
-        Some(LlmEngineState::Ended)
+        LlmEngineState::Ended
     );
     assert_eq!(
         std::fs::read(archived(&h, &exited, "e")).unwrap(),

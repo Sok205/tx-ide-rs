@@ -13,12 +13,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
-use common::{Harness, agent, process, wait_for};
+use common::{Harness, agent, exiting, wait_for};
 use proptest::prelude::*;
 use serde_json::Value;
 use tx_core::{
-    CoreError, CreateOptions, Event, EventSink, EventType, LaunchOptions, Lifecycle, Locks,
-    SendOptions, SessionId, TxCore,
+    CoreError, Event, EventSink, EventType, Lifecycle, Locks, SendOptions, SessionId, TxCore,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -110,17 +109,6 @@ fn verdict<T>(result: &Result<T, CoreError>) -> String {
     }
 }
 
-/// A process that exits at once. Whether `exited` lands in the `create_session` batch depends
-/// on `true` dying before `set-option @tx-id` runs; otherwise a later refresh records it. Tests
-/// that need a fixed log call [`await_exit`] right after creating one.
-fn exiting(name: &str, cwd: &std::path::Path) -> CreateOptions {
-    CreateOptions::new(
-        name,
-        cwd,
-        LaunchOptions::process("true", Vec::<String>::new()),
-    )
-}
-
 /// Every lifecycle event of one id, checked against the lifecycle order: `created` first and
 /// only once; at most one terminal (`exited` / `stopped`) per run, a run ending at `respawned`;
 /// `archived` at most once per run, and after it only `renamed` / `tagged` until a `respawned`.
@@ -157,7 +145,10 @@ fn check_lifecycle(id: &str, types: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Refreshes `id` until its record is `Exited`, so both exit paths reach the same log.
+/// Refreshes `id` until its record is `Exited`, so both exit paths reach the same log. Whether
+/// the `exited` of an [`exiting`] agent lands in the `create_session` batch depends on `true`
+/// dying before `set-option @tx-id` runs; otherwise a later refresh records it, so tests that
+/// need a fixed log call this right after creating one.
 fn await_exit(core: &TxCore, id: &SessionId) {
     assert!(
         wait_for(Duration::from_secs(5), || core
@@ -221,11 +212,11 @@ fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<SessionId>, step: usize, op:
             name,
             exiting: at_once,
         } => {
-            let cwd = h.workdir(&format!("w{step}"));
+            let repository = h.repository(&format!("w{step}"));
             let opts = if *at_once {
-                exiting(NAMES[*name], &cwd)
+                exiting(NAMES[*name], &repository)
             } else {
-                process(NAMES[*name], &cwd)
+                agent(NAMES[*name], &repository)
             };
             let result = core.create_session(opts);
             if let Ok(id) = &result {
@@ -334,7 +325,7 @@ proptest! {
         }
         let h = Harness::new();
         let recorder = Arc::new(Recorder::default());
-        let mut core = h.open();
+        let mut core = h.open_with_engine();
         core.subscribe(Box::new(Arc::clone(&recorder)));
         run_ops(&h, &core, &recorder, &ops)?;
     }
@@ -345,7 +336,7 @@ fn scripted_sequence_sink_view_equals_the_log() {
     require_tmux!();
     let h = Harness::new();
     let recorder = Arc::new(Recorder::default());
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
     let ops = [
         Op::Create {
@@ -360,7 +351,7 @@ fn scripted_sequence_sink_view_equals_the_log() {
         Op::Create {
             name: 0,
             exiting: false,
-        }, // NameTaken: nothing
+        }, // alpha is held: created as alpha-2
         Op::Rename { who: 0, name: 0 }, // same name: Ok, nothing
         Op::Rename { who: 0, name: 6 }, // invalid: nothing
         Op::Kill(0),
@@ -377,7 +368,9 @@ fn scripted_sequence_sink_view_equals_the_log() {
     run_ops(&h, &core, &recorder, &ops).unwrap();
     assert_eq!(
         log_types(&h),
-        ["created", "created", "exited", "exited", "archived"]
+        [
+            "created", "created", "exited", "created", "exited", "archived"
+        ]
     );
 }
 
@@ -427,8 +420,10 @@ fn every_lock_is_free_when_sinks_run() {
     core.subscribe(Box::new(Arc::clone(&relocker)));
     let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
     let cwd = core.get_session(&a).unwrap().cwd;
-    let b = core.create_session(process("b", &h.workdir("b"))).unwrap();
-    let c = core.create_session(exiting("c", &h.workdir("c"))).unwrap();
+    let b = core.create_session(agent("b", &h.repository("b"))).unwrap();
+    let c = core
+        .create_session(exiting("c", &h.repository("c")))
+        .unwrap();
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
@@ -477,16 +472,16 @@ fn a_sink_may_stop_the_session_it_was_told_about() {
         outcome: Mutex::new(Vec::new()),
     });
     let recorder = Arc::new(Recorder::default());
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&stopper)));
     core.subscribe(Box::new(Arc::clone(&recorder)));
     let done = Arc::new(AtomicBool::new(false));
     let worker = {
         let done = Arc::clone(&done);
-        let cwd = h.workdir("p");
+        let repository = h.repository("p");
         let core = Arc::new(core);
         std::thread::spawn(move || {
-            let id = core.create_session(process("p", &cwd));
+            let id = core.create_session(agent("p", &repository));
             done.store(true, Ordering::SeqCst);
             id.map(|id| core.get_session(&id).unwrap())
         })
@@ -514,13 +509,13 @@ fn a_sink_may_archive_the_session_it_was_told_about() {
     require_tmux!();
     let h = Harness::new();
     let other = h.open();
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     core.subscribe(Box::new(move |event: &Event| {
         if event.type_ == EventType::Created {
             other.archive_session(&event.id).unwrap();
         }
     }));
-    let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
+    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
     let session = core.get_session(&id).unwrap();
     assert_eq!(session.lifecycle, Lifecycle::Stopped);
     assert!(session.archived_at.is_some());
@@ -550,15 +545,17 @@ fn sixteen_sinks_run_in_registration_order_once_per_event() {
     const SINKS: usize = 16;
     let h = Harness::new();
     let out = Arc::new(Mutex::new(Vec::new()));
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     for index in 0..SINKS {
         core.subscribe(Box::new(Indexed {
             index,
             out: Arc::clone(&out),
         }));
     }
-    let a = core.create_session(process("a", &h.workdir("a"))).unwrap();
-    let b = core.create_session(exiting("b", &h.workdir("b"))).unwrap();
+    let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let b = core
+        .create_session(exiting("b", &h.repository("b")))
+        .unwrap();
     await_exit(&core, &b);
     core.rename_session(&a, "a2").unwrap();
     core.set_session_tags(&a, vec![]).unwrap();
@@ -602,7 +599,7 @@ fn fifty_ops_through_alternating_panicking_and_recording_sinks() {
     require_tmux!();
     let h = Harness::new();
     let recorders: Vec<Arc<Recorder>> = (0..4).map(|_| Arc::new(Recorder::default())).collect();
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     for (index, recorder) in recorders.iter().enumerate() {
         core.subscribe(Box::new(Panicky(index)));
         core.subscribe(Box::new(Arc::clone(recorder)));
@@ -655,10 +652,10 @@ fn a_failure_after_the_lock_is_taken_emits_nothing_and_leaves_the_record() {
     require_tmux!();
     let h = Harness::new();
     let recorder = Arc::new(Recorder::default());
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let a = core.create_session(process("a", &h.workdir("a"))).unwrap();
-    let b = core.create_session(process("b", &h.workdir("b"))).unwrap();
+    let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let b = core.create_session(agent("b", &h.repository("b"))).unwrap();
     core.stop_session(&b).unwrap();
     let before = h.log_lines().len();
     assert_eq!(before, 3);
@@ -683,7 +680,7 @@ fn a_failure_after_the_lock_is_taken_emits_nothing_and_leaves_the_record() {
     );
 
     // rename_session: name free in the store, taken on the server by a foreign session.
-    let c = core.create_session(process("c", &h.workdir("c"))).unwrap();
+    let c = core.create_session(agent("c", &h.repository("c"))).unwrap();
     let output = h.tmux(&["new-session", "-d", "-s", "taken", "sleep", "30"]);
     assert!(output.status.success());
     let record = h.record_bytes(&c);
@@ -700,7 +697,7 @@ fn a_failure_after_the_lock_is_taken_emits_nothing_and_leaves_the_record() {
     assert_eq!(core.get_session(&c).unwrap().name, "c");
     // create_session: same foreign name, fails at `new-session` after `create.lock`.
     let taken = matches!(
-        core.create_session(process("taken", &h.workdir("t"))),
+        core.create_session(agent("taken", &h.repository("t"))),
         Err(CoreError::NameTaken(_))
     );
     assert!(taken);
@@ -748,7 +745,7 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
             let barrier = Arc::clone(&barrier);
             let recorder = Arc::clone(recorder);
             std::thread::spawn(move || {
-                let mut core = h.open();
+                let mut core = h.open_with_engine();
                 core.subscribe(Box::new(recorder));
                 barrier.wait();
                 let mut failures = BTreeMap::new();
@@ -759,9 +756,9 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
                     };
                     let result: Result<(), CoreError> = match step % 5 {
                         0 => core
-                            .create_session(process(
+                            .create_session(agent(
                                 &format!("w{worker}s{step}"),
-                                &h.workdir(&format!("w{worker}s{step}")),
+                                &h.repository(&format!("w{worker}s{step}")),
                             ))
                             .map(|id| pool.lock().unwrap().push(id)),
                         1 => pick(step).map_or(Ok(()), |id| {
@@ -847,11 +844,11 @@ fn log_line_order_per_id_follows_the_lifecycle_under_contention() {
     let h = Arc::new(Harness::new());
     let mut violations = Vec::new();
     for round in 0..ROUNDS {
-        let core = h.open();
+        let core = h.open_with_engine();
         let id = core
-            .create_session(process(
+            .create_session(agent(
                 &format!("s{round}"),
-                &h.workdir(&format!("s{round}")),
+                &h.repository(&format!("s{round}")),
             ))
             .unwrap();
         let barrier = Arc::new(Barrier::new(3));
@@ -899,7 +896,7 @@ fn event_is_clone_send_sync_and_closures_and_shared_sinks_register() {
     let h = Harness::new();
     let names = Arc::new(Mutex::new(Vec::<String>::new()));
     let recorder = Arc::new(Recorder::default());
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     let captured = Arc::clone(&names);
     let closure: Box<dyn EventSink> = Box::new(move |event: &Event| {
         captured.lock().unwrap().push(event.name.clone());
@@ -907,7 +904,7 @@ fn event_is_clone_send_sync_and_closures_and_shared_sinks_register() {
     core.subscribe(closure);
     core.subscribe(Box::new(Arc::clone(&recorder)));
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
+    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
     core.stop_session(&id).unwrap();
     assert_eq!(*names.lock().unwrap(), ["p", "p"]);
     // The same Arc registered twice is called twice per event.
@@ -934,9 +931,9 @@ fn sinks_still_run_when_the_log_cannot_be_appended() {
     require_tmux!();
     let h = Harness::new();
     let recorder = Arc::new(Recorder::default());
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
+    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
     assert_eq!(h.log_lines().len(), 1);
     let path = h.data_dir().join("log.jsonl");
     std::fs::remove_file(&path).unwrap();

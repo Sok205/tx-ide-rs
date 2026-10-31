@@ -1,13 +1,20 @@
 //! Where `txc` keeps its files: the five XDG directories under `tx-ide` (or `$TX_APPNAME`), and
 //! the one-time move of a version-1 home. Every process runs in a sandbox: `HOME`, `TMPDIR` and
 //! every directory live under a temp root, and no `XDG_*` or `TX_*` of the caller leaks in.
+//! Agents run a fake `claude` (a shim that just stays alive).
+
+mod common;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
 
+use common::{repository_at, shim_path_in};
+
 struct Sandbox {
     root: tempfile::TempDir,
+    /// PATH with the fake `claude` first.
+    path: String,
 }
 
 impl Sandbox {
@@ -17,7 +24,8 @@ impl Sandbox {
             .tempdir_in("/tmp")
             .unwrap();
         std::fs::create_dir_all(root.path().join("tmp")).unwrap();
-        Self { root }
+        let path = shim_path_in(&root.path().join("shim"), &[("claude", "exec sleep 30")]);
+        Self { root, path }
     }
 
     fn path(&self) -> &Path {
@@ -34,6 +42,7 @@ impl Sandbox {
             .env("HOME", self.home())
             .env("TMPDIR", self.path().join("tmp"))
             .env("USER", "u")
+            .env("PATH", &self.path)
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID")
             .env_remove("TX_TMUX_SOCKET")
@@ -73,29 +82,58 @@ impl Sandbox {
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
-    fn workdir(&self) -> PathBuf {
-        let path = self.path().join("work");
-        std::fs::create_dir_all(&path).unwrap();
-        path
+    /// A git repository with one commit at `<root>/work`: an agent's starting checkout.
+    fn repository(&self) -> PathBuf {
+        repository_at(&self.path().join("work"))
     }
 
-    /// A session whose program writes its environment to `<work>/env.txt`, then the parsed lines.
+    /// `create NAME --cwd <repository> --engine claude --prompt start`, with the fake `claude`.
+    fn create(&self, name: &str, environment: &[(&str, &str)]) -> String {
+        let work = self.repository();
+        self.ok(
+            &[
+                "create",
+                name,
+                "--cwd",
+                work.to_str().unwrap(),
+                "--engine",
+                "claude",
+                "--prompt",
+                "start",
+            ],
+            environment,
+        )
+        .trim()
+        .to_owned()
+    }
+
+    /// An agent whose `claude` writes its environment to `env.txt` in its worktree, then the
+    /// parsed lines.
     fn session_environment(&self, environment: &[(&str, &str)]) -> Vec<(String, String)> {
-        let work = self.workdir();
+        let work = self.repository();
+        let path = shim_path_in(
+            &self.path().join("probe-shim"),
+            &[("claude", "env > env.txt; exec sleep 30")],
+        );
+        let mut environment = environment.to_vec();
+        environment.push(("PATH", path.as_str()));
         self.ok(
             &[
                 "create",
                 "probe",
                 "--cwd",
                 work.to_str().unwrap(),
-                "--exec",
-                "sh",
-                "-c",
-                "env > env.txt; exec sleep 30",
+                "--engine",
+                "claude",
+                "--prompt",
+                "start",
             ],
-            environment,
+            &environment,
         );
-        let text = wait_for(&work.join("env.txt"));
+        let shown: serde_json::Value =
+            serde_json::from_str(&self.ok(&["show", "probe"], &environment)).unwrap();
+        let worktree = PathBuf::from(shown["cwd"].as_str().unwrap());
+        let text = wait_for(&worktree.join("env.txt"));
         text.lines()
             .filter_map(|line| line.split_once('='))
             .map(|(key, value)| (key.to_owned(), value.to_owned()))
@@ -133,22 +171,7 @@ fn defaults_are_the_xdg_directories_under_tx_ide() {
         return;
     }
     let sandbox = Sandbox::new();
-    let work = sandbox.workdir();
-    let id = sandbox
-        .ok(
-            &[
-                "create",
-                "a",
-                "--cwd",
-                work.to_str().unwrap(),
-                "--exec",
-                "sleep",
-                "30",
-            ],
-            &[],
-        )
-        .trim()
-        .to_owned();
+    let id = sandbox.create("a", &[]);
     let home = sandbox.home();
     let socket = sandbox.path().join("tmp/tx-ide.u/tmux.sock");
     let exists = socket.exists();
@@ -273,15 +296,16 @@ fn version_one_home(sandbox: &Sandbox, old: &Path, session: &str) {
     .flat_map(|flag| [(*flag).to_owned(), old.to_string_lossy().into_owned()])
     .collect();
     let mut args: Vec<&str> = flags.iter().map(String::as_str).collect();
-    let work = sandbox.workdir();
+    let work = sandbox.repository();
     args.extend([
         "create",
         session,
         "--cwd",
         work.to_str().unwrap(),
-        "--exec",
-        "sleep",
-        "30",
+        "--engine",
+        "claude",
+        "--prompt",
+        "start",
     ]);
     sandbox.ok(&args, &[]);
     std::fs::create_dir_all(old.join("agents")).unwrap();
@@ -378,18 +402,7 @@ fn migrate_refuses_to_merge_into_a_used_home() {
     let old = sandbox.path().join("old");
     version_one_home(&sandbox, &old, "legacy");
     kill_server(&old.join("tmux.sock"));
-    let work = sandbox.workdir();
-    sandbox.ok(
-        &[
-            "create",
-            "fresh",
-            "--cwd",
-            work.to_str().unwrap(),
-            "--exec",
-            "true",
-        ],
-        &[],
-    );
+    sandbox.create("fresh", &[]);
     kill_server(&sandbox.path().join("tmp/tx-ide.u/tmux.sock"));
     let output = sandbox.run(&["migrate", "--from", old.to_str().unwrap()], &[]);
     let stderr = String::from_utf8_lossy(&output.stderr);

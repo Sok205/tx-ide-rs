@@ -210,7 +210,7 @@ pub fn git_worktrees(directory: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Where a session runs: its record's `cwd` (an agent's worktree, a process's directory).
+/// Where a session runs: its record's `cwd`, the agent's worktree.
 pub fn cwd_of(core: &TxCore, id: &SessionId) -> PathBuf {
     core.get_session(id).unwrap().cwd
 }
@@ -229,6 +229,10 @@ pub fn wait_for(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool 
 
 /// A test engine: runs `sh -c <script>` where the script records its environment and reads
 /// stdin forever (so messages land in a file), and writes a marker file via the workspace.
+/// The `model` option picks a variant: `exit` runs `true` (a program that exits at once),
+/// `tough` ignores the hang-up a closed pane sends (as a CLI busy with its exit hooks might),
+/// `data` names its conversation up front (as Claude's plan does), `refuse` is refused by
+/// `configure`.
 pub struct ShellStub;
 
 pub const STUB_ID: &str = "stub";
@@ -296,8 +300,19 @@ impl LlmEngine for ShellStub {
             ),
             LaunchMode::Fork { source } => ("fork", source.id.as_str()),
         };
-        let plan = LaunchPlan::new("sh")
-            .args(["-c".to_owned(), script])
+        let (program, args) = match option("model") {
+            Some("exit") => ("true", Vec::new()),
+            Some("tough") => (
+                "sh",
+                vec![
+                    "-c".to_owned(),
+                    "trap '' HUP TERM; env > env.txt; sleep 120".to_owned(),
+                ],
+            ),
+            _ => ("sh", vec!["-c".to_owned(), script]),
+        };
+        let plan = LaunchPlan::new(program)
+            .args(args)
             .env("STUB_PROFILE", req.profile.file().display().to_string())
             .env("STUB_EFFORT", option("effort").unwrap_or("none"))
             .env("FROM_PLAN", "plan")
@@ -370,20 +385,25 @@ fn stub_conversation(session: &tx_core::Session) -> Option<(String, PathBuf)> {
     Some((conversation, transcript))
 }
 
-/// A `Process` session that keeps stdin open and records what it is typed.
-pub fn process(name: &str, cwd: &Path) -> CreateOptions {
-    CreateOptions::new(
-        name,
-        cwd,
-        LaunchOptions::process("sh", ["-c", "env > env.txt; cat > input.txt"]),
-    )
-}
-
+/// A stub agent that keeps stdin open and records what it is typed (`input.txt` in its
+/// worktree, see [`typed`]) and its environment (`env.txt`). `cwd` must be a git checkout
+/// (`Harness::repository`); the agent runs in a worktree of it (`cwd_of`).
 pub fn agent(name: &str, cwd: &Path) -> CreateOptions {
     CreateOptions::new(
         name,
         cwd,
         LaunchOptions::agent(STUB_ID).initial_prompt("start"),
+    )
+}
+
+/// A stub agent whose program exits at once (`true`).
+pub fn exiting(name: &str, cwd: &Path) -> CreateOptions {
+    CreateOptions::new(
+        name,
+        cwd,
+        LaunchOptions::agent(STUB_ID)
+            .initial_prompt("start")
+            .option("model", "exit"),
     )
 }
 

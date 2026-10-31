@@ -16,8 +16,8 @@ use serde_json::{Map, Value, json};
 use tx_core::config::{MAX_SOCKET_PATH_BYTES, SOCKET_FILE};
 use tx_core::session::{MAX_NAME_BYTES, RECORD_VERSION};
 use tx_core::{
-    CoreConfig, CoreError, Directories, Launch, Lifecycle, RecordError, Session, SessionId,
-    validate_name,
+    CoreConfig, CoreError, Directories, Launch, Lifecycle, LlmEngineState, RecordError, Session,
+    SessionId, validate_name,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -46,23 +46,23 @@ fn arb_session_id() -> impl Strategy<Value = SessionId> {
 }
 
 fn arb_launch() -> impl Strategy<Value = Launch> {
-    prop_oneof![
-        (
-            arb_text(),
-            prop::collection::vec(arb_text(), 0..4),
-            prop::option::of(arb_text()),
-            prop::option::of(arb_text()),
-        )
-            .prop_map(|(engine, profile, model, effort)| Launch::Agent {
-                engine,
-                profile,
-                model,
-                effort,
-                resume: None,
-            }),
-        (arb_text(), prop::collection::vec(arb_text(), 0..4))
-            .prop_map(|(program, args)| Launch::Process { program, args }),
-    ]
+    (
+        arb_text(),
+        prop::collection::vec(arb_text(), 0..4),
+        prop::option::of(arb_text()),
+        prop::option::of(arb_text()),
+    )
+        .prop_map(|(engine, profile, model, effort)| Launch::Agent {
+            engine,
+            profile,
+            model,
+            effort,
+            resume: None,
+        })
+}
+
+fn arb_state() -> impl Strategy<Value = LlmEngineState> {
+    prop::sample::select(LlmEngineState::ALL.to_vec())
 }
 
 /// Every f64 bit pattern serde_json can represent: finite, including -0.0 and subnormals.
@@ -99,22 +99,25 @@ fn arb_session_with(
         arb_lifecycle(),
         arb_launch(),
         prop::collection::btree_map(arb_text(), arb_json(), 0..3),
+        arb_state(),
     )
         .prop_map(
-            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch, ext)| Session {
-                id,
-                name,
-                parent,
-                tags,
-                cwd,
-                created_at,
-                ended_at,
-                archived_at: None,
-                last_modified_at: created_at,
-                lifecycle,
-                launch,
-                ext,
-                state: None,
+            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch, ext, state)| {
+                Session {
+                    id,
+                    name,
+                    parent,
+                    tags,
+                    cwd,
+                    created_at,
+                    ended_at,
+                    archived_at: None,
+                    last_modified_at: created_at,
+                    lifecycle,
+                    launch,
+                    ext,
+                    state,
+                }
             },
         )
 }
@@ -149,7 +152,7 @@ fn session_value(session: &Session) -> Map<String, Value> {
     }
 }
 
-const TOP_KEYS: [&str; 11] = [
+const TOP_KEYS: [&str; 12] = [
     "version",
     "id",
     "name",
@@ -161,6 +164,7 @@ const TOP_KEYS: [&str; 11] = [
     "lifecycle",
     "launch",
     "ext",
+    "state",
 ];
 const LAUNCH_KEYS: [&str; 7] = [
     "kind", "engine", "profile", "model", "effort", "program", "args",
@@ -209,18 +213,13 @@ proptest! {
         prop_assert_eq!(value.keys().next().map(String::as_str), Some("version"));
         prop_assert_eq!(value.get("version"), Some(&json!(RECORD_VERSION)));
         prop_assert_eq!(value.get("lifecycle"), Some(&json!(session.lifecycle.as_str())));
-        let kind = match &session.launch {
-            Launch::Agent { .. } => "agent",
-            Launch::Process { .. } => "process",
-        };
-        prop_assert_eq!(value["launch"].get("kind"), Some(&json!(kind)));
+        prop_assert_eq!(value["launch"].get("kind"), Some(&json!("agent")));
         // The deprecated `model` / `effort` of an agent launch are written only when set.
-        if let Launch::Agent { model, effort, .. } = &session.launch {
-            let expected_effort = effort.as_ref().map(|e| json!(e));
-            prop_assert_eq!(value["launch"].get("effort"), expected_effort.as_ref());
-            let expected_model = model.as_ref().map(|m| json!(m));
-            prop_assert_eq!(value["launch"].get("model"), expected_model.as_ref());
-        }
+        let Launch::Agent { model, effort, .. } = &session.launch;
+        let expected_effort = effort.as_ref().map(|e| json!(e));
+        prop_assert_eq!(value["launch"].get("effort"), expected_effort.as_ref());
+        let expected_model = model.as_ref().map(|m| json!(m));
+        prop_assert_eq!(value["launch"].get("model"), expected_model.as_ref());
         prop_assert_eq!(session.to_json().unwrap(), session.to_json().unwrap());
     }
 
@@ -279,12 +278,15 @@ fn sample() -> Session {
         archived_at: None,
         last_modified_at: 1.0,
         lifecycle: Lifecycle::Stopped,
-        launch: Launch::Process {
-            program: "sh".into(),
-            args: vec![],
+        launch: Launch::Agent {
+            engine: "e".into(),
+            profile: vec![],
+            model: None,
+            effort: None,
+            resume: None,
         },
         ext: std::collections::BTreeMap::new(),
-        state: None,
+        state: LlmEngineState::Ended,
     }
 }
 
@@ -599,6 +601,8 @@ fn from_json_requires_all_mandatory_fields() {
             "parent" => assert_eq!(result.unwrap().parent, None),
             "ended_at" => assert_eq!(result.unwrap().ended_at, None),
             "ext" => assert!(result.unwrap().ext.is_empty()),
+            // Written before `state` existed: an ended record reads as ended.
+            "state" => assert_eq!(result.unwrap().state, LlmEngineState::Ended),
             _ => assert!(
                 matches!(result, Err(RecordError::Json(_))),
                 "{key}: {result:?}"
@@ -635,16 +639,12 @@ proptest! {
         prop_assert_eq!(back, session);
     }
 
-    /// Keys from the *other* launch variant are extra keys too and must not confuse the tag.
+    /// Keys of the old process launch are extra keys too and must not confuse the tag.
     #[test]
     fn other_variant_keys_inside_launch_are_ignored(session in arb_session(), filler in arb_json()) {
         let mut value = session_value(&session);
-        let foreign: &[&str] = match session.launch {
-            Launch::Agent { .. } => &["program", "args"],
-            Launch::Process { .. } => &["engine", "profile", "model", "effort"],
-        };
-        for key in foreign {
-            value["launch"][*key] = filler.clone();
+        for key in ["program", "args"] {
+            value["launch"][key] = filler.clone();
         }
         let back = Session::from_json(&Value::Object(value).to_string()).unwrap();
         prop_assert_eq!(back, session);

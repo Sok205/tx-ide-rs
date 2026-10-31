@@ -334,7 +334,7 @@ fn open(
     let artifact_id = artifacts.resolve_id(token).map_err(failed)?;
     let artifact = artifacts.require(&artifact_id).map_err(failed)?;
     let ui = Ui::from_core(core);
-    if let Some(shown) = tx_artifacts::views::live_view(&ui, core, &artifact_id)? {
+    if let Some(shown) = tx_artifacts::views::live_view(&ui, &artifact_id)? {
         let switched = ui.inside()
             && ui
                 .quiet(&["switch-client", "-t", &format!("={}", shown.name)])

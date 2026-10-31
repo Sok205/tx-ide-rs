@@ -1,10 +1,72 @@
 //! `apply_edit` against a real core: what a saved form writes, and what it must leave alone.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tx_core::{CoreConfig, CoreError, CreateOptions, LaunchOptions, SessionId, TxCore};
+use tx_core::{
+    CoreConfig, CoreError, CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest,
+    LlmEngine, LlmEngineChange, LlmEngineHook, Session, SessionId, TxCore,
+};
 use tx_edit::{Ext, apply_edit};
+
+/// A test engine: an agent that just stays alive.
+struct SleepStub;
+
+impl LlmEngine for SleepStub {
+    fn id(&self) -> &str {
+        "stub"
+    }
+
+    fn ext_key(&self) -> &'static str {
+        "stub"
+    }
+
+    fn configure(
+        &self,
+        _: &Session,
+        options: &serde_json::Value,
+    ) -> Result<serde_json::Value, EngineError> {
+        Ok(options.clone())
+    }
+
+    fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        Ok(LaunchPlan::new("sleep").args(["60".to_owned()]))
+    }
+
+    fn on_hook(&self, _: &Session, _: &LlmEngineHook) -> LlmEngineChange {
+        LlmEngineChange::NONE
+    }
+}
+
+/// A git repository with one commit: an agent's starting checkout, isolated from the host's
+/// git config.
+fn repository(path: &Path) {
+    std::fs::create_dir_all(path).unwrap();
+    std::fs::write(path.join("README.md"), "hello\n").unwrap();
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["add", "README.md"],
+        &["commit", "-q", "-m", "init"],
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
 
 struct Harness {
     dir: tempfile::TempDir,
@@ -25,16 +87,18 @@ impl Harness {
     }
 
     fn core(&self) -> TxCore {
-        TxCore::open(CoreConfig::new(self.directories())).unwrap()
+        let mut core = TxCore::open(CoreConfig::new(self.directories())).unwrap();
+        core.register_engine(Box::new(SleepStub)).unwrap();
+        core
     }
 
     fn create(&self, core: &TxCore, name: &str) -> SessionId {
         let cwd = self.dir.path().join("work").join(name);
-        std::fs::create_dir_all(&cwd).unwrap();
+        repository(&cwd);
         core.create_session(CreateOptions::new(
             name,
             cwd,
-            LaunchOptions::process("sleep", ["60"]),
+            LaunchOptions::agent("stub").initial_prompt("start"),
         ))
         .unwrap()
     }

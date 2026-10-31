@@ -324,7 +324,7 @@ fn lesson_1_checks_pass_and_advance() {
 }
 
 /// Gate: the session checks pass against a spawned worker (lesson 5: a Claude worker tagged
-/// `tutor`), and lesson 3's against a tagged shell session.
+/// `tutor`), and lesson 3's against a session tagged `http-tutor`.
 #[test]
 fn session_checks_pass_against_a_spawned_worker() {
     require_tmux!();
@@ -337,13 +337,25 @@ fn session_checks_pass_against_a_spawned_worker() {
         out.contains("expected at least 1 matching sessions, found 0"),
         "{out}"
     );
-    tutor.create(&["server", "--tag", "http-tutor", "--exec", "sleep", "60"]);
+    tutor.create(&[
+        "server",
+        "--tag",
+        "http-tutor",
+        "--engine",
+        "claude",
+        "--prompt",
+        "start",
+    ]);
     let out = tutor.ok(&["tutor", "check"], "");
     assert!(out.contains("✓ server is tagged http-tutor"), "{out}");
 
     tutor.ok(&["tutor", "goto", "05-spawn-worker"], "");
     let (code, out, _) = tutor.code(&["tutor", "check"], "");
-    assert_eq!(code, Some(1), "a shell is not a worker: {out}");
+    assert_eq!(
+        code,
+        Some(1),
+        "an agent without the tutor tag is not a worker: {out}"
+    );
     tutor.create(&[
         "worker", "--engine", "claude", "--prompt", "start", "--tag", "tutor",
     ]);

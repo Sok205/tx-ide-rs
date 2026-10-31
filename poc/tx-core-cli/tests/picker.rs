@@ -59,17 +59,7 @@ fn pick_nests_into_a_view_pane() {
     } else {
         "sh"
     };
-    let cwd = cli.dir.path().join("inner");
-    std::fs::create_dir_all(&cwd).unwrap();
-    cli.ok(&[
-        "create",
-        "inner",
-        "--cwd",
-        cwd.to_str().unwrap(),
-        "--exec",
-        "sleep",
-        "300",
-    ]);
+    cli.create("inner");
     assert!(
         cli.tmux(&["new-session", "-d", "-s", "Views", "-c", "/tmp", shell])
             .status

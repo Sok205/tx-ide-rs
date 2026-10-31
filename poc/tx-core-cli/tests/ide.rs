@@ -649,8 +649,10 @@ fn ui_attach_starts_the_assistant_and_nests_home_into_it() {
         clients.sort();
         clients
     };
+    // Starting the assistant (a repository, its worktree, the agent) can take over ten seconds
+    // while the other suites load the machine.
     assert!(
-        cli.wait_for(10, || clients() == ["home", "tx-assistant"]),
+        cli.wait_for(30, || clients() == ["home", "tx-assistant"]),
         "clients: {:?}",
         clients()
     );

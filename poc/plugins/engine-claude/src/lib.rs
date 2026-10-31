@@ -527,7 +527,7 @@ mod tests {
                 effort: None,
                 resume: None,
             },
-            state: Some(state),
+            state,
             ext,
         }
     }

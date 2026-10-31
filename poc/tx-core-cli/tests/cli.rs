@@ -1,86 +1,12 @@
 //! End-to-end over the built `txc` binary and a private tmux server.
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+mod common;
+
+use std::path::Path;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
-struct Cli {
-    dir: tempfile::TempDir,
-}
-
-impl Cli {
-    fn new() -> Self {
-        Self {
-            dir: tempfile::Builder::new()
-                .prefix("txc")
-                .tempdir_in("/tmp")
-                .unwrap(),
-        }
-    }
-
-    fn state(&self) -> PathBuf {
-        self.dir.path().join("state")
-    }
-
-    fn run_env(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
-        command
-            .args(directory_flags(&self.state()))
-            .args(args)
-            .env_remove("TMUX")
-            .env_remove("TX_SESSION_ID");
-        for (key, value) in env {
-            command.env(key, value);
-        }
-        command.output().unwrap()
-    }
-
-    fn run(&self, args: &[&str]) -> Output {
-        self.run_env(args, &[])
-    }
-
-    fn ok(&self, args: &[&str]) -> String {
-        let output = self.run(args);
-        assert!(
-            output.status.success(),
-            "txc {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).into_owned()
-    }
-
-    fn fails(&self, args: &[&str], code: i32) -> String {
-        let output = self.run(args);
-        assert_eq!(
-            output.status.code(),
-            Some(code),
-            "txc {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stderr).into_owned()
-    }
-
-    fn workdir(&self, name: &str) -> PathBuf {
-        let path = self.dir.path().join(name);
-        std::fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn tmux(&self, args: &[&str]) -> Output {
-        Command::new("tmux")
-            .arg("-S")
-            .arg(self.state().join("tmux.sock"))
-            .args(args)
-            .output()
-            .unwrap()
-    }
-}
-
-impl Drop for Cli {
-    fn drop(&mut self) {
-        let _ = self.tmux(&["kill-server"]);
-    }
-}
+use common::{Cli, cwd_of};
 
 fn wait_for(path: &Path, timeout: Duration) -> String {
     let deadline = Instant::now() + timeout;
@@ -104,6 +30,10 @@ fn usage_errors_exit_2_without_touching_state() {
         "{stderr}"
     );
     assert!(cli.fails(&["create", "x"], 2).contains("--cwd"));
+    assert!(
+        cli.fails(&["create", "x", "--cwd", "/"], 2)
+            .contains("create needs --engine ID")
+    );
     assert!(cli.fails(&["bogus"], 2).contains("bogus"));
     assert!(!cli.state().exists());
     assert!(cli.ok(&["help"]).starts_with("usage: txc"));
@@ -119,7 +49,7 @@ fn engines_are_registered() {
 #[test]
 fn core_errors_exit_1() {
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
+    let cwd = cli.repository("w");
     let stderr = cli.fails(&["show", "nope"], 1);
     assert_eq!(stderr, "txc: no session \"nope\"\n");
     let stderr = cli.fails(
@@ -138,33 +68,72 @@ fn core_errors_exit_1() {
     assert!(stderr.contains("ghost"), "{stderr}");
 }
 
+/// A `"kind": "process"` record left by a build before core held agents only is skipped by every
+/// read, and named on stderr once per invocation.
 #[test]
-fn process_session_round_trip() {
-    if Command::new("tmux").arg("-V").output().is_err() {
-        eprintln!("tmux not available; skipping");
-        return;
-    }
+fn process_records_on_disk_are_skipped_and_named_on_stderr() {
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
-    let cwd_str = cwd.to_str().unwrap();
-    let id = cli
-        .ok(&[
+    let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+    let sessions = cli.state().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join(format!("{id}.json")),
+        format!(
+            r#"{{"version":1,"id":"{id}","name":"old-shell","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{{"kind":"process","program":"sh","args":[]}}}}"#
+        ),
+    )
+    .unwrap();
+    let output = cli.run(&["ls"], &[], "");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert!(stderr.contains("skipped 1 process record"), "{stderr}");
+    assert!(stderr.contains(id), "{stderr}");
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert!(
+        cli.fails(&["show", "old-shell"], 1)
+            .ends_with("no session \"old-shell\"\n")
+    );
+    assert!(
+        sessions.join(format!("{id}.json")).is_file(),
+        "nothing is deleted"
+    );
+}
+
+#[test]
+fn agent_session_round_trip() {
+    require_tmux!();
+    let cli = Cli::new();
+    let repository = cli.repository("w");
+    // The agent writes its environment's greeting, then captures what is typed at it.
+    let path = cli.shim_path(&[("claude", "echo $GREETING > env.txt; exec cat > input.txt")]);
+    let output = cli.run(
+        &[
             "create",
-            "sh-1",
+            "ag-1",
             "--cwd",
-            cwd_str,
+            repository.to_str().unwrap(),
             "--tag",
             "t",
             "--env",
             "GREETING=hi",
-            "--exec",
-            "sh",
-            "-c",
-            "echo $GREETING > env.txt; cat > input.txt",
-        ])
-        .trim()
-        .to_owned();
+            "--engine",
+            "claude",
+            "--prompt",
+            "start",
+        ],
+        &[("PATH", path.as_str())],
+        "",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     assert_eq!(id.len(), 36);
+    let cwd = cwd_of(&cli, "ag-1");
+    assert_ne!(cwd, repository, "an agent runs in its own worktree");
     assert_eq!(
         wait_for(&cwd.join("env.txt"), Duration::from_secs(5)),
         "hi\n"
@@ -173,72 +142,75 @@ fn process_session_round_trip() {
     let ls = cli.ok(&["ls"]);
     let fields: Vec<&str> = ls.trim().split('\t').collect();
     assert_eq!(fields[0], id);
-    assert_eq!(fields[1], "sh-1");
+    assert_eq!(fields[1], "ag-1");
     assert_eq!(fields[2], "running");
-    assert_eq!(fields[3], cwd.canonicalize().unwrap().to_str().unwrap());
+    assert_eq!(fields[3], cwd.to_str().unwrap());
     assert_eq!(cli.ok(&["ls", "--tag", "zzz"]), "");
     assert_eq!(cli.ok(&["ls", "--lifecycle", "running"]).lines().count(), 1);
 
-    let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "sh-1"])).unwrap();
+    let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "ag-1"])).unwrap();
     assert_eq!(shown["id"], id);
     assert_eq!(shown["tags"], serde_json::json!(["t"]));
-    assert_eq!(cli.ok(&["show", &id]), cli.ok(&["show", "sh-1"]));
+    assert_eq!(cli.ok(&["show", &id]), cli.ok(&["show", "ag-1"]));
 
     assert_eq!(
-        cli.ok(&["rename", "sh-1", "sh-2"]).trim(),
-        format!("{id}\tsh-2")
+        cli.ok(&["rename", "ag-1", "ag-2"]).trim(),
+        format!("{id}\tag-2")
     );
     assert_eq!(
-        cli.ok(&["tag", "sh-2", "a", "b"]).trim(),
+        cli.ok(&["tag", "ag-2", "a", "b"]).trim(),
         format!("{id}\ta,b")
     );
     assert_eq!(
-        cli.ok(&["tag", "sh-2"]).trim_end_matches('\n'),
+        cli.ok(&["tag", "ag-2"]).trim_end_matches('\n'),
         format!("{id}\t")
     );
 
-    let where_ = cli.ok(&["where", "sh-2"]);
+    let where_ = cli.ok(&["where", "ag-2"]);
     let fields: Vec<&str> = where_.trim().split('\t').collect();
-    assert_eq!(fields[0], cli.state().join("tmux.sock").to_str().unwrap());
+    assert_eq!(fields[0], cli.sock().to_str().unwrap());
     assert!(
         fields[1].starts_with('$') && fields[2].starts_with('%'),
         "{where_}"
     );
 
-    cli.ok(&["send", "sh-2", "hello", "there;"]);
-    cli.ok(&["send", "sh-2", "--", "--flag"]);
+    cli.ok(&["send", "ag-2", "hello", "there;"]);
+    cli.ok(&["send", "ag-2", "--", "--flag"]);
     // Inside tx's server, `send` carries the caller's id; elsewhere it does not.
-    let fake_tmux = format!("{},0,0", cli.state().join("tmux.sock").display());
-    let output = cli.run_env(
-        &["send", "sh-2", "from me"],
+    let fake_tmux = format!("{},0,0", cli.sock().display());
+    let output = cli.run(
+        &["send", "ag-2", "from me"],
         &[("TMUX", &fake_tmux), ("TX_SESSION_ID", &id)],
+        "",
     );
     assert!(output.status.success());
-    let output = cli.run_env(
-        &["send", "sh-2", "not me"],
+    let output = cli.run(
+        &["send", "ag-2", "not me"],
         &[("TMUX", "/tmp/other,0,0"), ("TX_SESSION_ID", &id)],
+        "",
     );
     assert!(output.status.success());
     // The operator names where they typed with `--via`; from inside a view the view names it.
-    cli.ok(&["send", "--via", "plan.md", "sh-2", "from a buffer"]);
+    cli.ok(&["send", "--via", "plan.md", "ag-2", "from a buffer"]);
     cli.ok(&[
         "ui", "view", "open", "notes", "--kind", "shell", "--", "sleep", "600",
     ]);
-    let view_pane = cli.tmux(&["display-message", "-p", "-t", "=notes:", "#{pane_id}"]);
-    let view_pane = String::from_utf8_lossy(&view_pane.stdout).trim().to_owned();
-    let output = cli.run_env(
-        &["send", "--via", "ignored", "sh-2", "from notes"],
+    let view_pane = cli.tmux_out(&["display-message", "-p", "-t", "=notes:", "#{pane_id}"]);
+    let output = cli.run(
+        &["send", "--via", "ignored", "ag-2", "from notes"],
         &[("TMUX", &fake_tmux), ("TMUX_PANE", &view_pane)],
+        "",
     );
     assert!(output.status.success());
     // An id core does not know is no agent: the view still names the sender.
-    let output = cli.run_env(
-        &["send", "sh-2", "unknown id"],
+    let output = cli.run(
+        &["send", "ag-2", "unknown id"],
         &[
             ("TMUX", &fake_tmux),
             ("TMUX_PANE", &view_pane),
             ("TX_SESSION_ID", "unknown-id"),
         ],
+        "",
     );
     assert!(
         output.status.success(),
@@ -253,26 +225,26 @@ fn process_session_round_trip() {
     };
     assert_eq!(
         typed,
-        "<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"sh-2\">from me</from-agent>\n<from-user>not me</from-user>\n<from-user session=\"plan.md\">from a buffer</from-user>\n<from-user session=\"notes\">from notes</from-user>\n<from-user session=\"notes\">unknown id</from-user>\n"
+        "<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"ag-2\">from me</from-agent>\n<from-user>not me</from-user>\n<from-user session=\"plan.md\">from a buffer</from-user>\n<from-user session=\"notes\">from notes</from-user>\n<from-user session=\"notes\">unknown id</from-user>\n"
     );
 
     assert_eq!(cli.ok(&["refresh"]), "");
-    assert_eq!(cli.ok(&["refresh", "sh-2"]), "");
-    assert_eq!(cli.ok(&["stop", "sh-2"]).trim(), format!("{id}\tstopped"));
-    assert!(cli.fails(&["where", "sh-2"], 1).contains("not running"));
-    assert!(!cli.tmux(&["has-session", "-t", "=sh-2"]).status.success());
+    assert_eq!(cli.ok(&["refresh", "ag-2"]), "");
+    assert_eq!(cli.ok(&["stop", "ag-2"]).trim(), format!("{id}\tstopped"));
+    assert!(cli.fails(&["where", "ag-2"], 1).contains("not running"));
+    assert!(!cli.tmux(&["has-session", "-t", "=ag-2"]).status.success());
     assert_eq!(
-        cli.ok(&["archive", "sh-2"]).trim(),
+        cli.ok(&["archive", "ag-2"]).trim(),
         format!("{id}\tarchived")
     );
     assert_eq!(cli.ok(&["ls"]), "");
     assert!(
         cli.ok(&["ls", "--archived"])
-            .starts_with(&format!("{id}\tsh-2\tstopped\t"))
+            .starts_with(&format!("{id}\tag-2\tstopped\t"))
     );
-    assert!(cli.ok(&["show", "sh-2"]).contains("\"archived_at\""));
+    assert!(cli.ok(&["show", "ag-2"]).contains("\"archived_at\""));
     assert_eq!(
-        cli.ok(&["archive", "sh-2"]).trim(),
+        cli.ok(&["archive", "ag-2"]).trim(),
         format!("{id}\tarchived"),
         "archiving again changes nothing"
     );
@@ -280,45 +252,55 @@ fn process_session_round_trip() {
 
 #[test]
 fn an_agent_reaches_its_own_core_through_the_session_environment() {
-    if Command::new("tmux").arg("-V").output().is_err() {
-        return;
-    }
+    require_tmux!();
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
+    let repository = cli.repository("w");
+    let path = cli.shim_path(&[("claude", "env > env.txt; exec cat > input.txt")]);
+    // `txc` with relative directory flags, run from the temp dir.
+    let relative = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_txc"))
+            .current_dir(cli.dir.path())
+            .args([
+                "--config-dir",
+                "config",
+                "--data-dir",
+                "data",
+                "--state-dir",
+                "state",
+                "--cache-dir",
+                "cache",
+                "--run-dir",
+                "run",
+            ])
+            .args(args)
+            .env("PATH", &path)
+            .env_remove("TMUX")
+            .env_remove("TX_SESSION_ID")
+            .env_remove("TX_APPNAME")
+            .output()
+            .unwrap()
+    };
     // Relative directory flags still yield absolute paths inside the session environment.
-    let rel = Command::new(env!("CARGO_BIN_EXE_txc"))
-        .current_dir(cli.dir.path())
-        .args([
-            "--config-dir",
-            "config",
-            "--data-dir",
-            "data",
-            "--state-dir",
-            "state",
-            "--cache-dir",
-            "cache",
-            "--run-dir",
-            "run",
-            "create",
-            "me",
-            "--cwd",
-            cwd.to_str().unwrap(),
-            "--exec",
-            "sh",
-            "-c",
-            "env > env.txt; cat > input.txt",
-        ])
-        .env_remove("TMUX")
-        .env_remove("TX_SESSION_ID")
-        .env_remove("TX_APPNAME")
-        .output()
-        .unwrap();
+    let rel = relative(&[
+        "create",
+        "me",
+        "--cwd",
+        repository.to_str().unwrap(),
+        "--engine",
+        "claude",
+        "--prompt",
+        "start",
+    ]);
     assert!(
         rel.status.success(),
         "{}",
         String::from_utf8_lossy(&rel.stderr)
     );
     let id = String::from_utf8_lossy(&rel.stdout).trim().to_owned();
+    let shown = relative(&["show", "me"]);
+    assert!(shown.status.success());
+    let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let cwd = Path::new(shown["cwd"].as_str().unwrap());
     let env = wait_for(&cwd.join("env.txt"), Duration::from_secs(5));
     let get = |key: &str| {
         env.lines()
@@ -389,39 +371,10 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
 
 #[test]
 fn refresh_reports_vanished_sessions() {
-    if Command::new("tmux").arg("-V").output().is_err() {
-        return;
-    }
+    require_tmux!();
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
-    let id = cli
-        .ok(&[
-            "create",
-            "v",
-            "--cwd",
-            cwd.to_str().unwrap(),
-            "--exec",
-            "sleep",
-            "30",
-        ])
-        .trim()
-        .to_owned();
+    let id = cli.create("v");
     assert!(cli.tmux(&["kill-session", "-t", "=v"]).status.success());
     assert_eq!(cli.ok(&["refresh"]).trim(), format!("{id}\tv\texited"));
     assert_eq!(cli.ok(&["refresh"]), "");
-}
-
-/// Every directory flag naming `dir`: the suites keep the five directories in one place, so
-/// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
-pub fn directory_flags(dir: &std::path::Path) -> Vec<std::ffi::OsString> {
-    [
-        "--config-dir",
-        "--data-dir",
-        "--state-dir",
-        "--cache-dir",
-        "--run-dir",
-    ]
-    .into_iter()
-    .flat_map(|flag| [flag.into(), dir.as_os_str().to_owned()])
-    .collect()
 }

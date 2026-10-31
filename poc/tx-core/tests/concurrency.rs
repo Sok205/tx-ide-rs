@@ -1,5 +1,5 @@
-//! Spec verification 2, 3, 4: concurrent create (OS processes), concurrent updates (threads),
-//! per-recipient serialization of messages.
+//! Spec verification 2, 3, 4: concurrent create (OS processes) under one asked name, concurrent
+//! updates (threads), per-recipient serialization of messages.
 
 mod common;
 
@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
-use common::{Harness, process, typed, wait_for};
+use common::{Harness, ShellStub, agent, cwd_of, typed, wait_for};
 use tx_core::{CoreConfig, CoreError, Directories, ListFilter, SendOptions, TxCore};
 
 const CHILD_ENV: &str = "TX_CORE_TEST_CHILD";
@@ -22,20 +22,23 @@ fn child_entry() {
     };
     let parts: Vec<&str> = spec.splitn(4, ':').collect();
     assert_eq!(parts[0], "create");
-    let core = TxCore::open(CoreConfig::new(Directories::under(parts[1]))).unwrap();
-    match core.create_session(process(parts[2], std::path::Path::new(parts[3]))) {
+    let mut core = TxCore::open(CoreConfig::new(Directories::under(parts[1]))).unwrap();
+    core.register_engine(Box::new(ShellStub)).unwrap();
+    match core.create_session(agent(parts[2], std::path::Path::new(parts[3]))) {
         Ok(id) => println!("\nTXC-VERDICT ok {id}"),
         Err(CoreError::NameTaken(_)) => println!("\nTXC-VERDICT err NameTaken"),
         Err(other) => println!("\nTXC-VERDICT err {other:?}"),
     }
 }
 
+/// Eight processes ask for the name `shared` at once: the create lock hands each its own name
+/// (`shared`, `shared-2`, …), no record is lost and no name is given twice.
 #[test]
-fn concurrent_create_from_eight_processes_yields_one_session() {
+fn concurrent_create_from_eight_processes_yields_eight_distinct_names() {
     require_tmux!();
     let h = Harness::new();
     h.open();
-    let cwd = h.workdir("w");
+    let cwd = h.repository("w");
     let exe = std::env::current_exe().unwrap();
     let children: Vec<_> = (0..8)
         .map(|_| {
@@ -71,20 +74,32 @@ fn concurrent_create_from_eight_processes_yields_one_session() {
         }
     }
     assert!(other.is_empty(), "{other:?}");
-    assert_eq!((ok, taken), (1, 7));
-    assert_eq!(h.live_names(), ["shared"]);
+    assert_eq!((ok, taken), (8, 0));
+    let mut names = h.live_names();
+    names.sort();
+    let mut expected: Vec<String> = (1..=8)
+        .map(|suffix| {
+            if suffix == 1 {
+                "shared".to_owned()
+            } else {
+                format!("shared-{suffix}")
+            }
+        })
+        .collect();
+    expected.sort();
+    assert_eq!(names, expected);
     let core = h.open();
-    assert_eq!(core.list_sessions(&ListFilter::default()).unwrap().len(), 1);
-    assert_eq!(h.log_lines().len(), 1);
+    assert_eq!(core.list_sessions(&ListFilter::default()).unwrap().len(), 8);
+    assert_eq!(h.log_lines().len(), 8);
 }
 
 #[test]
 fn concurrent_tag_and_rename_lose_no_update() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
+    let core = h.open_with_engine();
     let id = core
-        .create_session(process("target", &h.workdir("w")))
+        .create_session(agent("target", &h.repository("w")))
         .unwrap();
     let barrier = Arc::new(Barrier::new(4));
     let handles: Vec<_> = (0..4)
@@ -142,9 +157,11 @@ fn concurrent_tag_and_rename_lose_no_update() {
 fn parallel_senders_never_interleave_inside_one_recipient() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("w");
-    let id = core.create_session(process("inbox", &cwd)).unwrap();
+    let core = h.open_with_engine();
+    let id = core
+        .create_session(agent("inbox", &h.repository("w")))
+        .unwrap();
+    let cwd = cwd_of(&core, &id);
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
@@ -206,8 +223,8 @@ fn parallel_senders_never_interleave_inside_one_recipient() {
 fn refresh_all_never_marks_a_freshly_created_session_exited() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("w");
+    let core = h.open_with_engine();
+    let cwd = h.repository("w");
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let refresher = {
         let stop = Arc::clone(&stop);
@@ -225,10 +242,7 @@ fn refresh_all_never_marks_a_freshly_created_session_exited() {
     };
     let mut ids = Vec::new();
     for i in 0..24 {
-        ids.push(
-            core.create_session(process(&format!("s{i}"), &cwd))
-                .unwrap(),
-        );
+        ids.push(core.create_session(agent(&format!("s{i}"), &cwd)).unwrap());
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     let wrongly_exited = refresher.join().unwrap();

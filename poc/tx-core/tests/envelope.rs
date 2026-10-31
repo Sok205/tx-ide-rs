@@ -1,11 +1,11 @@
-//! Seam 4: an engine may frame incoming messages its own way. Process sessions and agents
-//! whose engine is not registered in this core get the default envelope.
+//! Seam 4: an engine may frame incoming messages its own way. Agents whose engine frames
+//! nothing, or whose engine is not registered in this core, get the default envelope.
 
 mod common;
 
 use std::time::Duration;
 
-use common::{Harness, STUB_ID, agent, cwd_of, process, typed, wait_for};
+use common::{Harness, agent, cwd_of, typed, wait_for};
 use tx_core::{
     CreateOptions, EngineError, EnvelopeSender, LaunchOptions, LaunchPlan, LaunchRequest,
     LlmEngine, SendOptions, Sender,
@@ -65,8 +65,10 @@ fn the_recipients_engine_frames_the_message() {
         ))
         .unwrap();
     let cwd = cwd_of(&core, &shouter);
-    let plain_dir = h.workdir("p");
-    let plain = core.create_session(process("plain", &plain_dir)).unwrap();
+    let plain = core
+        .create_session(agent("plain", &h.repository("p")))
+        .unwrap();
+    let plain_dir = cwd_of(&core, &plain);
     let stub = core
         .create_session(agent("stubbed", &h.repository("a")))
         .unwrap();
@@ -130,5 +132,4 @@ fn the_recipients_engine_frames_the_message() {
         "{}",
         typed(&cwd)
     );
-    let _ = STUB_ID;
 }

@@ -43,26 +43,21 @@ pub fn set_utc() {
 
 /// One world session as a tx-core record (`version: 1`): lifecycle and `status` from `state`, the chat plugin's chat refs, the edit plugin's group.
 pub fn record(session: &Value, transcripts: &Path) -> Value {
-    let engine = session["engine"].as_str();
+    let engine = session["engine"].as_str().unwrap();
     let state = session["state"].as_str().unwrap();
-    let launch = match engine {
-        Some(engine) => json!({
-            "kind": "agent", "engine": engine, "profile": [], "resume": null,
-        }),
-        None => json!({"kind": "process", "program": "sh", "args": []}),
-    };
+    let launch = json!({
+        "kind": "agent", "engine": engine, "profile": [], "resume": null,
+    });
     let mut ext = Map::new();
     // Model and effort are engine data (PR 12a), under the engine's own `ext` key.
-    if let Some(engine) = engine {
-        let mut data = Map::new();
-        for key in ["model", "effort"] {
-            if let Some(value) = session.get(key).filter(|value| !value.is_null()) {
-                data.insert(key.to_owned(), value.clone());
-            }
+    let mut data = Map::new();
+    for key in ["model", "effort"] {
+        if let Some(value) = session.get(key).filter(|value| !value.is_null()) {
+            data.insert(key.to_owned(), value.clone());
         }
-        if !data.is_empty() {
-            ext.insert(engine.to_owned(), Value::Object(data));
-        }
+    }
+    if !data.is_empty() {
+        ext.insert(engine.to_owned(), Value::Object(data));
     }
     let chats: Vec<Value> = session["transcripts"]
         .as_array()

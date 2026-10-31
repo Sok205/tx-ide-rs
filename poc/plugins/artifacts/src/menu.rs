@@ -17,10 +17,9 @@ use tx_client::render::{
 };
 use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::View;
-use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError, VerbIo};
+use tx_core::{Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError, VerbIo};
 
 use crate::artifact::{Artifact, Kind, USER_ACTOR};
-use crate::grouping::bound_artifact;
 use crate::picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::render::{actor_label, updated_at};
 use crate::service::ArtifactService;
@@ -99,9 +98,8 @@ pub struct Sections {
 /// Pure: the ARTIFACTS the session touched (newest first; a kind other than document is the
 /// row's first chip), its live PARENT, its live CHILDREN
 /// (agents and unbound views; an artifact's view is a row under its artifact). `views` are the
-/// tx-client views; `live` the running core records, where a record bound through
-/// `ext.artifacts.bound` is a legacy view (PR 11 deletes). `locate` gives a tmux session's
-/// LOCATION cell, `name_of` a touch author's name.
+/// tx-client views; `live` the running core records. `locate` gives a tmux session's LOCATION
+/// cell, `name_of` a touch author's name.
 pub fn sections(
     record: &Session,
     touched: &[Artifact],
@@ -119,13 +117,6 @@ pub fn sections(
             .iter()
             .find(|view| view.bound.as_deref() == Some(artifact.id.as_str()))
             .map(|view| view.name.as_str());
-        let legacy_view = || {
-            live.iter()
-                .find(|candidate| {
-                    bound_artifact(candidate).as_deref() == Some(artifact.id.as_str())
-                })
-                .map(|session| session.name.as_str())
-        };
         let mut chips = Vec::new();
         if !matches!(artifact.kind, Kind::Document { .. }) {
             chips.push(artifact.kind.name().to_owned());
@@ -138,9 +129,7 @@ pub fn sections(
         }
         rows.push(Row {
             name: artifact.display_name().to_owned(),
-            location: bound_view
-                .or_else(legacy_view)
-                .map_or_else(|| "—".to_owned(), &locate),
+            location: bound_view.map_or_else(|| "—".to_owned(), &locate),
             chips,
         });
         out.targets.push(Target {
@@ -173,9 +162,7 @@ pub fn sections(
         .collect();
     let child_agents = live
         .iter()
-        .filter(|candidate| {
-            candidate.parent.as_ref() == Some(&record.id) && bound_artifact(candidate).is_none()
-        })
+        .filter(|candidate| candidate.parent.as_ref() == Some(&record.id))
         .map(session_row);
     let child_views = views
         .iter()
@@ -278,17 +265,6 @@ impl Nav<'_> {
         let Some(record) = self.record(session, client) else {
             return Ok(1);
         };
-        // Legacy, PR 11 deletes: a core process record standing in for a view.
-        let legacy_back = match bound_artifact(&record) {
-            Some(artifact_id) => Some(self.controlling_of(&artifact_id)?),
-            None => match (&record.launch, &record.parent) {
-                (Launch::Process { .. }, Some(parent)) => Some(Some(parent.to_string())),
-                _ => None,
-            },
-        };
-        if let Some(back) = legacy_back {
-            return self.back_to(session, client, back);
-        }
         let listing = self.listing(&record, client)?;
         let content = listing
             .items
@@ -428,7 +404,7 @@ impl Nav<'_> {
     }
 
     fn live_view(&self, artifact_id: &str) -> Result<Option<Shown>, VerbError> {
-        views::live_view(&self.ui, self.core, artifact_id)
+        views::live_view(&self.ui, artifact_id)
     }
 
     /// `<txc> <cli_arguments> argv…`, shell-quoted: `run-shell` and the popup run in the
@@ -812,7 +788,7 @@ mod tests {
         let mut record = json!({
             "version": 1, "id": id, "name": name, "parent": null, "tags": [], "cwd": "/r",
             "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": "running",
-            "launch": {"kind": "process", "program": "sleep", "args": []},
+            "launch": {"kind": "agent", "engine": "claude", "profile": []},
         });
         for (key, value) in extra.as_object().unwrap() {
             record[key] = value.clone();
@@ -852,11 +828,6 @@ mod tests {
             record.clone(),
             session("p1", "boss", json!({"tags": ["x"]})),
             session("c1", "worker", json!({"parent": "a1"})),
-            session(
-                "v0",
-                "legacy-md",
-                json!({"parent": "a1", "ext": {"artifacts": {"bound": "art-old"}}}),
-            ),
         ];
         let views = [
             view("plan-md", Some("a1"), Some("art-new")),
@@ -882,10 +853,7 @@ mod tests {
         assert_eq!(artifacts[0].name, "New");
         assert_eq!(artifacts[0].location, "at-plan-md");
         assert_eq!(artifacts[0].chips, ["a1", "user"]);
-        assert_eq!(
-            artifacts[1].location, "at-legacy-md",
-            "a legacy bound record"
-        );
+        assert_eq!(artifacts[1].location, "—");
         assert_eq!(artifacts[2].location, "—");
         assert_eq!(out.sections[1].1[0].name, "boss");
         let children: Vec<&str> = out.sections[2].1.iter().map(|r| r.name.as_str()).collect();

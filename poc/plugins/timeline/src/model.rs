@@ -362,42 +362,25 @@ pub fn chat_sources(session: &Session) -> Vec<ChatSource> {
     out
 }
 
-/// The engine the record runs: its own agent launch, else the one `ext.chat` remembers.
-pub fn engine_of(session: &Session) -> Option<String> {
-    match &session.launch {
-        Launch::Agent { engine, .. } => Some(engine.clone()),
-        Launch::Process { .. } => {
-            let ext = chat_ext(session).ok()?;
-            ext.launch.map(|launch| launch.engine).or(ext.engine)
-        }
-    }
+/// The engine the record runs.
+pub fn engine_of(session: &Session) -> String {
+    let Launch::Agent { engine, .. } = &session.launch;
+    engine.clone()
 }
 
-/// `(model, effort)` the record was launched with: engine data (`ext.<engine>`, PR 12a) for an
-/// agent record, the chat plugin's launch for a process one. Engine 8c asks the engine instead.
+/// `(model, effort)` the record was launched with: engine data (`ext.<engine>`, PR 12a).
+/// Engine 8c asks the engine instead.
 fn launch_options(session: &Session) -> (Option<String>, Option<String>) {
-    match &session.launch {
-        Launch::Agent { engine, .. } => {
-            let option = |key: &str| {
-                session
-                    .ext
-                    .get(engine)?
-                    .get(key)?
-                    .as_str()
-                    .map(str::to_owned)
-            };
-            (option("model"), option("effort"))
-        }
-        Launch::Process { .. } => chat_ext(session)
-            .ok()
-            .and_then(|ext| ext.launch)
-            .map_or((None, None), |launch| (launch.model, launch.effort)),
-    }
-}
-
-/// An agent session (main's `role == llm`).
-pub fn is_agent(session: &Session) -> bool {
-    engine_of(session).is_some()
+    let Launch::Agent { engine, .. } = &session.launch;
+    let option = |key: &str| {
+        session
+            .ext
+            .get(engine)?
+            .get(key)?
+            .as_str()
+            .map(str::to_owned)
+    };
+    (option("model"), option("effort"))
 }
 
 pub fn is_alive(session: &Session) -> bool {
@@ -410,12 +393,9 @@ pub fn activity_at(session: &Session) -> f64 {
     session.last_modified_at
 }
 
-/// The agent's state as its engine adapter last reported it; `idle` for a record without one.
+/// The agent's state as its engine adapter last reported it.
 pub fn agent_state(session: &Session) -> String {
-    session
-        .state
-        .map_or("idle", tx_core::LlmEngineState::as_str)
-        .to_owned()
+    session.state.as_str().to_owned()
 }
 
 fn group_override(session: &Session) -> Option<&str> {
@@ -518,12 +498,11 @@ impl Builder {
         found
     }
 
-    /// Window-filtered agent records merged into lanes, same-name dead lanes disambiguated with
-    /// a `@MonDD` suffix.
+    /// Window-filtered records merged into lanes, same-name dead lanes disambiguated with a
+    /// `@MonDD` suffix.
     fn lane_seeds(&self, everyone: &[Session], cut: f64) -> Vec<LaneSeed> {
         let mut records: Vec<&Session> = everyone
             .iter()
-            .filter(|session| is_agent(session))
             .filter(|session| !session.tags.iter().any(|tag| tag == "temporary"))
             .filter(|session| activity_at(session) >= cut || session.created_at >= cut)
             .collect();
@@ -634,7 +613,7 @@ impl Builder {
             let mut engines: Vec<String> = records
                 .iter()
                 .flat_map(|record| {
-                    let engine = engine_of(record).unwrap_or_else(|| "?".to_owned());
+                    let engine = engine_of(record);
                     chat_sources(record)
                         .into_iter()
                         .map(move |_| engine.clone())

@@ -5,13 +5,13 @@ mod common;
 use std::sync::Arc;
 use std::thread;
 
-use common::{Harness, process};
+use common::{Harness, STUB_ID, agent};
 use serde_json::{Value, json};
 use tx_core::{Session, SessionId};
 
 const RECORD: &str = r#"{"version":1,"id":"0f6b3b8a-1111-4222-8333-444444444444","name":"a","parent":null,
     "tags":[],"cwd":"/tmp","created_at":1.0,"ended_at":null,"lifecycle":"running",
-    "launch":{"kind":"process","program":"sh","args":[]}"#;
+    "launch":{"kind":"agent","engine":"stub","profile":[]}"#;
 
 #[test]
 fn record_without_ext_loads_as_empty() {
@@ -38,8 +38,8 @@ fn ext_round_trips() {
 fn update_ext_writes_only_on_change() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let id = core.create_session(process("a", &h.workdir("a"))).unwrap();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
     assert!(
         core.update_ext(&id, "hooks", |v| *v = json!({"state": "working"}))
             .unwrap()
@@ -58,19 +58,31 @@ fn update_ext_writes_only_on_change() {
     );
     assert!(core.update_ext(&id, "other", |v| *v = json!(1)).unwrap());
     let ext = core.get_session(&id).unwrap().ext;
-    assert_eq!(ext.len(), 2, "other plugins' keys survive");
+    assert_eq!(
+        ext.len(),
+        3,
+        "other plugins' keys survive, the engine's own included"
+    );
 }
 
 #[test]
 fn null_removes_the_key() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let id = core.create_session(process("a", &h.workdir("a"))).unwrap();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
     core.update_ext(&id, "hooks", |v| *v = json!({"state": "idle"}))
         .unwrap();
     assert!(core.update_ext(&id, "hooks", |v| *v = Value::Null).unwrap());
-    assert!(core.get_session(&id).unwrap().ext.is_empty());
+    assert_eq!(
+        core.get_session(&id)
+            .unwrap()
+            .ext
+            .keys()
+            .collect::<Vec<_>>(),
+        [STUB_ID],
+        "only the engine's own entry is left"
+    );
     assert!(
         !core.update_ext(&id, "hooks", |v| *v = Value::Null).unwrap(),
         "absent → Null is no change"
@@ -93,8 +105,8 @@ fn update_ext_on_unknown_session_is_not_found() {
 fn concurrent_updates_both_survive() {
     require_tmux!();
     let h = Harness::new();
-    let core = Arc::new(h.open());
-    let id = core.create_session(process("a", &h.workdir("a"))).unwrap();
+    let core = Arc::new(h.open_with_engine());
+    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
     let handles: Vec<_> = ["x", "y"]
         .into_iter()
         .map(|key| {

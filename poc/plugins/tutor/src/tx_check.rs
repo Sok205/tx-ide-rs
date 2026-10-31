@@ -1,39 +1,34 @@
 //! The `tx` check: a predicate over session records.
 //!
-//! Main's record fields map onto core's as follows. `role` is the launch kind: `llm` (or
-//! `agent`) for an engine launch, `shell` (or `process`) for a plain program. `state` is any of
-//! the names a record answers to: a running record is `alive` and `running`, plus its agent
-//! state (`starting` / `idle` / `working` / `ended`) when it has one; an ended
-//! record is `archived` and its lifecycle (`exited` / `stopped`). `chat_origin` needs a
+//! Main's record fields map onto core's as follows. `role` is `llm` (or `agent`): every core
+//! record is an agent, so `shell` matches nothing. `state` is any of the names a record
+//! answers to: a running record is `alive` and `running`, plus its agent state (`starting` /
+//! `idle` / `working` / `ended`); an ended record is `archived` and its lifecycle (`exited` /
+//! `stopped`). `chat_origin` needs a
 //! chat plugin, which this port does not have yet, so it matches nothing.
 
 use tx_core::{Launch, Lifecycle, Session};
 
 use crate::pack::{SessionFilter, TxCheck};
 
-fn role_matches(session: &Session, role: &str) -> bool {
-    match &session.launch {
-        Launch::Agent { .. } => matches!(role, "llm" | "agent"),
-        Launch::Process { .. } => matches!(role, "shell" | "process"),
-    }
+fn role_matches(_: &Session, role: &str) -> bool {
+    matches!(role, "llm" | "agent")
 }
 
-fn engine_of(session: &Session) -> Option<&str> {
-    match &session.launch {
-        Launch::Agent { engine, .. } => Some(engine),
-        Launch::Process { .. } => None,
-    }
+fn engine_of(session: &Session) -> &str {
+    let Launch::Agent { engine, .. } = &session.launch;
+    engine
 }
 
 /// Every state name the record answers to.
 pub fn states(session: &Session) -> Vec<String> {
     match session.lifecycle {
         Lifecycle::Running => {
-            let mut names = vec!["alive".to_owned(), "running".to_owned()];
-            if let Some(state) = session.state {
-                names.push(state.as_str().to_owned());
-            }
-            names
+            vec![
+                "alive".to_owned(),
+                "running".to_owned(),
+                session.state.as_str().to_owned(),
+            ]
         }
         ended => vec!["archived".to_owned(), ended.as_str().to_owned()],
     }
@@ -55,7 +50,7 @@ pub fn matches(filter: &SessionFilter, session: &Session) -> bool {
         && filter
             .engine
             .as_ref()
-            .is_none_or(|engine| engine_of(session) == Some(engine.as_str()))
+            .is_none_or(|engine| engine_of(session) == engine)
         && (filter.state.is_empty() || {
             let have = states(session);
             filter.state.iter().any(|state| have.contains(state))
@@ -123,11 +118,6 @@ mod tests {
         record(name, launch, lifecycle, tags, parent)
     }
 
-    fn shell(name: &str, tags: &[&str]) -> Session {
-        let launch = json!({"kind": "process", "program": "sh", "args": []});
-        record(name, launch, "running", tags, None)
-    }
-
     fn check(session: SessionFilter) -> TxCheck {
         TxCheck {
             label: "l".into(),
@@ -140,7 +130,7 @@ mod tests {
     #[test]
     fn every_given_field_must_match() {
         let worker = agent("w", "running", &["tutor"], Some("p"));
-        let server = shell("server", &["tutor", "http-tutor"]);
+        let server = agent("server", "running", &["tutor", "http-tutor"], None);
         let filter = |f: SessionFilter| matches(&f, &worker);
         assert!(filter(SessionFilter::default()));
         assert!(filter(SessionFilter {
@@ -158,6 +148,10 @@ mod tests {
             ..Default::default()
         }));
         assert!(!filter(SessionFilter {
+            state: vec!["working".into()],
+            ..Default::default()
+        }));
+        assert!(!filter(SessionFilter {
             state: vec!["archived".into()],
             ..Default::default()
         }));
@@ -165,13 +159,14 @@ mod tests {
             has_parent: Some(true),
             ..Default::default()
         }));
+        // Every core record is an agent: the `shell` role of main's tutorials matches nothing.
         assert!(!filter(SessionFilter {
             role: Some("shell".into()),
             ..Default::default()
         }));
         assert!(!matches(
             &SessionFilter {
-                engine: Some("claude".into()),
+                engine: Some("codex".into()),
                 ..Default::default()
             },
             &server
@@ -180,7 +175,7 @@ mod tests {
             &SessionFilter {
                 name: Some("server".into()),
                 tag: Some("http-tutor".into()),
-                role: Some("shell".into()),
+                role: Some("agent".into()),
                 ..Default::default()
             },
             &server
@@ -189,9 +184,10 @@ mod tests {
 
     #[test]
     fn the_agent_state_adds_a_state_name() {
+        // A record written before agent state existed reads as idle.
         let mut worker = agent("w", "running", &[], None);
-        assert_eq!(states(&worker), ["alive", "running"]);
-        worker.state = Some(tx_core::LlmEngineState::Working);
+        assert_eq!(states(&worker), ["alive", "running", "idle"]);
+        worker.state = tx_core::LlmEngineState::Working;
         assert_eq!(states(&worker), ["alive", "running", "working"]);
         assert_eq!(
             states(&agent("x", "stopped", &[], None)),

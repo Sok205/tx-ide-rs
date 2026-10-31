@@ -6,7 +6,7 @@
 use serde_json::Value;
 use tx_client::tmux::Ui;
 use tx_client::views;
-use tx_core::{CoreError, Launch, Lifecycle, ListFilter, PluginStatus, Session, TxCore, VerbError};
+use tx_core::{CoreError, Lifecycle, ListFilter, PluginStatus, Session, TxCore, VerbError};
 
 use crate::model::{Context, KeyHint, Past};
 
@@ -73,20 +73,13 @@ fn chat_count(session: &Session) -> usize {
         .map_or(0, Vec::len)
 }
 
-/// A session `respawn` can bring back in place: an agent. An exited shell is not.
-fn respawnable(session: &Session) -> bool {
-    matches!(session.launch, Launch::Agent { .. })
-}
-
-/// Respawnable exited and stopped sessions, newest end first (the `history` verb's list, minus
-/// what `respawn` would refuse).
+/// Exited and stopped sessions, newest end first (the `history` verb's list).
 pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
     let mut sessions = Vec::new();
     for lifecycle in [Lifecycle::Exited, Lifecycle::Stopped] {
         for id in core.list_sessions(&ListFilter::new().lifecycle(lifecycle))? {
             match core.get_session(&id) {
-                Ok(session) if respawnable(&session) => sessions.push(session),
-                Ok(_) => {}
+                Ok(session) => sessions.push(session),
                 Err(CoreError::NotFound(_)) => {}
                 Err(error) => return Err(error),
             }
@@ -150,48 +143,6 @@ pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, VerbError>
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn session(launch: Launch, ext: Option<Value>) -> Session {
-        Session {
-            id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-            name: "s".into(),
-            parent: None,
-            tags: Vec::new(),
-            cwd: "/w".into(),
-            created_at: 1.0,
-            ended_at: Some(2.0),
-            archived_at: None,
-            last_modified_at: 1.0,
-            lifecycle: Lifecycle::Exited,
-            launch,
-            ext: ext
-                .map(|chat| [("chat".to_owned(), chat)].into())
-                .unwrap_or_default(),
-            state: None,
-        }
-    }
-
-    #[test]
-    fn only_agents_are_respawnable() {
-        let agent = Launch::Agent {
-            engine: "claude".into(),
-            profile: Vec::new(),
-            model: None,
-            effort: None,
-            resume: None,
-        };
-        let shell = || Launch::Process {
-            program: "zsh".into(),
-            args: Vec::new(),
-        };
-        assert!(respawnable(&session(agent, None)));
-        assert!(!respawnable(&session(shell(), None)));
-        // A recorded chat does not make a shell an agent.
-        assert!(!respawnable(&session(
-            shell(),
-            Some(serde_json::json!({"chats": [{"id": "c1"}]}))
-        )));
-    }
 
     #[test]
     fn a_fragment_hint_is_its_keys_and_first_sentence() {

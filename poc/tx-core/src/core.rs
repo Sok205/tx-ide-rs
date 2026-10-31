@@ -140,6 +140,7 @@ impl ForkOptions {
     }
 }
 
+/// How to start the agent. One variant: core holds agents only (Storage PR 14 flattens it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LaunchOptions {
@@ -153,10 +154,6 @@ pub enum LaunchOptions {
         /// The agent's first message. Required: an engine never starts silently.
         initial_prompt: String,
     },
-    Process {
-        program: String,
-        args: Vec<String>,
-    },
 }
 
 impl LaunchOptions {
@@ -169,40 +166,25 @@ impl LaunchOptions {
         }
     }
 
-    pub fn process<I, S>(program: impl Into<String>, args: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        Self::Process {
-            program: program.into(),
-            args: args.into_iter().map(Into::into).collect(),
-        }
-    }
-
-    /// Role names, in order. No effect on a `Process` launch.
+    /// Role names, in order.
     pub fn profile<I, S>(mut self, roles: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        if let Self::Agent { profile, .. } = &mut self {
-            profile.extend(roles.into_iter().map(Into::into));
-        }
+        let Self::Agent { profile, .. } = &mut self;
+        profile.extend(roles.into_iter().map(Into::into));
         self
     }
 
-    /// Replaces the engine options with `options`, a JSON object. No effect on a `Process`
-    /// launch.
+    /// Replaces the engine options with `options`, a JSON object.
     pub fn options(mut self, options: serde_json::Value) -> Self {
-        if let Self::Agent { options: slot, .. } = &mut self {
-            *slot = options;
-        }
+        let Self::Agent { options: slot, .. } = &mut self;
+        *slot = options;
         self
     }
 
-    /// Sets one engine option (`option("model", "fable")`); a repeated key replaces. No effect
-    /// on a `Process` launch.
+    /// Sets one engine option (`option("model", "fable")`); a repeated key replaces.
     pub fn option(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
         if let Self::Agent {
             options: serde_json::Value::Object(options),
@@ -214,11 +196,9 @@ impl LaunchOptions {
         self
     }
 
-    /// No effect on a `Process` launch.
     pub fn initial_prompt(mut self, prompt: impl Into<String>) -> Self {
-        if let Self::Agent { initial_prompt, .. } = &mut self {
-            *initial_prompt = prompt.into();
-        }
+        let Self::Agent { initial_prompt, .. } = &mut self;
+        *initial_prompt = prompt.into();
         self
     }
 }
@@ -440,15 +420,13 @@ fn archive_lock(directory: &Path) -> Result<Option<std::fs::File>, EngineError> 
     }
 }
 
-/// The process is gone, whatever the adapter last said: `ended_at` is set and an agent's state
+/// The process is gone, whatever the adapter last said: `ended_at` is set and the state
 /// becomes `Ended`. No `StateChanged`: `Exited` / `Stopped` already say so.
 fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
     let ended_at = now();
     session.lifecycle = lifecycle;
     session.ended_at = Some(ended_at);
-    if session.state.is_some() {
-        session.state = Some(LlmEngineState::Ended);
-    }
+    session.state = LlmEngineState::Ended;
 }
 
 /// How long `stop` waits for the pane's process after `kill-session` before killing it outright.
@@ -609,6 +587,13 @@ impl TxCore {
             .collect())
     }
 
+    /// The ids of the process records in the store: written before PR 11, when core still
+    /// held non-LLM sessions. Every read skips them (a front end reports them at startup);
+    /// Storage PR 14's migration moves them out.
+    pub fn skipped_records(&self) -> Result<Vec<SessionId>, CoreError> {
+        Ok(self.store.skipped()?)
+    }
+
     pub fn get_session(&self, id: &SessionId) -> Result<Session, CoreError> {
         self.store
             .load(id)?
@@ -651,9 +636,9 @@ impl TxCore {
 
     // ----- create ------------------------------------------------------------------------------
 
-    /// Starts a session and returns its id. An agent runs in its own detached worktree of the
+    /// Starts an agent and returns its id. It runs in its own detached worktree of the
     /// checkout `opts.cwd`, under the first free name (`opts.name`, else `opts.name-2` …); the
-    /// record carries the name and the worktree. A process runs in `opts.cwd` as asked.
+    /// record carries the name and the worktree.
     pub fn create_session(&self, opts: CreateOptions) -> Result<SessionId, CoreError> {
         let (id, events) = self.create_locked(opts, None)?;
         self.emit(events);
@@ -664,9 +649,8 @@ impl TxCore {
     /// the source's working directory at its committed `HEAD` (uncommitted changes stay
     /// behind). It runs the source's engine with its roles and a copy of its engine data (model
     /// and effort included) under `options.options`, carries `parent = source`, and starts with
-    /// `options.prompt`. The source keeps running. `NotAnAgent` for a process session; whether
-    /// the source has a conversation to branch is the engine's answer, surfaced as its
-    /// `EngineError`.
+    /// `options.prompt`. The source keeps running. Whether the source has a conversation to
+    /// branch is the engine's answer, surfaced as its `EngineError`.
     pub fn fork_session(
         &self,
         source: &SessionId,
@@ -692,10 +676,7 @@ impl TxCore {
         };
         let Launch::Agent {
             engine, profile, ..
-        } = &source.launch
-        else {
-            return Err(CoreError::NotAnAgent(source.id.clone()));
-        };
+        } = &source.launch;
         let name = options
             .name
             .unwrap_or_else(|| format!("{}-fork", source.name));
@@ -728,50 +709,30 @@ impl TxCore {
         if !opts.cwd.is_dir() {
             return Err(CoreError::NotADirectory(opts.cwd));
         }
-        // The real directory: git is asked about the real checkout, a process runs in the real
-        // directory, and the record and every workspace path say so.
+        // The real directory: git is asked about the real checkout, and the record and every
+        // workspace path say so.
         let cwd = std::fs::canonicalize(&opts.cwd).map_err(store_io(&opts.cwd))?;
         let opts = CreateOptions { cwd, ..opts };
         // Pure checks before the lock: an unknown engine, a missing prompt or an unknown role never
         // touches state.
-        let (engine, roles) = match &opts.launch {
-            LaunchOptions::Agent {
-                engine,
-                profile,
-                initial_prompt,
-                ..
-            } => {
-                let adapter = self
-                    .engines
-                    .get(engine)
-                    .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
-                if initial_prompt.trim().is_empty() {
-                    return Err(CoreError::PromptRequired);
-                }
-                (
-                    Some((adapter, self.profiles.resolve(profile)?)),
-                    profile.clone(),
-                )
-            }
-            LaunchOptions::Process { program, .. } => {
-                if program.is_empty() {
-                    return Err(CoreError::InvalidName(program.clone()));
-                }
-                (None, Vec::new())
-            }
-            #[allow(unreachable_patterns)]
-            _ => unreachable!("LaunchOptions variants are all handled"),
-        };
+        let LaunchOptions::Agent {
+            engine,
+            profile,
+            initial_prompt,
+            ..
+        } = &opts.launch;
+        let adapter = self
+            .engines
+            .get(engine)
+            .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+        if initial_prompt.trim().is_empty() {
+            return Err(CoreError::PromptRequired);
+        }
+        let engine = (adapter, self.profiles.resolve(profile)?);
+        let roles = profile.clone();
 
         let _create = self.locks.create().map_err(CoreError::Lock)?;
-        if engine.is_none() {
-            // A process runs where it is asked to, under the name it is asked for.
-            if self.name_holder(&opts.name, None)?.is_some() {
-                return Err(CoreError::NameTaken(opts.name));
-            }
-            return self.launch_locked(opts, engine, roles, fork_of);
-        }
-        // An agent gets its own detached worktree at the starting checkout's `HEAD`, under the
+        // The agent gets its own detached worktree at the starting checkout's `HEAD`, under the
         // first name free among the unarchived records (`name`, `name-2`, … `name-99`), in a
         // directory free on disk.
         // A directory that is not a checkout fails here, with git's own words, before anything
@@ -796,7 +757,7 @@ impl TxCore {
     fn launch_locked(
         &self,
         opts: CreateOptions,
-        engine: Option<(&dyn LlmEngine, ResolvedProfile)>,
+        engine: (&dyn LlmEngine, ResolvedProfile),
         roles: Vec<String>,
         fork_of: Option<&Session>,
     ) -> Result<(SessionId, Vec<Event>), CoreError> {
@@ -806,32 +767,22 @@ impl TxCore {
         // the engine's `configure` then adjusts and its fork plan replaces with the fork's own.
         // Core copies the value whole; it never reads into it.
         let mut ext = std::collections::BTreeMap::new();
-        let (launch, agent) = match (opts.launch, engine) {
-            (
-                LaunchOptions::Agent {
-                    engine,
-                    options,
-                    initial_prompt,
-                    ..
-                },
-                Some((adapter, resolved)),
-            ) => {
-                if let Some(data) = fork_of.and_then(|source| source.ext.get(adapter.ext_key())) {
-                    ext.insert(adapter.ext_key().to_owned(), data.clone());
-                }
-                let launch = Launch::Agent {
-                    engine,
-                    profile: roles,
-                    model: None,
-                    effort: None,
-                    resume: None,
-                };
-                (launch, Some((adapter, resolved, options, initial_prompt)))
-            }
-            (LaunchOptions::Process { program, args, .. }, _) => {
-                (Launch::Process { program, args }, None)
-            }
-            (LaunchOptions::Agent { .. }, None) => unreachable!("engine resolved above"),
+        let (adapter, resolved) = engine;
+        let LaunchOptions::Agent {
+            engine,
+            options,
+            initial_prompt,
+            ..
+        } = opts.launch;
+        if let Some(data) = fork_of.and_then(|source| source.ext.get(adapter.ext_key())) {
+            ext.insert(adapter.ext_key().to_owned(), data.clone());
+        }
+        let launch = Launch::Agent {
+            engine,
+            profile: roles,
+            model: None,
+            effort: None,
+            resume: None,
         };
         let created_at = now();
         let mut session = Session {
@@ -845,31 +796,25 @@ impl TxCore {
             archived_at: None,
             last_modified_at: created_at,
             lifecycle: Lifecycle::Running,
-            // An agent starts in `Starting` until its adapter's first change; a process has
-            // no engine and so no state.
-            state: agent.is_some().then_some(LlmEngineState::Starting),
+            // `Starting` until the adapter's first change.
+            state: LlmEngineState::Starting,
             launch,
             ext,
         };
-        let engine = match agent {
-            Some((adapter, resolved, options, initial_prompt)) => {
-                // The engine validates the options and merges them into its data, which the
-                // launch then reads. A refusal here has written nothing yet.
-                let engine_data = adapter.configure(&session, &options)?;
-                session
-                    .ext
-                    .insert(adapter.ext_key().to_owned(), engine_data);
-                Some(EngineLaunch {
-                    adapter,
-                    resolved,
-                    mode: match fork_of {
-                        Some(source) => LaunchMode::Fork { source },
-                        None => LaunchMode::Start,
-                    },
-                    initial_prompt: Some(initial_prompt),
-                })
-            }
-            None => None,
+        // The engine validates the options and merges them into its data, which the launch
+        // then reads. A refusal here has written nothing yet.
+        let engine_data = adapter.configure(&session, &options)?;
+        session
+            .ext
+            .insert(adapter.ext_key().to_owned(), engine_data);
+        let engine = EngineLaunch {
+            adapter,
+            resolved,
+            mode: match fork_of {
+                Some(source) => LaunchMode::Fork { source },
+                None => LaunchMode::Start,
+            },
+            initial_prompt: Some(initial_prompt),
         };
         let exited_at_once = self.start_locked(&mut session, engine, &opts.env)?;
         let mut events = vec![match fork_of {
@@ -883,17 +828,17 @@ impl TxCore {
     }
 
     /// The shared launch path, under the create lock: `session` is the record to run, already
-    /// `Running` (and `Starting`), under a free name, in its `cwd`. For an agent the profile is
-    /// written, the engine's plan taken and its workspace applied; then tmux starts the
-    /// program with `extra_env` on top of core's environment, `@tx-id` links the session, and
-    /// the record is saved. A program that exits at once takes its session (and, if it was the
+    /// `Running` (and `Starting`), under a free name, in its `cwd`. The profile is written,
+    /// the engine's plan taken and its workspace applied; then tmux starts the program with
+    /// `extra_env` on top of core's environment, `@tx-id` links the session, and the record is
+    /// saved. A program that exits at once takes its session (and, if it was the
     /// last one, the server) with it before `@tx-id` can be set: that is a session that ran and
     /// exited, not a failure to start one; the record says so and `true` comes back. A failure
     /// leaves no tmux session and no profile behind.
     fn start_locked(
         &self,
         session: &mut Session,
-        engine: Option<EngineLaunch<'_>>,
+        engine: EngineLaunch<'_>,
         extra_env: &[(String, String)],
     ) -> Result<bool, CoreError> {
         let profile_file = self.profile_path(&session.id);
@@ -916,41 +861,32 @@ impl TxCore {
         merge_env(&mut env, &self.config.env);
         merge_env(&mut env, extra_env);
 
-        let (program, args) = match engine {
-            Some(engine) => {
-                let profile = Profile::write(engine.resolved, &profile_file)
-                    .map_err(store_io(&profile_file))?;
-                let request = LaunchRequest {
-                    session,
-                    mode: engine.mode,
-                    profile: &profile,
-                    initial_prompt: engine.initial_prompt.as_deref(),
-                    hook_command: &self.config.hook_command,
-                };
-                let plan = engine
-                    .adapter
-                    .launch(&request)
-                    .inspect_err(|_| cleanup_profile())?;
-                apply_workspace(&session.cwd, &plan.workspace)
-                    .inspect_err(|_| cleanup_profile())?;
-                validate_env(&plan.env).inspect_err(|_| cleanup_profile())?;
-                merge_env(&mut env, &plan.env);
-                if plan.program.is_empty() {
-                    cleanup_profile();
-                    return Err(CoreError::InvalidName(plan.program));
-                }
-                if let Some(engine_data) = plan.engine_data {
-                    session
-                        .ext
-                        .insert(engine.adapter.ext_key().to_owned(), engine_data);
-                }
-                (plan.program, plan.args)
-            }
-            None => match &session.launch {
-                Launch::Process { program, args } => (program.clone(), args.clone()),
-                Launch::Agent { .. } => unreachable!("an agent launch carries its engine"),
-            },
+        let profile =
+            Profile::write(engine.resolved, &profile_file).map_err(store_io(&profile_file))?;
+        let request = LaunchRequest {
+            session,
+            mode: engine.mode,
+            profile: &profile,
+            initial_prompt: engine.initial_prompt.as_deref(),
+            hook_command: &self.config.hook_command,
         };
+        let plan = engine
+            .adapter
+            .launch(&request)
+            .inspect_err(|_| cleanup_profile())?;
+        apply_workspace(&session.cwd, &plan.workspace).inspect_err(|_| cleanup_profile())?;
+        validate_env(&plan.env).inspect_err(|_| cleanup_profile())?;
+        merge_env(&mut env, &plan.env);
+        if plan.program.is_empty() {
+            cleanup_profile();
+            return Err(CoreError::InvalidName(plan.program));
+        }
+        if let Some(engine_data) = plan.engine_data {
+            session
+                .ext
+                .insert(engine.adapter.ext_key().to_owned(), engine_data);
+        }
+        let (program, args) = (plan.program, plan.args);
 
         if let Err(error) =
             self.tmux
@@ -988,8 +924,7 @@ impl TxCore {
     /// conversation (the engine continues the one it recorded under its `ext` key, in
     /// `LaunchMode::Resume`). `StillRunning` while the record is `Running` or tmux still has the
     /// session; `WorktreeMissing` when `cwd` is gone, since a respawn never recreates one;
-    /// `NameHeld` when an unarchived record took the name meanwhile; `NotAnAgent` for a process.
-    /// Comes back `Running` and `Starting`, with `ended_at` and `archived_at` cleared, and
+    /// `NameHeld` when an unarchived record took the name meanwhile. Comes back `Running` and `Starting`, with `ended_at` and `archived_at` cleared, and
     /// announced as `Respawned`.
     pub fn respawn_session(&self, id: &SessionId) -> Result<Session, CoreError> {
         let (session, events) = self.respawn_locked(id)?;
@@ -1003,10 +938,7 @@ impl TxCore {
         let mut session = self.get_session(id)?;
         let Launch::Agent {
             engine, profile, ..
-        } = &session.launch
-        else {
-            return Err(CoreError::NotAnAgent(id.clone()));
-        };
+        } = &session.launch;
         let adapter = self
             .engines
             .get(engine)
@@ -1028,7 +960,7 @@ impl TxCore {
         session.lifecycle = Lifecycle::Running;
         session.ended_at = None;
         session.archived_at = None;
-        session.state = Some(LlmEngineState::Starting);
+        session.state = LlmEngineState::Starting;
         adapter.restore(&session, &self.config.archive_directory(id))?;
         let engine = EngineLaunch {
             adapter,
@@ -1036,7 +968,7 @@ impl TxCore {
             mode: LaunchMode::Resume,
             initial_prompt: None,
         };
-        let exited_at_once = self.start_locked(&mut session, Some(engine), &[])?;
+        let exited_at_once = self.start_locked(&mut session, engine, &[])?;
         let mut events = vec![event(
             EventType::Respawned,
             &session,
@@ -1187,18 +1119,16 @@ impl TxCore {
             if session.lifecycle != Lifecycle::Running {
                 return Ok(None);
             }
-            let Launch::Agent { engine, .. } = &session.launch else {
-                return Ok(None);
-            };
+            let Launch::Agent { engine, .. } = &session.launch;
             let Some(adapter) = self.engines.get(engine) else {
                 return Ok(None);
             };
-            let current = session.state.expect("agent sessions carry a state");
+            let current = session.state;
             let change = adapter.on_hook(&session, &hook);
             let mut changed = Vec::new();
             let state = match change.state {
                 Some(to) if to != current => {
-                    session.state = Some(to);
+                    session.state = to;
                     let detail = format!("{} → {}", current.as_str(), to.as_str());
                     changed.push(event(EventType::StateChanged, &session, None, detail));
                     to
@@ -1225,12 +1155,10 @@ impl TxCore {
     /// The engine's `archive` for an agent record, under `<archive directory>/.archive.lock`
     /// taken without waiting: a caller that finds the lock held leaves the archive to the
     /// holder. Failure is an `ArchiveFailed` event, never an error. Called after every hook, and
-    /// after a stop or an exit, once the process is gone and the transcript final. A process
-    /// record or an unregistered engine archives nothing.
+    /// after a stop or an exit, once the process is gone and the transcript final. An
+    /// unregistered engine archives nothing.
     fn archive_conversation(&self, session: &Session) {
-        let Launch::Agent { engine, .. } = &session.launch else {
-            return;
-        };
+        let Launch::Agent { engine, .. } = &session.launch;
         let Some(adapter) = self.engines.get(engine) else {
             return;
         };
@@ -1335,14 +1263,11 @@ impl TxCore {
         })
     }
 
-    /// The recipient's engine frames the message when it is registered here; a `Process`
-    /// session, or an agent whose engine this core does not know, gets the default envelope.
+    /// The recipient's engine frames the message when it is registered here; an agent whose
+    /// engine this core does not know gets the default envelope.
     fn envelope_for(&self, recipient: &Session, sender: &EnvelopeSender<'_>, text: &str) -> String {
-        let adapter = match &recipient.launch {
-            Launch::Agent { engine, .. } => self.engines.get(engine),
-            Launch::Process { .. } => None,
-        };
-        match adapter {
+        let Launch::Agent { engine, .. } = &recipient.launch;
+        match self.engines.get(engine) {
             Some(adapter) => adapter.envelope(sender, text),
             None => build_envelope(sender, text),
         }
@@ -1651,34 +1576,29 @@ mod tests {
         let core = TxCore::open(config).unwrap();
         let cwd = dir.path().to_path_buf();
         let opts = |launch: LaunchOptions| CreateOptions::new("n", cwd.clone(), launch);
-        let process = || LaunchOptions::process("sleep", ["1"]);
-        let mut bad = opts(process());
+        let agent = || LaunchOptions::agent("ghost").initial_prompt("go");
+        let mut bad = opts(agent());
         bad.name = "no spaces".into();
         assert!(matches!(
             core.create_session(bad).unwrap_err(),
             CoreError::InvalidName(_)
         ));
-        let mut bad = opts(process());
+        let mut bad = opts(agent());
         bad.env = vec![("=".into(), "1".into())];
         assert!(matches!(
             core.create_session(bad).unwrap_err(),
             CoreError::InvalidEnvKey(_)
         ));
-        let mut bad = opts(process());
+        let mut bad = opts(agent());
         bad.cwd = dir.path().join("missing");
         assert!(matches!(
             core.create_session(bad).unwrap_err(),
             CoreError::NotADirectory(_)
         ));
-        let bad = opts(LaunchOptions::agent("ghost"));
+        let bad = opts(agent());
         assert!(
             matches!(core.create_session(bad).unwrap_err(), CoreError::UnknownEngine(e) if e == "ghost")
         );
-        let bad = opts(LaunchOptions::process("", Vec::<String>::new()));
-        assert!(matches!(
-            core.create_session(bad).unwrap_err(),
-            CoreError::InvalidName(_)
-        ));
         assert!(
             std::fs::read_dir(directories.data.join("sessions"))
                 .unwrap()
@@ -1726,12 +1646,15 @@ mod tests {
             archived_at: None,
             last_modified_at: 1.0,
             lifecycle,
-            launch: Launch::Process {
-                program: "x".into(),
-                args: vec![],
+            launch: Launch::Agent {
+                engine: "e".into(),
+                profile: vec![],
+                model: None,
+                effort: None,
+                resume: None,
             },
             ext: std::collections::BTreeMap::new(),
-            state: None,
+            state: LlmEngineState::Idle,
         };
         let filter = ListFilter::new()
             .parent("p".parse().unwrap())

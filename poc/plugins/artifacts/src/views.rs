@@ -7,10 +7,9 @@ use std::path::Path;
 
 use tx_client::tmux::Ui;
 use tx_client::views::{self, View, ViewKind, ViewRequest};
-use tx_core::{Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
+use tx_core::{Session, SessionId, VerbError};
 
 use crate::artifact::{Artifact, USER_ACTOR};
-use crate::grouping::bound_artifact;
 use crate::kinds::view_suffix;
 use crate::service::ArtifactService;
 
@@ -81,22 +80,13 @@ impl From<View> for Shown {
     }
 }
 
-/// The session showing the artifact: a tx-client view bound to it, else (legacy, PR 11 deletes)
-/// a running core record carrying `ext.artifacts.bound`. Every open path looks here first.
-pub fn live_view(ui: &Ui, core: &TxCore, artifact_id: &str) -> Result<Option<Shown>, VerbError> {
-    let bound = views::list(ui)
+/// The session showing the artifact: the tx-client view bound to it. Every open path looks
+/// here first.
+pub fn live_view(ui: &Ui, artifact_id: &str) -> Result<Option<Shown>, VerbError> {
+    Ok(views::list(ui)
         .map_err(failed)?
         .into_iter()
-        .find(|view| view.bound.as_deref() == Some(artifact_id));
-    if let Some(view) = bound {
-        return Ok(Some(view.into()));
-    }
-    let _ = core.refresh_all();
-    let running = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
-    Ok(running
-        .iter()
-        .filter_map(|id| core.get_session(id).ok())
-        .find(|session| bound_artifact(session).as_deref() == Some(artifact_id))
+        .find(|view| view.bound.as_deref() == Some(artifact_id))
         .map(Shown::from))
 }
 

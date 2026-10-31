@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
-use common::{Harness, agent, cwd_of, process, typed, wait_for};
+use common::{Harness, agent, cwd_of, typed, wait_for};
 use proptest::prelude::*;
 use tx_core::{CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TxCore};
 
@@ -171,6 +171,21 @@ impl Model {
         self.recs
             .iter()
             .any(|(id, rec)| !rec.archived && rec.name == name && Some(id) != except)
+    }
+
+    /// The name a create asked `base` gets: the first of `base`, `base-2`, … no unarchived
+    /// record holds.
+    fn free_name(&self, base: &str) -> String {
+        (1..)
+            .map(|suffix| {
+                if suffix == 1 {
+                    base.to_owned()
+                } else {
+                    format!("{base}-{suffix}")
+                }
+            })
+            .find(|candidate| !self.name_held(candidate, None))
+            .unwrap()
     }
 
     /// The unarchived (`archived: false`) or archived records' ids passing `keep`, sorted.
@@ -356,7 +371,7 @@ fn check_model(
 
 fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> {
     let mut model = Model::default();
-    let cwd = h.workdir("w");
+    let repository = h.repository("w");
     for (step, op) in ops.iter().enumerate() {
         let before = snapshot(h, &model);
         // Ids whose record may legitimately change in this step.
@@ -364,20 +379,22 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
         match op {
             Op::Create { name, tags, parent } => {
                 let name = name_at(*name);
-                let mut opts = process(&name, &cwd);
+                let mut opts = agent(&name, &repository);
                 opts.tags = tags.iter().map(|t| TAGS[*t].to_owned()).collect();
                 opts.parent = parent.map(|p| model.id_for(p));
                 let valid = !name.is_empty() && name.len() <= 128 && !name.contains(' ');
-                let expected = if !valid {
-                    "InvalidName"
-                } else if model.name_held(&name, None) {
-                    "NameTaken"
-                } else {
-                    "Ok"
-                };
+                // A held name is never refused: the agent gets the next free one.
+                let expected = if valid { "Ok" } else { "InvalidName" };
                 let result = core.create_session(opts.clone());
                 prop_assert_eq!(verdict(&result), expected, "step {}: create {}", step, name);
                 if let Ok(id) = result {
+                    let name = model.free_name(&name);
+                    prop_assert_eq!(
+                        &core.get_session(&id).unwrap().name,
+                        &name,
+                        "step {}: the name given",
+                        step
+                    );
                     model.all_ids.push(id.clone());
                     model.recs.insert(
                         id,
@@ -640,7 +657,7 @@ proptest! {
             return Ok(());
         }
         let h = Harness::new();
-        let core = h.open();
+        let core = h.open_with_engine();
         run_ops(&h, &core, &ops)?;
     }
 }
@@ -650,7 +667,7 @@ proptest! {
 fn scripted_corner_sequence_matches_the_model() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
+    let core = h.open_with_engine();
     let alpha = || Op::Create {
         name: 0,
         tags: vec![],
@@ -668,14 +685,14 @@ fn scripted_corner_sequence_matches_the_model() {
             parent: Some(0),
         },
         Op::Kill(0),
-        alpha(),                        // NameTaken: killed but still Running
+        alpha(),                        // alpha-2: killed but still Running, alpha is held
         Op::Rename { who: 1, name: 0 }, // NameTaken: record of alpha is Running
         Op::Stop(0),                    // Exited, not Stopped
-        alpha(),                        // NameTaken: an ended, unarchived record holds it
+        alpha(),                        // alpha-3: an ended, unarchived record holds alpha
         Op::Archive(0),                 // already ended: archived only
-        alpha(),                        // free: the only other alpha is archived
+        alpha(),                        // alpha: the first holder is archived
         Op::Archive(2),                 // a live one: stopped, then archived; no orphan
-        alpha(),                        // free again
+        alpha(),                        // alpha-2 again: its holder is archived
         Op::Rename { who: 1, name: 0 }, // NameTaken by the running alpha
         Op::Kill(1),
         Op::Rename { who: 1, name: 2 }, // killed record: record-only rename, Ok
@@ -690,8 +707,8 @@ fn scripted_corner_sequence_matches_the_model() {
         Op::Archive(0),                 // already archived: unchanged, no event
         Op::Archive(9),                 // NotFound
         Op::Kill(0),                    // the running alpha
-        Op::Archive(3),                 // killed: Exited, then archived
-        alpha(),                        // free: every alpha record is archived
+        Op::Archive(4),                 // killed: Exited, then archived
+        alpha(),                        // alpha: every record named alpha is archived
         Op::Rename { who: 0, name: 2 }, // NameTaken: an archived record obeys the name rule
         Op::Archive(1),
         Op::Rename { who: 0, name: 2 }, // Ok: gamma's holder is archived too
@@ -707,11 +724,11 @@ fn scripted_corner_sequence_matches_the_model() {
 fn resolve_prefers_an_id_over_a_name_equal_to_it() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("a");
-    let a = core.create_session(process("a", &cwd)).unwrap();
+    let core = h.open_with_engine();
+    let repository = h.repository("a");
+    let a = core.create_session(agent("a", &repository)).unwrap();
     // A uuid is a valid name; a session *named* like another session's id.
-    let b = core.create_session(process(a.as_str(), &cwd)).unwrap();
+    let b = core.create_session(agent(a.as_str(), &repository)).unwrap();
     assert_ne!(a, b);
     assert_eq!(
         core.resolve(a.as_str()).unwrap(),
@@ -743,19 +760,19 @@ fn resolve_prefers_an_id_over_a_name_equal_to_it() {
 fn resolve_three_records_one_name() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("a");
-    let first = core.create_session(process("n", &cwd)).unwrap();
+    let core = h.open_with_engine();
+    let repository = h.repository("a");
+    let first = core.create_session(agent("n", &repository)).unwrap();
     // An ended, unarchived record keeps its name: only archiving frees it.
     core.stop_session(&first).unwrap();
-    assert_eq!(
-        kind(&core.create_session(process("n", &cwd)).unwrap_err()),
-        "NameTaken"
-    );
+    let held = core.create_session(agent("n", &repository)).unwrap();
+    assert_eq!(core.get_session(&held).unwrap().name, "n-2");
+    core.archive_session(&held).unwrap();
     core.archive_session(&first).unwrap();
-    let second = core.create_session(process("n", &cwd)).unwrap();
+    let second = core.create_session(agent("n", &repository)).unwrap();
+    assert_eq!(core.get_session(&second).unwrap().name, "n");
     core.archive_session(&second).unwrap();
-    let third = core.create_session(process("n", &cwd)).unwrap();
+    let third = core.create_session(agent("n", &repository)).unwrap();
     assert_eq!(core.resolve("n").unwrap(), third);
     // Kill behind the back: the record is still Running and still wins.
     h.tmux_ok(&["kill-session", "-t", "=n"]);
@@ -781,8 +798,8 @@ fn resolve_three_records_one_name() {
     core.rename_session(&first, "n").unwrap();
     assert_eq!(core.resolve("n").unwrap(), third);
     // An older unarchived record beats a newer archived one.
-    let older = core.create_session(process("o", &cwd)).unwrap();
-    let newer = core.create_session(process("p", &cwd)).unwrap();
+    let older = core.create_session(agent("o", &repository)).unwrap();
+    let newer = core.create_session(agent("p", &repository)).unwrap();
     core.archive_session(&newer).unwrap();
     core.rename_session(&older, "p").unwrap();
     assert_eq!(core.resolve("p").unwrap(), older);
@@ -796,10 +813,9 @@ fn resolve_three_records_one_name() {
 fn parent_is_never_validated_and_tags_are_verbatim() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("a");
+    let core = h.open_with_engine();
     let ghost: SessionId = "no-such-parent".parse().unwrap();
-    let mut opts = process("p", &cwd);
+    let mut opts = agent("p", &h.repository("a"));
     opts.parent = Some(ghost.clone());
     let big = "T".repeat(10 * 1024);
     opts.tags = vec![
@@ -910,15 +926,15 @@ fn env_values_with_equals_spaces_newline_and_8kb_reach_the_process() {
 fn env_keys_rejected_before_any_state() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("a");
+    let core = h.open_with_engine();
+    let repository = h.repository("a");
     for key in ["", "A=B", "A B", "A\nB", "A\0", "ä", "A$", "A/B"] {
-        let mut opts = process("k", &cwd);
+        let mut opts = agent("k", &repository);
         opts.env = vec![(key.into(), "1".into())];
         let error = core.create_session(opts).unwrap_err();
         assert_eq!(kind(&error), "InvalidEnvKey", "{key:?}");
     }
-    let mut opts = process("k", &cwd);
+    let mut opts = agent("k", &repository);
     opts.env = vec![("A".into(), "x\0y".into())];
     assert_eq!(
         kind(&core.create_session(opts).unwrap_err()),
@@ -947,11 +963,12 @@ fn eight_cores_create_distinct_names_in_parallel() {
         .map(|i| {
             let barrier = Arc::clone(&barrier);
             let config = h.config();
-            let cwd = h.workdir(&format!("w{i}"));
+            let repository = h.repository(&format!("w{i}"));
             std::thread::spawn(move || {
-                let core = TxCore::open(config).unwrap();
+                let mut core = TxCore::open(config).unwrap();
+                core.register_engine(Box::new(common::ShellStub)).unwrap();
                 barrier.wait();
-                core.create_session(process(&format!("par-{i}"), &cwd))
+                core.create_session(agent(&format!("par-{i}"), &repository))
             })
         })
         .collect();
@@ -1000,7 +1017,7 @@ fn archive_of_a_live_session_stops_it_and_frees_its_name() {
         h.live_names().is_empty(),
         "stopped first: no orphan in tmux"
     );
-    let again = core.create_session(process("f", &h.workdir("b"))).unwrap();
+    let again = core.create_session(agent("f", &h.repository("b"))).unwrap();
     assert_ne!(again, id);
     assert_eq!(
         core.list_sessions(&ListFilter::default()).unwrap(),
@@ -1064,10 +1081,11 @@ fn archive_of_a_live_session_stops_it_and_frees_its_name() {
 fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("a");
-    let a = core.create_session(process("a", &cwd)).unwrap();
-    let b = core.create_session(process("b", &h.workdir("b"))).unwrap();
+    let core = h.open_with_engine();
+    let repository = h.repository("a");
+    let a = core.create_session(agent("a", &repository)).unwrap();
+    let cwd = cwd_of(&core, &a);
+    let b = core.create_session(agent("b", &h.repository("b"))).unwrap();
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
@@ -1075,15 +1093,14 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     h.tmux_ok(&["rename-session", "-t", "=a", "sneaky"]);
     let after = core.get_execution_location(&a).unwrap();
     assert_eq!(before, after, "targets are server-local ids, not names");
-    // The record still says "a"; tmux says "sneaky". A new create named "a" succeeds in tmux
-    // but the record of `a` is Running with that name: NameTaken by the record.
+    // The record still says "a"; tmux says "sneaky". "sneaky" is free by records but taken by
+    // tmux: NameTaken from tmux.
     assert_eq!(
-        kind(&core.create_session(process("a", &cwd)).unwrap_err()),
-        "NameTaken"
-    );
-    // And "sneaky" is free by records but taken by tmux: NameTaken from tmux.
-    assert_eq!(
-        kind(&core.create_session(process("sneaky", &cwd)).unwrap_err()),
+        kind(
+            &core
+                .create_session(agent("sneaky", &repository))
+                .unwrap_err()
+        ),
         "NameTaken"
     );
     core.send_message(&a, "hi", SendOptions::default()).unwrap();
@@ -1147,14 +1164,9 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
         "NotRunning"
     );
     assert!(core.refresh_all().unwrap().is_empty());
-    // An exited record keeps its name until archived.
-    assert_eq!(
-        kind(&core.create_session(process("renamed", &cwd)).unwrap_err()),
-        "NameTaken"
-    );
     core.archive_session(&a).unwrap();
     // Creating again starts a fresh server; old records stay Exited.
-    let c = core.create_session(process("renamed", &cwd)).unwrap();
+    let c = core.create_session(agent("renamed", &repository)).unwrap();
     assert_eq!(h.live_names(), ["renamed"]);
     assert_eq!(core.resolve("renamed").unwrap(), c);
     assert_eq!(core.get_session(&a).unwrap().lifecycle, Lifecycle::Exited);
@@ -1164,8 +1176,8 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
 fn stop_after_server_death_reports_exited() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let id = core.create_session(process("s", &h.workdir("a"))).unwrap();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("s", &h.repository("a"))).unwrap();
     h.tmux(&["kill-server"]);
     let session = core.stop_session(&id).unwrap();
     assert_eq!(
@@ -1187,10 +1199,10 @@ fn stop_after_server_death_reports_exited() {
 fn terminal_records_never_revive() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("a");
-    let stopped = core.create_session(process("s", &cwd)).unwrap();
-    let exited = core.create_session(process("e", &cwd)).unwrap();
+    let core = h.open_with_engine();
+    let repository = h.repository("a");
+    let stopped = core.create_session(agent("s", &repository)).unwrap();
+    let exited = core.create_session(agent("e", &repository)).unwrap();
     core.stop_session(&stopped).unwrap();
     h.tmux_ok(&["kill-session", "-t", "=e"]);
     core.refresh_session(&exited).unwrap();

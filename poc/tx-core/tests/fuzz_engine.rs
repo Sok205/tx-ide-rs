@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use tx_core::engine::{apply_workspace, resolve_in};
 use tx_core::{
     CoreError, EngineError, EngineRegistry, Launch, LaunchPlan, LaunchRequest, Lifecycle,
-    LlmEngine, Profile, ResolvedProfile, Session, SessionId, WorkspaceAction,
+    LlmEngine, LlmEngineState, Profile, ResolvedProfile, Session, SessionId, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -905,11 +905,14 @@ fn core_accepts_a_plan_with_empty_program() {
         archived_at: None,
         last_modified_at: 0.0,
         lifecycle: Lifecycle::Running,
-        launch: Launch::Process {
-            program: "sh".into(),
-            args: Vec::new(),
+        launch: Launch::Agent {
+            engine: "empty".into(),
+            profile: Vec::new(),
+            model: None,
+            effort: None,
+            resume: None,
         },
-        state: None,
+        state: LlmEngineState::Starting,
         ext: Default::default(),
     };
     let request = LaunchRequest::new(&session, &profile).initial_prompt("");

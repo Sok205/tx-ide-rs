@@ -3,7 +3,6 @@
 //! ```text
 //! resolved(session)  = own override (ext.edit.group, else ext.artifacts.group)
 //!                      ?? first override up the parent chain (stops at hubs and cycles)
-//!                      ?? the bound artifact's group (legacy nvim records' ext.artifacts.bound)
 //!                      ?? tags[0]
 //!                      ?? session.name
 //! resolved(view)     = first override up the parent chain (from the view's parent agent)
@@ -42,11 +41,6 @@ const EDIT_PLUGIN: &str = "edit";
 /// `ext["artifacts"]` on a session record.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ext {
-    /// Legacy, PR 11 deletes: the artifact an nvim view shows, on records written before
-    /// `artifact open` made tx-client views (which carry it as `@tx-view-bound`). Read, never
-    /// written.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bound: Option<String>,
     /// The group override `txc group` sets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
@@ -63,11 +57,6 @@ pub fn ext_of(session: &Session) -> Result<Ext, String> {
                 session.name
             )
         })
-}
-
-/// Legacy, PR 11 deletes: the artifact a core record is bound to; `None` for a malformed record.
-pub fn bound_artifact(session: &Session) -> Option<String> {
-    ext_of(session).ok()?.bound
 }
 
 fn non_empty(value: Option<&Value>) -> Option<&str> {
@@ -111,20 +100,16 @@ impl<'a> GroupResolver<'a> {
 
     /// The session's effective group; the name is the floor.
     pub fn session_group(&self, session: &Session) -> String {
-        self.session_group_guarded(session, &HashSet::new())
+        if let Some(derived) = self.session_override(session) {
+            return derived;
+        }
+        session.tags.first().unwrap_or(&session.name).to_owned()
     }
 
     /// The artifact's effective group, [`UNGROUPED`] when nothing survives.
     pub fn artifact_group(&self, artifact: &Artifact) -> String {
-        self.artifact_override(artifact, &HashSet::new())
+        self.artifact_override(artifact)
             .unwrap_or_else(|| UNGROUPED.into())
-    }
-
-    fn session_group_guarded(&self, session: &Session, resolving: &HashSet<&'a str>) -> String {
-        if let Some(derived) = self.session_override(session, resolving) {
-            return derived;
-        }
-        session.tags.first().unwrap_or(&session.name).to_owned()
     }
 
     fn parent(&self, session: &Session) -> Option<&'a Session> {
@@ -139,13 +124,13 @@ impl<'a> GroupResolver<'a> {
             .as_ref()
             .and_then(|parent| self.sessions_by_id.get(parent.as_str()).copied());
         self.ancestor_override(parent, HashSet::new())
-            .or_else(|| self.bound_override(view.bound.as_deref(), &HashSet::new()))
+            .or_else(|| self.bound_override(view.bound.as_deref()))
             .unwrap_or_else(|| view.tags.first().unwrap_or(&view.name).to_owned())
     }
 
-    /// Own override, first override up the parent chain, or the bound artifact's. Only overrides
-    /// inherit; an ancestor's tags never leak down.
-    fn session_override(&self, session: &Session, resolving: &HashSet<&'a str>) -> Option<String> {
+    /// Own override, else the first override up the parent chain. Only overrides inherit; an
+    /// ancestor's tags never leak down.
+    fn session_override(&self, session: &Session) -> Option<String> {
         if let Some(group) = own_group(session) {
             return Some(group);
         }
@@ -155,7 +140,7 @@ impl<'a> GroupResolver<'a> {
                 return Some(group);
             }
         }
-        self.bound_override(bound_artifact(session).as_deref(), resolving)
+        None
     }
 
     /// The first override from `ancestor` up the parent chain; stops after a hub and at a cycle.
@@ -183,26 +168,17 @@ impl<'a> GroupResolver<'a> {
         None
     }
 
-    /// The bound artifact's override, unless that artifact is already being resolved.
-    fn bound_override(&self, bound: Option<&str>, resolving: &HashSet<&'a str>) -> Option<String> {
+    /// The bound artifact's override.
+    fn bound_override(&self, bound: Option<&str>) -> Option<String> {
         let artifact = self.artifacts_by_id.get(bound?)?;
-        if resolving.contains(artifact.id.as_str()) {
-            return None;
-        }
-        self.artifact_override(artifact, resolving)
+        self.artifact_override(artifact)
     }
 
     /// Own override, else the creator's full resolution, else the newest surviving toucher's.
-    fn artifact_override(
-        &self,
-        artifact: &'a Artifact,
-        resolving: &HashSet<&'a str>,
-    ) -> Option<String> {
+    fn artifact_override(&self, artifact: &'a Artifact) -> Option<String> {
         if let Some(group) = set(&artifact.group) {
             return Some(group.to_owned());
         }
-        let mut resolving = resolving.clone();
-        resolving.insert(&artifact.id);
         let history = artifact.history();
         let creator_first = history.iter().take(1).chain(history.iter().skip(1).rev());
         for touch in creator_first {
@@ -210,7 +186,7 @@ impl<'a> GroupResolver<'a> {
                 continue;
             }
             if let Some(author) = self.sessions_by_id.get(touch.session_id.as_str()) {
-                return Some(self.session_group_guarded(author, &resolving));
+                return Some(self.session_group(author));
             }
         }
         None
@@ -227,7 +203,7 @@ mod tests {
         let mut record = json!({
             "version": 1, "id": id, "name": name, "parent": null, "tags": [], "cwd": "/r",
             "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": "running",
-            "launch": {"kind": "process", "program": "sleep", "args": []},
+            "launch": {"kind": "agent", "engine": "claude", "profile": []},
         });
         for (key, value) in extra.as_object().unwrap() {
             record[key] = value.clone();
@@ -325,7 +301,7 @@ mod tests {
     fn a_malformed_ext_reads_as_absent() {
         let sessions = vec![
             session("m1", "M", json!({"ext": {"artifacts": "junk", "edit": 5}})),
-            session("m2", "M2", json!({"ext": {"artifacts": {"bound": 7}}})),
+            session("m2", "M2", json!({"ext": {"artifacts": {"group": 7}}})),
         ];
         assert_eq!(group_of(&sessions, &[], "m1"), "M");
         assert_eq!(group_of(&sessions, &[], "m2"), "M2");
@@ -333,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn artifact_cascade_and_recursion_guard() {
+    fn artifact_cascade() {
         let sessions = fixture_g(None, None);
         let resolve = |authors: &[&str], group: Option<&str>| {
             let artifacts = [artifact("art", group, authors)];
@@ -343,16 +319,6 @@ mod tests {
         assert_eq!(resolve(&["user", "gone", "user"], None), UNGROUPED);
         assert_eq!(resolve(&["c1", "b1"], None), "child");
         assert_eq!(resolve(&["user", "b1"], Some("g")), "g");
-
-        let sessions = [session(
-            "v1",
-            "view",
-            json!({"ext": {"artifacts": {"bound": "art3"}}}),
-        )];
-        let artifacts = [artifact("art3", None, &["v1"])];
-        let resolver = GroupResolver::new(&sessions, &artifacts);
-        assert_eq!(resolver.session_group(&sessions[0]), "view");
-        assert_eq!(resolver.artifact_group(&artifacts[0]), "view");
     }
 
     fn view(parent: Option<&str>, bound: Option<&str>, tags: &[&str]) -> View {
@@ -391,20 +357,5 @@ mod tests {
             resolver.view_group(&view(Some("l1"), Some("gone"), &[])),
             "plan-md"
         );
-    }
-
-    /// Legacy, PR 11 deletes: a core record bound through `ext.artifacts.bound`.
-    #[test]
-    fn a_view_takes_its_artifacts_group() {
-        let sessions = [
-            session("w1", "worker", json!({"ext": group("effort")})),
-            session(
-                "v1",
-                "view",
-                json!({"ext": {"artifacts": {"bound": "art"}}}),
-            ),
-        ];
-        let artifacts = [artifact("art", None, &["w1"])];
-        assert_eq!(group_of(&sessions, &artifacts, "v1"), "effort");
     }
 }

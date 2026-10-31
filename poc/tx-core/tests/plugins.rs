@@ -5,7 +5,7 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use common::{Harness, STUB_ID, ShellStub, process};
+use common::{Harness, STUB_ID, ShellStub, agent};
 use serde_json::json;
 use tx_core::{
     Event, EventSink, Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, TxCore,
@@ -126,7 +126,7 @@ fn a_plugin_fills_all_three_slots() {
     core.plug(vec![plugin], &cfg).unwrap();
     assert_eq!(core.engine_ids(), vec![STUB_ID]);
     assert_eq!(*settings.lock().unwrap(), json!({"k": 1}));
-    core.create_session(process("alice", &h.workdir("a")))
+    core.create_session(agent("alice", &h.repository("a")))
         .unwrap();
     assert_eq!(*seen.0.lock().unwrap(), vec!["alice".to_owned()]);
     let verb = core.verb("echo").expect("verb registered");

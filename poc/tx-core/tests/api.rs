@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use tx_core::{
     CoreConfig, CreateOptions, Directories, EventType, Launch, LaunchMode, LaunchOptions,
-    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, Profile, ResolvedProfile,
-    SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
+    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState, Profile,
+    ResolvedProfile, SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -83,7 +83,7 @@ fn record(cwd: &Path) -> Session {
             effort: None,
             resume: None,
         },
-        state: None,
+        state: LlmEngineState::Idle,
         ext: Default::default(),
     }
 }
@@ -109,41 +109,36 @@ fn create_options_and_launch_options_builders() {
     assert_eq!(opts.parent, Some(parent));
     assert_eq!(opts.tags, ["a", "b"]);
     assert_eq!(opts.env, [("K".to_owned(), "v".to_owned())]);
-    match &opts.launch {
-        LaunchOptions::Agent {
-            engine,
-            profile,
-            options,
-            initial_prompt,
-            ..
-        } => {
-            assert_eq!(engine, "claude");
-            assert_eq!(profile, &["dev", "ops"]);
-            // A repeated key replaces; `options(..)` replaces the whole object.
-            assert_eq!(
-                *options,
-                serde_json::json!({"model": "sonnet", "effort": "max"})
-            );
-            let replaced = LaunchOptions::agent("claude")
-                .option("model", "opus")
-                .options(serde_json::json!({"effort": "low"}));
-            assert!(matches!(
-                &replaced,
-                LaunchOptions::Agent { options, .. } if *options == serde_json::json!({"effort": "low"})
-            ));
-            let bare = LaunchOptions::agent("claude");
-            assert!(matches!(
-                &bare,
-                LaunchOptions::Agent { options, .. } if *options == serde_json::json!({})
-            ));
-            assert_eq!(initial_prompt, "start");
-        }
-        other => panic!("{other:?}"),
-    }
-    let process = LaunchOptions::process("sh", ["-c", "true"]);
-    assert!(
-        matches!(&process, LaunchOptions::Process { program, args, .. } if program == "sh" && args == &["-c", "true"])
+    let LaunchOptions::Agent {
+        engine,
+        profile,
+        options,
+        initial_prompt,
+        ..
+    } = &opts.launch
+    else {
+        panic!("{:?}", opts.launch)
+    };
+    assert_eq!(engine, "claude");
+    assert_eq!(profile, &["dev", "ops"]);
+    // A repeated key replaces; `options(..)` replaces the whole object.
+    assert_eq!(
+        *options,
+        serde_json::json!({"model": "sonnet", "effort": "max"})
     );
+    let replaced = LaunchOptions::agent("claude")
+        .option("model", "opus")
+        .options(serde_json::json!({"effort": "low"}));
+    assert!(matches!(
+        &replaced,
+        LaunchOptions::Agent { options, .. } if *options == serde_json::json!({"effort": "low"})
+    ));
+    let bare = LaunchOptions::agent("claude");
+    assert!(matches!(
+        &bare,
+        LaunchOptions::Agent { options, .. } if *options == serde_json::json!({})
+    ));
+    assert_eq!(initial_prompt, "start");
 }
 
 #[test]

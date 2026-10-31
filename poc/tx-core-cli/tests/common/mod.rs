@@ -212,57 +212,18 @@ impl Cli {
             .trim()
             .to_owned()
     }
-    /// A directory of stand-in executables (`exec sleep 60` unless `body` says otherwise),
-    /// returned as a PATH value that puts it first.
+    /// A directory of stand-in executables under `<dir>/shim`, returned as a PATH value that
+    /// puts it first.
     pub fn shim_path(&self, shims: &[(&str, &str)]) -> String {
-        let dir = self.dir.path().join("shim");
-        std::fs::create_dir_all(&dir).unwrap();
-        for (name, body) in shims {
-            let path = dir.join(name);
-            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-                .unwrap();
-        }
-        format!(
-            "{}:{}",
-            dir.display(),
-            std::env::var("PATH").unwrap_or_default()
-        )
+        shim_path_in(&self.dir.path().join("shim"), shims)
     }
     /// A `claude` that just stays alive, so agent sessions can be created without the engine.
     pub fn fake_claude_path(&self) -> String {
         self.shim_path(&[("claude", "exec sleep 60")])
     }
-    /// A git repository with one commit under `<dir>/<name>`: an agent's starting checkout,
-    /// isolated from the host's git config.
+    /// A git repository with one commit under `<dir>/<name>`: an agent's starting checkout.
     pub fn repository(&self, name: &str) -> PathBuf {
-        let repository = self.dir.path().join(name);
-        std::fs::create_dir_all(&repository).unwrap();
-        std::fs::write(repository.join("README.md"), "hello\n").unwrap();
-        for args in [
-            &["init", "-q", "-b", "main"][..],
-            &["add", "README.md"],
-            &["commit", "-q", "-m", "init"],
-        ] {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(&repository)
-                .args(args)
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("GIT_AUTHOR_NAME", "t")
-                .env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t")
-                .env("GIT_COMMITTER_EMAIL", "t@t")
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        repository
+        repository_at(&self.dir.path().join(name))
     }
     /// `<data>/worktrees`, canonical: where every agent's worktree lands.
     pub fn worktrees_dir(&self) -> PathBuf {
@@ -270,21 +231,83 @@ impl Cli {
         std::fs::create_dir_all(&dir).unwrap();
         dir.canonicalize().unwrap()
     }
+    /// A Claude agent named `name`, started from a fresh repository `<dir>/<name>` with the
+    /// fake `claude` on PATH; its id.
     pub fn create(&self, name: &str) -> String {
-        let cwd = self.dir.path().join(name);
-        std::fs::create_dir_all(&cwd).unwrap();
-        self.ok(&[
-            "create",
-            name,
-            "--cwd",
-            cwd.to_str().unwrap(),
-            "--exec",
-            "sleep",
-            "60",
-        ])
-        .trim()
-        .to_owned()
+        let cwd = self.repository(name);
+        let path = self.fake_claude_path();
+        let output = self.run(
+            &[
+                "create",
+                name,
+                "--cwd",
+                cwd.to_str().unwrap(),
+                "--engine",
+                "claude",
+                "--prompt",
+                "start",
+            ],
+            &[("PATH", path.as_str())],
+            "",
+        );
+        assert!(
+            output.status.success(),
+            "txc create {name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
+}
+
+/// Stand-in executables (`#!/bin/sh` scripts with the given bodies) written into `dir`, returned
+/// as a PATH value that puts `dir` first.
+pub fn shim_path_in(dir: &std::path::Path, shims: &[(&str, &str)]) -> String {
+    std::fs::create_dir_all(dir).unwrap();
+    for (name, body) in shims {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+    }
+    format!(
+        "{}:{}",
+        dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+/// A git repository with one commit at `repository` (created if missing, left alone if it is one
+/// already): an agent's starting checkout, isolated from the host's git config.
+pub fn repository_at(repository: &std::path::Path) -> PathBuf {
+    if repository.join(".git").exists() {
+        return repository.to_path_buf();
+    }
+    std::fs::create_dir_all(repository).unwrap();
+    std::fs::write(repository.join("README.md"), "hello\n").unwrap();
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["add", "README.md"],
+        &["commit", "-q", "-m", "init"],
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    repository.to_path_buf()
 }
 
 impl Drop for Cli {
@@ -314,7 +337,7 @@ pub fn lifecycle_of(cli: &Cli, token: &str) -> String {
     json["lifecycle"].as_str().unwrap().to_owned()
 }
 
-/// Where a session runs: its record's `cwd` (an agent's worktree, a process's directory).
+/// Where a session runs: its record's `cwd`, the agent's worktree.
 pub fn cwd_of(cli: &Cli, token: &str) -> PathBuf {
     let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", token])).unwrap();
     PathBuf::from(json["cwd"].as_str().unwrap())
