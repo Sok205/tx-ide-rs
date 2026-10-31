@@ -2,7 +2,8 @@
 //! renderer and palette, the modal editor, the `views` store) and the plugin `ide`, the
 //! nested-tmux workspace layer. Views are the non-LLM tmux sessions on the core's private server
 //! (`views`); `ui install` composes the server's config from the resources every active plugin
-//! publishes, and `ide` publishes the IDE's own: theme, base keys, helper scripts.
+//! publishes, and `ide` publishes the IDE's own: theme, base keys, helper scripts, and the
+//! nvim runtime (`nvim/`) that every nvim view gets on its runtimepath.
 
 pub mod editor;
 pub mod install;
@@ -35,6 +36,22 @@ impl Plugin for IdePlugin {
         r.resource(
             "bin/tmux-system-resources",
             include_bytes!("../bin/tmux-system-resources"),
+        )?;
+        r.resource(
+            "nvim/lua/tx-tour.lua",
+            include_bytes!("../nvim/lua/tx-tour.lua"),
+        )?;
+        r.resource(
+            "nvim/lua/tx-diffview-return.lua",
+            include_bytes!("../nvim/lua/tx-diffview-return.lua"),
+        )?;
+        r.resource(
+            "nvim/lua/tx-ask.lua",
+            include_bytes!("../nvim/lua/tx-ask.lua"),
+        )?;
+        r.resource(
+            "nvim/plugin/tx.lua",
+            include_bytes!("../nvim/plugin/tx.lua"),
         )
     }
 }

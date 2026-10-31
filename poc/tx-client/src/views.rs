@@ -150,9 +150,30 @@ fn guard(ui: &Ui, name: &str) -> Result<(), ViewError> {
     Ok(())
 }
 
+/// What a view's program runs with: `arguments`, and for nvim a startup command that puts
+/// `nvim_runtime` first on the runtimepath and sources its `plugin/tx.lua`. It is `-c`, run
+/// after the user's init, not `--cmd`: lazy.nvim resets the runtimepath during init and would
+/// drop an entry added before it.
+fn program_arguments(program: &str, arguments: &[String], nvim_runtime: &Path) -> Vec<String> {
+    let mut words = arguments.to_vec();
+    if Path::new(program)
+        .file_name()
+        .is_some_and(|name| name == "nvim")
+    {
+        // `:set` ends a value at an unescaped space.
+        let runtime = nvim_runtime
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace(' ', "\\ ");
+        words.push("-c".to_owned());
+        words.push(format!("set rtp^={runtime} | runtime plugin/tx.lua"));
+    }
+    words
+}
+
 /// `new-session -d` running `program arguments…` in the working directory, then the view's
 /// options. The program and its arguments go to tmux as separate words, so no shell is in the
-/// way.
+/// way; an nvim view also gets tx-client's nvim runtime (`program_arguments`).
 pub fn open(ui: &Ui, request: &ViewRequest<'_>) -> Result<View, ViewError> {
     if ui.has_session(request.name) {
         return Err(ViewError::NameTaken(request.name.to_owned()));
@@ -171,7 +192,8 @@ pub fn open(ui: &Ui, request: &ViewRequest<'_>) -> Result<View, ViewError> {
         &working_directory,
         request.program,
     ];
-    create.extend(request.arguments.iter().map(String::as_str));
+    let arguments = program_arguments(request.program, request.arguments, ui.nvim_runtime());
+    create.extend(arguments.iter().map(String::as_str));
     ui.run(&create)?;
     let created_at = tx_core::events::now();
     let tags = request.tags.join(",");
@@ -309,6 +331,29 @@ mod tests {
     }
 
     #[test]
+    fn nvim_views_get_the_runtime_after_their_own_arguments() {
+        let arguments = ["/a/plan.md".to_owned()];
+        let runtime = Path::new("/d/tx ide/nvim");
+        let expected = [
+            "/a/plan.md",
+            "-c",
+            "set rtp^=/d/tx\\ ide/nvim | runtime plugin/tx.lua",
+        ];
+        assert_eq!(program_arguments("nvim", &arguments, runtime), expected);
+        assert_eq!(
+            program_arguments("/opt/homebrew/bin/nvim", &arguments, runtime),
+            expected
+        );
+        for program in ["sh", "fake-nvim", "nvim-qt", "vim"] {
+            assert_eq!(
+                program_arguments(program, &arguments, runtime),
+                arguments,
+                "{program}"
+            );
+        }
+    }
+
+    #[test]
     fn parse_views_reads_every_field_and_skips_non_views() {
         let listing = "home\t1\thome\t\t\t\t1700000000.5\t/Users/me\n\
                        agent\t\t\t\t\t\t\t/w\n\
@@ -352,7 +397,7 @@ mod tests {
             .unwrap();
         let conf = dir.path().join("tmux.conf");
         std::fs::write(&conf, "").unwrap();
-        let ui = Ui::new(dir.path().join("tmux.sock"), conf);
+        let ui = Ui::new(dir.path().join("tmux.sock"), conf, dir.path().join("nvim"));
         let parent: SessionId = "11111111-2222-3333-4444-555555555555".parse().unwrap();
         // No server yet: no views, no session, and `open` below starts the server.
         match list(&ui) {

@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 
 use tx_core::TxCore;
 
+use crate::install::NVIM_RESOURCE;
 use crate::views::{KIND_OPTION, VIEW_OPTION, ViewKind};
 
 const BINARY: &str = "tmux";
@@ -51,6 +52,8 @@ pub struct Location {
 pub struct Ui {
     socket: PathBuf,
     conf: PathBuf,
+    /// `<data>/nvim`, what `ui install` materialises the `nvim/` resources into.
+    nvim_runtime: PathBuf,
 }
 
 /// An exact session target for pane-typed `-t` (`show-options`, `set-option`).
@@ -64,12 +67,27 @@ fn non_empty(value: &str) -> Option<String> {
 
 impl Ui {
     pub fn from_core(core: &TxCore) -> Self {
-        Self::new(core.socket_path().to_path_buf(), core.config().tmux_conf_path())
+        let config = core.config();
+        Self::new(
+            core.socket_path().to_path_buf(),
+            config.tmux_conf_path(),
+            config.directories.data.join(NVIM_RESOURCE),
+        )
     }
 
-    /// Bound to a socket and config of the caller's choosing (scratch servers in tests).
-    pub fn new(socket: PathBuf, conf: PathBuf) -> Self {
-        Self { socket, conf }
+    /// Bound to a socket, config and nvim runtime of the caller's choosing (scratch servers in
+    /// tests).
+    pub fn new(socket: PathBuf, conf: PathBuf, nvim_runtime: PathBuf) -> Self {
+        Self {
+            socket,
+            conf,
+            nvim_runtime,
+        }
+    }
+
+    /// The directory every nvim view puts first on its runtimepath.
+    pub fn nvim_runtime(&self) -> &Path {
+        &self.nvim_runtime
     }
 
     pub fn argv(&self, args: &[&str]) -> Vec<OsString> {
@@ -398,6 +416,7 @@ mod tests {
         Ui {
             socket: PathBuf::from("/s/tmux.sock"),
             conf: PathBuf::from("/s/tmux.conf"),
+            nvim_runtime: PathBuf::from("/s/data/nvim"),
         }
     }
 
@@ -513,6 +532,7 @@ mod tests {
         let ui = Ui {
             socket: dir.path().join("tmux.sock"),
             conf,
+            nvim_runtime: dir.path().join("nvim"),
         };
         if ui.run(&["new-session", "-d", "-s", "t"]).is_err() {
             eprintln!("tmux not available; skipping");
