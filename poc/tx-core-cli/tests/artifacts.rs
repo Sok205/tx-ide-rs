@@ -449,6 +449,26 @@ fn artifact_open_starts_a_bound_view() {
     assert_eq!(cli.ok(&["ui", "view", "ls"]).lines().count(), 2);
 }
 
+/// Cold start: with no tmux server running, `ui view ls` lists nothing and `artifact open`
+/// starts the server (with core's conf) through the view's `new-session`.
+#[test]
+fn artifact_open_starts_the_server_when_none_runs() {
+    require_tmux!();
+    let cli = Cli::new();
+    fake_editor(&cli);
+    let id = create(&cli, "user", "plan.md", "x");
+    assert!(
+        !cli.tmux(&["list-sessions"]).status.success(),
+        "no server yet"
+    );
+    assert_eq!(cli.ok(&["ui", "view", "ls"]), "");
+    let out = cli.ok(&["artifact", "open", &id]);
+    assert!(out.contains("nvim view 'plan-md'"), "{out}");
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-kind"), "editor");
+    assert_eq!(view_option(&cli, "plan-md", "@tx-view-bound"), id);
+    assert!(cli.ok(&["ui", "view", "ls"]).contains("plan-md"));
+}
+
 // ----- prefix+a ---------------------------------------------------------------------------
 
 /// The operator's setup for prefix+a: `ui install`ed server, an agent `a`, an outer terminal on
