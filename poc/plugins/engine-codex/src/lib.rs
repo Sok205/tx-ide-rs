@@ -399,6 +399,7 @@ mod tests {
             cwd: "/tmp".into(),
             created_at: 1.0,
             ended_at: None,
+            archived_at: None,
             last_modified_at: 1.0,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {

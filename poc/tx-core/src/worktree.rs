@@ -99,32 +99,30 @@ impl WorktreeManager {
         unavailable_names: &HashSet<String>,
     ) -> Result<String, WorktreeError> {
         let context = repository_context(starting_directory)?;
-        for suffix in 1..100 {
-            let candidate = if suffix == 1 {
-                base_name.to_owned()
-            } else {
-                format!("{base_name}-{suffix}")
-            };
-            if !is_valid_name(&candidate) || unavailable_names.contains(&candidate) {
-                continue;
-            }
-            let path = self.path_for(&context, &candidate);
-            if !path.exists() && !context.registered_paths.contains(&resolve_path(&path)) {
-                return Ok(candidate);
-            }
-        }
-        Err(WorktreeError::NoFreeName(base_name.to_owned()))
+        candidate_names(base_name)
+            .filter(|candidate| is_valid_name(candidate) && !unavailable_names.contains(candidate))
+            .find(|candidate| {
+                let path = self.path_for(&context, candidate);
+                !path.exists() && !context.registered_paths.contains(&resolve_path(&path))
+            })
+            .ok_or_else(|| WorktreeError::NoFreeName(base_name.to_owned()))
     }
 
-    /// Create a detached worktree under a name free across live sessions and Git paths.
+    /// Create a detached worktree for a session. The session name is the first of `<base>`,
+    /// `<base>-2`, … not in `unavailable_names`; the worktree's directory label is, separately,
+    /// the first of `<name>`, `<name>-2`, … free on disk. The two differ when an archived
+    /// session still keeps its worktree under the name. Returns the name and the path.
     pub fn create_unique(
         &self,
         starting_directory: &Path,
         base_name: &str,
         unavailable_names: &HashSet<String>,
     ) -> Result<(String, PathBuf), WorktreeError> {
-        let name = self.next_name(starting_directory, base_name, unavailable_names)?;
-        let path = self.create(starting_directory, &name)?;
+        let name = candidate_names(base_name)
+            .find(|candidate| is_valid_name(candidate) && !unavailable_names.contains(candidate))
+            .ok_or_else(|| WorktreeError::NoFreeName(base_name.to_owned()))?;
+        let label = self.next_name(starting_directory, &name, &HashSet::new())?;
+        let path = self.create(starting_directory, &label)?;
         Ok((name, path))
     }
 
@@ -224,6 +222,17 @@ pub fn repository_slug(main_checkout: &Path) -> String {
     } else {
         slug.to_owned()
     }
+}
+
+/// `<base>`, `<base>-2`, … `<base>-99`.
+fn candidate_names(base_name: &str) -> impl Iterator<Item = String> + '_ {
+    (1..100).map(move |suffix| {
+        if suffix == 1 {
+            base_name.to_owned()
+        } else {
+            format!("{base_name}-{suffix}")
+        }
+    })
 }
 
 fn is_valid_name(name: &str) -> bool {

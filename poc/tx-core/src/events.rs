@@ -38,7 +38,8 @@ pub enum EventType {
     EngineDataChanged,
     Exited,
     Stopped,
-    Forgotten,
+    /// Hidden from listings, nothing deleted; a respawn brings it back.
+    Archived,
 }
 
 impl EventType {
@@ -53,7 +54,7 @@ impl EventType {
         EventType::EngineDataChanged,
         EventType::Exited,
         EventType::Stopped,
-        EventType::Forgotten,
+        EventType::Archived,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -68,7 +69,7 @@ impl EventType {
             EventType::EngineDataChanged => "engine-data-changed",
             EventType::Exited => "exited",
             EventType::Stopped => "stopped",
-            EventType::Forgotten => "forgotten",
+            EventType::Archived => "archived",
         }
     }
 }
@@ -404,7 +405,7 @@ mod tests {
                 "engine-data-changed",
                 "exited",
                 "stopped",
-                "forgotten"
+                "archived"
             ]
         );
     }

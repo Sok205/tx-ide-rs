@@ -122,7 +122,8 @@ fn exiting(name: &str, cwd: &std::path::Path) -> CreateOptions {
 }
 
 /// Every lifecycle event of one id, checked against the lifecycle order: `created` first and
-/// only once; nothing after `forgotten`; at most one terminal (`exited` / `stopped`).
+/// only once; at most one terminal (`exited` / `stopped`) per run, a run ending at `respawned`;
+/// `archived` at most once per run, and after it only `renamed` / `tagged` until a `respawned`.
 fn check_lifecycle(id: &str, types: &[String]) -> Result<(), String> {
     if types.first().map(String::as_str) != Some("created") {
         return Err(format!(
@@ -133,17 +134,25 @@ fn check_lifecycle(id: &str, types: &[String]) -> Result<(), String> {
     if types.iter().filter(|t| *t == "created").count() != 1 {
         return Err(format!("{id}: created more than once: {types:?}"));
     }
-    if let Some(pos) = types.iter().position(|t| t == "forgotten")
-        && pos + 1 != types.len()
-    {
-        return Err(format!("{id}: events after forgotten: {types:?}"));
-    }
-    let terminal = types
-        .iter()
-        .filter(|t| *t == "exited" || *t == "stopped")
-        .count();
-    if terminal > 1 {
-        return Err(format!("{id}: more than one terminal event: {types:?}"));
+    let mut terminal = false;
+    let mut archived = false;
+    for type_ in types {
+        match type_.as_str() {
+            "respawned" => {
+                terminal = false;
+                archived = false;
+            }
+            "renamed" | "tagged" => {}
+            _ if archived => {
+                return Err(format!("{id}: {type_} after archived: {types:?}"));
+            }
+            "archived" => archived = true,
+            "exited" | "stopped" if terminal => {
+                return Err(format!("{id}: more than one terminal event: {types:?}"));
+            }
+            "exited" | "stopped" => terminal = true,
+            _ => {}
+        }
     }
     Ok(())
 }
@@ -175,7 +184,7 @@ enum Op {
     SetTags { who: usize, tags: usize },
     Send { to: usize, from: Option<usize> },
     Stop(usize),
-    Forget(usize),
+    Archive(usize),
     Refresh(usize),
     RefreshAll,
     Kill(usize),
@@ -191,7 +200,7 @@ fn arb_op() -> impl Strategy<Value = Op> {
         2 => (who.clone(), 0..3usize).prop_map(|(who, tags)| Op::SetTags { who, tags }),
         1 => (who.clone(), prop::option::of(who.clone())).prop_map(|(to, from)| Op::Send { to, from }),
         2 => who.clone().prop_map(Op::Stop),
-        2 => who.clone().prop_map(Op::Forget),
+        2 => who.clone().prop_map(Op::Archive),
         2 => who.clone().prop_map(Op::Refresh),
         1 => Just(Op::RefreshAll),
         2 => (0..NAMES.len() - 1).prop_map(Op::Kill),
@@ -237,7 +246,7 @@ fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<SessionId>, step: usize, op:
             verdict(&core.send_message(&id_for(ids, *to), "hi", opts))
         }
         Op::Stop(who) => verdict(&core.stop_session(&id_for(ids, *who))),
-        Op::Forget(who) => verdict(&core.forget_session(&id_for(ids, *who))),
+        Op::Archive(who) => verdict(&core.archive_session(&id_for(ids, *who))),
         Op::Refresh(who) => verdict(&core.refresh_session(&id_for(ids, *who))),
         Op::RefreshAll => verdict(&core.refresh_all()),
         Op::Kill(name) => {
@@ -361,14 +370,14 @@ fn scripted_sequence_sink_view_equals_the_log() {
         }, // not live: nothing
         Op::Refresh(0), // exited
         Op::Stop(0),    // NotRunning: nothing
-        Op::Forget(0),
-        Op::Forget(0), // Ok(false): nothing
+        Op::Archive(0), // already exited: archived only
+        Op::Archive(0), // already archived: Ok, nothing
         Op::RefreshAll,
     ];
     run_ops(&h, &core, &recorder, &ops).unwrap();
     assert_eq!(
         log_types(&h),
-        ["created", "created", "exited", "exited", "forgotten"]
+        ["created", "created", "exited", "exited", "archived"]
     );
 }
 
@@ -416,8 +425,8 @@ fn every_lock_is_free_when_sinks_run() {
     });
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&relocker)));
-    let cwd = h.workdir("a");
-    let a = core.create_session(agent("a", &cwd)).unwrap();
+    let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let cwd = core.get_session(&a).unwrap().cwd;
     let b = core.create_session(process("b", &h.workdir("b"))).unwrap();
     let c = core.create_session(exiting("c", &h.workdir("c"))).unwrap();
     assert!(wait_for(Duration::from_secs(5), || cwd
@@ -431,8 +440,8 @@ fn every_lock_is_free_when_sinks_run() {
     core.refresh_session(&b).unwrap();
     core.refresh_all().unwrap();
     core.stop_session(&a).unwrap();
-    core.forget_session(&b).unwrap();
-    core.forget_session(&c).unwrap();
+    core.archive_session(&b).unwrap();
+    core.archive_session(&c).unwrap();
     assert!(
         !relocker.stuck.load(Ordering::SeqCst),
         "a sink could not take a lock within 2 s"
@@ -498,27 +507,26 @@ fn a_sink_may_stop_the_session_it_was_told_about() {
     assert!(h.live_names().is_empty());
 }
 
-/// Forgetting from inside `Created`: the caller gets an id with no record behind it.
+/// Archiving from inside `Created`: the caller gets an id whose record is already stopped and
+/// archived; nothing is deleted and nothing is left running.
 #[test]
-fn a_sink_may_forget_the_session_it_was_told_about() {
+fn a_sink_may_archive_the_session_it_was_told_about() {
     require_tmux!();
     let h = Harness::new();
     let other = h.open();
     let mut core = h.open();
     core.subscribe(Box::new(move |event: &Event| {
         if event.type_ == EventType::Created {
-            assert!(other.forget_session(&event.id).unwrap());
+            other.archive_session(&event.id).unwrap();
         }
     }));
     let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
-    let gone = matches!(core.get_session(&id), Err(CoreError::NotFound(_)));
-    assert!(
-        gone,
-        "create_session returned an id whose record a sink already deleted"
-    );
-    assert_eq!(log_types(&h), ["created", "forgotten"]);
-    // The tmux session is an orphan now: forget never kills.
-    assert_eq!(h.live_names(), ["p"]);
+    let session = core.get_session(&id).unwrap();
+    assert_eq!(session.lifecycle, Lifecycle::Stopped);
+    assert!(session.archived_at.is_some());
+    assert_eq!(log_types(&h), ["created", "stopped", "archived"]);
+    // Archive stops first: no orphan in tmux.
+    assert!(h.live_names().is_empty());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -555,7 +563,7 @@ fn sixteen_sinks_run_in_registration_order_once_per_event() {
     core.rename_session(&a, "a2").unwrap();
     core.set_session_tags(&a, vec![]).unwrap();
     core.stop_session(&a).unwrap();
-    core.forget_session(&b).unwrap();
+    core.archive_session(&b).unwrap();
     let calls = out.lock().unwrap().clone();
     let lines = log(&h);
     assert_eq!(lines.len(), 7);
@@ -617,7 +625,7 @@ fn fifty_ops_through_alternating_panicking_and_recording_sinks() {
                 tags: 2,
             },
             3 => Op::Stop(step / 5),
-            _ => Op::Forget(step / 5),
+            _ => Op::Archive(step / 5),
         };
         if run_op(&h, &core, &mut ids, step, &op) == "Ok" {
             ok += 1;
@@ -765,7 +773,7 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
                                 .map(drop)
                         }),
                         3 => pick(step).map_or(Ok(()), |id| core.stop_session(&id).map(drop)),
-                        _ => pick(step).map_or(Ok(()), |id| core.forget_session(&id).map(drop)),
+                        _ => pick(step).map_or(Ok(()), |id| core.archive_session(&id).map(drop)),
                     };
                     if let Err(error) = result {
                         *failures.entry(kind(&error)).or_insert(0usize) += 1;
@@ -781,7 +789,7 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
             *failures.entry(kind).or_insert(0usize) += count;
         }
     }
-    // Only expected races: a record stopped / forgotten by another thread. Never a lock or
+    // Only expected races: a record stopped / archived by another thread. Never a lock or
     // store error.
     let unexpected: Vec<_> = failures
         .keys()
@@ -858,7 +866,7 @@ fn log_line_order_per_id_follows_the_lifecycle_under_contention() {
                     match worker {
                         0 => core.stop_session(&id).map(drop),
                         1 => core.set_session_tags(&id, vec!["x".into()]).map(drop),
-                        _ => core.forget_session(&id).map(drop),
+                        _ => core.archive_session(&id).map(drop),
                     }
                 })
             })

@@ -146,7 +146,10 @@ pub fn owned_elsewhere(core: &TxCore, me: &SessionId, chat_id: &str) -> Result<b
     };
     let in_history = |s: &Session| history_ext(s).is_ok_and(|ext| ext.chats.contains_key(chat_id));
     let mut elsewhere = false;
-    for id in core.list_sessions(&ListFilter::new())? {
+    // An archived record still owns its chats: a respawn brings it back.
+    let mut ids = core.list_sessions(&ListFilter::new())?;
+    ids.extend(core.list_sessions(&ListFilter::new().archived())?);
+    for id in ids {
         let session = match core.get_session(&id) {
             Ok(session) => session,
             Err(tx_core::CoreError::NotFound(_)) => continue,

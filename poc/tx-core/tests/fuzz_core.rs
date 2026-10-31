@@ -1,6 +1,6 @@
 //! Adversarial / property tests for `TxCore` against a private tmux server: a model-based random
 //! operation sequence, record integrity on every error path, terminal states, `resolve` edge
-//! cases, odd tags / parents / env values, concurrent cores, forget-then-create, server death.
+//! cases, odd tags / parents / env values, concurrent cores, archive-then-create, server death.
 //!
 //! Tests marked `#[ignore = "BUG: …"]` document real failures; they stay in the file so the
 //! reproduction survives, and the suite stays green.
@@ -101,7 +101,7 @@ enum Op {
         tags: Vec<usize>,
     },
     Stop(usize),
-    Forget(usize),
+    Archive(usize),
     Refresh(usize),
     RefreshAll,
     /// `kill-session -t =<name>` behind core's back.
@@ -121,7 +121,7 @@ fn arb_op() -> impl Strategy<Value = Op> {
         2 => (who.clone(), 0..NAMES.len()).prop_map(|(who, name)| Op::Rename { who, name }),
         2 => (who.clone(), tags).prop_map(|(who, tags)| Op::SetTags { who, tags }),
         2 => who.clone().prop_map(Op::Stop),
-        2 => who.clone().prop_map(Op::Forget),
+        2 => who.clone().prop_map(Op::Archive),
         2 => who.clone().prop_map(Op::Refresh),
         1 => Just(Op::RefreshAll),
         2 => (0..VALID_NAMES).prop_map(Op::Kill),
@@ -139,6 +139,8 @@ struct Rec {
     ended_at: Option<f64>,
     /// The tmux session was killed behind core's back; the record still says `Running`.
     killed: bool,
+    /// Archived: hidden from the default listing, its name free; never deleted.
+    archived: bool,
 }
 
 impl Rec {
@@ -152,8 +154,6 @@ struct Model {
     /// Every id ever minted, in creation order.
     all_ids: Vec<SessionId>,
     recs: BTreeMap<SessionId, Rec>,
-    /// tmux sessions no record manages any more (forgotten while live).
-    orphans: BTreeSet<String>,
     log_len: usize,
 }
 
@@ -166,10 +166,23 @@ impl Model {
         }
     }
 
-    fn name_running(&self, name: &str, except: Option<&SessionId>) -> bool {
-        self.recs.iter().any(|(id, rec)| {
-            rec.lifecycle == Lifecycle::Running && rec.name == name && Some(id) != except
-        })
+    /// Whether an unarchived record other than `except`, running or not, holds `name`.
+    fn name_held(&self, name: &str, except: Option<&SessionId>) -> bool {
+        self.recs
+            .iter()
+            .any(|(id, rec)| !rec.archived && rec.name == name && Some(id) != except)
+    }
+
+    /// The unarchived (`archived: false`) or archived records' ids passing `keep`, sorted.
+    fn listed(&self, archived: bool, keep: impl Fn(&Rec) -> bool) -> Vec<SessionId> {
+        let mut ids: Vec<SessionId> = self
+            .recs
+            .iter()
+            .filter(|(_, rec)| rec.archived == archived && keep(rec))
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        ids
     }
 
     fn expected_live(&self) -> Vec<String> {
@@ -178,13 +191,13 @@ impl Model {
             .values()
             .filter(|rec| rec.live())
             .map(|rec| rec.name.clone())
-            .chain(self.orphans.iter().cloned())
             .collect();
         names.sort();
         names
     }
 
-    /// `resolve(name)`: the `Running` record, else the most recently created.
+    /// `resolve(name)`: the `Running` record, else the most recently created unarchived one,
+    /// else the most recently created archived one.
     fn expected_resolve(&self, name: &str) -> Option<SessionId> {
         let named: Vec<&SessionId> = self
             .all_ids
@@ -194,6 +207,7 @@ impl Model {
         named
             .iter()
             .find(|id| self.recs[*id].lifecycle == Lifecycle::Running)
+            .or(named.iter().rev().find(|id| !self.recs[*id].archived))
             .or(named.last())
             .map(|id| (*id).clone())
     }
@@ -214,49 +228,60 @@ fn check_model(
     model: &mut Model,
     step: usize,
 ) -> Result<(), TestCaseError> {
-    let mut listed = core.list_sessions(&ListFilter::default()).unwrap();
-    listed.sort();
-    let mut expected: Vec<SessionId> = model.recs.keys().cloned().collect();
-    expected.sort();
-    prop_assert_eq!(listed, expected, "step {}: ids", step);
+    let sorted = |mut ids: Vec<SessionId>| {
+        ids.sort();
+        ids
+    };
+    let listed = sorted(core.list_sessions(&ListFilter::default()).unwrap());
+    prop_assert_eq!(listed, model.listed(false, |_| true), "step {}: ids", step);
+    let archived = sorted(core.list_sessions(&ListFilter::new().archived()).unwrap());
+    prop_assert_eq!(
+        archived,
+        model.listed(true, |_| true),
+        "step {}: archived ids",
+        step
+    );
 
-    let mut running = core
-        .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
-        .unwrap();
-    running.sort();
-    let mut expected_running: Vec<SessionId> = model
-        .recs
-        .iter()
-        .filter(|(_, rec)| rec.lifecycle == Lifecycle::Running)
-        .map(|(id, _)| id.clone())
-        .collect();
-    expected_running.sort();
-    prop_assert_eq!(running, expected_running, "step {}: running filter", step);
+    let running = sorted(
+        core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
+            .unwrap(),
+    );
+    prop_assert_eq!(
+        running,
+        model.listed(false, |rec| rec.lifecycle == Lifecycle::Running),
+        "step {}: running filter",
+        step
+    );
 
-    let mut tagged = core.list_sessions(&ListFilter::new().tag("t1")).unwrap();
-    tagged.sort();
-    let mut expected_tagged: Vec<SessionId> = model
-        .recs
-        .iter()
-        .filter(|(_, rec)| rec.tags.iter().any(|t| t == "t1"))
-        .map(|(id, _)| id.clone())
-        .collect();
-    expected_tagged.sort();
-    prop_assert_eq!(tagged, expected_tagged, "step {}: tag filter", step);
+    let tagged = sorted(core.list_sessions(&ListFilter::new().tag("t1")).unwrap());
+    prop_assert_eq!(
+        tagged,
+        model.listed(false, |rec| rec.tags.iter().any(|t| t == "t1")),
+        "step {}: tag filter",
+        step
+    );
+    let tagged_archived = sorted(
+        core.list_sessions(&ListFilter::new().tag("t1").archived())
+            .unwrap(),
+    );
+    prop_assert_eq!(
+        tagged_archived,
+        model.listed(true, |rec| rec.tags.iter().any(|t| t == "t1")),
+        "step {}: archived tag filter",
+        step
+    );
 
     if let Some(first) = model.all_ids.first() {
-        let mut children = core
-            .list_sessions(&ListFilter::new().parent(first.clone()))
-            .unwrap();
-        children.sort();
-        let mut expected_children: Vec<SessionId> = model
-            .recs
-            .iter()
-            .filter(|(_, rec)| rec.parent.as_ref() == Some(first))
-            .map(|(id, _)| id.clone())
-            .collect();
-        expected_children.sort();
-        prop_assert_eq!(children, expected_children, "step {}: parent filter", step);
+        let children = sorted(
+            core.list_sessions(&ListFilter::new().parent(first.clone()))
+                .unwrap(),
+        );
+        prop_assert_eq!(
+            children,
+            model.listed(false, |rec| rec.parent.as_ref() == Some(first)),
+            "step {}: parent filter",
+            step
+        );
     }
 
     for (id, rec) in &mut model.recs {
@@ -270,6 +295,13 @@ fn check_model(
             id
         );
         prop_assert_eq!(&session.tags, &rec.tags, "step {}: tags of {}", step, id);
+        prop_assert_eq!(
+            session.archived_at.is_some(),
+            rec.archived,
+            "step {}: archived_at presence of {}",
+            step,
+            id
+        );
         prop_assert_eq!(
             &session.parent,
             &rec.parent,
@@ -338,7 +370,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 let valid = !name.is_empty() && name.len() <= 128 && !name.contains(' ');
                 let expected = if !valid {
                     "InvalidName"
-                } else if model.name_running(&name, None) || model.orphans.contains(&name) {
+                } else if model.name_held(&name, None) {
                     "NameTaken"
                 } else {
                     "Ok"
@@ -356,6 +388,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                             parent: opts.parent,
                             ended_at: None,
                             killed: false,
+                            archived: false,
                         },
                     );
                     model.log_len += 1;
@@ -370,9 +403,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 } else if let Some(rec) = model.recs.get(&id) {
                     if rec.name == name {
                         "Ok"
-                    } else if model.name_running(&name, Some(&id))
-                        || (rec.live() && model.orphans.contains(&name))
-                    {
+                    } else if model.name_held(&name, Some(&id)) {
                         "NameTaken"
                     } else {
                         "Ok"
@@ -445,18 +476,35 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                     touched.insert(id);
                 }
             }
-            Op::Forget(who) => {
+            Op::Archive(who) => {
                 let id = model.id_for(*who);
-                let existed = model.recs.contains_key(&id);
-                let result = core.forget_session(&id);
-                prop_assert_eq!(verdict(&result), "Ok", "step {}: forget {}", step, id);
-                prop_assert_eq!(result.unwrap(), existed, "step {}: forget existed", step);
-                if let Some(rec) = model.recs.remove(&id) {
-                    if rec.live() {
-                        model.orphans.insert(rec.name);
+                let expected = if model.recs.contains_key(&id) {
+                    "Ok"
+                } else {
+                    "NotFound"
+                };
+                let result = core.archive_session(&id);
+                prop_assert_eq!(verdict(&result), expected, "step {}: archive {}", step, id);
+                if let Ok(session) = result {
+                    let rec = model.recs.get_mut(&id).unwrap();
+                    if !rec.archived {
+                        // A running one is stopped first: `Stopped`, or `Exited` when its
+                        // tmux session was already gone.
+                        if !rec.lifecycle.is_terminal() {
+                            rec.lifecycle = if rec.killed {
+                                Lifecycle::Exited
+                            } else {
+                                Lifecycle::Stopped
+                            };
+                            rec.killed = false;
+                            model.log_len += 1;
+                        }
+                        rec.archived = true;
+                        model.log_len += 1;
+                        touched.insert(id);
                     }
-                    model.log_len += 1;
-                    touched.insert(id);
+                    prop_assert_eq!(session.lifecycle, rec.lifecycle, "step {}: archive", step);
+                    prop_assert!(session.archived_at.is_some());
                 }
             }
             Op::Refresh(who) => {
@@ -530,8 +578,6 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                     .find(|rec| rec.live() && rec.name == name)
                 {
                     rec.killed = true;
-                } else {
-                    model.orphans.remove(name);
                 }
             }
             Op::Send { to, from } => {
@@ -605,6 +651,11 @@ fn scripted_corner_sequence_matches_the_model() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open();
+    let alpha = || Op::Create {
+        name: 0,
+        tags: vec![],
+        parent: None,
+    };
     let ops = [
         Op::Create {
             name: 0,
@@ -617,27 +668,17 @@ fn scripted_corner_sequence_matches_the_model() {
             parent: Some(0),
         },
         Op::Kill(0),
-        Op::Create {
-            name: 0,
-            tags: vec![],
-            parent: None,
-        }, // NameTaken: killed but still Running
+        alpha(),                        // NameTaken: killed but still Running
         Op::Rename { who: 1, name: 0 }, // NameTaken: record of alpha is Running
         Op::Stop(0),                    // Exited, not Stopped
-        Op::Create {
-            name: 0,
-            tags: vec![],
-            parent: None,
-        }, // name free again
-        Op::Forget(2),                  // forget a live one: orphan in tmux
-        Op::Create {
-            name: 0,
-            tags: vec![],
-            parent: None,
-        }, // NameTaken by tmux
-        Op::Rename { who: 1, name: 0 }, // live rename into an orphan: NameTaken
+        alpha(),                        // NameTaken: an ended, unarchived record holds it
+        Op::Archive(0),                 // already ended: archived only
+        alpha(),                        // free: the only other alpha is archived
+        Op::Archive(2),                 // a live one: stopped, then archived; no orphan
+        alpha(),                        // free again
+        Op::Rename { who: 1, name: 0 }, // NameTaken by the running alpha
         Op::Kill(1),
-        Op::Rename { who: 1, name: 0 }, // killed record: record-only rename, Ok
+        Op::Rename { who: 1, name: 2 }, // killed record: record-only rename, Ok
         Op::RefreshAll,
         Op::Refresh(1),
         Op::Stop(1),                    // NotRunning
@@ -646,12 +687,14 @@ fn scripted_corner_sequence_matches_the_model() {
             to: 0,
             from: Some(9),
         }, // NotFound (sender)
-        Op::Kill(0),                    // kills the orphan
-        Op::Create {
-            name: 0,
-            tags: vec![],
-            parent: None,
-        }, // free: every "alpha" record is terminal
+        Op::Archive(0),                 // already archived: unchanged, no event
+        Op::Archive(9),                 // NotFound
+        Op::Kill(0),                    // the running alpha
+        Op::Archive(3),                 // killed: Exited, then archived
+        alpha(),                        // free: every alpha record is archived
+        Op::Rename { who: 0, name: 2 }, // NameTaken: an archived record obeys the name rule
+        Op::Archive(1),
+        Op::Rename { who: 0, name: 2 }, // Ok: gamma's holder is archived too
     ];
     run_ops(&h, &core, &ops).unwrap();
 }
@@ -677,12 +720,19 @@ fn resolve_prefers_an_id_over_a_name_equal_to_it() {
     );
     assert_eq!(core.resolve(b.as_str()).unwrap(), b);
     assert_eq!(core.resolve("a").unwrap(), a);
-    // Once the id record is gone, the name match surfaces.
-    core.forget_session(&a).unwrap();
+    // Archived, the id record still exists, and the id still wins.
+    core.archive_session(&a).unwrap();
+    assert_eq!(
+        core.resolve(a.as_str()).unwrap(),
+        a,
+        "an archived id still resolves as an id"
+    );
+    // Once the id record is gone (deleted by hand: core never deletes one), the name surfaces.
+    std::fs::remove_file(h.data_dir().join(format!("sessions/{a}.json"))).unwrap();
     assert_eq!(
         core.resolve(a.as_str()).unwrap(),
         b,
-        "forgotten id falls through to the name"
+        "a missing id falls through to the name"
     );
     // Even when the named record is stopped, the id-looking name still resolves to it.
     core.stop_session(&b).unwrap();
@@ -696,9 +746,15 @@ fn resolve_three_records_one_name() {
     let core = h.open();
     let cwd = h.workdir("a");
     let first = core.create_session(process("n", &cwd)).unwrap();
+    // An ended, unarchived record keeps its name: only archiving frees it.
     core.stop_session(&first).unwrap();
+    assert_eq!(
+        kind(&core.create_session(process("n", &cwd)).unwrap_err()),
+        "NameTaken"
+    );
+    core.archive_session(&first).unwrap();
     let second = core.create_session(process("n", &cwd)).unwrap();
-    core.stop_session(&second).unwrap();
+    core.archive_session(&second).unwrap();
     let third = core.create_session(process("n", &cwd)).unwrap();
     assert_eq!(core.resolve("n").unwrap(), third);
     // Kill behind the back: the record is still Running and still wins.
@@ -712,14 +768,24 @@ fn resolve_three_records_one_name() {
     assert_eq!(
         core.resolve("n").unwrap(),
         third,
-        "most recently created among terminals"
+        "the unarchived one, though ended, beats the archived ones"
     );
-    // Rename an older terminal record to the name: still the most recent *created* wins.
+    core.archive_session(&third).unwrap();
+    assert_eq!(
+        core.resolve("n").unwrap(),
+        third,
+        "most recently created among the archived"
+    );
+    // Rename an older archived record away and back: still the most recent *created* wins.
     core.rename_session(&first, "m").unwrap();
     core.rename_session(&first, "n").unwrap();
     assert_eq!(core.resolve("n").unwrap(), third);
-    core.forget_session(&third).unwrap();
-    assert_eq!(core.resolve("n").unwrap(), second);
+    // An older unarchived record beats a newer archived one.
+    let older = core.create_session(process("o", &cwd)).unwrap();
+    let newer = core.create_session(process("p", &cwd)).unwrap();
+    core.archive_session(&newer).unwrap();
+    core.rename_session(&older, "p").unwrap();
+    assert_eq!(core.resolve("p").unwrap(), older);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -919,33 +985,42 @@ fn eight_cores_create_distinct_names_in_parallel() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 8. forget then create / refresh
+// 8. archive then create / refresh
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn forget_of_a_live_session_keeps_its_name_taken_in_tmux() {
+fn archive_of_a_live_session_stops_it_and_frees_its_name() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core.create_session(agent("f", &h.repository("a"))).unwrap();
-    assert!(core.forget_session(&id).unwrap());
-    let error = core
-        .create_session(process("f", &h.workdir("b")))
-        .unwrap_err();
-    assert_eq!(kind(&error), "NameTaken", "tmux still holds the name");
+    let archived = core.archive_session(&id).unwrap();
+    assert_eq!(archived.lifecycle, Lifecycle::Stopped);
     assert!(
-        core.list_sessions(&ListFilter::default())
-            .unwrap()
-            .is_empty()
+        h.live_names().is_empty(),
+        "stopped first: no orphan in tmux"
+    );
+    let again = core.create_session(process("f", &h.workdir("b"))).unwrap();
+    assert_ne!(again, id);
+    assert_eq!(
+        core.list_sessions(&ListFilter::default()).unwrap(),
+        std::slice::from_ref(&again)
+    );
+    assert_eq!(
+        core.list_sessions(&ListFilter::new().archived()).unwrap(),
+        std::slice::from_ref(&id)
     );
     assert!(
         core.refresh_all().unwrap().is_empty(),
-        "no record, nothing to refresh"
+        "an archived record has nothing to refresh"
     );
-    assert_eq!(kind(&core.refresh_session(&id).unwrap_err()), "NotFound");
+    assert!(matches!(
+        core.refresh_session(&id).unwrap(),
+        RefreshResult::Unchanged(_)
+    ));
     assert_eq!(
         kind(&core.get_execution_location(&id).unwrap_err()),
-        "NotFound"
+        "NotRunning"
     );
     assert_eq!(
         kind(
@@ -953,28 +1028,32 @@ fn forget_of_a_live_session_keeps_its_name_taken_in_tmux() {
                 .send_message(&id, "x", SendOptions::default())
                 .unwrap_err()
         ),
-        "NotFound"
+        "NotRunning"
     );
-    assert_eq!(kind(&core.stop_session(&id).unwrap_err()), "NotFound");
+    assert_eq!(kind(&core.stop_session(&id).unwrap_err()), "NotRunning");
+    // An archived record still obeys the name rule, and may take a free name.
     assert_eq!(
-        kind(&core.rename_session(&id, "g").unwrap_err()),
-        "NotFound"
+        core.rename_session(&id, "f").unwrap(),
+        archived,
+        "renaming to its own name is a no-op"
     );
-    assert_eq!(h.live_names(), ["f"], "the orphan keeps running");
-    assert_eq!(log_types(&h), ["created", "forgotten"]);
-    // A failed create against the orphan name left nothing behind.
+    assert_eq!(core.rename_session(&id, "g").unwrap().name, "g");
+    assert_eq!(
+        kind(&core.rename_session(&id, "f").unwrap_err()),
+        "NameTaken"
+    );
     assert!(
-        !h.state_dir()
+        h.state_dir()
             .join("profiles")
-            .read_dir()
-            .unwrap()
-            .any(|_| true)
+            .join(format!("{id}.md"))
+            .is_file(),
+        "nothing is deleted"
     );
-    // Once the orphan is gone, the name is free again.
-    h.tmux_ok(&["kill-session", "-t", "=f"]);
-    let again = core.create_session(process("f", &h.workdir("b"))).unwrap();
-    assert_ne!(again, id);
     assert_eq!(h.live_names(), ["f"]);
+    assert_eq!(
+        log_types(&h),
+        ["created", "stopped", "archived", "created", "renamed"]
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1068,6 +1147,12 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
         "NotRunning"
     );
     assert!(core.refresh_all().unwrap().is_empty());
+    // An exited record keeps its name until archived.
+    assert_eq!(
+        kind(&core.create_session(process("renamed", &cwd)).unwrap_err()),
+        "NameTaken"
+    );
+    core.archive_session(&a).unwrap();
     // Creating again starts a fresh server; old records stay Exited.
     let c = core.create_session(process("renamed", &cwd)).unwrap();
     assert_eq!(h.live_names(), ["renamed"]);
@@ -1119,13 +1204,14 @@ fn terminal_records_never_revive() {
     h.tmux_ok(&["new-session", "-d", "-s", "e", "sleep", "30"]);
     h.tmux_ok(&["set-option", "-t", "=e:", "@tx-id", exited.as_str()]);
     assert!(core.refresh_all().unwrap().is_empty());
-    for (id, at) in [&stopped, &exited].into_iter().zip(ended) {
+    for (index, (id, at)) in [&stopped, &exited].into_iter().zip(ended).enumerate() {
         assert!(matches!(
             core.refresh_session(id).unwrap(),
             RefreshResult::Unchanged(_)
         ));
-        core.rename_session(id, "zz").unwrap();
-        core.rename_session(id, "back").unwrap();
+        // Distinct names: an ended, unarchived record keeps holding the one it takes.
+        core.rename_session(id, &format!("zz{index}")).unwrap();
+        core.rename_session(id, &format!("back{index}")).unwrap();
         core.set_session_tags(id, vec!["t".into()]).unwrap();
         let session = core.get_session(id).unwrap();
         assert!(session.lifecycle.is_terminal());

@@ -222,6 +222,7 @@ mod tests {
             cwd: PathBuf::from("/"),
             created_at,
             ended_at: None,
+            archived_at: None,
             last_modified_at: created_at,
             lifecycle: Lifecycle::Running,
             launch: Launch::Process {

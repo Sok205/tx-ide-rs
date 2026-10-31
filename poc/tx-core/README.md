@@ -87,8 +87,12 @@ to `cwd`, refusing anything that escapes it), then starts `program args…` with
 - Names: `[A-Za-z0-9_-]{1,128}`; ids: `[A-Za-z0-9_-]{1,64}` (uuid v4 in practice). Both are
   validated everywhere, including when read back from disk, so a record or lock file can never
   land outside its directory.
-- `NameTaken` counts `Running` records only; a stopped agent's name can be reused. A tmux
-  session that still holds the name (say, after `forget`) also yields `NameTaken`.
+- `NameTaken` counts every unarchived record, running or not: a stopped agent keeps its name
+  (a new create gets `<name>-2`), an archived one frees it. A tmux session that still holds the
+  name also yields `NameTaken`. A respawn whose name an unarchived record took meanwhile fails
+  with `NameHeld`; nothing is renamed automatically.
+- `archive_session` stops a running session, then hides it from `list_sessions` (unless the
+  filter asks for `archived()`); the record, worktree and profile stay, and a respawn clears it.
 - `Exited` and `Stopped` are terminal. Reads never touch tmux. `list-sessions` is the only
   liveness signal; any failure of it other than "no server" is `InspectionFailed`, and the
   operation writes nothing.

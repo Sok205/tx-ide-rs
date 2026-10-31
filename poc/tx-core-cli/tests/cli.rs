@@ -262,11 +262,20 @@ fn process_session_round_trip() {
     assert!(cli.fails(&["where", "sh-2"], 1).contains("not running"));
     assert!(!cli.tmux(&["has-session", "-t", "=sh-2"]).status.success());
     assert_eq!(
-        cli.ok(&["forget", "sh-2"]).trim(),
-        format!("{id}\tforgotten")
+        cli.ok(&["archive", "sh-2"]).trim(),
+        format!("{id}\tarchived")
     );
-    assert!(cli.fails(&["forget", "sh-2"], 1).contains("no session"));
     assert_eq!(cli.ok(&["ls"]), "");
+    assert!(
+        cli.ok(&["ls", "--archived"])
+            .starts_with(&format!("{id}\tsh-2\tstopped\t"))
+    );
+    assert!(cli.ok(&["show", "sh-2"]).contains("\"archived_at\""));
+    assert_eq!(
+        cli.ok(&["archive", "sh-2"]).trim(),
+        format!("{id}\tarchived"),
+        "archiving again changes nothing"
+    );
 }
 
 #[test]

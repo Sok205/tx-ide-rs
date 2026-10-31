@@ -238,7 +238,7 @@ crate depending only on `tx-core`; the CLI registers the bundled ones in `main`.
 ### Reading the operation log from outside
 
 `log.jsonl` is `{"ts","actor","type","msg"}` per line; types are `created`, `renamed`, `tagged`,
-`message-sent`, `state-changed`, `exited`, `stopped`, `forgotten`. It is a notification trail, not the record:
+`message-sent`, `state-changed`, `exited`, `stopped`, `archived`. It is a notification trail, not the record:
 on an event, re-read the session with `get_session`. Lines are never torn, so `tail -f` works.
 
 ### From inside an agent
@@ -373,7 +373,7 @@ agent), and the shells and editors `txc ui view open` starts. A view has no core
 in tmux session options only (`@tx-view 1`, `@tx-view-kind home|editor|diff|shell|timeline|tutor|mockup`,
 `@tx-view-parent <agent id>`, `@tx-view-bound`, `@tx-view-tags`, `@tx-view-created`), so nothing
 goes stale when the server dies. `txc ui view ls` first closes the views whose parent agent is
-gone (forgotten or no longer running), then lists the rest. Closing and renaming go through the
+gone (no longer running), then lists the rest. Closing and renaming go through the
 `views` guard, which refuses any session core marked with `@tx-id`: an agent is stopped only
 through `txc kill`. prefix+X closes a shell, editor, timeline, tutor or mockup view after a
 confirmation, keeps refusing the home base, and kills an agent through `txc kill` as before.
