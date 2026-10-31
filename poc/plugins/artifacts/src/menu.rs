@@ -299,15 +299,15 @@ impl Nav<'_> {
             .unwrap_or(0);
         let width = (content + POPUP_FRAME).min(self.client_width(client));
         let height = listing.items.len().max(1) + POPUP_ROWS_OVERHEAD;
-        tm::display_popup(
-            &self.ui,
-            client,
-            &width.to_string(),
-            &height.to_string(),
-            &listing.title,
-            &self.txc_command(&[PICK_VERB, session, client])?,
-        )
-        .map_err(failed)?;
+        self.ui
+            .display_popup(
+                client,
+                &width.to_string(),
+                &height.to_string(),
+                &listing.title,
+                &self.txc_command(&[PICK_VERB, session, client])?,
+            )
+            .map_err(failed)?;
         Ok(0)
     }
 
@@ -565,15 +565,14 @@ impl Nav<'_> {
                     .core
                     .resolve(session)
                     .and_then(|id| self.core.get_session(&id));
-                tm::popup_attach(
-                    &self.ui,
-                    &self.core.socket_path().to_string_lossy(),
-                    &outer,
-                    &popup_title(target, owner.ok().as_ref()),
-                    &popup_footer(&prefix),
-                    &target.name,
-                )
-                .map_err(failed)?;
+                self.ui
+                    .popup_attach(
+                        &outer,
+                        &popup_title(target, owner.ok().as_ref()),
+                        &popup_footer(&prefix),
+                        &target.name,
+                    )
+                    .map_err(failed)?;
                 Ok(0)
             }
             Mode::Attach => self.rehost(session, client, target),

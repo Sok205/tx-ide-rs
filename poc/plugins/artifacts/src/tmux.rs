@@ -1,13 +1,10 @@
-//! The tmux calls prefix+a needs beyond `tx_client::tmux::Ui` (popups, the outer-client walk,
+//! The tmux calls prefix+a needs beyond `tx_client::tmux::Ui` (the outer-client walk,
 //! focusing a hosting pane), ported from main's `tmux.rs`. All go through `Ui::run` / `Ui::quiet`,
 //! so every call carries the core's `-S` and `-f`. Parsers are pure.
 
-use tx_client::tmux::{Ui, UiError, shell_quote};
+use tx_client::tmux::{Ui, UiError};
 
-pub const ACCENT_HEX: &str = "#7aa2f7";
-pub const FG_HEX: &str = "#c0caf5";
-pub const DIM_FG_HEX: &str = "#a9b1d6";
-pub const BG_DEEP_HEX: &str = "#15161e";
+pub use tx_client::tmux::{DIM_FG_HEX, FG_HEX};
 
 /// `client`'s terminal width in columns; `None` when there is no such client.
 pub fn client_width(ui: &Ui, client: &str) -> Option<usize> {
@@ -76,91 +73,6 @@ pub fn pane_hosting_client(ui: &Ui, client: &str) -> Option<String> {
         .map(|(_, pane_id)| pane_id.to_owned())
 }
 
-/// The argv of a `width`×`height` popup centred on `client`, in the picker's palette.
-pub fn popup_args(
-    client: &str,
-    width: &str,
-    height: &str,
-    title: &str,
-    command: &str,
-) -> Vec<String> {
-    let style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
-    let border = format!("bg={BG_DEEP_HEX},fg={ACCENT_HEX}");
-    let title = format!("#[fg={ACCENT_HEX},bold]{title}#[default]");
-    [
-        "display-popup",
-        "-c",
-        client,
-        "-E",
-        "-x",
-        "C",
-        "-y",
-        "C",
-        "-w",
-        width,
-        "-h",
-        height,
-        "-b",
-        "rounded",
-        "-s",
-        &style,
-        "-S",
-        &border,
-        "-T",
-        &title,
-        command,
-    ]
-    .iter()
-    .map(|word| (*word).to_owned())
-    .collect()
-}
-
-/// Opens the popup running `command`; returns when it closes.
-pub fn display_popup(
-    ui: &Ui,
-    client: &str,
-    width: &str,
-    height: &str,
-    title: &str,
-    command: &str,
-) -> Result<(), UiError> {
-    let args = popup_args(client, width, height, title, command);
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    ui.run(&args).map(drop)
-}
-
-/// The popup's attach command: this server's socket, `$TMUX` cleared, no fallback shell, so
-/// detaching closes the popup.
-pub fn popup_attach_command(socket: &str, session: &str) -> String {
-    format!(
-        "TMUX= tmux -S {} attach -t {}",
-        shell_quote(socket),
-        shell_quote(session)
-    )
-}
-
-/// Nest-attaches `session` in a popup covering most of `client`'s terminal. While it is open the
-/// session's status line shows `footer`; it is hidden again when the popup closes.
-pub fn popup_attach(
-    ui: &Ui,
-    socket: &str,
-    client: &str,
-    title: &str,
-    footer: &str,
-    session: &str,
-) -> Result<(), UiError> {
-    let status_style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
-    ui.set_session_option(session, "status", "on")?;
-    ui.set_session_option(session, "status-style", &status_style)?;
-    ui.set_session_option(session, "status-format[0]", footer)?;
-    let command = popup_attach_command(socket, session);
-    let shown = display_popup(ui, client, "90%", "90%", title, &command);
-    for option in ["status", "status-style", "status-format[0]"] {
-        ui.quiet(&["set-option", "-u", "-t", &format!("={session}:"), option]);
-    }
-    shown
-}
-
 /// Runs `command` on the server in the background (`run-shell -b`), outliving the caller.
 pub fn run_shell_background(ui: &Ui, command: &str) -> Result<(), UiError> {
     ui.run(&["run-shell", "-b", command]).map(drop)
@@ -221,20 +133,5 @@ mod tests {
             walk_to_outer_client(self_hosted, looped, "/dev/ttys005"),
             None
         );
-    }
-
-    #[test]
-    fn the_popup_attach_names_the_core_socket() {
-        assert_eq!(
-            popup_attach_command("/tmp/s p/tmux.sock", "plan-md"),
-            "TMUX= tmux -S '/tmp/s p/tmux.sock' attach -t 'plan-md'"
-        );
-    }
-
-    #[test]
-    fn popups_are_centred_and_run_the_command_last() {
-        let args = popup_args("/dev/ttys1", "40", "10", " a ", "cmd");
-        assert_eq!(args[..4], ["display-popup", "-c", "/dev/ttys1", "-E"]);
-        assert_eq!(args.last().unwrap(), "cmd");
     }
 }

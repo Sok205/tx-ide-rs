@@ -323,7 +323,7 @@ fn output(mut command: Command) -> Result<String, String> {
 
 fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
     let wide = |title| Popup {
-        width: "118",
+        width: "121",
         height: "30",
         y: "1",
         title,

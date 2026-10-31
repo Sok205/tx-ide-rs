@@ -1,6 +1,7 @@
-//! tx-core plugin `picker`: the fzf session picker (prefix+t). `_list` is its feed (fzf re-runs
-//! it to reload) and `pick` is the interactive loop. Port of main's `tx attach` without
-//! `--host`/`--all`. Publishes `keys/picker.tmux`.
+//! tx-core plugin `picker`: the fzf session picker (prefix+t). It lists the running agents and
+//! the views, each view under the agent it belongs to. `_list` is its feed (fzf re-runs it to
+//! reload), `pick` is the interactive loop, and `_picker-popup` shows a pick in a popup (alt-p).
+//! Port of main's `tx attach` without `--host`/`--all`. Publishes `keys/picker.tmux`.
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -16,10 +17,11 @@ use tx_core::{
 };
 
 use tx_client::render::{
-    ACCENT_ANSI, BOLD, FG_ANSI, LOCATION_W, RESET, ROLE_W, Row, WARN_ANSI, picker_namew,
-    picker_rows,
+    ACCENT_ANSI, BOLD, FG_ANSI, LOCATION_W, NESTED_MARK, PickerEntry, RESET, ROLE_W, Row,
+    WARN_ANSI, picker_namew, picker_rows,
 };
-use tx_client::tmux::Ui;
+use tx_client::tmux::{DIM_FG_HEX, FG_HEX, Ui, shell_quote};
+use tx_client::views::{self, View};
 
 pub const PLUGIN_ID: &str = "picker";
 
@@ -34,6 +36,7 @@ impl Plugin for PickerPlugin {
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(List));
         r.verb(Arc::new(Pick));
+        r.verb(Arc::new(PickerPopup));
         r.resource("keys/picker.tmux", include_bytes!("../tmux/keys.tmux"))
     }
 }
@@ -41,6 +44,10 @@ impl Plugin for PickerPlugin {
 const DEFAULT_NAMEW: i64 = 18;
 const DEFAULT_COLS: i64 = 80;
 const RETRY_PAUSE: Duration = Duration::from_millis(1200);
+/// What alt-p has fzf print ahead of the selection.
+const POPUP_LINE: &str = "popup";
+/// Lets the picker's own popup close first: tmux drops a popup opened while another is up.
+const POPUP_DELAY: &str = "0.1";
 /// Foreground commands of a pane that may be replaced by a nested attach.
 const HOSTING_COMMANDS: [&str; 6] = ["zsh", "bash", "sh", "fish", "dash", "tmux"];
 
@@ -139,6 +146,7 @@ pub fn fzf_args(
             "--bind=start:execute-silent(( while sleep 1; do curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || exit 0; done ) &)+unbind(y,n)"
         ),
         format!("--bind=ctrl-r:{reload}"),
+        format!("--bind=alt-p:print({POPUP_LINE})+accept"),
         format!(
             "--bind=focus:transform-header({focus_cmd})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"
         ),
@@ -163,31 +171,64 @@ pub fn fzf_args(
     args
 }
 
-/// Reconcile with tmux, then the running sessions.
-fn running(core: &TxCore) -> Result<Vec<Session>, VerbError> {
-    core.refresh_all()?;
-    let ids = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
-    ids.iter()
-        .map(|id| core.get_session(id).map_err(VerbError::from))
-        .collect()
+/// What the picker lists: reconciled with tmux and with the views whose agent is gone closed,
+/// the running agents and every view.
+struct Listing {
+    agents: Vec<Session>,
+    views: Vec<View>,
 }
 
-/// The picker feed for `sessions`, newline-terminated.
-fn feed(ui: &Ui, sessions: &[Session], namew: i64) -> String {
-    let targets = ui.live_targets();
-    let attachments = ui.attachment_map();
-    let rows: Vec<Row<'_>> = sessions
-        .iter()
-        .map(|session| Row {
-            session,
-            target: targets.get(&session.name).map_or("", String::as_str),
-            attached: attachments
-                .iter()
-                .find(|(name, _)| *name == session.name)
-                .map_or(&[][..], |(_, locations)| locations.as_slice()),
-        })
-        .collect();
-    format!("{}\n", picker_rows(&rows, namew, now()))
+impl Listing {
+    fn gather(core: &TxCore, ui: &Ui) -> Result<Self, VerbError> {
+        core.refresh_all()?;
+        views::close_orphans(ui, core).map_err(ui_failed)?;
+        let ids = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
+        let agents = ids
+            .iter()
+            .map(|id| core.get_session(id).map_err(VerbError::from))
+            .collect::<Result<_, _>>()?;
+        let views = views::list(ui).map_err(ui_failed)?;
+        Ok(Listing { agents, views })
+    }
+
+    fn entries(&self) -> impl Iterator<Item = PickerEntry<'_>> {
+        self.agents
+            .iter()
+            .map(PickerEntry::Agent)
+            .chain(self.views.iter().map(PickerEntry::View))
+    }
+
+    /// The widest NAME cell: a view with a parent may be shown under it, behind the mark.
+    fn longest_name(&self) -> i64 {
+        let mark = NESTED_MARK.chars().count();
+        self.entries()
+            .map(|entry| match entry {
+                PickerEntry::View(view) if view.parent_id.is_some() => {
+                    view.name.chars().count() + mark
+                }
+                _ => entry.name().chars().count(),
+            } as i64)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The picker feed, newline-terminated.
+    fn feed(&self, ui: &Ui, namew: i64) -> String {
+        let targets = ui.live_targets();
+        let attachments = ui.attachment_map();
+        let rows: Vec<Row<'_>> = self
+            .entries()
+            .map(|entry| Row {
+                entry,
+                target: targets.get(entry.name()).map_or("", String::as_str),
+                attached: attachments
+                    .iter()
+                    .find(|(name, _)| name == entry.name())
+                    .map_or(&[][..], |(_, locations)| locations.as_slice()),
+            })
+            .collect();
+        format!("{}\n", picker_rows(&rows, namew, now()))
+    }
 }
 
 pub struct List;
@@ -203,8 +244,8 @@ impl Verb for List {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, _argv: &[String]) -> Result<i32, VerbError> {
         let namew = namew_from(std::env::var("NAMEW").ok().as_deref());
-        let sessions = running(core)?;
-        let text = feed(&Ui::from_core(core), &sessions, namew);
+        let ui = Ui::from_core(core);
+        let text = Listing::gather(core, &ui)?.feed(&ui, namew);
         io.stdout
             .write_all(text.as_bytes())
             .map_err(|e| VerbError::Failed(format!("write: {e}")))?;
@@ -251,12 +292,10 @@ impl Verb for Pick {
             return Ok(2);
         };
         let ui = Ui::from_core(core);
-        let longest = running(core)?
-            .iter()
-            .map(|session| session.name.chars().count() as i64)
-            .max()
-            .unwrap_or(0);
-        let namew = picker_namew(detect_term_cols(), longest);
+        let namew = picker_namew(
+            detect_term_cols(),
+            Listing::gather(core, &ui)?.longest_name(),
+        );
         let bin = std::env::current_exe()
             .and_then(std::fs::canonicalize)
             .map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
@@ -277,10 +316,15 @@ impl Verb for Pick {
             Binds::of(core),
         );
         loop {
-            let text = feed(&ui, &running(core)?, namew);
-            let Some(selection) = select(&args, namew, &arm_file, &text)? else {
+            let text = Listing::gather(core, &ui)?.feed(&ui, namew);
+            let Some(output) = select(&args, namew, &arm_file, &text)? else {
                 return Ok(0);
             };
+            let (popup, selection) = split_popup(&output);
+            // alt-p on an empty list prints only the popup line: nothing picked, as with Enter.
+            if selection.trim().is_empty() {
+                return Ok(0);
+            }
             let fields: Vec<&str> = selection.trim_end_matches('\n').split('\t').collect();
             let name = fields[0];
             let target = fields
@@ -290,6 +334,11 @@ impl Verb for Pick {
                 .unwrap_or(name);
             if !ui.has_session(name) {
                 eprintln!("txc: session '{name}' does not exist");
+            } else if popup {
+                if open_popup(core, &ui, name)? {
+                    return Ok(0);
+                }
+                eprintln!("txc: a popup needs a tmux client");
             } else if options.jump {
                 if jump(&ui, name, target)? {
                     return Ok(0);
@@ -303,6 +352,88 @@ impl Verb for Pick {
             std::thread::sleep(RETRY_PAUSE);
         }
     }
+}
+
+/// alt-p's output is the popup line, then the selection.
+fn split_popup(output: &str) -> (bool, &str) {
+    match output
+        .strip_prefix(POPUP_LINE)
+        .and_then(|rest| rest.strip_prefix('\n'))
+    {
+        Some(selection) => (true, selection),
+        None if output.trim_end() == POPUP_LINE => (true, ""),
+        None => (false, output),
+    }
+}
+
+/// alt-p: a background `_picker-popup` nest-attaches `name` in a popup on this client once the
+/// picker's own popup has closed. False when there is no client to show it on.
+fn open_popup(core: &TxCore, ui: &Ui, name: &str) -> Result<bool, VerbError> {
+    let Some(client) = ui
+        .inside()
+        .then(|| ui.display_message("#{client_name}", None))
+        .flatten()
+    else {
+        return Ok(false);
+    };
+    let bin =
+        std::env::current_exe().map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
+    let mut words = vec![shell_quote(&bin.to_string_lossy())];
+    words.extend(
+        core.config()
+            .cli_arguments()
+            .iter()
+            .map(|word| shell_quote(word)),
+    );
+    words.extend([POPUP_VERB, &client, name].map(shell_quote));
+    ui.run_shell_background(&format!("sleep {POPUP_DELAY}; {}", words.join(" ")))
+        .map_err(ui_failed)?;
+    Ok(true)
+}
+
+const POPUP_VERB: &str = "_picker-popup";
+
+/// `_picker-popup <client> <name>`: the agent or view `name` nest-attached in a popup over
+/// `client`'s terminal; detaching closes it and the session keeps running.
+pub struct PickerPopup;
+
+impl Verb for PickerPopup {
+    fn name(&self) -> &'static str {
+        POPUP_VERB
+    }
+
+    fn usage(&self) -> &'static str {
+        "_picker-popup <client> <name>   a picked session in a popup (alt-p, internal)"
+    }
+
+    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+        let [client, name] = argv else {
+            let _ = writeln!(io.stderr, "usage: txc {POPUP_VERB} <client> <name>");
+            return Ok(2);
+        };
+        let ui = Ui::from_core(core);
+        if !ui.has_session(name) {
+            ui.display_status(client, &format!("txc: session '{name}' does not exist"));
+            return Ok(1);
+        }
+        let (_, prefix) = ui.quiet(&["show-options", "-gv", "prefix"]);
+        if let Err(error) = ui.popup_attach(
+            client,
+            &format!(" {name} "),
+            &popup_footer(prefix.trim()),
+            name,
+        ) {
+            ui.display_status(client, &format!("txc: {error}"));
+            return Ok(1);
+        }
+        Ok(0)
+    }
+}
+
+fn popup_footer(prefix: &str) -> String {
+    format!(
+        " #[fg={FG_HEX}]{prefix} d#[fg={DIM_FG_HEX}] closes the popup, the session keeps running"
+    )
 }
 
 /// Run fzf once over `feed`; `None` on abort or an empty selection.
@@ -356,20 +487,30 @@ enum OpenMode {
 }
 
 /// `current_hosts`: the launching session is a view whose shell panes host nested attaches
-/// (the home base, the tutor); from any other session the client is switched.
-fn open_mode(inside: bool, current_hosts: bool, pane_command: Option<&str>) -> OpenMode {
+/// (the home base, the tutor); from any other session the client is switched. `target_hosts`:
+/// the picked session is such a view itself, which is switched to, never nested into a pane.
+fn open_mode(
+    inside: bool,
+    current_hosts: bool,
+    target_hosts: bool,
+    pane_command: Option<&str>,
+) -> OpenMode {
     if !inside {
         return OpenMode::Attach;
     }
-    if current_hosts && pane_command.is_some_and(|command| HOSTING_COMMANDS.contains(&command)) {
+    if current_hosts
+        && !target_hosts
+        && pane_command.is_some_and(|command| HOSTING_COMMANDS.contains(&command))
+    {
         OpenMode::Nest
     } else {
         OpenMode::Switch
     }
 }
 
-/// The open mode for the caller's surroundings, with the pane to nest into.
-fn open_mode_here(ui: &Ui) -> (OpenMode, Option<String>) {
+/// The open mode for the caller's surroundings and the picked `name`, with the pane to nest
+/// into.
+fn open_mode_here(ui: &Ui, name: &str) -> (OpenMode, Option<String>) {
     let inside = ui.inside();
     let pane = inside.then(|| ui.current_pane_id()).flatten();
     let current_hosts = pane.is_some()
@@ -379,14 +520,19 @@ fn open_mode_here(ui: &Ui) -> (OpenMode, Option<String>) {
     let command = pane
         .as_deref()
         .and_then(|pane| ui.display_message("#{pane_current_command}", Some(pane)));
-    let mode = open_mode(inside, current_hosts, command.as_deref());
+    let mode = open_mode(
+        inside,
+        current_hosts,
+        ui.hosts_nested_attaches(name),
+        command.as_deref(),
+    );
     (mode, pane)
 }
 
 /// Default path: nest into the launching view's shell pane, else switch the client, else
 /// attach this terminal.
 fn open(ui: &Ui, target: &str, name: &str) -> Result<(), VerbError> {
-    match open_mode_here(ui) {
+    match open_mode_here(ui, name) {
         (OpenMode::Nest, Some(pane)) => nest(ui, &pane, target)?,
         (OpenMode::Attach, _) => {
             let _ = std::io::stdout().flush();
@@ -411,7 +557,7 @@ fn jump(ui: &Ui, name: &str, target: &str) -> Result<bool, VerbError> {
     {
         return Ok(ui.select_window(&pane) && ui.select_pane(&pane));
     }
-    if let (OpenMode::Nest, Some(pane)) = open_mode_here(ui) {
+    if let (OpenMode::Nest, Some(pane)) = open_mode_here(ui, name) {
         nest(ui, &pane, target)?;
         return Ok(true);
     }
@@ -429,7 +575,7 @@ mod tests {
 
     use super::*;
 
-    const HEADER: &str = "NAME           LOCATION                  STARTED IDLE   ROLE  TAGS";
+    const HEADER: &str = "NAME           LOCATION                  STARTED IDLE   ROLE     TAGS";
 
     const ALL: Binds = Binds {
         edit_tag: true,
@@ -488,6 +634,7 @@ mod tests {
             "--query=".into(),
             format!("--bind=start:execute-silent(( while sleep 1; do curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || exit 0; done ) &)+unbind(y,n)"),
             format!("--bind=ctrl-r:{reload}"),
+            "--bind=alt-p:print(popup)+accept".into(),
             format!("--bind=focus:transform-header({focus})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"),
             format!("--bind=ctrl-t:execute(tmux -S /k/tmux.sock display-popup -E -h 4 -w 60% \"/x/txc --data-dir /s _edit-tag {{1}}\")+{reload}"),
             format!("--bind=ctrl-d:execute-silent(printf '%s' {{1}} >\"$TX_ARM_FILE\")+transform-header({arm})+rebind(y,n)"),
@@ -529,20 +676,51 @@ mod tests {
     #[test]
     fn open_mode_by_surroundings() {
         for command in [Some("zsh"), Some("txc"), None] {
-            assert_eq!(open_mode(false, true, command), OpenMode::Attach);
-            assert_eq!(open_mode(false, false, command), OpenMode::Attach);
+            for target_hosts in [false, true] {
+                assert_eq!(
+                    open_mode(false, true, target_hosts, command),
+                    OpenMode::Attach
+                );
+                assert_eq!(
+                    open_mode(false, false, target_hosts, command),
+                    OpenMode::Attach
+                );
+            }
         }
         for shell in HOSTING_COMMANDS {
             assert_eq!(
-                open_mode(true, true, Some(shell)),
+                open_mode(true, true, false, Some(shell)),
                 OpenMode::Nest,
                 "{shell}"
             );
+            // A home base or tutor picked from a home base is switched to, never nested.
+            assert_eq!(
+                open_mode(true, true, true, Some(shell)),
+                OpenMode::Switch,
+                "{shell}"
+            );
         }
-        assert_eq!(open_mode(true, false, Some("zsh")), OpenMode::Switch);
-        assert_eq!(open_mode(true, true, Some("nvim")), OpenMode::Switch);
-        assert_eq!(open_mode(true, true, Some("txc")), OpenMode::Switch);
-        assert_eq!(open_mode(true, true, None), OpenMode::Switch);
-        assert_eq!(open_mode(true, false, None), OpenMode::Switch);
+        assert_eq!(open_mode(true, false, false, Some("zsh")), OpenMode::Switch);
+        assert_eq!(open_mode(true, true, false, Some("nvim")), OpenMode::Switch);
+        assert_eq!(open_mode(true, true, false, Some("txc")), OpenMode::Switch);
+        assert_eq!(open_mode(true, true, false, None), OpenMode::Switch);
+        assert_eq!(open_mode(true, false, false, None), OpenMode::Switch);
+    }
+
+    #[test]
+    fn alt_p_output_is_split_from_the_selection() {
+        let row = "sh\t\tL\t$4\t  └ sh\n";
+        assert_eq!(split_popup(&format!("popup\n{row}")), (true, row));
+        assert_eq!(split_popup(row), (false, row));
+        assert_eq!(split_popup("popup\n"), (true, ""));
+        assert_eq!(split_popup("popup"), (true, ""));
+        // A session named `popup` picked with Enter is a plain pick.
+        let named = "popup\t\tL\t$1\tpopup\n";
+        assert_eq!(split_popup(named), (false, named));
+    }
+
+    #[test]
+    fn the_popup_footer_names_the_prefix() {
+        assert!(popup_footer("C-a").contains("C-a d"));
     }
 }

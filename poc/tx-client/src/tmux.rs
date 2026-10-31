@@ -16,6 +16,12 @@ const BINARY: &str = "tmux";
 const LABEL_REV_OPTION: &str = "@tx-label-rev";
 const STATUS_MILLISECONDS: &str = "5000";
 
+/// The popup palette (the picker's and prefix+a's).
+pub const ACCENT_HEX: &str = "#7aa2f7";
+pub const FG_HEX: &str = "#c0caf5";
+pub const DIM_FG_HEX: &str = "#a9b1d6";
+pub const BG_DEEP_HEX: &str = "#15161e";
+
 #[derive(Debug, thiserror::Error)]
 pub enum UiError {
     #[error("tmux {args} failed: {stderr}")]
@@ -337,6 +343,99 @@ impl Ui {
     pub fn nest_attach_command(&self, target: &str) -> String {
         format!("bash -c {}", shell_quote(&self.nest_attach_script(target)))
     }
+
+    /// Opens a `width`×`height` popup on `client` running `command`; returns when it closes.
+    pub fn display_popup(
+        &self,
+        client: &str,
+        width: &str,
+        height: &str,
+        title: &str,
+        command: &str,
+    ) -> Result<(), UiError> {
+        let args = popup_args(client, width, height, title, command);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.run(&args).map(drop)
+    }
+
+    /// Nest-attaches `session` (an agent or a view) in a popup covering most of `client`'s
+    /// terminal. While it is open the session's status line shows `footer`; it is hidden again
+    /// when the popup closes.
+    pub fn popup_attach(
+        &self,
+        client: &str,
+        title: &str,
+        footer: &str,
+        session: &str,
+    ) -> Result<(), UiError> {
+        let status_style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
+        self.set_session_option(session, "status", "on")?;
+        self.set_session_option(session, "status-style", &status_style)?;
+        self.set_session_option(session, "status-format[0]", footer)?;
+        let command = popup_attach_command(&self.socket.to_string_lossy(), session);
+        let shown = self.display_popup(client, "90%", "90%", title, &command);
+        // The whole `status-format` array: unsetting only `[0]` leaves an empty local array
+        // that blanks the global status line.
+        for option in ["status", "status-style", "status-format"] {
+            self.quiet(&[
+                "set-option",
+                "-u",
+                "-t",
+                &exact_session_pane(session),
+                option,
+            ]);
+        }
+        shown
+    }
+}
+
+/// The argv of a `width`×`height` popup centred on `client`, in the picker's palette.
+pub fn popup_args(
+    client: &str,
+    width: &str,
+    height: &str,
+    title: &str,
+    command: &str,
+) -> Vec<String> {
+    let style = format!("bg={BG_DEEP_HEX},fg={DIM_FG_HEX}");
+    let border = format!("bg={BG_DEEP_HEX},fg={ACCENT_HEX}");
+    let title = format!("#[fg={ACCENT_HEX},bold]{title}#[default]");
+    [
+        "display-popup",
+        "-c",
+        client,
+        "-E",
+        "-x",
+        "C",
+        "-y",
+        "C",
+        "-w",
+        width,
+        "-h",
+        height,
+        "-b",
+        "rounded",
+        "-s",
+        &style,
+        "-S",
+        &border,
+        "-T",
+        &title,
+        command,
+    ]
+    .iter()
+    .map(|word| (*word).to_owned())
+    .collect()
+}
+
+/// The popup's attach command: this server's socket, `$TMUX` cleared, no fallback shell, so
+/// detaching closes the popup.
+pub fn popup_attach_command(socket: &str, session: &str) -> String {
+    format!(
+        "TMUX= tmux -S {} attach -t {}",
+        shell_quote(socket),
+        shell_quote(session)
+    )
 }
 
 /// `(inner session, hosting pane)` for every pane whose tty is a client's tty. A pane hosting
@@ -411,6 +510,21 @@ pub fn shell_quote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_popup_attach_names_the_core_socket() {
+        assert_eq!(
+            popup_attach_command("/tmp/s p/tmux.sock", "plan-md"),
+            "TMUX= tmux -S '/tmp/s p/tmux.sock' attach -t 'plan-md'"
+        );
+    }
+
+    #[test]
+    fn popups_are_centred_and_run_the_command_last() {
+        let args = popup_args("/dev/ttys1", "40", "10", " a ", "cmd");
+        assert_eq!(args[..4], ["display-popup", "-c", "/dev/ttys1", "-E"]);
+        assert_eq!(args.last().unwrap(), "cmd");
+    }
 
     fn ui() -> Ui {
         Ui {

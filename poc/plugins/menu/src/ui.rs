@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Widget};
 use tx_client::render::reltime;
 
-use crate::model::{Item, Menu, View};
+use crate::model::{Context, Item, Menu, View};
 
 pub const ACCENT: Color = Color::Rgb(122, 162, 247);
 pub const INFO: Color = Color::Rgb(125, 207, 255);
@@ -120,7 +120,14 @@ fn menu_lines(menu: &Menu) -> Vec<(Line<'static>, bool)> {
     for item in menu.items() {
         if item.section() != section {
             section = item.section();
-            lines.push((Line::styled(section, dim()), false));
+            let mut header = vec![Span::styled(section, dim())];
+            if section == Item::Attach.section() {
+                header.push(Span::styled(
+                    format!("  {}", running_counts(&menu.ctx)),
+                    Style::new().fg(DIM_FG),
+                ));
+            }
+            lines.push((Line::from(header), false));
         }
         let label = format!("  {:<LABEL_W$}", item.label());
         let selected = *item == menu.selected();
@@ -133,6 +140,19 @@ fn menu_lines(menu: &Menu) -> Vec<(Line<'static>, bool)> {
         ));
     }
     lines
+}
+
+/// `2 agents · 1 view`: what the picker (Attach to running) lists, agents and views apart.
+fn running_counts(ctx: &Context) -> String {
+    let plural = |count: usize, noun: &str| {
+        let s = if count == 1 { "" } else { "s" };
+        format!("{count} {noun}{s}")
+    };
+    format!(
+        "{} · {}",
+        plural(ctx.agents, "agent"),
+        plural(ctx.views, "view")
+    )
 }
 
 fn recent_lines(menu: &Menu) -> Vec<Line<'static>> {
@@ -475,7 +495,7 @@ mod tests {
             "     ██║   ██╔╝ ██╗",
             "     ╚═╝   ╚═╝  ╚═╝  ide",
             "",
-            "sessions",
+            "sessions  2 agents · 1 view",
             "  New tx session        n",
             "  Attach to running     t",
             "  Resume from history   h",
@@ -644,5 +664,14 @@ mod tests {
             let mut buf = Buffer::empty(area);
             draw(&menu, 0, area, &mut buf);
         }
+    }
+
+    #[test]
+    fn the_sessions_header_counts_agents_and_views_apart() {
+        let mut ctx = context();
+        assert_eq!(running_counts(&ctx), "2 agents · 1 view");
+        ctx.agents = 1;
+        ctx.views = 0;
+        assert_eq!(running_counts(&ctx), "1 agent · 0 views");
     }
 }
