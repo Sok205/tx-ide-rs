@@ -22,15 +22,21 @@
 //! fork never shows the source's conversation while it waits for its own. A fork runs in the
 //! current directory (the fork's worktree) without asking: `-c tui.resume_cwd=current`. The data is rewritten only when the id differs; other keys of
 //! the object survive. Paths Codex reports are resolved (`/private/tmp/…` for `/tmp/…`).
+//!
+//! `archive` keeps a copy of the rollout at `<archive>/<conversation_id>.jsonl` (Codex inlines
+//! everything in the rollout, so there are no sidecars); `restore` puts it back at exactly the
+//! recorded `transcript_path` when that file is gone. The rollout's name carries its creation
+//! time, so a record without a `transcript_path` cannot be restored and says so.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
     EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
-    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
+    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command, mirror_file,
+    mirror_file_exact,
 };
 
 pub const CODEX_BIN: &str = "codex";
@@ -160,6 +166,26 @@ impl CodexAdapter {
                 ))
             })
     }
+
+    /// The conversation `SessionStart` recorded and the rollout path it came with. `None`
+    /// before the first prompt; the path alone is `None` on a record that only ever held the id.
+    fn recorded_conversation<'a>(
+        &self,
+        session: &'a Session,
+    ) -> Option<(&'a str, Option<&'a Path>)> {
+        let data = engine_data(self, session);
+        let conversation = data.get(CONVERSATION_ID_KEY)?.as_str()?;
+        let transcript = data
+            .get(TRANSCRIPT_PATH_KEY)
+            .and_then(Value::as_str)
+            .map(Path::new);
+        Some((conversation, transcript))
+    }
+}
+
+/// The archive's copy of a conversation: `<archive>/<conversation id>.jsonl`.
+fn archived_rollout(archive_directory: &Path, conversation: &str) -> PathBuf {
+    archive_directory.join(format!("{conversation}.jsonl"))
 }
 
 impl LlmEngine for CodexAdapter {
@@ -266,6 +292,53 @@ impl LlmEngine for CodexAdapter {
             _ => None,
         };
         LlmEngineChange { state, engine_data }
+    }
+
+    /// The rollout at the recorded `transcript_path`, keyed by conversation id so the
+    /// conversations before a `/new` stay archived: by offset while the process lives, compared
+    /// whole once the record is terminal (the process gone, the rollout final). No conversation
+    /// yet, or a rollout not on disk, archives nothing.
+    fn archive(&self, session: &Session, archive_directory: &Path) -> Result<(), EngineError> {
+        let Some((conversation, Some(transcript))) = self.recorded_conversation(session) else {
+            return Ok(());
+        };
+        if !transcript.is_file() {
+            return Ok(());
+        }
+        let archived = archived_rollout(archive_directory, conversation);
+        if session.lifecycle.is_terminal() {
+            mirror_file_exact(transcript, &archived)
+        } else {
+            mirror_file(transcript, &archived)
+        }
+    }
+
+    /// When the recorded rollout is gone and the archive has it: the whole file back at exactly
+    /// the recorded `transcript_path`, its dated directories created. A live rollout is never
+    /// overwritten; a conversation the archive does not hold restores nothing. A record whose
+    /// archive has the rollout but that recorded no path is refused: the name carries the
+    /// creation time, and a rebuilt one would not be the one Codex looks for.
+    fn restore(&self, session: &Session, archive_directory: &Path) -> Result<bool, EngineError> {
+        let Some((conversation, transcript)) = self.recorded_conversation(session) else {
+            return Ok(false);
+        };
+        let archived = archived_rollout(archive_directory, conversation);
+        if !archived.is_file() {
+            return Ok(false);
+        }
+        let Some(transcript) = transcript else {
+            return Err(EngineError::Refused(format!(
+                "codex cannot restore {}: the archive holds {} but the record has no \
+                 ext.{EXT_KEY}.{TRANSCRIPT_PATH_KEY} to put it back at",
+                session.name,
+                archived.display()
+            )));
+        };
+        if transcript.is_file() {
+            return Ok(false);
+        }
+        mirror_file(&archived, transcript)?;
+        Ok(true)
     }
 }
 
@@ -898,5 +971,213 @@ mod tests {
         core.plug(vec![Box::new(CodexPlugin)], &PluginConfig::default())
             .unwrap();
         assert_eq!(core.engine_ids(), vec!["codex"]);
+    }
+
+    fn write(path: &Path, data: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, data).unwrap();
+    }
+
+    /// A running record whose data names conversation `id` at rollout `transcript`.
+    fn recorded(id: &str, transcript: &Path) -> Session {
+        session(
+            LlmEngineState::Idle,
+            serde_json::json!({CONVERSATION_ID_KEY: id, TRANSCRIPT_PATH_KEY: transcript}),
+        )
+    }
+
+    /// Where Codex would put a rollout of `id` under `codex_home`, created on `date`.
+    fn rollout(codex_home: &Path, date: &str, id: &str) -> PathBuf {
+        codex_home.join("sessions").join(date).join(format!(
+            "rollout-{}T10-00-00-{id}.jsonl",
+            date.replace('/', "-")
+        ))
+    }
+
+    fn rollout_bytes() -> Vec<u8> {
+        (0..=255u8).cycle().take(204_800).collect()
+    }
+
+    #[test]
+    fn archive_mirrors_the_rollout_by_conversation_id() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = rollout(dir.path(), "2026/10/31", "c1");
+        write(&transcript, b"{\"type\":\"session_meta\"}\n");
+        let archive = dir.path().join("archive");
+        let engine = CodexAdapter::new(dir.path());
+        let session = recorded("c1", &transcript);
+
+        engine.archive(&session, &archive).unwrap();
+        let archived = archive.join("c1.jsonl");
+        assert_eq!(
+            std::fs::read(&archived).unwrap(),
+            b"{\"type\":\"session_meta\"}\n"
+        );
+        assert_eq!(
+            std::fs::read_dir(&archive).unwrap().count(),
+            1,
+            "no sidecars"
+        );
+        let inode = std::fs::metadata(&archived).unwrap().ino();
+
+        // A later turn appends in place.
+        write(
+            &transcript,
+            b"{\"type\":\"session_meta\"}\n{\"type\":\"response_item\"}\n",
+        );
+        engine.archive(&session, &archive).unwrap();
+        assert_eq!(
+            std::fs::read(&archived).unwrap(),
+            std::fs::read(&transcript).unwrap()
+        );
+        assert_eq!(std::fs::metadata(&archived).unwrap().ino(), inode);
+
+        // After a `/new` the record names a second conversation; the first stays archived.
+        let next = rollout(dir.path(), "2026/10/31", "c2");
+        write(&next, b"{\"fresh\":true}\n");
+        engine.archive(&recorded("c2", &next), &archive).unwrap();
+        assert!(archived.is_file());
+        assert_eq!(
+            std::fs::read(archive.join("c2.jsonl")).unwrap(),
+            b"{\"fresh\":true}\n"
+        );
+    }
+
+    #[test]
+    fn a_terminal_record_archives_by_whole_compare_a_running_one_by_offset() {
+        use tx_core::Lifecycle;
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = rollout(dir.path(), "2026/10/31", "c1");
+        let data = rollout_bytes();
+        write(&transcript, &data);
+        let archive = dir.path().join("archive");
+        let engine = CodexAdapter::new(dir.path());
+        let running = recorded("c1", &transcript);
+        engine.archive(&running, &archive).unwrap();
+        assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), data);
+
+        // A rewrite 100 KiB before the end: a hook's offset mirror keeps the stale copy...
+        let mut rewritten = data.clone();
+        rewritten[data.len() - 102_400] ^= 0xFF;
+        std::fs::write(&transcript, &rewritten).unwrap();
+        engine.archive(&running, &archive).unwrap();
+        assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), data);
+        // ...and the archive of a stopped record is exact.
+        let stopped = Session {
+            lifecycle: Lifecycle::Stopped,
+            ..recorded("c1", &transcript)
+        };
+        engine.archive(&stopped, &archive).unwrap();
+        assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), rewritten);
+    }
+
+    #[test]
+    fn archive_without_a_conversation_or_a_live_rollout_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("archive");
+        let engine = CodexAdapter::new(dir.path());
+        // No data yet (before the first prompt), the id alone, and a rollout not on disk.
+        for session in [
+            record(serde_json::Value::Null),
+            record(serde_json::json!({"model": "gpt-6.1-sol"})),
+            record(serde_json::json!({CONVERSATION_ID_KEY: "c1"})),
+            recorded("c1", &rollout(dir.path(), "2026/10/31", "c1")),
+        ] {
+            engine.archive(&session, &archive).unwrap();
+        }
+        assert!(!archive.exists());
+    }
+
+    #[test]
+    fn restore_puts_a_missing_rollout_back_at_the_recorded_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = rollout(dir.path(), "2026/10/31", "c1");
+        let archive = dir.path().join("archive");
+        write(&archive.join("c1.jsonl"), b"{\"one\":1}\n");
+        let engine = CodexAdapter::new(dir.path());
+        let session = recorded("c1", &transcript);
+
+        assert!(!dir.path().join("sessions").exists());
+        assert!(engine.restore(&session, &archive).unwrap());
+        assert_eq!(std::fs::read(&transcript).unwrap(), b"{\"one\":1}\n");
+        // Restoring again changes nothing: the live copy is there.
+        assert!(!engine.restore(&session, &archive).unwrap());
+    }
+
+    #[test]
+    fn restore_never_overwrites_a_live_rollout() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = rollout(dir.path(), "2026/10/31", "c1");
+        write(&transcript, b"LIVE");
+        let archive = dir.path().join("archive");
+        write(&archive.join("c1.jsonl"), b"ARCHIVED");
+        let restored = CodexAdapter::new(dir.path())
+            .restore(&recorded("c1", &transcript), &archive)
+            .unwrap();
+        assert!(!restored);
+        assert_eq!(std::fs::read(&transcript).unwrap(), b"LIVE");
+    }
+
+    #[test]
+    fn restore_without_an_archived_copy_restores_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = rollout(dir.path(), "2026/10/31", "c1");
+        let archive = dir.path().join("archive");
+        write(&archive.join("other.jsonl"), b"X");
+        let engine = CodexAdapter::new(dir.path());
+        assert!(
+            !engine
+                .restore(&recorded("c1", &transcript), &archive)
+                .unwrap()
+        );
+        assert!(!transcript.exists());
+        // No conversation at all: nothing to look for (the resume refuses on its own).
+        assert!(
+            !engine
+                .restore(&record(serde_json::Value::Null), &archive)
+                .unwrap()
+        );
+        // The id without a path, and nothing archived under it: still nothing to do.
+        assert!(
+            !engine
+                .restore(
+                    &record(serde_json::json!({CONVERSATION_ID_KEY: "c1"})),
+                    &archive
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn restore_refuses_a_record_without_a_transcript_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("archive");
+        write(&archive.join("c1.jsonl"), b"{\"one\":1}\n");
+        let session = record(serde_json::json!({CONVERSATION_ID_KEY: "c1"}));
+        let error = CodexAdapter::new(dir.path())
+            .restore(&session, &archive)
+            .unwrap_err();
+        assert!(matches!(error, EngineError::Refused(_)), "{error:?}");
+        let text = error.to_string();
+        assert!(text.contains("cannot restore agent"), "{text}");
+        assert!(text.contains("c1.jsonl"), "{text}");
+        assert!(text.contains("ext.codex.transcript_path"), "{text}");
+        assert!(!dir.path().join("sessions").exists());
+    }
+
+    #[test]
+    fn archive_then_restore_round_trips_byte_for_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = rollout(dir.path(), "2026/10/31", "c1");
+        let bytes = rollout_bytes();
+        write(&transcript, &bytes);
+        let archive = dir.path().join("archive");
+        let engine = CodexAdapter::new(dir.path());
+        let session = recorded("c1", &transcript);
+        engine.archive(&session, &archive).unwrap();
+        std::fs::remove_dir_all(dir.path().join("sessions")).unwrap();
+        assert!(engine.restore(&session, &archive).unwrap());
+        assert_eq!(std::fs::read(&transcript).unwrap(), bytes);
     }
 }
