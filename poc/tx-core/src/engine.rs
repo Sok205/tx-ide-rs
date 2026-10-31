@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::CoreError;
 use crate::profile::Profile;
 use crate::session::{Session, validate_name};
-use crate::state::{LlmEngineChange, LlmEngineHook};
+use crate::state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 
 /// An adapter could not honor a request, or a workspace action could not be applied.
 #[derive(Debug, thiserror::Error)]
@@ -249,9 +249,11 @@ pub trait LlmEngine: Send + Sync {
         None
     }
 
-    /// What to type to abort the running turn and leave the CLI at its prompt; `None`: not
-    /// supported. Pure. The default knows none.
-    fn interrupt(&self, session: &Session) -> Option<Input> {
+    /// What to type to abort the running turn, and the state the agent is in once it landed
+    /// (`Some(Idle)`: at its prompt; `None`: say nothing, a hook will), since an aborted turn
+    /// need not fire the CLI's end-of-turn hook. Core applies the state as it does a hook's.
+    /// `None` as a whole: not supported. Pure. The default knows none.
+    fn interrupt(&self, session: &Session) -> Option<(Input, Option<LlmEngineState>)> {
         let _ = session;
         None
     }

@@ -303,9 +303,10 @@ impl LlmEngine for CodexAdapter {
         Some(Input::line(QUIT_COMMAND))
     }
 
-    /// Escape, as the status line says ("esc to interrupt"); Ctrl-C mid-turn opens a menu.
-    fn interrupt(&self, _: &Session) -> Option<Input> {
-        Some(Input::Key(Key::Escape))
+    /// Escape, as the status line says ("esc to interrupt"); Ctrl-C mid-turn opens a menu. The
+    /// agent is at its prompt afterwards.
+    fn interrupt(&self, _: &Session) -> Option<(Input, Option<LlmEngineState>)> {
+        Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
     /// An approval stops the turn on the operator (`Idle`); the next `PostToolUse` means they
@@ -849,7 +850,10 @@ mod tests {
     fn stop_is_quit_submitted_and_interrupt_is_escape() {
         let session = record(serde_json::Value::Null);
         assert_eq!(adapter().stop(&session), Some(Input::line("/quit")));
-        assert_eq!(adapter().interrupt(&session), Some(Input::Key(Key::Escape)));
+        assert_eq!(
+            adapter().interrupt(&session),
+            Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
+        );
         assert_eq!(
             adapter().receive_message(&tx_core::EnvelopeSender::User { via: Some("notes") }, "hi"),
             Input::line("<from-user session=\"notes\">hi</from-user>")

@@ -230,7 +230,7 @@ impl LlmEngine for Aider {
     // Optional: how to leave and how to abort a turn (`None`, the default, means core kills /
     // cannot interrupt); `receive_message` defaults to the `<from-…>` envelope, submitted.
     fn stop(&self, _: &Session) -> Option<Input> { Some(Input::line("/exit")) }
-    fn interrupt(&self, _: &Session) -> Option<Input> { Some(Input::Key(Key::ControlC)) }
+    fn interrupt(&self, _: &Session) -> Option<(Input, Option<LlmEngineState>)> { Some((Input::Key(Key::ControlC), Some(LlmEngineState::Idle))) }
 }
 
 // in your binary:

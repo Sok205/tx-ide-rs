@@ -1300,10 +1300,9 @@ impl TxCore {
         }
     }
 
-    /// Aborts the agent's running turn with its engine's `interrupt` input. An aborted turn
-    /// fires no end-of-turn hook (Claude's `Stop` runs only for a turn that finished), so a
-    /// `Working` agent is marked `Idle` here, with its `StateChanged`: it is at its prompt. The
-    /// next hook corrects that if the input landed too late. `NotRunning` when the record or
+    /// Aborts the agent's running turn with its engine's `interrupt` input, and applies the
+    /// state the engine says the agent is in afterwards (an aborted turn fires no end-of-turn
+    /// hook on Claude), with its `StateChanged`, as for a hook. `NotRunning` when the record or
     /// tmux says so; `Engine(Refused)` when the engine has no such input.
     pub fn interrupt_session(&self, id: &SessionId) -> Result<(), CoreError> {
         let changed = {
@@ -1317,26 +1316,19 @@ impl TxCore {
                 .engines
                 .get(engine)
                 .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
-            let input = adapter.interrupt(&session).ok_or_else(|| {
+            let (input, state) = adapter.interrupt(&session).ok_or_else(|| {
                 EngineError::Refused(format!("{engine} has no way to interrupt a turn"))
             })?;
             let live = self.live_or_not_running(id)?;
             deliver(&self.tmux, &live.pane_target, &input, DELIVERY_PAUSE)?;
-            if session.state != LlmEngineState::Working {
+            let current = session.state;
+            let Some(to) = state.filter(|to| *to != current) else {
                 return Ok(());
-            }
-            session.state = LlmEngineState::Idle;
+            };
+            session.state = to;
             self.save(&mut session)?;
-            event(
-                EventType::StateChanged,
-                &session,
-                None,
-                format!(
-                    "{} → {}",
-                    LlmEngineState::Working.as_str(),
-                    LlmEngineState::Idle.as_str()
-                ),
-            )
+            let detail = format!("{} → {}", current.as_str(), to.as_str());
+            event(EventType::StateChanged, &session, None, detail)
         };
         self.emit(vec![changed]);
         Ok(())

@@ -279,15 +279,12 @@ fn interrupt_types_the_engines_input_into_a_running_agent() {
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
-    // At its prompt (`starting` here): the input is typed and the state stays.
+    // The input is typed, and the state the engine says follows, as for a hook.
     core.interrupt_session(&id).unwrap();
     assert!(wait_for(Duration::from_secs(5), || !typed(&cwd).is_empty()));
     assert_eq!(typed(&cwd), "INTERRUPT\n");
-    assert_eq!(
-        core.get_session(&id).unwrap().state,
-        LlmEngineState::Starting
-    );
-    // Mid-turn: an aborted turn fires no hook, so core marks it idle itself.
+    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Idle);
+    // Mid-turn: idle again, one state-changed each time the state moved.
     core.hook(
         &id,
         tx_core::LlmEngineHook {
@@ -305,7 +302,10 @@ fn interrupt_types_the_engines_input_into_a_running_agent() {
         .filter(|line| line["type"] == "state-changed")
         .map(|line| line["msg"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(states, ["starting → working", "working → idle"]);
+    assert_eq!(
+        states,
+        ["starting → idle", "idle → working", "working → idle"]
+    );
     assert!(matches!(
         core.interrupt_session(&"zz".parse::<SessionId>().unwrap())
             .unwrap_err(),

@@ -309,9 +309,13 @@ impl LlmEngine for ShellStub {
         Some(Input::Key(Key::ControlD))
     }
 
-    /// The stub has no turns; what core types is visible in `input.txt`.
-    fn interrupt(&self, _: &tx_core::Session) -> Option<Input> {
-        Some(Input::line("INTERRUPT"))
+    /// The stub has no turns; what core types is visible in `input.txt`, and it says it is idle
+    /// afterwards, as the real engines do.
+    fn interrupt(&self, _: &tx_core::Session) -> Option<(Input, Option<tx_core::LlmEngineState>)> {
+        Some((
+            Input::line("INTERRUPT"),
+            Some(tx_core::LlmEngineState::Idle),
+        ))
     }
 
     /// The data's `transcript_path` mirrored to `<archive>/<conversation_id>.jsonl`, as Claude

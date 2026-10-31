@@ -339,8 +339,10 @@ impl LlmEngine for ClaudeAdapter {
         Some(Input::line(EXIT_COMMAND))
     }
 
-    fn interrupt(&self, _: &Session) -> Option<Input> {
-        Some(Input::Key(Key::Escape))
+    /// Escape; Claude's `Stop` hook does not run for an interrupted turn, so the engine says
+    /// the agent is at its prompt.
+    fn interrupt(&self, _: &Session) -> Option<(Input, Option<LlmEngineState>)> {
+        Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
     fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange {
@@ -1038,7 +1040,10 @@ mod tests {
         let (dir, _) = profile("", &[]);
         let session = record(dir.path(), serde_json::Value::Null);
         assert_eq!(adapter().stop(&session), Some(Input::line("/exit")));
-        assert_eq!(adapter().interrupt(&session), Some(Input::Key(Key::Escape)));
+        assert_eq!(
+            adapter().interrupt(&session),
+            Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
+        );
         assert_eq!(
             adapter().receive_message(&tx_core::EnvelopeSender::Agent { name: "peer" }, "hi"),
             Input::line("<from-agent session=\"peer\">hi</from-agent>")
