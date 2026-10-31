@@ -1,4 +1,4 @@
--- Ask a live tx llm session about the code under the cursor.
+-- Ask a live tx agent about the code under the cursor.
 --
 --   <leader>aQ  queue a question here, to send with the rest later
 --   <leader>aq  review queued questions, their source, and the target chat
@@ -8,62 +8,50 @@
 -- for. Sending is the ONLY thing that empties the queue, so a mistyped or
 -- abandoned prompt can never cost the operator questions they had banked.
 --
--- Delivery goes through `tx send-user-message`, which wraps the body in the
--- <from-user session="…"> operator envelope -- deliberately NOT `tx send-message`,
--- which hard-wraps <from-agent> and would misattribute the operator as a peer agent.
--- tx fills the session attribute from $TX_SESSION_ID (exported into every tx
--- session), so a question keeps the editor it was asked from rather than the
--- hosting view. The argv form of vim.system runs no shell, so a question
--- containing quotes or $ reaches the target verbatim.
+-- Delivery goes through `txc send <id> --via <label>`, which wraps the body in the
+-- <from-user session="<label>"> operator envelope. The label is the tmux session
+-- hosting this nvim when it is a tx-client view (@tx-view), else the buffer's file
+-- name. The argv form of vim.system runs no shell, so a question containing quotes
+-- or $ reaches the target verbatim.
 --
--- Session discovery reads every @tx_id in one tmux sweep, then joins those IDs
--- to the durable records. The join can move fully into tx when it gains a JSON
--- sessions command.
+-- Agent discovery is `txc ls --json`: the live agents, each {id, name, state,
+-- working_directory, tags}.
 
-local HOME = vim.env.HOME
-local function read_record(id)
-  local f = io.open(HOME .. "/.tx-ide/sessions/" .. id .. ".json")
-  if not f then
-    return nil
+-- the live agents, as txc lists them
+local function live_agents()
+  local result = vim.system({ "txc", "ls", "--json" }, { text = true }):wait()
+  if result.code ~= 0 then
+    vim.notify("txc ls --json failed: " .. vim.trim(result.stderr or ""), vim.log.levels.ERROR)
+    return {}
   end
-  local ok, rec = pcall(vim.json.decode, f:read("*a"))
-  f:close()
-  return ok and rec or nil
+  return vim.json.decode(result.stdout)
 end
 
--- live tmux sessions -> durable records, keyed by @tx_id
-local function live_records()
-  local records = {}
-  for _, id in ipairs(vim.fn.systemlist("tmux list-sessions -F '#{@tx_id}'")) do
-    if id ~= "" then
-      local record = read_record(id)
-      if record then
-        records[#records + 1] = record
-      end
+-- the agent this nvim runs in, when it runs in one
+local function me(agents)
+  for _, agent in ipairs(agents) do
+    if agent.id == vim.env.TX_SESSION_ID then
+      return agent
     end
   end
-  return records
+  return nil
 end
 
-local function me()
-  return vim.env.TX_SESSION_ID and read_record(vim.env.TX_SESSION_ID) or nil
-end
-
--- llm sessions only (nvim/shell cannot read messages), self excluded,
--- sessions sharing one of my scope tags sorted first
+-- every live agent but me, agents sharing one of my tags sorted first
 local function targets()
-  local self_rec = me() or {}
-  local my_tags = self_rec.tags or {}
+  local agents = live_agents()
+  local self_agent = me(agents) or {}
+  local my_tags = self_agent.tags or {}
   local list = {}
-  for _, r in ipairs(live_records()) do
-    if r.role == "llm" and r.name ~= self_rec.name then
+  for _, agent in ipairs(agents) do
+    if agent.id ~= self_agent.id then
       local shared = false
-      for _, t in ipairs(r.tags or {}) do
-        if vim.tbl_contains(my_tags, t) then
+      for _, tag in ipairs(agent.tags) do
+        if vim.tbl_contains(my_tags, tag) then
           shared = true
         end
       end
-      list[#list + 1] = { name = r.name, tags = r.tags or {}, sibling = shared }
+      list[#list + 1] = { id = agent.id, name = agent.name, tags = agent.tags, sibling = shared }
     end
   end
   table.sort(list, function(a, b)
@@ -75,14 +63,35 @@ local function targets()
   return list
 end
 
--- on_sent runs only when tx accepted the message, so a failed send leaves the
+-- Where questions come from: the tx-client view hosting this nvim, else the file they
+-- were asked in (the first one's, when they span several). An unnamed buffer is "nvim".
+local function via_label(file)
+  if vim.env.TMUX_PANE then
+    local result = vim.system({
+      "tmux",
+      "display-message",
+      "-p",
+      "-t",
+      vim.env.TMUX_PANE,
+      "#{session_name}\t#{@tx-view}",
+    }, { text = true }):wait()
+    local session_name, view = vim.trim(result.stdout or ""):match("^(.-)\t(.*)$")
+    if result.code == 0 and view == "1" then
+      return session_name
+    end
+  end
+  local name = vim.fn.fnamemodify(file, ":t")
+  return name ~= "" and name or "nvim"
+end
+
+-- on_sent runs only when txc accepted the message, so a failed send leaves the
 -- queue intact rather than swallowing questions the operator has to retype
-local function send(target, body, on_sent)
-  vim.system({ "tx", "send-user-message", target, body }, { text = true }, function(result)
+local function send(target, label, body, on_sent)
+  vim.system({ "txc", "send", "--via", label, target.id, "--", body }, { text = true }, function(result)
     vim.schedule(function()
       if result.code ~= 0 then
         local why = vim.trim(result.stderr or "")
-        vim.notify("tx send-user-message failed: " .. why, vim.log.levels.ERROR)
+        vim.notify("txc send failed: " .. why, vim.log.levels.ERROR)
         return
       end
       on_sent()
@@ -298,7 +307,7 @@ vim.keymap.set({ "n", "x" }, "<leader>aq", function()
 
   local target_list = targets()
   if #target_list == 0 then
-    return vim.notify("no live llm sessions", vim.log.levels.WARN)
+    return vim.notify("no live agents", vim.log.levels.WARN)
   end
   if active_layout and active_layout:valid() then
     active_layout:close()
@@ -312,7 +321,7 @@ vim.keymap.set({ "n", "x" }, "<leader>aq", function()
   local question_index = 1
   local chat_index = 1
   for position, target in ipairs(target_list) do
-    if target.name == vim.g.tx_ask_target then
+    if target.id == vim.g.tx_ask_target then
       chat_index = position
     end
   end
@@ -352,7 +361,7 @@ vim.keymap.set({ "n", "x" }, "<leader>aq", function()
     end
     local body = table.concat(questions, "  ||  "):gsub("\n", "\\n")
     local count = #questions
-    send(target, body, function()
+    send(target, via_label(selected_items[1].context.file), body, function()
       local remaining = {}
       for position, item in ipairs(queue) do
         if not sent_queue_positions[position] then
@@ -360,7 +369,7 @@ vim.keymap.set({ "n", "x" }, "<leader>aq", function()
         end
       end
       replace_queue(remaining)
-      vim.notify(("sent %d question%s to %s"):format(count, count == 1 and "" or "s", target))
+      vim.notify(("sent %d question%s to %s"):format(count, count == 1 and "" or "s", target.name))
     end)
   end
 
@@ -778,8 +787,8 @@ vim.keymap.set({ "n", "x" }, "<leader>aq", function()
       return vim.notify("no chats match the filter", vim.log.levels.WARN)
     end
 
-    local target = target_list[chat_index].name
-    vim.g.tx_ask_target = target
+    local target = target_list[chat_index]
+    vim.g.tx_ask_target = target.id
     layout:close()
     send_questions(target, selected_items)
   end

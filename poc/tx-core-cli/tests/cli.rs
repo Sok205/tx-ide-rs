@@ -251,6 +251,40 @@ fn agent_session_round_trip() {
 }
 
 #[test]
+fn ls_json_lists_running_agents_with_exactly_five_keys() {
+    require_tmux!();
+    let cli = Cli::new();
+    assert_eq!(cli.ok(&["ls", "--json"]).trim(), "[]");
+    let live = cli.create("live");
+    let stopped = cli.create("stopped");
+    cli.ok(&["tag", "live", "scope"]);
+    cli.ok(&["stop", "stopped"]);
+
+    let listing: serde_json::Value = serde_json::from_str(&cli.ok(&["ls", "--json"])).unwrap();
+    let entries = listing.as_array().unwrap();
+    assert_eq!(entries.len(), 1, "a stopped agent is not live: {listing}");
+    let entry = entries[0].as_object().unwrap();
+    let keys: Vec<&str> = entry.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        ["id", "name", "state", "working_directory", "tags"],
+        "exactly the five keys"
+    );
+    assert_eq!(entry["id"], live.as_str());
+    assert_eq!(entry["name"], "live");
+    assert!(entry["state"].is_string());
+    assert_eq!(entry["tags"], serde_json::json!(["scope"]));
+    assert_eq!(
+        entry["working_directory"],
+        cwd_of(&cli, "live").to_str().unwrap()
+    );
+
+    let ended: serde_json::Value =
+        serde_json::from_str(&cli.ok(&["ls", "--json", "--lifecycle", "stopped"])).unwrap();
+    assert_eq!(ended[0]["id"], stopped.as_str());
+}
+
+#[test]
 fn an_agent_reaches_its_own_core_through_the_session_environment() {
     require_tmux!();
     let cli = Cli::new();
