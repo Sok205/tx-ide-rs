@@ -31,6 +31,7 @@ tx-assistant = { path = "../plugins/assistant" }
 tx-mockup = { path = "../plugins/mockup" }
 tx-tutor = { path = "../plugins/tutor" }
 tx-artifacts = { path = "../plugins/artifacts" }
+tx-tour = { path = "../plugins/tour" }
 tx-timeline = { path = "../plugins/timeline" }
 tx-menu = { path = "../plugins/menu" }
 serde.workspace = true

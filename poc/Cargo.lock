@@ -1827,6 +1827,7 @@ dependencies = [
  "tx-picker",
  "tx-spawn",
  "tx-timeline",
+ "tx-tour",
  "tx-tutor",
 ]
 
@@ -1936,6 +1937,17 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tx-chat",
+ "tx-client",
+ "tx-core",
+]
+
+[[package]]
+name = "tx-tour"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "tx-artifacts",
  "tx-client",
  "tx-core",
 ]

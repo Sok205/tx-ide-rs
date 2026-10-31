@@ -1,0 +1,19 @@
+[package]
+name = "tx-tour"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "tx-core plugin: code tours, artifacts of kind `tour` opened as nvim views of their stops."
+
+[dependencies]
+tx-core.workspace = true
+tx-client.workspace = true
+tx-artifacts = { path = "../artifacts" }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
