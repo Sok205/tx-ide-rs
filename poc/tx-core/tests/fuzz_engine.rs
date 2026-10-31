@@ -7,9 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use proptest::prelude::*;
 use tx_core::engine::{apply_workspace, resolve_in};
 use tx_core::{
-    CoreError, EngineError, EngineKind, EngineRegistry, Launch, LaunchPlan, LaunchRequest,
-    Lifecycle, LlmEngine, LlmEngineState, Profile, ResolvedProfile, Session, SessionId,
-    WorkspaceAction,
+    CoreError, EngineError, EngineKind, EngineRegistry, LaunchPlan, LaunchRequest, LlmEngine,
+    LlmEngineState, Profile, ResolvedProfile, Session, SessionId, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -837,23 +836,17 @@ fn core_accepts_a_plan_with_empty_program() {
     let session = Session {
         id: SessionId::mint(),
         name: "s".into(),
-        parent: None,
-        tags: Vec::new(),
-        cwd: dir.path().to_owned(),
-        created_at: 0.0,
-        ended_at: None,
-        archived_at: None,
-        last_modified_at: 0.0,
-        lifecycle: Lifecycle::Running,
-        launch: Launch::Agent {
-            engine: EngineKind::Claude,
-            profile: Vec::new(),
-            model: None,
-            effort: None,
-            resume: None,
-        },
+        engine: EngineKind::Claude,
+        working_directory: dir.path().to_owned(),
+        roles: Vec::new(),
         state: LlmEngineState::Starting,
+        created_at: 0.0,
+        last_modified_at: 0.0,
+        archived_at: None,
+        tags: Vec::new(),
+        parent_id: None,
         ext: Default::default(),
+        other: Default::default(),
     };
     let request = LaunchRequest::new(&session, &profile);
     let mut registry = EngineRegistry::new();

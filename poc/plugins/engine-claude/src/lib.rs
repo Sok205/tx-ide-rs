@@ -36,6 +36,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tx_core::migrate::version_one_conversation;
 use tx_core::{
     Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
     LlmEngineChange, LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data,
@@ -219,7 +220,7 @@ impl ClaudeAdapter {
         data.insert(CONVERSATION_ID_KEY.into(), id.into());
         data.insert(
             TRANSCRIPT_PATH_KEY.into(),
-            self.transcript_path(&session.cwd, id)
+            self.transcript_path(&session.working_directory, id)
                 .to_string_lossy()
                 .into(),
         );
@@ -242,7 +243,7 @@ impl ClaudeAdapter {
             .get(TRANSCRIPT_PATH_KEY)
             .and_then(Value::as_str)
             .map(PathBuf::from)
-            .unwrap_or_else(|| self.transcript_path(&session.cwd, conversation));
+            .unwrap_or_else(|| self.transcript_path(&session.working_directory, conversation));
         let sidecars = transcript
             .parent()
             .unwrap_or(Path::new(""))
@@ -345,6 +346,43 @@ impl LlmEngine for ClaudeAdapter {
         Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
+    /// `model` and `effort` from the version-1 launch (an effort Claude does not know is
+    /// dropped), and the conversation the record names, its transcript where the chat plugin
+    /// recorded it, else where Claude writes conversation `id` of a process started in the
+    /// record's `cwd`.
+    fn upgrade_version_one(
+        &self,
+        record: &serde_json::Map<String, Value>,
+        launch: &serde_json::Map<String, Value>,
+    ) -> Value {
+        let mut data = serde_json::Map::new();
+        if let Some(model) = launch.get(MODEL_KEY).and_then(Value::as_str) {
+            data.insert(MODEL_KEY.into(), model.into());
+        }
+        if let Some(effort) = launch
+            .get(EFFORT_KEY)
+            .and_then(Value::as_str)
+            .and_then(|effort| effort.parse::<Effort>().ok())
+        {
+            data.insert(EFFORT_KEY.into(), effort.as_str().into());
+        }
+        if let Some((conversation, transcript)) = version_one_conversation(record, launch) {
+            data.insert(CONVERSATION_ID_KEY.into(), conversation.into());
+            let transcript = transcript.map(str::to_owned).or_else(|| {
+                let cwd = record.get("cwd")?.as_str()?;
+                Some(
+                    self.transcript_path(Path::new(cwd), conversation)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            });
+            if let Some(transcript) = transcript {
+                data.insert(TRANSCRIPT_PATH_KEY.into(), transcript.into());
+            }
+        }
+        Value::Object(data)
+    }
+
     fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange {
         let field = |key: &str| hook.payload.get(key).and_then(Value::as_str);
         let state = match hook.name.as_str() {
@@ -385,7 +423,7 @@ impl LlmEngine for ClaudeAdapter {
         }
         let (archived_transcript, archived_sidecars) =
             self.archived_paths(session, archive_directory);
-        if session.lifecycle.is_terminal() {
+        if session.state == LlmEngineState::Ended {
             mirror_file_exact(&transcript, &archived_transcript)?;
         } else {
             mirror_file(&transcript, &archived_transcript)?;
@@ -553,7 +591,7 @@ mod tests {
 
     /// An agent record in `state` whose `ext.ClaudeAdapter` is `data` (absent when `Null`).
     fn session(state: LlmEngineState, data: serde_json::Value) -> Session {
-        use tx_core::{Launch, Lifecycle, SessionId};
+        use tx_core::SessionId;
         let mut ext = std::collections::BTreeMap::new();
         if !data.is_null() {
             ext.insert(EXT_KEY.to_owned(), data);
@@ -561,23 +599,17 @@ mod tests {
         Session {
             id: SessionId::mint(),
             name: "agent".into(),
-            parent: None,
-            tags: Vec::new(),
-            cwd: "/tmp".into(),
-            created_at: 1.0,
-            ended_at: None,
-            archived_at: None,
-            last_modified_at: 1.0,
-            lifecycle: Lifecycle::Running,
-            launch: Launch::Agent {
-                engine: adapter().kind(),
-                profile: Vec::new(),
-                model: None,
-                effort: None,
-                resume: None,
-            },
+            engine: adapter().kind(),
+            working_directory: "/tmp".into(),
+            roles: Vec::new(),
             state,
+            created_at: 1.0,
+            last_modified_at: 1.0,
+            archived_at: None,
+            tags: Vec::new(),
+            parent_id: None,
             ext,
+            other: serde_json::Map::new(),
         }
     }
 
@@ -838,7 +870,7 @@ mod tests {
     /// An agent record in `cwd` with this engine's data `data` (absent when `Null`).
     fn record(cwd: &Path, data: serde_json::Value) -> Session {
         Session {
-            cwd: cwd.to_owned(),
+            working_directory: cwd.to_owned(),
             ..session(LlmEngineState::Starting, data)
         }
     }
@@ -1247,7 +1279,6 @@ mod tests {
 
     #[test]
     fn a_terminal_record_archives_by_whole_compare_a_running_one_by_offset() {
-        use tx_core::Lifecycle;
         let dir = tempfile::tempdir().unwrap();
         let transcript = dir.path().join("home/projects/-w/c1.jsonl");
         let data: Vec<u8> = (0..=255u8).cycle().take(204_800).collect();
@@ -1266,7 +1297,7 @@ mod tests {
         assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), data);
         // ...and the archive of a stopped record is exact.
         let stopped = Session {
-            lifecycle: Lifecycle::Stopped,
+            state: LlmEngineState::Ended,
             ..recorded(dir.path(), "c1", &transcript)
         };
         engine.archive(&stopped, &archive).unwrap();
@@ -1401,5 +1432,62 @@ mod tests {
                 "{partial}"
             );
         }
+    }
+
+    /// `txc migrate`: the version-1 launch's options (an effort Claude does not know dropped),
+    /// and the conversation: the chat plugin's active capture with its transcript, else the
+    /// launch's `resume` with the transcript where Claude writes it for the record's `cwd`.
+    #[test]
+    fn upgrade_version_one_builds_the_engine_data() {
+        let engine = adapter();
+        let object = |value: serde_json::Value| value.as_object().unwrap().clone();
+        let record = object(serde_json::json!({
+            "id": "a", "cwd": "/w",
+            "ext": {"chat": {"chats": [
+                {"id": "old", "ended_at": 1.0, "transcript": "/t/old.jsonl"},
+                {"id": "c1", "transcript": "/t/c1.jsonl"},
+            ]}},
+        }));
+        let launch = object(serde_json::json!({
+            "kind": "agent", "engine": "claude", "model": "sonnet", "effort": "max", "resume": "r1",
+        }));
+        assert_eq!(
+            engine.upgrade_version_one(&record, &launch),
+            serde_json::json!({"model": "sonnet", "effort": "max", "conversation_id": "c1", "transcript_path": "/t/c1.jsonl"})
+        );
+        let launch = object(
+            serde_json::json!({"kind": "agent", "engine": "claude", "effort": "extreme", "resume": "r1"}),
+        );
+        let data = engine.upgrade_version_one(
+            &object(serde_json::json!({"id": "a", "cwd": "/w"})),
+            &launch,
+        );
+        assert_eq!(data["conversation_id"], "r1");
+        assert_eq!(
+            data.get("effort"),
+            None,
+            "an effort Claude does not know is dropped"
+        );
+        assert_eq!(data.get("model"), None);
+        let transcript = data["transcript_path"].as_str().unwrap();
+        assert!(
+            transcript.starts_with("/h/projects/") && transcript.ends_with("/r1.jsonl"),
+            "{transcript}"
+        );
+        assert_eq!(
+            engine.upgrade_version_one(
+                &object(serde_json::json!({"id": "a"})),
+                &object(serde_json::json!({"resume": "r1"}))
+            ),
+            serde_json::json!({"conversation_id": "r1"}),
+            "no cwd, no computed path"
+        );
+        assert_eq!(
+            engine.upgrade_version_one(
+                &object(serde_json::json!({"id": "a", "cwd": "/w"})),
+                &object(serde_json::json!({"kind": "agent"}))
+            ),
+            serde_json::json!({})
+        );
     }
 }

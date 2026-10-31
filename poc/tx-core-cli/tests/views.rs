@@ -5,7 +5,7 @@ mod common;
 
 use std::process::Command;
 
-use common::{Cli, lifecycle_of, pane_id_of};
+use common::{Cli, state_of, pane_id_of};
 
 fn view_option(cli: &Cli, view: &str, option: &str) -> String {
     cli.tmux_out(&["show-options", "-vqt", &format!("={view}:"), option])
@@ -80,7 +80,7 @@ fn view_open_ls_and_close() {
         String::from_utf8_lossy(&output.stderr),
         "txc ui view close: no session named 'qa-shell'\n"
     );
-    assert_eq!(lifecycle_of(&cli, "a"), "running");
+    assert_ne!(state_of(&cli, "a"), "ended");
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn view_close_refuses_an_agent_session() {
         "{stderr:?}"
     );
     assert!(has_session(&cli, "a"));
-    assert_eq!(lifecycle_of(&cli, "a"), "running");
+    assert_ne!(state_of(&cli, "a"), "ended");
     assert!(cli.ok(&["ui", "view", "ls"]).is_empty());
 }
 
@@ -287,7 +287,7 @@ fn prefix_x_closes_a_shell_view_after_confirming() {
         "the shell view is still there: {}",
         outer_screen(&cli)
     );
-    assert_eq!(lifecycle_of(&cli, "a"), "running");
+    assert_ne!(state_of(&cli, "a"), "ended");
     assert!(has_session(&cli, "probe"));
 }
 

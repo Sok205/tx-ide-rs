@@ -31,7 +31,7 @@ fn list_tolerates_malformed_hooks_ext() {
     let cli = Cli::new();
     let id = cli.create("a");
     cli.create("b");
-    let record = cli.state().join("sessions").join(format!("{id}.json"));
+    let record = common::record_path(&cli, &id);
     let mut json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
     json["ext"] = serde_json::json!({"hooks": 5});

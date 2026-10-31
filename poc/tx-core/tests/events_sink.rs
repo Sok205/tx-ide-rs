@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, wait_for};
-use tx_core::{Event, EventSink, EventType, Lifecycle, SendOptions, SessionId, TxCore};
+use tx_core::{Event, EventSink, EventType, LlmEngineState, SendOptions, SessionId, TxCore};
 
 #[derive(Default)]
 struct Recorder(Mutex<Vec<Event>>);
@@ -91,7 +91,7 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
 /// the saved record and must not deadlock on the session lock.
 struct Reentrant {
     core: TxCore,
-    seen: Mutex<Vec<(EventType, Lifecycle)>>,
+    seen: Mutex<Vec<(EventType, LlmEngineState)>>,
 }
 
 impl EventSink for Reentrant {
@@ -103,10 +103,7 @@ impl EventSink for Reentrant {
                 .unwrap();
         }
         if let Some(session) = session {
-            self.seen
-                .lock()
-                .unwrap()
-                .push((event.type_, session.lifecycle));
+            self.seen.lock().unwrap().push((event.type_, session.state));
         }
     }
 }
@@ -128,8 +125,8 @@ fn sinks_run_after_the_record_is_saved_and_locks_are_released() {
     assert_eq!(
         seen,
         [
-            (EventType::Created, Lifecycle::Running),
-            (EventType::Stopped, Lifecycle::Stopped),
+            (EventType::Created, LlmEngineState::Starting),
+            (EventType::Stopped, LlmEngineState::Ended),
         ]
     );
     assert_eq!(core.get_session(&id).unwrap().tags, ["seen"]);
@@ -158,7 +155,7 @@ fn a_panicking_sink_never_fails_the_operation_and_later_sinks_still_run() {
     core.subscribe(Box::new(Panicky));
     core.subscribe(Box::new(Arc::clone(&recorder)));
     let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
-    assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Running);
+    assert_ne!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
     assert_eq!(types(&recorder.0.lock().unwrap()), [EventType::Created]);
     assert_eq!(h.log_lines().len(), 1);
 }

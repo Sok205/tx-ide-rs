@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, typed, wait_for};
-use tx_core::{CoreConfig, Directories, Lifecycle, ListFilter, SendOptions, TxCore};
+use tx_core::{CoreConfig, Directories, ListFilter, SendOptions, TxCore};
 
 #[test]
 fn child_lists_running_sessions() {
@@ -16,7 +16,7 @@ fn child_lists_running_sessions() {
     };
     let core = TxCore::open(CoreConfig::new(Directories::under(home))).unwrap();
     let mut names: Vec<String> = core
-        .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
+        .list_sessions(&ListFilter::new().running())
         .unwrap()
         .iter()
         .map(|id| core.get_session(id).unwrap().name)

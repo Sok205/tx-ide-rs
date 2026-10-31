@@ -54,7 +54,7 @@ match `[A-Za-z0-9_.-]+`. Each directory resolves, first match wins:
 | directory | flag | exported by core | XDG variable | default | holds |
 |---|---|---|---|---|---|
 | config | `--config-dir` | `TX_CONFIG_DIR` | `$XDG_CONFIG_HOME/<app>` | `~/.config/<app>` | `plugins.yaml`, `roles/` (yours) |
-| data | `--data-dir` | `TX_DATA_DIR` | `$XDG_DATA_HOME/<app>` | `~/.local/share/<app>` | `sessions/<id>.json`, `log.jsonl`, `plugins/<id>/`, `roles/` (shipped), `bin/`, `keys/`, `conf/`, `tmux.conf` |
+| data | `--data-dir` | `TX_DATA_DIR` | `$XDG_DATA_HOME/<app>` | `~/.local/share/<app>` | `agents/<id>/agent.json` (and the agent's `archive/`), `log.jsonl`, `plugins/<id>/`, `roles/` (shipped), `bin/`, `keys/`, `conf/`, `tmux.conf` |
 | state | `--state-dir` | `TX_STATE_DIR` | `$XDG_STATE_HOME/<app>` | `~/.local/state/<app>` | `locks/`, `profiles/<id>.md` |
 | cache | `--cache-dir` | `TX_CACHE_DIR` | `$XDG_CACHE_HOME/<app>` | `~/.cache/<app>` | nothing yet |
 | run | `--run-dir` | `TX_RUN_DIR` | `$XDG_RUNTIME_DIR/<app>` | `$TMPDIR/<app>.$USER` (else `/tmp`) | `tmux.sock` (the directory is mode 0700) |
@@ -77,7 +77,27 @@ server has sessions (stop them first), when the old home has a `MOVED-TO` (a sec
 when a destination already holds something, so two homes are never merged. It renames within a
 filesystem and copies then deletes across filesystems, writes `<data>/MIGRATED-FROM` and
 `<old>/MOVED-TO`, keeps the old directory, and finishes with `ui install`, since the moved
-`tmux.conf` names the old paths. Records are moved as they are.
+`tmux.conf` names the old paths.
+
+The same `txc migrate` then upgrades every version-1 record left in `<data>/sessions/<id>.json`
+(moved from the old home, or written by a build before record version 2) to
+`<data>/agents/<id>/agent.json`. Until that runs, every other `txc` verb refuses with
+`N version-1 record(s) in <data>/sessions: run \`txc migrate\``: the mapping needs the engine
+plugins and moves files, so nothing upgrades in memory. Per record: `cwd` → `working_directory`,
+`parent` → `parent_id`, `launch.profile` → `roles`, `launch.engine` → `engine`;
+`lifecycle: exited|stopped` → `state: ended`, a running record keeps its `state` (`starting`
+when it had none); `last_modified_at` absent → the file's mtime; `ended_at` and `ext.hooks` are
+dropped, every other `ext` key kept; the engine builds its `ext.<engine>` from `launch.model` /
+`launch.effort` and the retired chat plugin's `ext.chat` (`LlmEngine::upgrade_version_one`),
+under whatever a later build already recorded there. A process record carrying `ext.chat.launch`
+(a fork from before core fork) becomes that agent; any other process record (nvim views,
+shells), an engine this build does not know, unreadable JSON or a file not named after its
+record's id goes to `<data>/legacy/` and is reported, never aborting the run. The original of
+every upgraded record is kept as `<data>/migration-backup/<id>.v1.json`; the version-1 file is
+deleted only once the new one is written; a record already at version 2 is skipped; a record
+whose engine plugin is disabled is left for a later run (`deferred`). The report lists
+`migrated`, `migrated-no-conversation`, `legacy`, `skipped` and `deferred` lines, or
+`nothing to do`.
 
 ## Architecture
 
@@ -88,7 +108,7 @@ filesystem and copies then deletes across filesystems, writes `<data>/MIGRATED-F
           +---------------------------------+
           |  TxCore  (one struct, open once) |
           |  config   CoreConfig            |
-          |  store    SessionStore   <data>/sessions/<id>.json
+          |  store    SessionStore   <data>/agents/<id>/agent.json
           |  tmux     Tmux           tmux -S <run>/tmux.sock -f <data>/tmux.conf
           |  events   EventLog       <data>/log.jsonl
           |  engines  EngineRegistry EngineKind -> Box<dyn LlmEngine>
@@ -108,12 +128,14 @@ filesystem and copies then deletes across filesystems, writes `<data>/MIGRATED-F
 
 | home | what |
 |---|---|
-| disk (`sessions/<id>.json`) | the record: id, name, parent, tags, cwd, timestamps (`last_modified_at` is stamped on every write), lifecycle, launch, and an agent's `state`. The snapshot every read returns. |
+| disk (`agents/<id>/agent.json`, record version 2) | the record: id, name, engine (`claude` \| `codex`), working_directory, roles, state, timestamps (`last_modified_at` is stamped on every write; `archived_at` when hidden), tags, parent_id, `ext`; keys this build does not know are kept and written back. The snapshot every read returns. |
 | tmux | the link only: session option `@tx-id` = record id |
 | looked up on demand | `#{session_id}` (`$N`) and `#{pane_id}` (`%N`) found by `@tx-id`, so a rename in tmux cannot break them |
 
-`Lifecycle` is `Running`, `Exited` (vanished) or `Stopped` (`stop_session`). The two terminal
-states are final: nothing in core moves a record out of them.
+There is no lifecycle field: an agent is running while `state` is not `ended`, and `ended` is
+final until a respawn; the event log says whether it exited (vanished) or was stopped
+(`stop_session`). `ListFilter::running()` / `ended()` and `txc ls --running` / `--ended` pick a
+side.
 
 ### Agent state: the engine adapter decides, core applies
 

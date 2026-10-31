@@ -9,9 +9,9 @@ use common::{Harness, STUB_ID, agent};
 use serde_json::{Value, json};
 use tx_core::{Session, SessionId};
 
-const RECORD: &str = r#"{"version":1,"id":"0f6b3b8a-1111-4222-8333-444444444444","name":"a","parent":null,
-    "tags":[],"cwd":"/tmp","created_at":1.0,"ended_at":null,"lifecycle":"running",
-    "launch":{"kind":"agent","engine":"claude","profile":[]}"#;
+const RECORD: &str = r#"{"version":2,"id":"0f6b3b8a-1111-4222-8333-444444444444","name":"a","engine":"claude",
+    "working_directory":"/tmp","roles":[],"state":"idle","created_at":1.0,"last_modified_at":1.0,
+    "archived_at":null,"tags":[],"parent_id":null"#;
 
 #[test]
 fn record_without_ext_loads_as_empty() {

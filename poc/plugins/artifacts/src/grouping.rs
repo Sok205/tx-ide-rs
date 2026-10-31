@@ -113,7 +113,7 @@ impl<'a> GroupResolver<'a> {
     }
 
     fn parent(&self, session: &Session) -> Option<&'a Session> {
-        let parent = session.parent.as_ref()?;
+        let parent = session.parent_id.as_ref()?;
         self.sessions_by_id.get(parent.as_str()).copied()
     }
 
@@ -201,9 +201,9 @@ mod tests {
 
     fn session(id: &str, name: &str, extra: Value) -> Session {
         let mut record = json!({
-            "version": 1, "id": id, "name": name, "parent": null, "tags": [], "cwd": "/r",
-            "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": "running",
-            "launch": {"kind": "agent", "engine": "claude", "profile": []},
+            "version": 2, "id": id, "name": name, "engine": "claude", "working_directory": "/r",
+            "roles": [], "state": "idle", "created_at": 1.0, "last_modified_at": 1.0,
+            "archived_at": null, "tags": [], "parent_id": null,
         });
         for (key, value) in extra.as_object().unwrap() {
             record[key] = value.clone();
@@ -233,17 +233,17 @@ mod tests {
     fn fixture_g(a1_parent: Option<&str>, hub_group: Option<&str>) -> Vec<Session> {
         let hub_ext = hub_group.map_or(json!({}), group);
         vec![
-            session("a1", "assist", json!({"parent": a1_parent})),
+            session("a1", "assist", json!({"parent_id": a1_parent})),
             session(
                 "b1",
                 "worker",
-                json!({"tags": ["feat-x", "extra"], "parent": "a1"}),
+                json!({"tags": ["feat-x", "extra"], "parent_id": "a1"}),
             ),
-            session("c1", "child", json!({"parent": "b1"})),
+            session("c1", "child", json!({"parent_id": "b1"})),
             session(
                 "h1",
                 "tx-assistant",
-                json!({"ext": hub_ext, "parent": "x1"}),
+                json!({"ext": hub_ext, "parent_id": "x1"}),
             ),
             session("x1", "up", json!({"ext": group("upgrp")})),
         ]
@@ -275,8 +275,8 @@ mod tests {
     #[test]
     fn parent_cycle_terminates() {
         let sessions = vec![
-            session("p1", "P", json!({"parent": "q1"})),
-            session("q1", "Q", json!({"parent": "p1"})),
+            session("p1", "P", json!({"parent_id": "q1"})),
+            session("q1", "Q", json!({"parent_id": "p1"})),
         ];
         assert_eq!(group_of(&sessions, &[], "p1"), "P");
     }

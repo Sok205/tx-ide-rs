@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, EngineKind, EventType, Input, Key, Launch,
-    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState,
-    Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CreateOptions, Directories, EngineKind, EventType, Input, Key, LaunchOptions,
+    LaunchPlan, LaunchRequest, ListFilter, LlmEngine, LlmEngineState, Profile, ResolvedProfile,
+    SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -49,7 +49,7 @@ fn launch_request_builder() {
     let hooks = ["txi".to_owned(), "hook".to_owned()];
     let request = LaunchRequest::new(&session, &profile).hook_command(&hooks);
     assert_eq!(request.session.id, session.id);
-    assert_eq!(request.session.cwd, dir.path());
+    assert_eq!(request.session.working_directory, dir.path());
     assert_eq!(request.profile.text(), "t");
     assert_eq!(request.hook_command, &hooks);
     let bare = LaunchRequest::new(&session, &profile);
@@ -74,23 +74,17 @@ fn record(cwd: &Path) -> Session {
     Session {
         id: SessionId::mint(),
         name: "s".into(),
-        parent: None,
-        tags: Vec::new(),
-        cwd: cwd.to_owned(),
-        created_at: 0.0,
-        ended_at: None,
-        archived_at: None,
-        last_modified_at: 0.0,
-        lifecycle: Lifecycle::Running,
-        launch: Launch::Agent {
-            engine: EngineKind::Claude,
-            profile: Vec::new(),
-            model: None,
-            effort: None,
-            resume: None,
-        },
+        engine: EngineKind::Claude,
+        working_directory: cwd.to_owned(),
+        roles: Vec::new(),
         state: LlmEngineState::Idle,
+        created_at: 0.0,
+        last_modified_at: 0.0,
+        archived_at: None,
+        tags: Vec::new(),
+        parent_id: None,
         ext: Default::default(),
+        other: Default::default(),
     }
 }
 
@@ -162,13 +156,10 @@ fn config_filter_and_send_builders() {
     );
     assert_eq!(config.skill_dirs, [PathBuf::from("/sk")]);
     let id: SessionId = "x".parse().unwrap();
-    let filter = ListFilter::new()
-        .parent(id.clone())
-        .tag("t")
-        .lifecycle(Lifecycle::Exited);
+    let filter = ListFilter::new().parent(id.clone()).tag("t").ended();
     assert_eq!(filter.parent, Some(id.clone()));
     assert_eq!(filter.tag.as_deref(), Some("t"));
-    assert_eq!(filter.lifecycle, Some(Lifecycle::Exited));
+    assert_eq!(filter.ended, Some(true));
     assert_eq!(ListFilter::new(), ListFilter::default());
     assert_eq!(
         SendOptions::from_agent(id.clone()).sender,

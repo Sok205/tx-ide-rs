@@ -4,7 +4,7 @@ mod common;
 
 use std::process::Command;
 
-use common::{Cli, lifecycle_of};
+use common::{Cli, state_of};
 
 #[test]
 fn kill_unknown_exits_1() {
@@ -26,7 +26,7 @@ fn kill_stops_and_reports() {
     let cli = Cli::new();
     cli.create("a");
     assert_eq!(cli.ok(&["kill", "a"]), "Killed 'a'\n");
-    assert_eq!(lifecycle_of(&cli, "a"), "stopped");
+    assert_eq!(state_of(&cli, "a"), "ended");
 }
 
 #[test]

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use tx_core::events::now;
 use tx_core::{
-    Lifecycle, ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
+    ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
 };
 
 use tx_client::render::{
@@ -182,7 +182,7 @@ impl Listing {
     fn gather(core: &TxCore, ui: &Ui) -> Result<Self, VerbError> {
         core.refresh_all()?;
         views::close_orphans(ui, core).map_err(ui_failed)?;
-        let ids = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
+        let ids = core.list_sessions(&ListFilter::new().running())?;
         let agents = ids
             .iter()
             .map(|id| core.get_session(id).map_err(VerbError::from))

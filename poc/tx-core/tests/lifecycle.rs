@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use common::{Harness, STUB_ID, STUB_KIND, agent, cwd_of, typed, wait_for};
 use tx_core::{
-    CoreError, LaunchOptions, Lifecycle, ListFilter, LlmEngineState, RefreshResult, SendOptions,
-    Sender, SessionId, TmuxError,
+    CoreError, LaunchOptions, ListFilter, LlmEngineState, RefreshResult, SendOptions, Sender,
+    SessionId, TmuxError,
 };
 
 /// `KEY=value` lines of the `env.txt` the stub engine writes in its working directory.
@@ -79,8 +79,8 @@ fn rename_updates_tmux_and_record() {
     );
     assert_eq!(core.rename_session(&id, "taken").unwrap().name, "taken");
     assert_eq!(
-        core.get_session(&other).unwrap().lifecycle,
-        Lifecycle::Stopped
+        core.get_session(&other).unwrap().state,
+        LlmEngineState::Ended
     );
     let types: Vec<String> = h
         .log_lines()
@@ -134,11 +134,10 @@ fn refresh_marks_a_vanished_session_exited_once() {
     let RefreshResult::Exited(session) = result else {
         panic!("{result:?}")
     };
-    assert_eq!(session.lifecycle, Lifecycle::Exited);
-    assert!(session.ended_at.is_some());
+    assert_eq!(session.state, LlmEngineState::Ended);
     let bytes = h.record_bytes(&id);
     assert!(
-        matches!(core.refresh_session(&id).unwrap(), RefreshResult::Unchanged(s) if s.lifecycle == Lifecycle::Exited)
+        matches!(core.refresh_session(&id).unwrap(), RefreshResult::Unchanged(s) if s.state == LlmEngineState::Ended)
     );
     assert_eq!(
         h.record_bytes(&id),
@@ -166,9 +165,9 @@ fn refresh_all_returns_only_changed_records() {
     let changed = core.refresh_all().unwrap();
     assert_eq!(changed.len(), 1);
     assert_eq!(changed[0].id, a);
-    assert_eq!(changed[0].lifecycle, Lifecycle::Exited);
-    assert_eq!(core.get_session(&b).unwrap().lifecycle, Lifecycle::Running);
-    assert_eq!(core.get_session(&c).unwrap().lifecycle, Lifecycle::Stopped);
+    assert_eq!(changed[0].state, LlmEngineState::Ended);
+    assert_ne!(core.get_session(&b).unwrap().state, LlmEngineState::Ended);
+    assert_eq!(core.get_session(&c).unwrap().state, LlmEngineState::Ended);
     assert!(core.refresh_all().unwrap().is_empty());
     h.tmux(&["kill-server"]);
     let changed = core.refresh_all().unwrap();
@@ -187,7 +186,7 @@ fn stop_asks_the_engine_and_keeps_the_record() {
     let core = h.open_with_engine();
     let id = core.create_session(agent("s", &h.repository("a"))).unwrap();
     let other = core.create_session(agent("o", &h.repository("b"))).unwrap();
-    let cwd = core.get_session(&id).unwrap().cwd;
+    let cwd = core.get_session(&id).unwrap().working_directory;
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
@@ -198,8 +197,7 @@ fn stop_asks_the_engine_and_keeps_the_record() {
         "the stub left on the engine's stop input, no grace period: {:?}",
         started.elapsed()
     );
-    assert_eq!(session.lifecycle, Lifecycle::Stopped);
-    assert!(session.ended_at.is_some());
+    assert_eq!(session.state, LlmEngineState::Ended);
     assert_eq!(h.live_names(), ["o"]);
     let stopped = h
         .log_lines()
@@ -207,7 +205,7 @@ fn stop_asks_the_engine_and_keeps_the_record() {
         .find(|line| line["type"] == "stopped")
         .unwrap();
     assert_eq!(stopped["msg"], "", "left by itself, not killed");
-    assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Stopped);
+    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
     assert!(matches!(
         core.stop_session(&id).unwrap_err(),
         CoreError::NotRunning(_)
@@ -220,8 +218,8 @@ fn stop_asks_the_engine_and_keeps_the_record() {
     // A session that vanished before stop is reported as what happened.
     h.tmux_ok(&["kill-session", "-t", "=o"]);
     assert_eq!(
-        core.stop_session(&other).unwrap().lifecycle,
-        Lifecycle::Exited
+        core.stop_session(&other).unwrap().state,
+        LlmEngineState::Ended
     );
     let types: Vec<String> = h
         .log_lines()
@@ -251,7 +249,7 @@ fn stop_waits_for_an_agent_that_survives_the_pane_and_then_kills_it() {
     let started = std::time::Instant::now();
     let session = core.stop_session(&id).unwrap();
     let waited = started.elapsed();
-    assert_eq!(session.lifecycle, Lifecycle::Stopped);
+    assert_eq!(session.state, LlmEngineState::Ended);
     assert!(
         !process_exists(pid),
         "the process is gone once stop returns"
@@ -275,7 +273,7 @@ fn interrupt_types_the_engines_input_into_a_running_agent() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core.create_session(agent("i", &h.repository("a"))).unwrap();
-    let cwd = core.get_session(&id).unwrap().cwd;
+    let cwd = core.get_session(&id).unwrap().working_directory;
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
@@ -336,28 +334,30 @@ fn respawn_brings_an_ended_agent_back_in_place() {
     ));
 
     let stopped = core.stop_session(&id).unwrap();
-    assert_eq!(stopped.lifecycle, Lifecycle::Stopped);
+    assert_eq!(stopped.state, LlmEngineState::Ended);
     let session = core.respawn_session(&id).unwrap();
     assert_eq!(session.id, id, "the same record");
     assert_eq!(session.name, "r");
-    assert_eq!(session.cwd, before.cwd, "the same worktree");
+    assert_eq!(
+        session.working_directory, before.working_directory,
+        "the same worktree"
+    );
     assert_eq!(session.created_at, before.created_at);
-    assert_eq!(session.lifecycle, Lifecycle::Running);
+    assert_ne!(session.state, LlmEngineState::Ended);
     assert_eq!(session.state, LlmEngineState::Starting);
-    assert_eq!(session.ended_at, None);
     assert_eq!(session.ext.get(STUB_ID), before.ext.get(STUB_ID));
     assert_eq!(core.get_session(&id).unwrap(), session);
     assert_eq!(h.live_names(), ["r"]);
     assert!(wait_for(Duration::from_secs(5), || {
-        stub_env(&session.cwd, "STUB_MODE").as_deref() == Some("resume")
+        stub_env(&session.working_directory, "STUB_MODE").as_deref() == Some("resume")
     }));
     assert_eq!(
-        stub_env(&session.cwd, "STUB_RESUME").as_deref(),
+        stub_env(&session.working_directory, "STUB_RESUME").as_deref(),
         Some(id.as_str()),
         "the engine continues the conversation named in its data"
     );
     assert_eq!(
-        stub_env(&session.cwd, "STUB_SESSION_ID").as_deref(),
+        stub_env(&session.working_directory, "STUB_SESSION_ID").as_deref(),
         Some(id.as_str())
     );
     assert!(
@@ -380,9 +380,9 @@ fn respawn_brings_an_ended_agent_back_in_place() {
         core.refresh_session(&id).unwrap(),
         RefreshResult::Exited(_)
     ));
-    assert_eq!(
-        core.respawn_session(&id).unwrap().lifecycle,
-        Lifecycle::Running
+    assert_ne!(
+        core.respawn_session(&id).unwrap().state,
+        LlmEngineState::Ended
     );
     core.stop_session(&id).unwrap();
 
@@ -404,7 +404,7 @@ fn respawn_brings_an_ended_agent_back_in_place() {
     );
     let respawned = &h.log_lines()[2];
     assert_eq!(respawned["id"], id.as_str());
-    assert_eq!(respawned["msg"], "after stopped");
+    assert_eq!(respawned["msg"], "");
 }
 
 #[test]
@@ -465,8 +465,7 @@ fn respawn_refusals_change_nothing() {
         CoreError::WorktreeMissing(ref path) if *path == worktree
     ));
     let still = core.get_session(&a).unwrap();
-    assert_eq!(still.lifecycle, Lifecycle::Stopped);
-    assert!(still.ended_at.is_some());
+    assert_eq!(still.state, LlmEngineState::Ended);
     assert_eq!(h.live_names(), ["b"]);
     let types: Vec<String> = h
         .log_lines()
@@ -497,10 +496,14 @@ fn archive_stops_hides_and_keeps_everything_until_a_respawn() {
     let profile = h.state_dir().join(format!("profiles/{id}.md"));
     // Running: stopped first, then archived.
     let archived = core.archive_session(&id).unwrap();
-    assert_eq!(archived.lifecycle, Lifecycle::Stopped);
+    assert_eq!(archived.state, LlmEngineState::Ended);
     assert!(archived.archived_at.is_some());
     assert_eq!(core.get_session(&id).unwrap(), archived);
-    assert!(h.data_dir().join(format!("sessions/{id}.json")).exists());
+    assert!(
+        h.data_dir()
+            .join(format!("agents/{id}/agent.json"))
+            .exists()
+    );
     assert!(profile.exists());
     assert!(worktree.is_dir());
     assert!(h.live_names().is_empty());
@@ -524,9 +527,9 @@ fn archive_stops_hides_and_keeps_everything_until_a_respawn() {
     core.archive_session(&other).unwrap();
     // A respawn brings the first back in place and unarchives it.
     let respawned = core.respawn_session(&id).unwrap();
-    assert_eq!(respawned.lifecycle, Lifecycle::Running);
+    assert_ne!(respawned.state, LlmEngineState::Ended);
     assert_eq!(respawned.archived_at, None);
-    assert_eq!(respawned.cwd, worktree);
+    assert_eq!(respawned.working_directory, worktree);
     assert_eq!(
         core.list_sessions(&ListFilter::new()).unwrap(),
         std::slice::from_ref(&id)
@@ -636,9 +639,9 @@ fn messages_arrive_whole_with_the_right_envelope() {
             .unwrap_err(),
         CoreError::NotRunning(_)
     ));
-    assert_eq!(
-        core.get_session(&a).unwrap().lifecycle,
-        Lifecycle::Running,
+    assert_ne!(
+        core.get_session(&a).unwrap().state,
+        LlmEngineState::Ended,
         "send never reconciles"
     );
 }
@@ -667,10 +670,7 @@ fn a_session_renamed_behind_cores_back_is_still_reachable() {
     ));
     assert_eq!(core.rename_session(&id, "fixed").unwrap().name, "fixed");
     assert_eq!(h.live_names(), ["fixed"]);
-    assert_eq!(
-        core.stop_session(&id).unwrap().lifecycle,
-        Lifecycle::Stopped
-    );
+    assert_eq!(core.stop_session(&id).unwrap().state, LlmEngineState::Ended);
     assert!(h.live_names().is_empty());
 }
 
@@ -697,7 +697,7 @@ fn inspection_failure_writes_nothing() {
     ));
     assert!(is_inspection(core.rename_session(&id, "y").unwrap_err()));
     assert_eq!(h.record_bytes(&id), before);
-    assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Running);
+    assert_ne!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
     assert_eq!(h.log_lines().len(), 1);
     std::fs::remove_dir(h.socket()).unwrap();
 }
@@ -715,5 +715,5 @@ fn location_of_a_terminal_record_is_not_running_even_if_tmux_has_its_id() {
         core.get_execution_location(&id).unwrap_err(),
         CoreError::NotRunning(_)
     ));
-    assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Stopped);
+    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
 }

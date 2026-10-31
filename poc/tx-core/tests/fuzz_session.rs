@@ -16,17 +16,13 @@ use serde_json::{Map, Value, json};
 use tx_core::config::{MAX_SOCKET_PATH_BYTES, SOCKET_FILE};
 use tx_core::session::{MAX_NAME_BYTES, RECORD_VERSION};
 use tx_core::{
-    CoreConfig, CoreError, Directories, EngineKind, Launch, Lifecycle, LlmEngineState, RecordError,
-    Session, SessionId, validate_name,
+    CoreConfig, CoreError, Directories, EngineKind, LlmEngineState, RecordError, Session,
+    SessionId, validate_name,
 };
 
 // ---------------------------------------------------------------------------------------------
 // Strategies
 // ---------------------------------------------------------------------------------------------
-
-fn arb_lifecycle() -> impl Strategy<Value = Lifecycle> {
-    prop::sample::select(Lifecycle::ALL.to_vec())
-}
 
 /// Any string, including control characters, NUL and astral-plane unicode.
 fn arb_text() -> impl Strategy<Value = String> {
@@ -45,20 +41,8 @@ fn arb_session_id() -> impl Strategy<Value = SessionId> {
     ]
 }
 
-fn arb_launch() -> impl Strategy<Value = Launch> {
-    (
-        0..EngineKind::ALL.len(),
-        prop::collection::vec(arb_text(), 0..4),
-        prop::option::of(arb_text()),
-        prop::option::of(arb_text()),
-    )
-        .prop_map(|(engine, profile, model, effort)| Launch::Agent {
-            engine: EngineKind::ALL[engine],
-            profile,
-            model,
-            effort,
-            resume: None,
-        })
+fn arb_engine() -> impl Strategy<Value = EngineKind> {
+    prop::sample::select(EngineKind::ALL.to_vec())
 }
 
 fn arb_state() -> impl Strategy<Value = LlmEngineState> {
@@ -86,38 +70,48 @@ fn arb_non_finite_f64() -> impl Strategy<Value = f64> {
 
 fn arb_session_with(
     created_at: impl Strategy<Value = f64>,
-    ended_at: impl Strategy<Value = Option<f64>>,
+    archived_at: impl Strategy<Value = Option<f64>>,
 ) -> impl Strategy<Value = Session> {
     (
         arb_session_id(),
         arb_text(),
-        prop::option::of(arb_session_id()),
-        prop::collection::vec(arb_text(), 0..4),
+        arb_engine(),
         arb_text().prop_map(PathBuf::from),
-        created_at,
-        ended_at,
-        arb_lifecycle(),
-        arb_launch(),
-        prop::collection::btree_map(arb_text(), arb_json(), 0..3),
+        prop::collection::vec(arb_text(), 0..4),
         arb_state(),
+        created_at,
+        archived_at,
+        prop::collection::vec(arb_text(), 0..4),
+        prop::option::of(arb_session_id()),
+        prop::collection::btree_map(arb_text(), arb_json(), 0..3),
     )
         .prop_map(
-            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch, ext, state)| {
-                Session {
-                    id,
-                    name,
-                    parent,
-                    tags,
-                    cwd,
-                    created_at,
-                    ended_at,
-                    archived_at: None,
-                    last_modified_at: created_at,
-                    lifecycle,
-                    launch,
-                    ext,
-                    state,
-                }
+            |(
+                id,
+                name,
+                engine,
+                working_directory,
+                roles,
+                state,
+                created_at,
+                archived_at,
+                tags,
+                parent_id,
+                ext,
+            )| Session {
+                id,
+                name,
+                engine,
+                working_directory,
+                roles,
+                state,
+                created_at,
+                last_modified_at: created_at,
+                archived_at,
+                tags,
+                parent_id,
+                ext,
+                other: Map::new(),
             },
         )
 }
@@ -152,22 +146,20 @@ fn session_value(session: &Session) -> Map<String, Value> {
     }
 }
 
-const TOP_KEYS: [&str; 12] = [
+const TOP_KEYS: [&str; 13] = [
     "version",
     "id",
     "name",
-    "parent",
-    "tags",
-    "cwd",
-    "created_at",
-    "ended_at",
-    "lifecycle",
-    "launch",
-    "ext",
+    "engine",
+    "working_directory",
+    "roles",
     "state",
-];
-const LAUNCH_KEYS: [&str; 7] = [
-    "kind", "engine", "profile", "model", "effort", "program", "args",
+    "created_at",
+    "last_modified_at",
+    "archived_at",
+    "tags",
+    "parent_id",
+    "ext",
 ];
 
 fn arb_extra_keys(
@@ -199,12 +191,12 @@ proptest! {
     fn session_round_trips_through_json(session in arb_session()) {
         let text = session.to_json().unwrap();
         prop_assert!(text.ends_with("}\n"), "{text:?}");
-        prop_assert!(text.starts_with("{\n  \"version\": 1,"), "{text:?}");
+        prop_assert!(text.starts_with("{\n  \"version\": 2,"), "{text:?}");
         let back = Session::from_json(&text).unwrap();
         prop_assert_eq!(&back, &session);
         // PartialEq treats -0.0 == 0.0; make sure the sign bit survives too.
         prop_assert_eq!(back.created_at.to_bits(), session.created_at.to_bits());
-        prop_assert_eq!(back.ended_at.map(f64::to_bits), session.ended_at.map(f64::to_bits));
+        prop_assert_eq!(back.archived_at.map(f64::to_bits), session.archived_at.map(f64::to_bits));
     }
 
     #[test]
@@ -212,14 +204,11 @@ proptest! {
         let value = session_value(&session);
         prop_assert_eq!(value.keys().next().map(String::as_str), Some("version"));
         prop_assert_eq!(value.get("version"), Some(&json!(RECORD_VERSION)));
-        prop_assert_eq!(value.get("lifecycle"), Some(&json!(session.lifecycle.as_str())));
-        prop_assert_eq!(value["launch"].get("kind"), Some(&json!("agent")));
-        // The deprecated `model` / `effort` of an agent launch are written only when set.
-        let Launch::Agent { model, effort, .. } = &session.launch;
-        let expected_effort = effort.as_ref().map(|e| json!(e));
-        prop_assert_eq!(value["launch"].get("effort"), expected_effort.as_ref());
-        let expected_model = model.as_ref().map(|m| json!(m));
-        prop_assert_eq!(value["launch"].get("model"), expected_model.as_ref());
+        prop_assert_eq!(value.get("state"), Some(&json!(session.state.as_str())));
+        prop_assert_eq!(value.get("engine"), Some(&json!(session.engine.as_str())));
+        for gone in ["lifecycle", "launch", "ended_at", "cwd", "parent"] {
+            prop_assert!(value.get(gone).is_none(), "{gone}");
+        }
         prop_assert_eq!(session.to_json().unwrap(), session.to_json().unwrap());
     }
 
@@ -241,24 +230,24 @@ proptest! {
         prop_assert!(refused);
     }
 
-    /// `Some(NaN)` ended_at silently becomes `None` after a round trip.
+    /// `Some(NaN)` archived_at would silently become `None` after a round trip.
     #[test]
-    fn non_finite_ended_at_is_refused(session in arb_session_with(Just(1.0), arb_non_finite_f64().prop_map(Some))) {
-        let refused = matches!(session.to_json(), Err(RecordError::NonFiniteTime("ended_at")));
+    fn non_finite_archived_at_is_refused(session in arb_session_with(Just(1.0), arb_non_finite_f64().prop_map(Some))) {
+        let refused = matches!(session.to_json(), Err(RecordError::NonFiniteTime("archived_at")));
         prop_assert!(refused);
     }
 }
 
 /// serde's `PathBuf` serializer errors on non-UTF-8 paths, and `to_json` unwraps that with
-/// `expect("a session is always serializable")`. On unix, `cwd` can hold arbitrary bytes.
+/// `expect("a session is always serializable")`. On unix, a path can hold arbitrary bytes.
 #[cfg(unix)]
 #[test]
-fn to_json_does_not_panic_on_non_utf8_cwd() {
+fn to_json_does_not_panic_on_non_utf8_working_directory() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
 
     let mut session = Session::from_json(&sample().to_json().unwrap()).unwrap();
-    session.cwd = PathBuf::from(OsStr::from_bytes(b"/tmp/\xff\xfe"));
+    session.working_directory = PathBuf::from(OsStr::from_bytes(b"/tmp/\xff\xfe"));
     let result = std::panic::catch_unwind(|| session.to_json());
     assert!(
         matches!(result, Ok(Err(RecordError::Json(_)))),
@@ -270,23 +259,17 @@ fn sample() -> Session {
     Session {
         id: sid("x"),
         name: "shell".into(),
-        parent: None,
-        tags: vec![],
-        cwd: PathBuf::from("/"),
-        created_at: 1.0,
-        ended_at: Some(2.0),
-        archived_at: None,
-        last_modified_at: 1.0,
-        lifecycle: Lifecycle::Stopped,
-        launch: Launch::Agent {
-            engine: EngineKind::Claude,
-            profile: vec![],
-            model: None,
-            effort: None,
-            resume: None,
-        },
-        ext: std::collections::BTreeMap::new(),
+        engine: EngineKind::Claude,
+        working_directory: PathBuf::from("/"),
+        roles: vec![],
         state: LlmEngineState::Ended,
+        created_at: 1.0,
+        last_modified_at: 1.0,
+        archived_at: Some(2.0),
+        tags: vec![],
+        parent_id: None,
+        ext: std::collections::BTreeMap::new(),
+        other: Map::new(),
     }
 }
 
@@ -372,7 +355,7 @@ proptest! {
     /// `from_json` does not enforce that.
     #[test]
     fn from_json_rejects_ids_from_str_rejects(text in arb_text().prop_filter("valid", |t| SessionId::from_str(t).is_err())) {
-        for key in ["id", "parent"] {
+        for key in ["id", "parent_id"] {
             let mut value = session_value(&sample());
             value.insert(key.into(), Value::String(text.clone()));
             let rejected = matches!(Session::from_json(&Value::Object(value).to_string()), Err(RecordError::Json(_)));
@@ -406,40 +389,38 @@ fn minted_ids_are_hyphenated_lowercase_uuid_v4() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 4. Lifecycle
+// 4. LlmEngineState names
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn lifecycle_as_str_from_str_bijection_and_serde_names() {
+fn state_as_str_and_serde_names_agree() {
     let mut seen = std::collections::HashSet::new();
-    for lifecycle in Lifecycle::ALL {
-        let name = lifecycle.as_str();
+    for state in LlmEngineState::ALL {
+        let name = state.as_str();
         assert!(seen.insert(name), "duplicate name {name}");
-        assert_eq!(Lifecycle::from_str(name).unwrap(), lifecycle);
-        assert_eq!(serde_json::to_value(lifecycle).unwrap(), json!(name));
+        assert_eq!(serde_json::to_value(state).unwrap(), json!(name));
         assert_eq!(
-            serde_json::from_value::<Lifecycle>(json!(name)).unwrap(),
-            lifecycle
+            serde_json::from_value::<LlmEngineState>(json!(name)).unwrap(),
+            state
         );
     }
-    assert_eq!(seen.len(), Lifecycle::ALL.len());
+    assert_eq!(seen.len(), LlmEngineState::ALL.len());
 }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
     #[test]
-    fn lifecycle_from_str_rejects_everything_else(text in arb_text()) {
-        let known = Lifecycle::ALL.iter().any(|l| l.as_str() == text);
-        prop_assert_eq!(Lifecycle::from_str(&text).is_ok(), known, "{:?}", text);
-        prop_assert_eq!(serde_json::from_value::<Lifecycle>(Value::String(text.clone())).is_ok(), known, "{:?}", text);
+    fn state_names_reject_everything_else(text in arb_text()) {
+        let known = LlmEngineState::ALL.iter().any(|state| state.as_str() == text);
+        prop_assert_eq!(serde_json::from_value::<LlmEngineState>(Value::String(text.clone())).is_ok(), known, "{:?}", text);
     }
 
-    /// Case variants ("Running") are not accepted anywhere.
+    /// Case variants ("Idle") are not accepted anywhere.
     #[test]
-    fn enum_names_are_case_sensitive(lifecycle in arb_lifecycle()) {
-        let upper = lifecycle.as_str().to_ascii_uppercase();
-        prop_assert!(Lifecycle::from_str(&upper).is_err());
+    fn state_names_are_case_sensitive(state in arb_state()) {
+        let upper = state.as_str().to_ascii_uppercase();
+        prop_assert!(serde_json::from_value::<LlmEngineState>(Value::String(upper)).is_err());
     }
 }
 
@@ -543,6 +524,7 @@ proptest! {
         let result = Session::from_json(&Value::Object(value).to_string());
         match version.as_u64() {
             Some(RECORD_VERSION) => prop_assert!(result.is_ok(), "{result:?}"),
+            Some(1) => prop_assert!(matches!(result, Err(RecordError::NeedsMigration(1))), "{result:?}"),
             Some(other) => prop_assert!(matches!(result, Err(RecordError::UnsupportedVersion(v)) if v == other), "{result:?}"),
             None => {
                 let expected = version.to_string();
@@ -564,16 +546,6 @@ proptest! {
         let _ = Session::from_json(&Value::Object(value).to_string());
     }
 
-    #[test]
-    fn from_json_with_one_launch_field_replaced_never_panics(
-        session in arb_session(),
-        key in prop::sample::select(LAUNCH_KEYS.to_vec()),
-        replacement in arb_json(),
-    ) {
-        let mut value = session_value(&session);
-        value["launch"][key] = replacement;
-        let _ = Session::from_json(&Value::Object(value).to_string());
-    }
 }
 
 #[test]
@@ -598,11 +570,9 @@ fn from_json_requires_all_mandatory_fields() {
                 "{key}: {result:?}"
             ),
             // A missing Option field reads as None, same as an explicit null.
-            "parent" => assert_eq!(result.unwrap().parent, None),
-            "ended_at" => assert_eq!(result.unwrap().ended_at, None),
+            "parent_id" => assert_eq!(result.unwrap().parent_id, None),
+            "archived_at" => assert_eq!(result.unwrap().archived_at, None),
             "ext" => assert!(result.unwrap().ext.is_empty()),
-            // Written before `state` existed: an ended record reads as ended.
-            "state" => assert_eq!(result.unwrap().state, LlmEngineState::Ended),
             _ => assert!(
                 matches!(result, Err(RecordError::Json(_))),
                 "{key}: {result:?}"
@@ -612,41 +582,30 @@ fn from_json_requires_all_mandatory_fields() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 7. Forward compatibility
+// 7. Forward compatibility: unknown keys survive in `other`, and are written back
 // ---------------------------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
     #[test]
-    fn extra_keys_are_ignored(
+    fn extra_keys_are_kept_in_other_and_rewritten(
         session in arb_session(),
         top_extra in arb_extra_keys(&TOP_KEYS),
-        launch_extra in arb_extra_keys(&LAUNCH_KEYS),
     ) {
         let mut value = session_value(&session);
-        for (k, v) in top_extra {
-            value.insert(k, v);
-        }
-        let Some(Value::Object(launch)) = value.get_mut("launch") else {
-            panic!("launch is not an object");
-        };
-        for (k, v) in launch_extra {
-            launch.insert(k, v);
+        for (k, v) in &top_extra {
+            value.insert(k.clone(), v.clone());
         }
         let text = Value::Object(value).to_string();
         let back = Session::from_json(&text).unwrap();
-        prop_assert_eq!(back, session);
-    }
-
-    /// Keys of the old process launch are extra keys too and must not confuse the tag.
-    #[test]
-    fn other_variant_keys_inside_launch_are_ignored(session in arb_session(), filler in arb_json()) {
-        let mut value = session_value(&session);
-        for key in ["program", "args"] {
-            value["launch"][key] = filler.clone();
+        let mut expected = session.clone();
+        expected.other = top_extra.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        prop_assert_eq!(&back, &expected);
+        let rewritten = session_value(&back);
+        for (k, v) in &top_extra {
+            prop_assert_eq!(rewritten.get(k), Some(v), "{:?} lost on rewrite", k);
         }
-        let back = Session::from_json(&Value::Object(value).to_string()).unwrap();
-        prop_assert_eq!(back, session);
+        prop_assert_eq!(Session::from_json(&back.to_json().unwrap()).unwrap(), back);
     }
 }

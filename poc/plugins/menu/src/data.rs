@@ -5,7 +5,7 @@
 
 use tx_client::tmux::Ui;
 use tx_client::views;
-use tx_core::{CoreError, Lifecycle, ListFilter, PluginStatus, Session, TxCore, VerbError};
+use tx_core::{CoreError, ListFilter, PluginStatus, Session, TxCore, VerbError};
 
 use crate::model::{Context, KeyHint, Past};
 
@@ -55,11 +55,9 @@ pub fn key_hint(plugin: &str, text: &str) -> Option<KeyHint> {
     })
 }
 
-fn ended_or_created(session: &Session) -> f64 {
-    session
-        .ended_at
-        .filter(|ended| *ended != 0.0)
-        .unwrap_or(session.created_at)
+/// When an ended record was last written: its end, or a later rename or tag.
+fn ended_at(session: &Session) -> f64 {
+    session.last_modified_at
 }
 
 /// 1 when the record's engine knows its conversation, else 0 (the engine's plugin disabled
@@ -68,28 +66,26 @@ fn chat_count(core: &TxCore, session: &Session) -> usize {
     usize::from(matches!(core.conversation(&session.id), Ok(Some(_))))
 }
 
-/// Exited and stopped sessions, newest end first.
+/// Ended sessions, newest end first.
 pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
     let mut sessions = Vec::new();
-    for lifecycle in [Lifecycle::Exited, Lifecycle::Stopped] {
-        for id in core.list_sessions(&ListFilter::new().lifecycle(lifecycle))? {
-            match core.get_session(&id) {
-                Ok(session) => sessions.push(session),
-                Err(CoreError::NotFound(_)) => {}
-                Err(error) => return Err(error),
-            }
+    for id in core.list_sessions(&ListFilter::new().ended())? {
+        match core.get_session(&id) {
+            Ok(session) => sessions.push(session),
+            Err(CoreError::NotFound(_)) => {}
+            Err(error) => return Err(error),
         }
     }
-    sessions.sort_by(|a, b| ended_or_created(b).total_cmp(&ended_or_created(a)));
+    sessions.sort_by(|a, b| ended_at(b).total_cmp(&ended_at(a)));
     Ok(sessions
         .iter()
         .map(|session| Past {
             id: session.id.to_string(),
             name: session.name.clone(),
             tag: session.tags.first().cloned().unwrap_or_default(),
-            at: ended_or_created(session),
+            at: ended_at(session),
             chats: chat_count(core, session),
-            cwd: session.cwd.display().to_string(),
+            cwd: session.working_directory.display().to_string(),
         })
         .collect())
 }
@@ -125,9 +121,7 @@ pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, VerbError>
         pane_session: session_in_pane(core, ui, pane).is_some(),
         history: past_sessions(core)?,
         keys,
-        agents: core
-            .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?
-            .len(),
+        agents: core.list_sessions(&ListFilter::new().running())?.len(),
         views: views::list(ui)
             .map_err(|error| VerbError::Failed(error.to_string()))?
             .len(),

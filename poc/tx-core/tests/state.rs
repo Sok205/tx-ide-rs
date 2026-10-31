@@ -188,5 +188,4 @@ fn every_write_stamps_last_modified_at() {
     pause();
     let stopped = core.stop_session(&id).unwrap();
     assert!(stopped.last_modified_at > changed.last_modified_at, "stop");
-    assert!(stopped.last_modified_at >= stopped.ended_at.unwrap());
 }

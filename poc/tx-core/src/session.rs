@@ -1,4 +1,4 @@
-//! The session record: what core stores on disk for every managed session.
+//! The session record: what core stores on disk for every managed agent.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -6,13 +6,15 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::engine::EngineKind;
 use crate::error::CoreError;
 use crate::state::LlmEngineState;
 
-/// The record schema this build reads and writes.
-pub const RECORD_VERSION: u64 = 1;
+/// The record schema this build reads and writes. Version 1 (one `sessions/<id>.json` per
+/// record, with `lifecycle` and `launch`) is upgraded by `txc migrate`, never read in place.
+pub const RECORD_VERSION: u64 = 2;
 /// Session names are tmux session names and file-name fragments; keep them short.
 pub const MAX_NAME_BYTES: usize = 128;
 /// Ids are uuids (36 bytes); the slack lets other minting schemes in without a format change.
@@ -20,7 +22,7 @@ pub const MAX_ID_BYTES: usize = 64;
 
 /// A record id: a uuid v4 minted by `create_session`. Every way to build one validates the
 /// grammar `[A-Za-z0-9_-]{1,64}` (parsing, deserializing), so an id is always a safe file-name
-/// fragment and tmux option value: `<id>.json`, `<id>.lock`, `@tx-id`.
+/// fragment and tmux option value: `agents/<id>/`, `<id>.lock`, `@tx-id`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct SessionId(String);
@@ -80,98 +82,41 @@ fn is_safe_fragment(text: &str, max: usize) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Lifecycle {
-    Running,
-    /// The tmux session vanished (process exit, server crash, a kill behind core's back).
-    Exited,
-    /// `stop_session` killed it.
-    Stopped,
-}
-
-impl Lifecycle {
-    pub const ALL: [Lifecycle; 3] = [Lifecycle::Running, Lifecycle::Exited, Lifecycle::Stopped];
-
-    /// Nothing in core moves a record out of a terminal state.
-    pub fn is_terminal(self) -> bool {
-        !matches!(self, Lifecycle::Running)
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Lifecycle::Running => "running",
-            Lifecycle::Exited => "exited",
-            Lifecycle::Stopped => "stopped",
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("unknown lifecycle {0:?} (expected running, exited or stopped)")]
-pub struct InvalidLifecycle(pub String);
-
-impl FromStr for Lifecycle {
-    type Err = InvalidLifecycle;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|lifecycle| lifecycle.as_str() == text)
-            .ok_or_else(|| InvalidLifecycle(text.to_owned()))
-    }
-}
-
-/// How the agent was started. The engine is one of the closed [`EngineKind`]s; a record naming
-/// any other string fails to load. One variant: core holds agents only (the `process` kind went with PR 11; Storage PR 14
-/// removes the enum).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum Launch {
-    Agent {
-        engine: EngineKind,
-        profile: Vec<String>,
-        /// Written by builds before PR 12a; the model is engine data (`ext.<engine>.model`)
-        /// now. Kept only so an old record round-trips until Storage PR 14 migrates it. Never
-        /// read; new records write nothing here.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        model: Option<String>,
-        /// As `model`: the effort of a record written before PR 12a (`ext.<engine>.effort` now).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        effort: Option<String>,
-        #[serde(default)]
-        resume: Option<String>,
-    },
-}
-
-/// The snapshot every read returns. Disk is the record; tmux holds only the `@tx-id` link.
+/// The snapshot every read returns: `<data>/agents/<id>/agent.json`, written atomically under
+/// the agent's lock. Disk is the record; tmux holds only the `@tx-id` link.
+///
+/// An agent is running while `state` is not `Ended`; `Ended` is the terminal state (the
+/// process exited or was stopped; the event log says which). There is no separate lifecycle.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     pub id: SessionId,
     pub name: String,
-    /// Ancestry only; core never schedules or stops children.
-    pub parent: Option<SessionId>,
-    pub tags: Vec<String>,
-    pub cwd: PathBuf,
-    pub created_at: f64,
-    pub ended_at: Option<f64>,
-    /// When the agent was archived: hidden from listings and its name freed, with nothing
-    /// deleted. `None` for an unarchived record and for records written before this field
-    /// existed; a respawn clears it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub archived_at: Option<f64>,
-    /// When the record was last written; core stamps it on every save. A record written before
-    /// this field existed loads with `created_at`.
-    pub last_modified_at: f64,
-    pub lifecycle: Lifecycle,
-    pub launch: Launch,
-    /// The agent's state as its engine adapter reported it. Core-owned. A record written
-    /// before this field existed loads as `idle` while running and `ended` once ended.
+    /// The engine that runs it, one of the closed [`EngineKind`]s.
+    pub engine: EngineKind,
+    /// The agent's worktree.
+    pub working_directory: PathBuf,
+    /// The role names its profile was built from.
+    pub roles: Vec<String>,
+    /// The agent's state as its engine adapter reported it. Core-owned.
     pub state: LlmEngineState,
-    /// Plugin-owned data keyed by plugin id; written through `TxCore::update_ext`. Core never
-    /// reads it.
+    pub created_at: f64,
+    /// When the record was last written; core stamps it on every save.
+    pub last_modified_at: f64,
+    /// When the agent was archived: hidden from listings and its name freed, with nothing
+    /// deleted. `None` for an unarchived record; a respawn clears it.
+    #[serde(default)]
+    pub archived_at: Option<f64>,
+    pub tags: Vec<String>,
+    /// Ancestry only; core never schedules or stops children.
+    #[serde(default)]
+    pub parent_id: Option<SessionId>,
+    /// Plugin- and engine-owned data keyed by plugin id or `ext_key`; written through
+    /// `TxCore::update_ext` and the engine hooks. Core never reads it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub ext: BTreeMap<String, serde_json::Value>,
+    pub ext: BTreeMap<String, Value>,
+    /// Keys this build does not know; kept so a newer build's fields survive a rewrite.
+    #[serde(flatten)]
+    pub other: Map<String, Value>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -180,19 +125,18 @@ pub enum RecordError {
     Json(#[from] serde_json::Error),
     #[error("record version {0} is not supported (this build reads version {RECORD_VERSION})")]
     UnsupportedVersion(u64),
+    /// An older record this build knows how to upgrade, but only through `txc migrate`: the
+    /// mapping needs the engine plugins and moves files.
+    #[error("record version {0}: run `txc migrate`")]
+    NeedsMigration(u64),
     #[error("record version {0} is not an unsigned integer")]
     InvalidVersion(String),
     #[error("record has no version field")]
     MissingVersion,
     #[error("{0} is not a finite number")]
     NonFiniteTime(&'static str),
-    /// A `"kind": "process"` record, written before PR 11. The store skips it until Storage
-    /// PR 14 migrates it.
-    #[error("a process record, written before core held agents only")]
-    ProcessRecord,
     /// The record names an engine that is not an [`EngineKind`]: written by hand or by a build
-    /// with another engine set. The store skips it, as it does a process record, until Storage
-    /// PR 14 migrates it.
+    /// with another engine set. The store skips it and names it.
     #[error("names engine {0:?}, which this build does not know (known: {known})", known = EngineKind::names())]
     UnknownEngine(String),
 }
@@ -204,29 +148,19 @@ struct RecordOut<'a> {
     session: &'a Session,
 }
 
-#[derive(Deserialize)]
-struct RecordIn {
-    version: Option<u64>,
-    #[serde(flatten)]
-    session: Session,
-}
-
 impl Session {
     /// Pretty JSON, newline-terminated, `version` first. Fails for what JSON cannot carry: a
-    /// non-UTF-8 `cwd` or a non-finite timestamp (serde_json would write `null`, which
-    /// `from_json` then refuses — better to refuse before the record exists).
+    /// non-UTF-8 `working_directory` or a non-finite timestamp (serde_json would write `null`,
+    /// which `from_json` then refuses — better to refuse before the record exists).
     pub fn to_json(&self) -> Result<String, RecordError> {
         if !self.created_at.is_finite() {
             return Err(RecordError::NonFiniteTime("created_at"));
         }
-        if self.ended_at.is_some_and(|at| !at.is_finite()) {
-            return Err(RecordError::NonFiniteTime("ended_at"));
+        if !self.last_modified_at.is_finite() {
+            return Err(RecordError::NonFiniteTime("last_modified_at"));
         }
         if self.archived_at.is_some_and(|at| !at.is_finite()) {
             return Err(RecordError::NonFiniteTime("archived_at"));
-        }
-        if !self.last_modified_at.is_finite() {
-            return Err(RecordError::NonFiniteTime("last_modified_at"));
         }
         let record = RecordOut {
             version: RECORD_VERSION,
@@ -237,48 +171,28 @@ impl Session {
         Ok(text)
     }
 
+    /// Version 2 only. A version-1 record is `NeedsMigration`; any other version is
+    /// `UnsupportedVersion`. Keys this build does not know land in `other`.
     pub fn from_json(text: &str) -> Result<Self, RecordError> {
-        let mut value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)?;
-        match value.get("version") {
+        let mut value: Map<String, Value> = serde_json::from_str(text)?;
+        match value.remove("version") {
             None => return Err(RecordError::MissingVersion),
-            Some(serde_json::Value::Number(version))
-                if version.as_u64() == Some(RECORD_VERSION) => {}
-            Some(serde_json::Value::Number(version)) => {
+            Some(Value::Number(version)) if version.as_u64() == Some(RECORD_VERSION) => {}
+            Some(Value::Number(version)) => {
                 return Err(match version.as_u64() {
+                    Some(1) => RecordError::NeedsMigration(1),
                     Some(other) => RecordError::UnsupportedVersion(other),
                     None => RecordError::InvalidVersion(version.to_string()),
                 });
             }
             Some(other) => return Err(RecordError::InvalidVersion(other.to_string())),
         }
-        if value.get("launch").and_then(|launch| launch.get("kind"))
-            == Some(&serde_json::Value::String("process".to_owned()))
-        {
-            return Err(RecordError::ProcessRecord);
-        }
-        if let Some(serde_json::Value::String(engine)) =
-            value.get("launch").and_then(|launch| launch.get("engine"))
+        if let Some(Value::String(engine)) = value.get("engine")
             && engine.parse::<EngineKind>().is_err()
         {
             return Err(RecordError::UnknownEngine(engine.clone()));
         }
-        // Written before `last_modified_at` existed: the last write is unknown, creation stands in.
-        if let Some(created_at) = value.get("created_at").cloned() {
-            value.entry("last_modified_at").or_insert(created_at);
-        }
-        // Written before `state` existed: a running agent is taken as idle, an ended one as ended.
-        if !value.contains_key("state") {
-            let state = match value.get("lifecycle") {
-                Some(serde_json::Value::String(lifecycle)) if lifecycle == "running" => {
-                    LlmEngineState::Idle
-                }
-                _ => LlmEngineState::Ended,
-            };
-            value.insert("state".to_owned(), serde_json::to_value(state)?);
-        }
-        let record: RecordIn = serde_json::from_value(serde_json::Value::Object(value))?;
-        let _ = record.version;
-        Ok(record.session)
+        Ok(serde_json::from_value(Value::Object(value))?)
     }
 
     /// A plugin's own `ext` record, typed. `Ok(None)` when the plugin never wrote one; `Err`
@@ -315,23 +229,17 @@ mod tests {
         Session {
             id: sid("b0000000-0000-4000-8000-000000000001"),
             name: "worker-1".into(),
-            parent: Some(sid("p")),
-            tags: vec!["a".into(), "b".into()],
-            cwd: PathBuf::from("/tmp/w"),
-            created_at: 1727000000.5,
-            ended_at: None,
-            archived_at: None,
-            last_modified_at: 1727000000.5,
-            lifecycle: Lifecycle::Running,
-            launch: Launch::Agent {
-                engine: EngineKind::Claude,
-                profile: vec!["COMMON".into(), "dev".into()],
-                model: None,
-                effort: None,
-                resume: Some("chat-1".into()),
-            },
-            ext: std::collections::BTreeMap::new(),
+            engine: EngineKind::Claude,
+            working_directory: PathBuf::from("/tmp/w"),
+            roles: vec!["COMMON".into(), "dev".into()],
             state: LlmEngineState::Working,
+            created_at: 1727000000.5,
+            last_modified_at: 1727000000.5,
+            archived_at: None,
+            tags: vec!["a".into(), "b".into()],
+            parent_id: Some(sid("p")),
+            ext: BTreeMap::new(),
+            other: Map::new(),
         }
     }
 
@@ -340,25 +248,21 @@ mod tests {
         Session {
             id: sid("x"),
             name: "done".into(),
-            parent: None,
-            tags: vec![],
-            cwd: PathBuf::from("/"),
-            created_at: 1.0,
-            ended_at: Some(2.0),
-            archived_at: None,
-            last_modified_at: 1.0,
-            lifecycle: Lifecycle::Stopped,
-            launch: Launch::Agent {
-                engine: EngineKind::Codex,
-                profile: vec![],
-                model: None,
-                effort: None,
-                resume: None,
-            },
-            ext: std::collections::BTreeMap::new(),
+            engine: EngineKind::Codex,
+            working_directory: PathBuf::from("/"),
+            roles: vec![],
             state: LlmEngineState::Ended,
+            created_at: 1.0,
+            last_modified_at: 2.0,
+            archived_at: Some(3.0),
+            tags: vec![],
+            parent_id: None,
+            ext: BTreeMap::new(),
+            other: Map::new(),
         }
     }
+
+    const VERSION_ONE: &str = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"claude","profile":[]}}"#;
 
     #[test]
     fn agent_round_trips_through_json() {
@@ -374,129 +278,164 @@ mod tests {
 
     #[test]
     fn json_shape_is_the_documented_one() {
-        let value: serde_json::Value = serde_json::from_str(&agent().to_json().unwrap()).unwrap();
+        let text = agent().to_json().unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(value["version"], RECORD_VERSION);
-        assert_eq!(value["lifecycle"], "running");
-        assert_eq!(value["launch"]["kind"], "agent");
-        assert_eq!(value["launch"]["resume"], "chat-1");
-        assert_eq!(value["launch"].get("model"), None);
-        assert_eq!(value["launch"].get("effort"), None);
-        assert_eq!(value["parent"], "p");
-        assert_eq!(value["ended_at"], serde_json::Value::Null);
+        assert_eq!(value["engine"], "claude");
+        assert_eq!(value["working_directory"], "/tmp/w");
+        assert_eq!(value["roles"], serde_json::json!(["COMMON", "dev"]));
         assert_eq!(value["state"], "working");
-        let value: serde_json::Value = serde_json::from_str(&ended().to_json().unwrap()).unwrap();
-        assert_eq!(value["launch"]["kind"], "agent");
-        assert_eq!(value["lifecycle"], "stopped");
-        assert_eq!(value["ended_at"], 2.0);
+        assert_eq!(value["parent_id"], "p");
+        assert_eq!(value["archived_at"], Value::Null);
+        for gone in ["lifecycle", "launch", "ended_at", "cwd", "parent", "ext"] {
+            assert!(value.get(gone).is_none(), "{gone}: {text}");
+        }
+        let keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "version",
+                "id",
+                "name",
+                "engine",
+                "working_directory",
+                "roles",
+                "state",
+                "created_at",
+                "last_modified_at",
+                "archived_at",
+                "tags",
+                "parent_id",
+            ]
+        );
+        let value: Value = serde_json::from_str(&ended().to_json().unwrap()).unwrap();
+        assert_eq!(value["engine"], "codex");
         assert_eq!(value["state"], "ended");
+        assert_eq!(value["archived_at"], 3.0);
+        assert_eq!(value["parent_id"], Value::Null);
     }
 
     #[test]
     fn json_is_pretty_and_newline_terminated() {
         let text = ended().to_json().unwrap();
         assert!(text.ends_with("}\n"), "{text:?}");
-        assert!(text.contains("\n  \"id\""), "{text:?}");
-    }
-
-    #[test]
-    fn optional_fields_may_be_null() {
-        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{"kind":"agent","engine":"claude","profile":[],"model":null,"effort":null}}"#;
-        let session = Session::from_json(text).unwrap();
-        assert_eq!(session.parent, None);
-        assert_eq!(session.ended_at, None);
-        assert_eq!(session.lifecycle, Lifecycle::Exited);
         assert!(
-            matches!(session.launch, Launch::Agent { ref model, ref effort, ref resume, .. } if model.is_none() && effort.is_none() && resume.is_none())
+            text.starts_with("{\n  \"version\": 2,\n  \"id\""),
+            "{text:?}"
         );
     }
 
-    /// A record written before PR 12a carries `model` and `effort` in `launch`. They are engine
-    /// data now (`ext.<engine>`), never read here, but they round-trip until Storage PR 14
-    /// migrates them, so a hook re-saving the record loses nothing.
     #[test]
-    fn launch_model_and_effort_of_an_old_record_round_trip() {
-        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{"kind":"agent","engine":"claude","profile":[],"model":"opus","effort":"xhigh"}}"#;
+    fn optional_fields_may_be_null_or_absent() {
+        let text = r#"{"version":2,"id":"i","name":"n","engine":"claude","working_directory":"/","roles":[],"state":"idle","created_at":1.0,"last_modified_at":1.0,"archived_at":null,"tags":[],"parent_id":null}"#;
         let session = Session::from_json(text).unwrap();
-        assert!(matches!(
-            session.launch,
-            Launch::Agent { ref model, ref effort, .. }
-                if model.as_deref() == Some("opus") && effort.as_deref() == Some("xhigh")
-        ));
-        let value: serde_json::Value = serde_json::from_str(&session.to_json().unwrap()).unwrap();
-        assert_eq!(value["launch"]["model"], "opus");
-        assert_eq!(value["launch"]["effort"], "xhigh");
+        assert_eq!(session.parent_id, None);
+        assert_eq!(session.archived_at, None);
+        assert!(session.ext.is_empty() && session.other.is_empty());
+        let text = text
+            .replace(r#","archived_at":null"#, "")
+            .replace(r#","parent_id":null"#, "");
+        assert_eq!(Session::from_json(&text).unwrap(), session);
     }
 
+    /// Acceptance 5: a key this build does not know survives a read and a rewrite, in place.
     #[test]
-    fn a_record_without_last_modified_at_loads_with_its_creation() {
-        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":7.5,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"claude","profile":[]}}"#;
-        assert_eq!(Session::from_json(text).unwrap().last_modified_at, 7.5);
-        let stamped = text.replace(
-            r#""created_at":7.5,"#,
-            r#""created_at":7.5,"last_modified_at":9.0,"#,
-        );
-        assert_eq!(Session::from_json(&stamped).unwrap().last_modified_at, 9.0);
-    }
-
-    /// A record written before agent state existed carries no `state`: running reads as idle,
-    /// ended as ended.
-    #[test]
-    fn a_record_without_state_loads_as_idle_or_ended() {
-        let running = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"claude","profile":[]}}"#;
-        assert_eq!(
-            Session::from_json(running).unwrap().state,
-            LlmEngineState::Idle
-        );
-        for lifecycle in ["exited", "stopped"] {
-            let text = running.replace("\"running\"", &format!("\"{lifecycle}\""));
-            assert_eq!(
-                Session::from_json(&text).unwrap().state,
-                LlmEngineState::Ended
-            );
-        }
-        let stated = running.replace(r#""lifecycle""#, r#""state":"working","lifecycle""#);
-        assert_eq!(
-            Session::from_json(&stated).unwrap().state,
-            LlmEngineState::Working
-        );
-    }
-
-    /// A `process` record (written before PR 11) is named as such, so the store can skip it
-    /// instead of failing on an unknown launch kind.
-    #[test]
-    fn a_process_record_is_refused_by_name() {
-        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{"kind":"process","program":"sh","args":[]}}"#;
-        assert!(matches!(
-            Session::from_json(text),
-            Err(RecordError::ProcessRecord)
-        ));
-    }
-
-    #[test]
-    fn unknown_keys_are_ignored_for_forward_compatibility() {
+    fn unknown_keys_round_trip_through_other() {
         let mut text = ended().to_json().unwrap();
-        text.insert_str(text.find("\"id\"").unwrap(), "\"future\": {\"x\": 1},\n  ");
-        assert_eq!(Session::from_json(&text).unwrap(), ended());
+        text.insert_str(
+            text.find("\"id\"").unwrap(),
+            "\"future_field\": 1,\n  \"future\": {\"x\": [1, 2]},\n  ",
+        );
+        let session = Session::from_json(&text).unwrap();
+        assert_eq!(session.other["future_field"], 1);
+        assert_eq!(session.other["future"], serde_json::json!({"x": [1, 2]}));
+        let mut expected = ended();
+        expected.other = session.other.clone();
+        assert_eq!(session, expected);
+        let rewritten: Value = serde_json::from_str(&session.to_json().unwrap()).unwrap();
+        assert_eq!(rewritten["future_field"], 1);
+        assert_eq!(rewritten["future"]["x"][1], 2);
+        assert_eq!(rewritten["version"], RECORD_VERSION);
+        assert_eq!(
+            Session::from_json(&session.to_json().unwrap()).unwrap(),
+            session
+        );
+    }
+
+    /// Acceptance 1: a version-1 record is refused by name, with the pointer to `txc migrate`,
+    /// before any of its fields is looked at (a process record, an unknown engine included).
+    #[test]
+    fn version_one_needs_migration() {
+        let error = Session::from_json(VERSION_ONE).unwrap_err();
+        assert!(matches!(error, RecordError::NeedsMigration(1)), "{error:?}");
+        assert_eq!(error.to_string(), "record version 1: run `txc migrate`");
+        let process = VERSION_ONE.replace(
+            r#"{"kind":"agent","engine":"claude","profile":[]}"#,
+            r#"{"kind":"process","program":"sh","args":[]}"#,
+        );
+        assert!(matches!(
+            Session::from_json(&process),
+            Err(RecordError::NeedsMigration(1))
+        ));
+        assert!(matches!(
+            Session::from_json(&VERSION_ONE.replace("\"claude\"", "\"kodex\"")),
+            Err(RecordError::NeedsMigration(1))
+        ));
+        assert!(matches!(
+            Session::from_json(r#"{"version":1}"#),
+            Err(RecordError::NeedsMigration(1))
+        ));
     }
 
     #[test]
-    fn newer_version_is_refused() {
+    fn newer_and_older_versions_are_refused() {
         let text = ended()
             .to_json()
             .unwrap()
-            .replace("\"version\": 1", "\"version\": 2");
+            .replace("\"version\": 2", "\"version\": 3");
         assert!(matches!(
             Session::from_json(&text),
-            Err(RecordError::UnsupportedVersion(2))
+            Err(RecordError::UnsupportedVersion(3))
+        ));
+        let text = ended()
+            .to_json()
+            .unwrap()
+            .replace("\"version\": 2", "\"version\": 0");
+        assert!(matches!(
+            Session::from_json(&text),
+            Err(RecordError::UnsupportedVersion(0))
         ));
     }
 
     #[test]
     fn missing_version_is_refused() {
-        let text = ended().to_json().unwrap().replace("\"version\": 1,\n", "");
+        let text = ended().to_json().unwrap().replace("\"version\": 2,\n", "");
         assert!(matches!(
             Session::from_json(&text),
             Err(RecordError::MissingVersion)
+        ));
+    }
+
+    /// A version-2 record naming an engine this build lacks is refused by name, so the store
+    /// can skip it; one whose engine is not even a string is a plain JSON error.
+    #[test]
+    fn an_unknown_engine_is_refused_by_name() {
+        let text = ended().to_json().unwrap().replace("\"codex\"", "\"kodex\"");
+        let error = Session::from_json(&text).unwrap_err();
+        assert!(
+            matches!(&error, RecordError::UnknownEngine(engine) if engine == "kodex"),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("claude, codex"), "{error}");
+        let text = ended().to_json().unwrap().replace("\"codex\"", "7");
+        assert!(matches!(
+            Session::from_json(&text),
+            Err(RecordError::Json(_))
         ));
     }
 
@@ -508,16 +447,16 @@ mod tests {
             Err(RecordError::Json(_))
         ));
         assert!(matches!(
-            Session::from_json(r#"{"version":1}"#),
+            Session::from_json(r#"{"version":2}"#),
             Err(RecordError::Json(_))
         ));
     }
 
     #[test]
-    fn to_json_refuses_a_non_utf8_cwd_instead_of_panicking() {
+    fn to_json_refuses_a_non_utf8_working_directory_instead_of_panicking() {
         use std::os::unix::ffi::OsStrExt;
         let mut session = ended();
-        session.cwd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/\xff\xfe"));
+        session.working_directory = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/\xff\xfe"));
         assert!(matches!(session.to_json(), Err(RecordError::Json(_))));
     }
 
@@ -531,15 +470,21 @@ mod tests {
                 Err(RecordError::NonFiniteTime("created_at"))
             ));
             let mut session = ended();
-            session.ended_at = Some(bad);
+            session.last_modified_at = bad;
             assert!(matches!(
                 session.to_json(),
-                Err(RecordError::NonFiniteTime("ended_at"))
+                Err(RecordError::NonFiniteTime("last_modified_at"))
+            ));
+            let mut session = ended();
+            session.archived_at = Some(bad);
+            assert!(matches!(
+                session.to_json(),
+                Err(RecordError::NonFiniteTime("archived_at"))
             ));
         }
         let mut session = ended();
         session.created_at = -0.0;
-        session.ended_at = Some(f64::MIN_POSITIVE / 2.0);
+        session.archived_at = Some(f64::MIN_POSITIVE / 2.0);
         assert_eq!(
             Session::from_json(&session.to_json().unwrap()).unwrap(),
             session
@@ -552,7 +497,7 @@ mod tests {
             let text = ended()
                 .to_json()
                 .unwrap()
-                .replace("\"version\": 1", &format!("\"version\": {version}"));
+                .replace("\"version\": 2", &format!("\"version\": {version}"));
             let error = Session::from_json(&text).unwrap_err();
             assert!(
                 matches!(&error, RecordError::InvalidVersion(found) if found.starts_with(&version[..2])),
@@ -566,7 +511,7 @@ mod tests {
         let error = RecordError::UnsupportedVersion(0);
         assert_eq!(
             error.to_string(),
-            "record version 0 is not supported (this build reads version 1)"
+            "record version 0 is not supported (this build reads version 2)"
         );
     }
 
@@ -621,22 +566,12 @@ mod tests {
             let text = agent()
                 .to_json()
                 .unwrap()
-                .replace("\"parent\": \"p\"", &format!("\"parent\": {bad}"));
+                .replace("\"parent_id\": \"p\"", &format!("\"parent_id\": {bad}"));
             assert!(
                 matches!(Session::from_json(&text), Err(RecordError::Json(_))),
                 "{bad}"
             );
         }
-    }
-
-    #[test]
-    fn lifecycle_terminal_states() {
-        assert!(!Lifecycle::Running.is_terminal());
-        assert!(Lifecycle::Exited.is_terminal());
-        assert!(Lifecycle::Stopped.is_terminal());
-        assert_eq!(Lifecycle::Running.as_str(), "running");
-        assert_eq!("stopped".parse::<Lifecycle>().unwrap(), Lifecycle::Stopped);
-        assert!("gone".parse::<Lifecycle>().is_err());
     }
 
     #[test]
@@ -685,7 +620,7 @@ mod tests {
     #[test]
     fn ext_absent_is_none() {
         let session = ended();
-        assert_eq!(session.ext::<serde_json::Value>("views").unwrap(), None);
+        assert_eq!(session.ext::<Value>("views").unwrap(), None);
     }
 
     #[test]

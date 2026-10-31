@@ -117,7 +117,9 @@ impl Harness {
     }
 
     fn record(&self, id: &SessionId) -> PathBuf {
-        self.directories().data.join(format!("sessions/{id}.json"))
+        self.directories()
+            .data
+            .join(format!("agents/{id}/agent.json"))
     }
 }
 

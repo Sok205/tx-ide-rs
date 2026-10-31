@@ -3,7 +3,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use tx_core::{CoreError, EngineKind, Lifecycle};
+use tx_core::{CoreError, EngineKind};
 
 pub const USAGE: &str = "\
 usage: txc [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR] [--run-dir DIR] [--socket PATH]
@@ -22,12 +22,14 @@ verbs:
                                                                     changes are not carried over); SOURCE's engine, roles and
                                                                     engine options unless an option says otherwise; name NAME,
                                                                     else SOURCE-fork; tags default to SOURCE's; prints its id
-  ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped] [--archived] [--json]
-                                                                    id, name, lifecycle, cwd per line;
+  ls [--parent ID] [--tag T] [--running|--ended] [--archived] [--json]
+                                                                    id, name, state, working directory per line;
+                                                                    --running / --ended: only agents whose state
+                                                                    is not / is ended;
                                                                     --archived: the archived sessions instead;
                                                                     --json: one array of {id, name, state,
                                                                     working_directory, tags}, running only
-                                                                    unless --lifecycle says otherwise
+                                                                    unless --ended says otherwise
   show TARGET                                                       the record as JSON
   rename TARGET NAME
   tag TARGET [TAG]...                                               replace the tag list
@@ -48,7 +50,8 @@ verbs:
   plugins                                                           id and active|disabled per plugin
   migrate [--from DIR]                                              move a version-1 home (default
                                                                     $TX_CORE_HOME, else ~/.tx-core) into
-                                                                    the directories below, once
+                                                                    the directories below, once, and
+                                                                    upgrade its version-1 records
 
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
@@ -112,7 +115,8 @@ pub enum Verb {
     Ls {
         parent: Option<String>,
         tag: Option<String>,
-        lifecycle: Option<Lifecycle>,
+        /// `Some(false)`: `--running`; `Some(true)`: `--ended`.
+        ended: Option<bool>,
         archived: bool,
         json: bool,
     },
@@ -490,33 +494,28 @@ fn parse_fork(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
 fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut parent = None;
     let mut tag = None;
-    let mut lifecycle = None;
+    let mut ended = None;
     let mut archived = false;
     let mut json = false;
     while let Some(flag) = cursor.next() {
         match flag {
             "--parent" => parent = Some(cursor.value(flag)?.to_owned()),
             "--tag" => tag = Some(cursor.value(flag)?.to_owned()),
-            "--lifecycle" => {
-                let text = cursor.value(flag)?;
-                lifecycle = Some(
-                    text.parse::<Lifecycle>()
-                        .map_err(|error| usage(error.to_string()))?,
-                );
-            }
+            "--running" => ended = Some(false),
+            "--ended" => ended = Some(true),
             "--archived" => archived = true,
             "--json" => json = true,
             other => return Err(usage(format!("ls: unexpected argument {other:?}"))),
         }
     }
     // The JSON listing is for pickers of live agents (nvim's tx-ask).
-    if json && lifecycle.is_none() {
-        lifecycle = Some(Lifecycle::Running);
+    if json && ended.is_none() {
+        ended = Some(false);
     }
     Ok(Verb::Ls {
         parent,
         tag,
-        lifecycle,
+        ended,
         archived,
         json,
     })
@@ -741,17 +740,27 @@ mod tests {
     #[test]
     fn other_verbs() {
         assert_eq!(
-            parse_str("ls --parent p --tag t --lifecycle exited")
-                .unwrap()
-                .verb,
+            parse_str("ls --parent p --tag t --ended").unwrap().verb,
             Verb::Ls {
                 parent: Some("p".into()),
                 tag: Some("t".into()),
-                lifecycle: Some(Lifecycle::Exited),
+                ended: Some(true),
                 archived: false,
                 json: false
             }
         );
+        assert!(matches!(
+            parse_str("ls --running").unwrap().verb,
+            Verb::Ls {
+                ended: Some(false),
+                json: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse_str("ls").unwrap().verb,
+            Verb::Ls { ended: None, .. }
+        ));
         assert!(matches!(
             parse_str("ls --archived").unwrap().verb,
             Verb::Ls { archived: true, .. }
@@ -759,20 +768,20 @@ mod tests {
         assert!(matches!(
             parse_str("ls --json").unwrap().verb,
             Verb::Ls {
-                lifecycle: Some(Lifecycle::Running),
+                ended: Some(false),
                 json: true,
                 ..
             }
         ));
         assert!(matches!(
-            parse_str("ls --json --lifecycle stopped").unwrap().verb,
+            parse_str("ls --json --ended").unwrap().verb,
             Verb::Ls {
-                lifecycle: Some(Lifecycle::Stopped),
+                ended: Some(true),
                 json: true,
                 ..
             }
         ));
-        assert!(parse_str("ls --lifecycle gone").is_err());
+        assert!(parse_str("ls --lifecycle running").is_err());
         assert_eq!(
             parse_str("show x").unwrap().verb,
             Verb::Show { target: "x".into() }

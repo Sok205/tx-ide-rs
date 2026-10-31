@@ -17,7 +17,7 @@ use tx_client::render::{
 };
 use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::View;
-use tx_core::{Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError, VerbIo};
+use tx_core::{ListFilter, LlmEngineState, Session, SessionId, TxCore, VerbError, VerbIo};
 
 use crate::artifact::{Artifact, Kind, USER_ACTOR};
 use crate::picker::{self, HINT, Item, Pick, row_label, visible_width};
@@ -154,7 +154,7 @@ pub fn sections(
         )
     };
     let parent: Vec<(Row, Target)> = record
-        .parent
+        .parent_id
         .as_ref()
         .and_then(|parent| live.iter().find(|candidate| &candidate.id == parent))
         .map(session_row)
@@ -162,7 +162,7 @@ pub fn sections(
         .collect();
     let child_agents = live
         .iter()
-        .filter(|candidate| candidate.parent.as_ref() == Some(&record.id))
+        .filter(|candidate| candidate.parent_id.as_ref() == Some(&record.id))
         .map(session_row);
     let child_views = views
         .iter()
@@ -231,7 +231,7 @@ impl Nav<'_> {
         let _ = self.core.refresh_all();
         let ids = self
             .core
-            .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
+            .list_sessions(&ListFilter::new().running())
             .unwrap_or_default();
         ids.iter()
             .filter_map(|id| self.core.get_session(id).ok())
@@ -548,7 +548,7 @@ impl Nav<'_> {
                 .display_status(client, &format!("prefix+a: session {target_id} not found"));
             return None;
         };
-        if target.lifecycle != Lifecycle::Running || !self.ui.has_session(&target.name) {
+        if target.state == LlmEngineState::Ended || !self.ui.has_session(&target.name) {
             self.ui
                 .display_status(client, &format!("prefix+a: {} has ended", target.name));
             return None;
@@ -639,7 +639,7 @@ impl Nav<'_> {
                 .parse::<SessionId>()
                 .ok()
                 .and_then(|id| self.core.get_session(&id).ok())
-                .is_some_and(|session| session.lifecycle == Lifecycle::Running);
+                .is_some_and(|session| session.state != LlmEngineState::Ended);
             if running {
                 return Some(touch.session_id.clone());
             }
@@ -786,9 +786,9 @@ mod tests {
 
     fn session(id: &str, name: &str, extra: Value) -> Session {
         let mut record = json!({
-            "version": 1, "id": id, "name": name, "parent": null, "tags": [], "cwd": "/r",
-            "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": "running",
-            "launch": {"kind": "agent", "engine": "claude", "profile": []},
+            "version": 2, "id": id, "name": name, "engine": "claude", "working_directory": "/r",
+            "roles": [], "state": "idle", "created_at": 1.0, "last_modified_at": 1.0,
+            "archived_at": null, "tags": [], "parent_id": null,
         });
         for (key, value) in extra.as_object().unwrap() {
             record[key] = value.clone();
@@ -823,11 +823,11 @@ mod tests {
 
     #[test]
     fn the_listing_holds_what_the_session_touched_its_parent_and_its_children() {
-        let record = session("a1", "agent", json!({"parent": "p1"}));
+        let record = session("a1", "agent", json!({"parent_id": "p1"}));
         let live = vec![
             record.clone(),
             session("p1", "boss", json!({"tags": ["x"]})),
-            session("c1", "worker", json!({"parent": "a1"})),
+            session("c1", "worker", json!({"parent_id": "a1"})),
         ];
         let views = [
             view("plan-md", Some("a1"), Some("art-new")),

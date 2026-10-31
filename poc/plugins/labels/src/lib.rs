@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use tx_core::{
-    CoreError, Lifecycle, ListFilter, Plugin, PluginError, Registry, SessionId, TxCore, Verb,
-    VerbError, VerbIo,
+    CoreError, ListFilter, Plugin, PluginError, Registry, SessionId, TxCore, Verb, VerbError,
+    VerbIo,
 };
 
 use tx_client::render::tag_hex;
@@ -117,7 +117,7 @@ impl Verb for Relabel {
     fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, _argv: &[String]) -> Result<i32, VerbError> {
         let ui = Ui::from_core(core);
         let live = ui.live_targets();
-        let ids = core.list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?;
+        let ids = core.list_sessions(&ListFilter::new().running())?;
         for id in ids {
             let session = core.get_session(&id)?;
             if !live.contains_key(&session.name) {

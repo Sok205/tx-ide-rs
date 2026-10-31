@@ -52,7 +52,7 @@ pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
-pub use session::{Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
+pub use session::{RecordError, Session, SessionId, validate_name};
 pub use state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 #[doc(hidden)]
 pub use store::SessionStore;

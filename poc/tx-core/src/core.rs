@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::config::CoreConfig;
+use crate::config::{AGENTS_DIR, CoreConfig};
 use crate::engine::{
     Conversation, EngineError, EngineKind, EngineRegistry, Input, LaunchRequest, LlmEngine,
     apply_workspace,
@@ -14,12 +14,14 @@ use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, EnvelopeSender, build_envelope, deliver};
 use crate::profile::{Profile, Profiles, ResolvedProfile};
-use crate::session::{Launch, Lifecycle, Session, SessionId, validate_name};
+use crate::session::{Session, SessionId, validate_name};
 use crate::state::{LlmEngineHook, LlmEngineState};
 use crate::store::{SessionStore, SkippedRecord, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 use crate::worktree::WorktreeManager;
 
+/// The version-1 layout's record directory (`<data>/sessions/<id>.json`); `TxCore::open`
+/// refuses while it still holds records, and `txc migrate` upgrades them.
 pub const SESSIONS_DIR: &str = "sessions";
 pub const LOCKS_DIR: &str = "locks";
 pub const PROFILES_DIR: &str = "profiles";
@@ -43,9 +45,9 @@ pub struct CreateOptions {
     /// record, running or not, holds the name; read it back from the record. Its worktree
     /// directory is labelled separately, first free on disk.
     pub name: String,
-    /// The starting directory. For an agent: a git checkout to branch from; the agent runs in
-    /// its own detached worktree at that checkout's `HEAD`, and the record's `cwd` names the
-    /// worktree. For a process: where it runs.
+    /// The starting directory: a git checkout to branch from; the agent runs in its own
+    /// detached worktree at that checkout's `HEAD`, and the record's `working_directory` names
+    /// the worktree.
     pub cwd: PathBuf,
     pub parent: Option<SessionId>,
     pub tags: Vec<String>,
@@ -205,13 +207,15 @@ impl LaunchOptions {
 }
 
 /// Every field is a conjunct; `None` matches everything. `archived` picks a side: `false` (the
-/// default) lists only unarchived records, `true` only archived ones.
+/// default) lists only unarchived records, `true` only archived ones; `ended` picks running or
+/// ended records when set.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ListFilter {
     pub parent: Option<SessionId>,
     pub tag: Option<String>,
-    pub lifecycle: Option<Lifecycle>,
+    /// `Some(false)`: running records only (`state` not `Ended`); `Some(true)`: ended ones.
+    pub ended: Option<bool>,
     pub archived: bool,
 }
 
@@ -230,8 +234,15 @@ impl ListFilter {
         self
     }
 
-    pub fn lifecycle(mut self, lifecycle: Lifecycle) -> Self {
-        self.lifecycle = Some(lifecycle);
+    /// Running records only: `state` not `Ended`.
+    pub fn running(mut self) -> Self {
+        self.ended = Some(false);
+        self
+    }
+
+    /// Ended records only.
+    pub fn ended(mut self) -> Self {
+        self.ended = Some(true);
         self
     }
 
@@ -244,14 +255,14 @@ impl ListFilter {
     pub fn matches(&self, session: &Session) -> bool {
         self.parent
             .as_ref()
-            .is_none_or(|parent| session.parent.as_ref() == Some(parent))
+            .is_none_or(|parent| session.parent_id.as_ref() == Some(parent))
             && self
                 .tag
                 .as_ref()
                 .is_none_or(|tag| session.tags.contains(tag))
             && self
-                .lifecycle
-                .is_none_or(|lifecycle| session.lifecycle == lifecycle)
+                .ended
+                .is_none_or(|ended| (session.state == LlmEngineState::Ended) == ended)
             && session.archived_at.is_some() == self.archived
     }
 }
@@ -421,12 +432,9 @@ fn archive_lock(directory: &Path) -> Result<Option<std::fs::File>, EngineError> 
     }
 }
 
-/// The process is gone, whatever the adapter last said: `ended_at` is set and the state
-/// becomes `Ended`. No `StateChanged`: `Exited` / `Stopped` already say so.
-fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
-    let ended_at = now();
-    session.lifecycle = lifecycle;
-    session.ended_at = Some(ended_at);
+/// The process is gone, whatever the adapter last said: the state becomes `Ended`. No
+/// `StateChanged`: `Exited` / `Stopped` already say so, and the save stamps when.
+fn mark_ended(session: &mut Session) {
     session.state = LlmEngineState::Ended;
 }
 
@@ -508,14 +516,34 @@ impl std::fmt::Debug for TxCore {
 }
 
 impl TxCore {
-    /// Checks the socket path, creates the layout (`<data>/sessions`, `<state>/locks`,
+    /// Checks the socket path, creates the layout (`<data>/agents`, `<state>/locks`,
     /// `<state>/profiles`, `<run>` private to the user), writes a default `tmux.conf` if none.
-    /// Does not start tmux.
+    /// Does not start tmux. Refuses with `NeedsMigration` while `<data>/sessions/` still holds
+    /// version-1 records: only `txc migrate` ([`TxCore::open_for_migration`]) reads those.
     pub fn open(config: CoreConfig) -> Result<Self, CoreError> {
         config.check_socket_path()?;
+        let sessions = config.directories.data.join(SESSIONS_DIR);
+        let records = crate::migrate::version_one_records(&config.directories.data)
+            .map_err(store_io(&sessions))?;
+        if !records.is_empty() {
+            return Err(CoreError::NeedsMigration {
+                directory: sessions,
+                records: records.len(),
+            });
+        }
+        Self::open_unchecked(config)
+    }
+
+    /// [`TxCore::open`] without the version-1 check, for the migration itself.
+    pub fn open_for_migration(config: CoreConfig) -> Result<Self, CoreError> {
+        config.check_socket_path()?;
+        Self::open_unchecked(config)
+    }
+
+    fn open_unchecked(config: CoreConfig) -> Result<Self, CoreError> {
         let directories = &config.directories;
         for dir in [
-            directories.data.join(SESSIONS_DIR),
+            directories.data.join(AGENTS_DIR),
             directories.state.join(LOCKS_DIR),
             directories.state.join(PROFILES_DIR),
             directories.run.clone(),
@@ -529,7 +557,7 @@ impl TxCore {
             std::fs::write(&conf, DEFAULT_TMUX_CONF).map_err(store_io(&conf))?;
         }
         Ok(Self {
-            store: SessionStore::new(directories.data.join(SESSIONS_DIR)),
+            store: SessionStore::new(directories.data.join(AGENTS_DIR)),
             tmux: Tmux::new(TMUX_BINARY, config.socket_path(), conf),
             events: EventLog::new(directories.data.join(LOG_FILE)),
             engines: EngineRegistry::new(),
@@ -544,6 +572,18 @@ impl TxCore {
 
     pub fn config(&self) -> &CoreConfig {
         &self.config
+    }
+
+    pub(crate) fn store(&self) -> &SessionStore {
+        &self.store
+    }
+
+    pub(crate) fn engines(&self) -> &EngineRegistry {
+        &self.engines
+    }
+
+    pub(crate) fn locks(&self) -> &Locks {
+        &self.locks
     }
 
     /// `<state>/profiles/<id>.md`: the composed role prompt a session was launched with.
@@ -618,11 +658,10 @@ impl TxCore {
     /// `EngineDisabled` when the record's engine is not registered (its plugin disabled).
     pub fn conversation(&self, id: &SessionId) -> Result<Option<Conversation>, CoreError> {
         let session = self.get_session(id)?;
-        let Launch::Agent { engine, .. } = &session.launch;
         let adapter = self
             .engines
-            .get(*engine)
-            .ok_or(CoreError::EngineDisabled(*engine))?;
+            .get(session.engine)
+            .ok_or(CoreError::EngineDisabled(session.engine))?;
         Ok(adapter.conversation(&session))
     }
 
@@ -643,7 +682,7 @@ impl TxCore {
             .collect();
         if let Some(running) = named
             .iter()
-            .find(|session| session.lifecycle == Lifecycle::Running)
+            .find(|session| session.state != LlmEngineState::Ended)
         {
             return Ok(running.id.clone());
         }
@@ -700,21 +739,18 @@ impl TxCore {
             let _session = self.locks.session(source).map_err(CoreError::Lock)?;
             self.get_session(source)?
         };
-        let Launch::Agent {
-            engine, profile, ..
-        } = &source.launch;
         let name = options
             .name
             .unwrap_or_else(|| format!("{}-fork", source.name));
         let launch = LaunchOptions::Agent {
-            engine: *engine,
-            profile: profile.clone(),
+            engine: source.engine,
+            profile: source.roles.clone(),
             options: options.options,
             initial_prompt: options.prompt,
         };
         let opts = CreateOptions {
             name,
-            cwd: source.cwd.clone(),
+            cwd: source.working_directory.clone(),
             parent: Some(source.id.clone()),
             tags: options.tags.unwrap_or_else(|| source.tags.clone()),
             env: Vec::new(),
@@ -803,29 +839,22 @@ impl TxCore {
         if let Some(data) = fork_of.and_then(|source| source.ext.get(adapter.ext_key())) {
             ext.insert(adapter.ext_key().to_owned(), data.clone());
         }
-        let launch = Launch::Agent {
-            engine,
-            profile: roles,
-            model: None,
-            effort: None,
-            resume: None,
-        };
         let created_at = now();
         let mut session = Session {
             id: id.clone(),
             name: opts.name,
-            parent: opts.parent,
-            tags: opts.tags,
-            cwd: opts.cwd,
-            created_at,
-            ended_at: None,
-            archived_at: None,
-            last_modified_at: created_at,
-            lifecycle: Lifecycle::Running,
+            engine,
+            working_directory: opts.cwd,
+            roles,
             // `Starting` until the adapter's first change.
             state: LlmEngineState::Starting,
-            launch,
+            created_at,
+            last_modified_at: created_at,
+            archived_at: None,
+            tags: opts.tags,
+            parent_id: opts.parent,
             ext,
+            other: serde_json::Map::new(),
         };
         // The engine validates the options and merges them into its data, which the launch
         // then reads. A refusal here has written nothing yet.
@@ -904,7 +933,8 @@ impl TxCore {
             Opening::Fork { source, prompt } => engine.adapter.fork(&request, source, prompt),
         }
         .inspect_err(|_| cleanup_profile())?;
-        apply_workspace(&session.cwd, &plan.workspace).inspect_err(|_| cleanup_profile())?;
+        apply_workspace(&session.working_directory, &plan.workspace)
+            .inspect_err(|_| cleanup_profile())?;
         validate_env(&plan.env).inspect_err(|_| cleanup_profile())?;
         merge_env(&mut env, &plan.env);
         if plan.program.is_empty() {
@@ -918,10 +948,13 @@ impl TxCore {
         }
         let (program, args) = (plan.program, plan.args);
 
-        if let Err(error) =
-            self.tmux
-                .new_session(&session.name, &session.cwd, &program, &args, &env)
-        {
+        if let Err(error) = self.tmux.new_session(
+            &session.name,
+            &session.working_directory,
+            &program,
+            &args,
+            &env,
+        ) {
             cleanup_profile();
             return Err(match error {
                 TmuxError::Failed { stderr, .. } if stderr.starts_with("duplicate session") => {
@@ -942,7 +975,7 @@ impl TxCore {
             Err(error) => return Err(undo(CoreError::Tmux(error))),
         };
         if exited_at_once {
-            mark_ended(session, Lifecycle::Exited);
+            mark_ended(session);
         }
         if let Err(error) = self.save(session) {
             return Err(undo(CoreError::Store(error)));
@@ -954,8 +987,8 @@ impl TxCore {
     /// conversation (the engine's `resume` continues the one it recorded under its `ext`
     /// key). `StillRunning` while the record is `Running` or tmux still has the
     /// session; `WorktreeMissing` when `cwd` is gone, since a respawn never recreates one;
-    /// `NameHeld` when an unarchived record took the name meanwhile. Comes back `Running` and `Starting`, with `ended_at` and `archived_at` cleared, and
-    /// announced as `Respawned`.
+    /// `NameHeld` when an unarchived record took the name meanwhile. Comes back `Starting`,
+    /// with `archived_at` cleared, and announced as `Respawned`.
     pub fn respawn_session(&self, id: &SessionId) -> Result<Session, CoreError> {
         let (session, events) = self.respawn_locked(id)?;
         self.emit(events);
@@ -966,19 +999,18 @@ impl TxCore {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
         let _session = self.locks.session(id).map_err(CoreError::Lock)?;
         let mut session = self.get_session(id)?;
-        let Launch::Agent {
-            engine, profile, ..
-        } = &session.launch;
         let adapter = self
             .engines
-            .get(*engine)
-            .ok_or(CoreError::EngineDisabled(*engine))?;
-        let resolved = self.profiles.resolve(profile)?;
-        if session.lifecycle == Lifecycle::Running || self.tmux.is_live(id)?.is_some() {
+            .get(session.engine)
+            .ok_or(CoreError::EngineDisabled(session.engine))?;
+        let resolved = self.profiles.resolve(&session.roles)?;
+        if session.state != LlmEngineState::Ended || self.tmux.is_live(id)?.is_some() {
             return Err(CoreError::StillRunning(id.clone()));
         }
-        if !session.cwd.is_dir() {
-            return Err(CoreError::WorktreeMissing(session.cwd.clone()));
+        if !session.working_directory.is_dir() {
+            return Err(CoreError::WorktreeMissing(
+                session.working_directory.clone(),
+            ));
         }
         if let Some(holder) = self.name_holder(&session.name, Some(id))? {
             return Err(CoreError::NameHeld {
@@ -986,9 +1018,6 @@ impl TxCore {
                 holder,
             });
         }
-        let previous = session.lifecycle;
-        session.lifecycle = Lifecycle::Running;
-        session.ended_at = None;
         session.archived_at = None;
         session.state = LlmEngineState::Starting;
         adapter.restore(&session, &self.config.archive_directory(id))?;
@@ -998,12 +1027,7 @@ impl TxCore {
             opening: Opening::Resume,
         };
         let exited_at_once = self.start_locked(&mut session, engine, &[])?;
-        let mut events = vec![event(
-            EventType::Respawned,
-            &session,
-            None,
-            format!("after {}", previous.as_str()),
-        )];
+        let mut events = vec![event(EventType::Respawned, &session, None, "")];
         if exited_at_once {
             events.push(exited_before_registration(&session));
         }
@@ -1067,7 +1091,7 @@ impl TxCore {
         if self.name_holder(name, Some(id))?.is_some() {
             return Err(CoreError::NameTaken(name.to_owned()));
         }
-        if session.lifecycle == Lifecycle::Running
+        if session.state != LlmEngineState::Ended
             && let Some(live) = self.tmux.is_live(id)?
         {
             match self.tmux.rename_session(&live.session_target, name) {
@@ -1145,11 +1169,10 @@ impl TxCore {
         let (state, changed, session) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
-            if session.lifecycle != Lifecycle::Running {
+            if session.state == LlmEngineState::Ended {
                 return Ok(None);
             }
-            let Launch::Agent { engine, .. } = &session.launch;
-            let Some(adapter) = self.engines.get(*engine) else {
+            let Some(adapter) = self.engines.get(session.engine) else {
                 return Ok(None);
             };
             let current = session.state;
@@ -1187,8 +1210,7 @@ impl TxCore {
     /// after a stop or an exit, once the process is gone and the transcript final. An
     /// unregistered engine archives nothing.
     fn archive_conversation(&self, session: &Session) {
-        let Launch::Agent { engine, .. } = &session.launch;
-        let Some(adapter) = self.engines.get(*engine) else {
+        let Some(adapter) = self.engines.get(session.engine) else {
             return;
         };
         let directory = self.config.archive_directory(&session.id);
@@ -1228,7 +1250,7 @@ impl TxCore {
         let (result, exited) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let session = self.get_session(id)?;
-            if session.lifecycle.is_terminal() || self.tmux.list_live()?.contains(id) {
+            if session.state == LlmEngineState::Ended || self.tmux.list_live()?.contains(id) {
                 (RefreshResult::Unchanged(session), None)
             } else {
                 let (session, exited) = self.mark_exited(session)?;
@@ -1248,14 +1270,14 @@ impl TxCore {
         let live = self.tmux.list_live()?;
         let mut changed = Vec::new();
         for session in records {
-            if session.lifecycle != Lifecycle::Running || live.contains(&session.id) {
+            if session.state == LlmEngineState::Ended || live.contains(&session.id) {
                 continue;
             }
             let exited = {
                 let _lock = self.locks.session(&session.id).map_err(CoreError::Lock)?;
                 // Re-load under the lock: another process may have stopped it meanwhile.
                 match self.store.load(&session.id)? {
-                    Some(current) if current.lifecycle == Lifecycle::Running => {
+                    Some(current) if current.state != LlmEngineState::Ended => {
                         Some(self.mark_exited(current)?)
                     }
                     _ => None,
@@ -1273,7 +1295,7 @@ impl TxCore {
 
     /// Saves the record as `Exited`; the caller emits the returned event once its lock is gone.
     fn mark_exited(&self, mut session: Session) -> Result<(Session, Event), CoreError> {
-        mark_ended(&mut session, Lifecycle::Exited);
+        mark_ended(&mut session);
         self.save(&mut session)?;
         self.archive_conversation(&session);
         let exited = event(EventType::Exited, &session, None, "");
@@ -1281,7 +1303,7 @@ impl TxCore {
     }
 
     pub fn get_execution_location(&self, id: &SessionId) -> Result<ExecutionLocation, CoreError> {
-        if self.get_session(id)?.lifecycle.is_terminal() {
+        if self.get_session(id)?.state == LlmEngineState::Ended {
             return Err(CoreError::NotRunning(id.clone()));
         }
         let live = self.live_or_not_running(id)?;
@@ -1295,8 +1317,7 @@ impl TxCore {
     /// The recipient's engine says what to type for a message when it is registered here; an
     /// agent whose engine this core does not know gets the default envelope, submitted.
     fn input_for(&self, recipient: &Session, sender: &EnvelopeSender<'_>, text: &str) -> Input {
-        let Launch::Agent { engine, .. } = &recipient.launch;
-        match self.engines.get(*engine) {
+        match self.engines.get(recipient.engine) {
             Some(adapter) => adapter.receive_message(sender, text),
             None => Input::line(build_envelope(sender, text)),
         }
@@ -1310,16 +1331,15 @@ impl TxCore {
         let changed = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
-            if session.lifecycle != Lifecycle::Running {
+            if session.state == LlmEngineState::Ended {
                 return Err(CoreError::NotRunning(id.clone()));
             }
-            let Launch::Agent { engine, .. } = &session.launch;
             let adapter = self
                 .engines
-                .get(*engine)
-                .ok_or(CoreError::EngineDisabled(*engine))?;
+                .get(session.engine)
+                .ok_or(CoreError::EngineDisabled(session.engine))?;
             let (input, state) = adapter.interrupt(&session).ok_or_else(|| {
-                EngineError::Refused(format!("{engine} has no way to interrupt a turn"))
+                EngineError::Refused(format!("{} has no way to interrupt a turn", session.engine))
             })?;
             let live = self.live_or_not_running(id)?;
             deliver(&self.tmux, &live.pane_target, &input, DELIVERY_PAUSE)?;
@@ -1365,17 +1385,16 @@ impl TxCore {
         let (session, live) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
-            if session.lifecycle.is_terminal() {
+            if session.state == LlmEngineState::Ended {
                 return Err(CoreError::NotRunning(id.clone()));
             }
             let Some(live) = self.tmux.is_live(id)? else {
                 let (session, exited) = self.mark_exited(session)?;
                 return Ok((session, exited));
             };
-            let Launch::Agent { engine, .. } = &session.launch;
             let stop = self
                 .engines
-                .get(*engine)
+                .get(session.engine)
                 .and_then(|adapter| adapter.stop(&session));
             let pid = self.tmux.pane_pid(&live.pane_target)?;
             match &stop {
@@ -1384,7 +1403,7 @@ impl TxCore {
                     self.tmux.kill_session(&live.session_target)?;
                 }
             }
-            mark_ended(&mut session, Lifecycle::Stopped);
+            mark_ended(&mut session);
             self.save(&mut session)?;
             (
                 session,
@@ -1415,7 +1434,7 @@ impl TxCore {
     pub fn archive_session(&self, id: &SessionId) -> Result<Session, CoreError> {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
         let mut events = Vec::new();
-        if !self.get_session(id)?.lifecycle.is_terminal() {
+        if self.get_session(id)?.state != LlmEngineState::Ended {
             let (_, ended) = self.stop_locked(id)?;
             events.push(ended);
         }
@@ -1472,7 +1491,7 @@ impl TxCore {
         let (receipt, sent) = {
             let _session = self.locks.session(to).map_err(CoreError::Lock)?;
             let recipient = self.get_session(to)?;
-            if recipient.lifecycle != Lifecycle::Running {
+            if recipient.state == LlmEngineState::Ended {
                 return Err(CoreError::NotRunning(to.clone()));
             }
             let live = self.live_or_not_running(to)?;
@@ -1513,7 +1532,7 @@ mod tests {
         let directories = Directories::under(dir.path());
         let core = TxCore::open(CoreConfig::new(directories.clone())).unwrap();
         for sub in [
-            directories.data.join("sessions"),
+            directories.data.join("agents"),
             directories.state.join("locks"),
             directories.state.join("profiles"),
         ] {
@@ -1697,7 +1716,7 @@ mod tests {
             CoreError::EngineDisabled(EngineKind::Codex)
         ));
         assert!(
-            std::fs::read_dir(directories.data.join("sessions"))
+            std::fs::read_dir(directories.data.join("agents"))
                 .unwrap()
                 .next()
                 .is_none()
@@ -1732,35 +1751,40 @@ mod tests {
 
     #[test]
     fn filters_match_records() {
-        let session = |parent: Option<&str>, tags: &[&str], lifecycle| Session {
+        let session = |parent: Option<&str>, tags: &[&str], state| Session {
             id: "i".parse().unwrap(),
             name: "n".into(),
-            parent: parent.map(|p| p.parse().unwrap()),
-            tags: tags.iter().map(|t| (*t).to_owned()).collect(),
-            cwd: "/".into(),
+            engine: EngineKind::Claude,
+            working_directory: "/".into(),
+            roles: vec![],
+            state,
             created_at: 1.0,
-            ended_at: None,
-            archived_at: None,
             last_modified_at: 1.0,
-            lifecycle,
-            launch: Launch::Agent {
-                engine: EngineKind::Claude,
-                profile: vec![],
-                model: None,
-                effort: None,
-                resume: None,
-            },
+            archived_at: None,
+            tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+            parent_id: parent.map(|p| p.parse().unwrap()),
             ext: std::collections::BTreeMap::new(),
-            state: LlmEngineState::Idle,
+            other: serde_json::Map::new(),
         };
         let filter = ListFilter::new()
             .parent("p".parse().unwrap())
             .tag("t")
-            .lifecycle(Lifecycle::Running);
-        assert!(filter.matches(&session(Some("p"), &["a", "t"], Lifecycle::Running)));
-        assert!(!filter.matches(&session(None, &["t"], Lifecycle::Running)));
-        assert!(!filter.matches(&session(Some("p"), &["a"], Lifecycle::Running)));
-        assert!(!filter.matches(&session(Some("p"), &["t"], Lifecycle::Exited)));
-        assert!(ListFilter::default().matches(&session(None, &[], Lifecycle::Stopped)));
+            .running();
+        assert!(filter.matches(&session(Some("p"), &["a", "t"], LlmEngineState::Idle)));
+        assert!(filter.matches(&session(Some("p"), &["t"], LlmEngineState::Starting)));
+        assert!(!filter.matches(&session(None, &["t"], LlmEngineState::Idle)));
+        assert!(!filter.matches(&session(Some("p"), &["a"], LlmEngineState::Idle)));
+        assert!(!filter.matches(&session(Some("p"), &["t"], LlmEngineState::Ended)));
+        assert!(ListFilter::default().matches(&session(None, &[], LlmEngineState::Ended)));
+        assert!(
+            ListFilter::new()
+                .ended()
+                .matches(&session(None, &[], LlmEngineState::Ended))
+        );
+        assert!(
+            !ListFilter::new()
+                .ended()
+                .matches(&session(None, &[], LlmEngineState::Working))
+        );
     }
 }

@@ -132,7 +132,7 @@ impl Sandbox {
         );
         let shown: serde_json::Value =
             serde_json::from_str(&self.ok(&["show", "probe"], &environment)).unwrap();
-        let worktree = PathBuf::from(shown["cwd"].as_str().unwrap());
+        let worktree = PathBuf::from(shown["working_directory"].as_str().unwrap());
         let text = wait_for(&worktree.join("env.txt"));
         text.lines()
             .filter_map(|line| line.split_once('='))
@@ -177,7 +177,7 @@ fn defaults_are_the_xdg_directories_under_tx_ide() {
     let exists = socket.exists();
     kill_server(&socket);
     assert!(
-        home.join(format!(".local/share/tx-ide/sessions/{id}.json"))
+        home.join(format!(".local/share/tx-ide/agents/{id}/agent.json"))
             .is_file()
     );
     assert!(home.join(".local/share/tx-ide/log.jsonl").is_file());
@@ -241,7 +241,7 @@ fn xdg_variables_move_each_directory() {
             ("XDG_RUNTIME_DIR", run.to_str().unwrap()),
         ],
     );
-    assert!(x.join("tx-ide/sessions").is_dir());
+    assert!(x.join("tx-ide/agents").is_dir());
     assert!(y.join("tx-ide/locks").is_dir());
     let mode = std::os::unix::fs::PermissionsExt::mode(
         &std::fs::metadata(run.join("tx-ide")).unwrap().permissions(),
@@ -283,31 +283,42 @@ fn a_lone_state_dir_flag_on_a_version_one_home_points_at_migrate() {
     assert!(!sandbox.home().exists());
 }
 
-/// Builds a version-1 home the way the old build laid it out: everything in one directory.
+/// Builds a version-1 home the way the old build laid it out: everything in one directory, the
+/// record a version-1 `sessions/<id>.json`, the shipped roles under `agents/`, and the old
+/// home's tmux server still holding the agent's session.
 fn version_one_home(sandbox: &Sandbox, old: &Path, session: &str) {
-    let flags: Vec<String> = [
-        "--config-dir",
-        "--data-dir",
-        "--state-dir",
-        "--cache-dir",
-        "--run-dir",
-    ]
-    .iter()
-    .flat_map(|flag| [(*flag).to_owned(), old.to_string_lossy().into_owned()])
-    .collect();
-    let mut args: Vec<&str> = flags.iter().map(String::as_str).collect();
-    let work = sandbox.repository();
-    args.extend([
-        "create",
-        session,
-        "--cwd",
-        work.to_str().unwrap(),
-        "--engine",
-        "claude",
-        "--prompt",
-        "start",
-    ]);
-    sandbox.ok(&args, &[]);
+    let id = "a0000000-0000-4000-8000-00000000000a";
+    std::fs::create_dir_all(old.join("sessions")).unwrap();
+    std::fs::write(
+        old.join(format!("sessions/{id}.json")),
+        serde_json::json!({
+            "version": 1, "id": id, "name": session, "parent": null, "tags": [], "cwd": "/w",
+            "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": "running",
+            "launch": {"kind": "agent", "engine": "claude", "profile": []}, "state": "idle",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(old.join("log.jsonl"), "").unwrap();
+    std::fs::create_dir_all(old.join("profiles")).unwrap();
+    std::fs::create_dir_all(old.join("locks")).unwrap();
+    let status = Command::new("tmux")
+        .arg("-S")
+        .arg(old.join("tmux.sock"))
+        .args([
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "sleep",
+            "30",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success(), "the old home's tmux server");
+    let _ = sandbox;
     std::fs::create_dir_all(old.join("agents")).unwrap();
     std::fs::write(old.join("agents/SHIPPED.md"), "shipped").unwrap();
     std::fs::create_dir_all(old.join("user-agents")).unwrap();
@@ -379,6 +390,21 @@ fn migrate_moves_a_version_one_home_once_and_never_while_it_runs() {
     assert!(
         conf.contains(&format!("@tx-data \"{}\"", data.display())),
         "{conf}"
+    );
+    // The record step upgraded the moved record: `sessions/` is gone, the agent lists at
+    // `agents/<id>/agent.json`, its original kept.
+    assert!(
+        out.contains("migrated-no-conversation\ta0000000-0000-4000-8000-00000000000a\tlegacy"),
+        "{out}"
+    );
+    assert!(!data.join("sessions").exists());
+    assert!(
+        data.join("agents/a0000000-0000-4000-8000-00000000000a/agent.json")
+            .is_file()
+    );
+    assert!(
+        data.join("migration-backup/a0000000-0000-4000-8000-00000000000a.v1.json")
+            .is_file()
     );
     let listed = sandbox.ok(&["ls"], &[]);
     assert!(listed.contains("legacy"), "{listed}");

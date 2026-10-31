@@ -97,7 +97,7 @@ impl Cli {
     /// Where `name` runs: its record's `cwd`, the agent's worktree.
     fn cwd_of(&self, name: &str) -> PathBuf {
         let shown: serde_json::Value = serde_json::from_str(&self.ok(&["show", name])).unwrap();
-        PathBuf::from(shown["cwd"].as_str().unwrap())
+        PathBuf::from(shown["working_directory"].as_str().unwrap())
     }
 
     fn tmux(&self, args: &[&str]) -> Output {
@@ -245,7 +245,8 @@ fn token_pool() -> Vec<String> {
         "--env",
         "--parent",
         "--tag",
-        "--lifecycle",
+        "--running",
+        "--ended",
         "--engine",
         "--role",
         "--model",
@@ -371,7 +372,7 @@ fn usage_level_inputs_are_table_driven() {
         ),
         (vec!["send", "x", "--"], "send needs the message text"),
         (vec!["send", "--"], "send needs the message text"),
-        (vec!["ls", "--lifecycle", "RUNNING"], "RUNNING"),
+        (vec!["ls", "--lifecycle", "running"], "--lifecycle"),
         (vec!["ls", "--tag"], "--tag needs a value"),
         (vec!["refresh", "a", "b"], "unexpected argument \"b\""),
         (
@@ -495,7 +496,7 @@ fn create_boundary_names_and_relative_cwd() {
         );
         assert!(output.status.success(), "{name}: {}", stderr(&output));
         let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", name])).unwrap();
-        let worktree = Path::new(shown["cwd"].as_str().unwrap());
+        let worktree = Path::new(shown["working_directory"].as_str().unwrap());
         assert!(worktree.is_absolute(), "{name}: {}", worktree.display());
         assert_eq!(
             main_checkout_of(worktree),
@@ -530,7 +531,7 @@ fn create_boundary_names_and_relative_cwd() {
     assert!(err.contains("create needs a session name"), "{err}");
     assert_eq!(
         cli.ok(&["stop", "--cwd"]).trim().split('\t').nth(1),
-        Some("stopped")
+        Some("ended")
     );
     assert_eq!(cli.ok(&["ls"]).lines().count(), 3);
 }
@@ -818,7 +819,7 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
         assert_eq!(fields[0].len(), 36, "{line:?}");
         assert!(names.contains(&fields[1]), "{line:?}");
         assert!(
-            ["running", "stopped", "exited"].contains(&fields[2]),
+            ["starting", "idle", "working", "ended"].contains(&fields[2]),
             "{line:?}"
         );
         assert!(
@@ -828,14 +829,14 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
         let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", fields[0]])).unwrap();
         assert_eq!(shown["id"], fields[0]);
         assert_eq!(shown["name"], fields[1]);
-        assert_eq!(shown["lifecycle"], fields[2]);
-        assert_eq!(shown["cwd"], fields[3]);
+        assert_eq!(shown["state"], fields[2]);
+        assert_eq!(shown["working_directory"], fields[3]);
         assert_eq!(shown["tags"], serde_json::json!(["k"]));
         assert_eq!(cli.ok(&["show", fields[1]]), cli.ok(&["show", fields[0]]));
     }
-    assert_eq!(cli.ok(&["ls", "--lifecycle", "stopped"]).lines().count(), 1);
+    assert_eq!(cli.ok(&["ls", "--ended"]).lines().count(), 1);
     assert_eq!(
-        cli.ok(&["ls", "--lifecycle", "running"]).lines().count(),
+        cli.ok(&["ls", "--running"]).lines().count(),
         names.len() - 1
     );
     assert_eq!(cli.ok(&["ls", "--tag", "k"]).lines().count(), names.len());
@@ -1066,7 +1067,7 @@ fn six_concurrent_creates_with_distinct_names_all_succeed() {
     ids.sort();
     ids.dedup();
     assert_eq!(ids.len(), 6, "ids must be distinct");
-    let ls = cli.ok(&["ls", "--lifecycle", "running"]);
+    let ls = cli.ok(&["ls", "--running"]);
     assert_eq!(ls.lines().count(), 6, "{ls}");
     let mut listed: Vec<&str> = ls.lines().map(|l| l.split('\t').nth(1).unwrap()).collect();
     listed.sort_unstable();
@@ -1106,7 +1107,7 @@ fn six_concurrent_creates_with_the_same_name_get_distinct_suffixed_names() {
     let expected: Vec<String> = std::iter::once("same".to_owned())
         .chain((2..=6).map(|n| format!("same-{n}")))
         .collect();
-    let ls = cli.ok(&["ls", "--lifecycle", "running"]);
+    let ls = cli.ok(&["ls", "--running"]);
     let mut listed: Vec<&str> = ls.lines().map(|l| l.split('\t').nth(1).unwrap()).collect();
     listed.sort_unstable();
     assert_eq!(listed, expected, "{ls}");
@@ -1135,7 +1136,7 @@ fn six_concurrent_creates_with_the_same_name_get_distinct_suffixed_names() {
     ]);
     let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", id.trim()])).unwrap();
     assert_eq!(shown["name"], "same");
-    assert_eq!(cli.ok(&["ls", "--lifecycle", "running"]).lines().count(), 6);
+    assert_eq!(cli.ok(&["ls", "--running"]).lines().count(), 6);
     assert_eq!(cli.ok(&["ls"]).lines().count(), 6);
     assert_eq!(cli.ok(&["ls", "--archived"]).lines().count(), 1);
 }

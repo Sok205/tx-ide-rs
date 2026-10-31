@@ -9,7 +9,7 @@ use common::{
 };
 use tx_core::worktree::repository_key;
 use tx_core::{
-    CoreError, CreateOptions, EngineKind, Launch, LaunchOptions, Lifecycle, ListFilter, Session,
+    CoreError, CreateOptions, EngineKind, LaunchOptions, ListFilter, LlmEngineState, Session,
     SessionId, WorktreeError,
 };
 
@@ -37,15 +37,14 @@ fn an_agent_runs_detached_with_the_tx_environment() {
     let repository = h.repository("p");
     let id = core.create_session(agent("agent-1", &repository)).unwrap();
     let session = core.get_session(&id).unwrap();
-    assert_eq!(session.lifecycle, Lifecycle::Running);
+    assert_ne!(session.state, LlmEngineState::Ended);
     assert_eq!(session.name, "agent-1");
     assert_ne!(
-        session.cwd,
+        session.working_directory,
         repository.canonicalize().unwrap(),
         "runs in a worktree of the checkout"
     );
-    assert!(session.ended_at.is_none());
-    assert!(matches!(session.launch, Launch::Agent { engine, .. } if engine == STUB_KIND));
+    assert_eq!(session.engine, STUB_KIND);
     assert_eq!(h.live_names(), ["agent-1"]);
     assert_eq!(
         h.tmux_ok(&["show-options", "-v", "-t", "=agent-1:", "@tx-id"])
@@ -168,11 +167,8 @@ fn agent_session_gets_profile_plan_and_workspace() {
     assert_eq!(git_ok(&repository, &["status", "--porcelain"]), "");
     let session = core.get_session(&id).unwrap();
     // The options are engine data, not record fields.
-    assert!(matches!(
-        session.launch,
-        Launch::Agent { ref engine, ref profile, model: None, effort: None, .. }
-            if *engine == STUB_KIND && *profile == ["dev"]
-    ));
+    assert_eq!(session.engine, STUB_KIND);
+    assert_eq!(session.roles, ["dev"]);
     assert_eq!(
         session.ext.get(STUB_ID),
         Some(&serde_json::json!({"model": "m", "effort": "max"}))
@@ -333,23 +329,29 @@ fn every_agent_gets_its_own_detached_worktree_under_a_free_name() {
     let first = core.create_session(agent("w", &repository)).unwrap();
     let session = core.get_session(&first).unwrap();
     assert_eq!(session.name, "w");
-    assert_eq!(session.cwd, expected("w"));
-    assert_eq!(git_ok(&session.cwd, &["rev-parse", "HEAD"]), head);
+    assert_eq!(session.working_directory, expected("w"));
+    assert_eq!(
+        git_ok(&session.working_directory, &["rev-parse", "HEAD"]),
+        head
+    );
     assert!(
-        !git(&session.cwd, &["symbolic-ref", "-q", "HEAD"])
+        !git(&session.working_directory, &["symbolic-ref", "-q", "HEAD"])
             .status
             .success(),
         "detached"
     );
-    assert!(session.cwd.join("README.md").is_file());
+    assert!(session.working_directory.join("README.md").is_file());
     assert_eq!(h.live_names(), ["w"]);
 
     // The same name while the first runs: the next free one, for the record and the tree.
     let second = core.create_session(agent("w", &repository)).unwrap();
     let session = core.get_session(&second).unwrap();
     assert_eq!(session.name, "w-2");
-    assert_eq!(session.cwd, expected("w-2"));
-    assert_eq!(git_ok(&session.cwd, &["rev-parse", "HEAD"]), head);
+    assert_eq!(session.working_directory, expected("w-2"));
+    assert_eq!(
+        git_ok(&session.working_directory, &["rev-parse", "HEAD"]),
+        head
+    );
     assert_eq!(
         git_worktrees(&repository),
         [
@@ -405,11 +407,7 @@ fn a_program_that_exits_at_once_yields_an_exited_record() {
         .create_session(exiting("quick", &h.repository("q")))
         .unwrap();
     let session = core.refresh_session(&id).unwrap().session().clone();
-    assert!(
-        matches!(session.lifecycle, Lifecycle::Exited),
-        "{session:?}"
-    );
-    assert!(session.ended_at.is_some());
+    assert!(session.state == LlmEngineState::Ended, "{session:?}");
     let repository = h.repository("q2");
     let held = core.create_session(exiting("quick", &repository)).unwrap();
     assert_eq!(
@@ -523,13 +521,9 @@ fn list_and_resolve() {
     assert_eq!(by_parent, std::slice::from_ref(&child));
     let by_tag = core.list_sessions(&ListFilter::new().tag("u")).unwrap();
     assert_eq!(by_tag, std::slice::from_ref(&child));
-    let running = core
-        .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
-        .unwrap();
+    let running = core.list_sessions(&ListFilter::new().running()).unwrap();
     assert_eq!(running, [root.clone(), child.clone()]);
-    let stopped = core
-        .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Stopped))
-        .unwrap();
+    let stopped = core.list_sessions(&ListFilter::new().ended()).unwrap();
     assert_eq!(stopped, std::slice::from_ref(&other));
     let none = core.list_sessions(&ListFilter::new().tag("zzz")).unwrap();
     assert!(none.is_empty());
@@ -584,7 +578,7 @@ fn reads_never_touch_tmux() {
     let core = h.open_with_engine();
     let id = core.create_session(agent("r", &h.repository("a"))).unwrap();
     h.tmux(&["kill-server"]);
-    assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Running);
+    assert_ne!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
     assert_eq!(core.resolve("r").unwrap(), id);
     assert_eq!(
         core.list_sessions(&ListFilter::default()).unwrap(),
@@ -607,7 +601,7 @@ fn reopen_sees_the_same_sessions() {
             .unwrap()
     };
     let core = h.open();
-    assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Running);
+    assert_ne!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
     assert!(core.get_execution_location(&id).is_ok());
     assert_eq!(h.live_names(), ["keep"]);
 }
@@ -625,9 +619,9 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
     opts.tags = vec!["t1".into()];
     let source_id = core.create_session(opts).unwrap();
     let source = core.get_session(&source_id).unwrap();
-    let head = git_ok(&source.cwd, &["rev-parse", "HEAD"]);
+    let head = git_ok(&source.working_directory, &["rev-parse", "HEAD"]);
     // Uncommitted work in the source's worktree stays there.
-    std::fs::write(source.cwd.join("draft.txt"), "wip").unwrap();
+    std::fs::write(source.working_directory.join("draft.txt"), "wip").unwrap();
 
     let fork_id = core
         .fork_session(&source_id, tx_core::ForkOptions::new("go on"))
@@ -635,19 +629,19 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
     assert_ne!(fork_id, source_id);
     let fork = core.get_session(&fork_id).unwrap();
     assert_eq!(fork.name, "src-fork");
-    assert_eq!(fork.parent, Some(source_id.clone()));
+    assert_eq!(fork.parent_id, Some(source_id.clone()));
     assert_eq!(fork.tags, ["t1"]);
-    assert_eq!(fork.lifecycle, Lifecycle::Running);
+    assert_ne!(fork.state, LlmEngineState::Ended);
     assert_eq!(fork.state, tx_core::LlmEngineState::Starting);
-    assert!(matches!(
-        fork.launch,
-        Launch::Agent { engine, ref resume, .. } if engine == STUB_KIND && resume.is_none()
-    ));
-    assert_ne!(fork.cwd, source.cwd);
-    assert_eq!(git_ok(&fork.cwd, &["rev-parse", "HEAD"]), head);
-    assert!(!fork.cwd.join("draft.txt").exists());
+    assert_eq!(fork.engine, STUB_KIND);
+    assert_ne!(fork.working_directory, source.working_directory);
+    assert_eq!(
+        git_ok(&fork.working_directory, &["rev-parse", "HEAD"]),
+        head
+    );
+    assert!(!fork.working_directory.join("draft.txt").exists());
     assert!(
-        fork.cwd.join("stub-marker.txt").is_file(),
+        fork.working_directory.join("stub-marker.txt").is_file(),
         "workspace on the fork's worktree"
     );
     // The fork's engine data starts as a copy of the source's (the stub's plan adds nothing
@@ -656,7 +650,7 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
         fork.ext.get(STUB_ID),
         Some(&serde_json::json!({"effort": "high"}))
     );
-    let env = env_of(&fork.cwd);
+    let env = env_of(&fork.working_directory);
     assert_eq!(get(&env, "STUB_MODE"), Some("fork"));
     assert_eq!(get(&env, "STUB_RESUME"), Some(source_id.as_str()));
     assert_eq!(get(&env, "STUB_SESSION_ID"), Some(fork_id.as_str()));
@@ -666,11 +660,11 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
         "the source's effort"
     );
     assert!(wait_for(Duration::from_secs(5), || fork
-        .cwd
+        .working_directory
         .join("prompt.txt")
         .exists()));
     assert_eq!(
-        std::fs::read_to_string(fork.cwd.join("prompt.txt")).unwrap(),
+        std::fs::read_to_string(fork.working_directory.join("prompt.txt")).unwrap(),
         "go on\n"
     );
     // The source is untouched and both run.
@@ -703,8 +697,11 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
     let second = core.get_session(&second).unwrap();
     assert_eq!(second.name, "src-fork-2");
     assert_eq!(second.tags, ["t2"]);
-    assert_eq!(second.parent, Some(source_id.clone()));
-    assert_eq!(get(&env_of(&second.cwd), "STUB_EFFORT"), Some("low"));
+    assert_eq!(second.parent_id, Some(source_id.clone()));
+    assert_eq!(
+        get(&env_of(&second.working_directory), "STUB_EFFORT"),
+        Some("low")
+    );
     assert_eq!(h.worktree_count(), 3);
     // An option the engine refuses: its answer, and nothing is left of the fork.
     let error = core

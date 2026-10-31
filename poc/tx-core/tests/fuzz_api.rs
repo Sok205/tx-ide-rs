@@ -10,10 +10,9 @@ use std::path::PathBuf;
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Directories, EngineKind, EventType, Launch,
-    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState,
-    MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId,
-    TxCore, WorkspaceAction,
+    CoreConfig, CoreError, CreateOptions, Directories, EngineKind, EventType, LaunchOptions,
+    LaunchPlan, LaunchRequest, ListFilter, LlmEngine, LlmEngineState, MAX_SOCKET_PATH_BYTES,
+    Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -67,8 +66,8 @@ fn pairs() -> impl Strategy<Value = Vec<(String, String)>> {
     prop::collection::vec((text(), text()), 0..4)
 }
 
-fn lifecycle() -> impl Strategy<Value = Lifecycle> {
-    prop::sample::select(Lifecycle::ALL.to_vec())
+fn state() -> impl Strategy<Value = LlmEngineState> {
+    prop::sample::select(LlmEngineState::ALL.to_vec())
 }
 
 fn session_id() -> impl Strategy<Value = SessionId> {
@@ -111,27 +110,21 @@ fn short_tempdir() -> tempfile::TempDir {
         .unwrap()
 }
 
-fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecycle) -> Session {
+fn session_with(parent: Option<SessionId>, tags: Vec<String>, state: LlmEngineState) -> Session {
     Session {
         id: SessionId::mint(),
         name: "s".into(),
-        parent,
-        tags,
-        cwd: "/w".into(),
+        engine: EngineKind::Claude,
+        working_directory: "/w".into(),
+        roles: vec![],
+        state,
         created_at: 1.0,
-        ended_at: None,
-        archived_at: None,
         last_modified_at: 1.0,
-        lifecycle,
-        launch: Launch::Agent {
-            engine: EngineKind::Claude,
-            profile: vec![],
-            model: None,
-            effort: None,
-            resume: None,
-        },
+        archived_at: None,
+        tags,
+        parent_id: parent,
         ext: std::collections::BTreeMap::new(),
-        state: LlmEngineState::Idle,
+        other: Default::default(),
     }
 }
 
@@ -191,7 +184,7 @@ proptest! {
             ResolvedProfile { text: "t".into(), skill_dirs: vec![] },
             &dir.path().join("p.md"),
         ).unwrap();
-        let session = session_with(None, vec![], Lifecycle::Running);
+        let session = session_with(None, vec![], LlmEngineState::Idle);
         let first = [w1.clone()];
         let last = [w.clone()];
 
@@ -277,25 +270,27 @@ proptest! {
     fn list_filter_builder_and_matches(
         p1 in session_id(), p2 in session_id(),
         t1 in text(), t2 in text(),
-        l1 in lifecycle(), l2 in lifecycle(),
-        s_parent in prop::option::of(session_id()), s_tags in texts(), s_life in lifecycle(),
+        e1 in any::<bool>(), e2 in any::<bool>(),
+        s_parent in prop::option::of(session_id()), s_tags in texts(), s_state in state(),
     ) {
-        let a = ListFilter::new().parent(p1.clone()).parent(p2.clone()).tag(&t1).tag(&t2).lifecycle(l1).lifecycle(l2);
-        let b = ListFilter::new().lifecycle(l2).tag(&t2).parent(p2.clone());
+        let side = |filter: ListFilter, ended: bool| if ended { filter.ended() } else { filter.running() };
+        let a = side(side(ListFilter::new().parent(p1.clone()).parent(p2.clone()).tag(&t1).tag(&t2), e1), e2);
+        let b = side(ListFilter::new(), e2).tag(&t2).parent(p2.clone());
         prop_assert_eq!(&a, &b);
         prop_assert_eq!(&a.parent, &Some(p2.clone()));
         prop_assert_eq!(a.tag.as_deref(), Some(t2.as_str()));
-        prop_assert_eq!(a.lifecycle, Some(l2));
+        prop_assert_eq!(a.ended, Some(e2));
         let only_tag = ListFilter::new().tag(&t1);
-        prop_assert!(only_tag.parent.is_none() && only_tag.lifecycle.is_none());
+        prop_assert!(only_tag.parent.is_none() && only_tag.ended.is_none());
 
-        let session = session_with(s_parent.clone(), s_tags.clone(), s_life);
+        let session = session_with(s_parent.clone(), s_tags.clone(), s_state);
+        let s_ended = s_state == LlmEngineState::Ended;
         prop_assert!(ListFilter::new().matches(&session), "empty filter must match everything");
-        let expected = s_parent.as_ref() == Some(&p2) && s_tags.contains(&t2) && s_life == l2;
+        let expected = s_parent.as_ref() == Some(&p2) && s_tags.contains(&t2) && s_ended == e2;
         prop_assert_eq!(a.matches(&session), expected);
         prop_assert_eq!(ListFilter::new().parent(p2.clone()).matches(&session), s_parent.as_ref() == Some(&p2));
         prop_assert_eq!(ListFilter::new().tag(&t2).matches(&session), s_tags.contains(&t2));
-        prop_assert_eq!(ListFilter::new().lifecycle(l2).matches(&session), s_life == l2);
+        prop_assert_eq!(side(ListFilter::new(), e2).matches(&session), s_ended == e2);
     }
 
     #[test]
@@ -325,7 +320,7 @@ fn public_types_have_the_promised_auto_traits() {
     assert_static::<CoreError>();
     assert_copy::<LaunchRequest<'static>>();
     assert_copy::<EventType>();
-    assert_copy::<Lifecycle>();
+    assert_copy::<LlmEngineState>();
 
     // Value types are unwind-safe; a `TxCore` is not (it owns `Box<dyn LlmEngine>`), see report.
     assert_unwind_safe::<CoreConfig>();
