@@ -1,6 +1,0 @@
-{"type":"user","message":{"role":"user","content":"<from-agent session=\"alice\">peer</from-agent>"},"userType":"external","timestamp":"2026-01-02T03:00:00Z","uuid":"u1"}
-not json
-
-{"type":"user","message":{"role":"user","content":"typed by you"},"userType":"external","timestamp":"2026-01-02T01:00:00Z","uuid":"u2"}
-{"type":"user","message":{"role":"user","content":"kick off"},"userType":"external","timestamp":"2026-01-02T01:30:00Z","uuid":""}
-{"type":"assistant","message":{"role":"assistant","content":"x"}}

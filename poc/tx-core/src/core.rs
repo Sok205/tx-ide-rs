@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use crate::config::CoreConfig;
 use crate::engine::{
-    EngineError, EngineRegistry, LaunchMode, LaunchRequest, LlmEngine, apply_workspace,
+    Conversation, EngineError, EngineRegistry, LaunchMode, LaunchRequest, LlmEngine,
+    apply_workspace,
 };
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
@@ -598,6 +599,18 @@ impl TxCore {
         self.store
             .load(id)?
             .ok_or_else(|| CoreError::NotFound(id.to_string()))
+    }
+
+    /// The session's current conversation, asked from its engine. `None`: not known yet.
+    /// `UnknownEngine` when the record's engine is not registered (its plugin disabled).
+    pub fn conversation(&self, id: &SessionId) -> Result<Option<Conversation>, CoreError> {
+        let session = self.get_session(id)?;
+        let Launch::Agent { engine, .. } = &session.launch;
+        let adapter = self
+            .engines
+            .get(engine)
+            .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+        Ok(adapter.conversation(&session))
     }
 
     /// An id first, then a name: the `Running` record with it, else the most recently created

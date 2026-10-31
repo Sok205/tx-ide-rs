@@ -5,21 +5,11 @@
 //! `<from-agent session="X">…</from-agent>` (peer; the legacy `<from-claude>` still parses),
 //! `<from-user session="X">…</from-user>` (the operator, typed in session X),
 //! `<tx-command-prompt …/> text` (prefix+/), the viewer composer template, or plain typed text.
-//! [`parse_message`] is the pure per-turn classifier; [`collect_messages`] and
-//! [`source_signature`] are the only functions touching the filesystem.
+//! [`parse_message`] is the pure per-turn classifier; the timeline reads the transcripts.
 //!
 //! The reference's regexes are hand-matched here (same anchoring, greediness and `\s` set).
 
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
-
 use serde_json::{Map, Value, json};
-use tx_core::{Lifecycle, Session};
-
-use crate::engines::BUNDLE_TRANSCRIPT_NAME;
-use crate::ext::history_ext;
 
 /// What a peer sender is, as the classifier needs it: a send from a non-agent home is yours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -360,164 +350,6 @@ fn parse_timestamp(iso: Option<&Value>) -> (f64, String) {
     (ts, iso.clone())
 }
 
-// ----- collection (the only filesystem-touching path) --------------------------------------------
-
-/// Every message across all chat history, oldest first: the durable history bundles under
-/// `history_dir`, then the live transcripts the running records point at, deduped globally by
-/// line uuid.
-pub fn collect_messages(sessions: &[Session], history_dir: &Path) -> Vec<Message> {
-    let role_of = role_resolver(sessions);
-    let sender_role = |name: &str| role_of.get(name).copied();
-    let mut messages = Vec::new();
-    let mut seen = HashSet::new();
-    for source in sources(sessions, history_dir) {
-        let Ok(bytes) = std::fs::read(&source.path) else {
-            continue;
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        let recipient = Recipient {
-            id: &source.recipient_id,
-            name: &source.recipient_name,
-            cmd: "",
-            chat_id: &source.chat_id,
-        };
-        for line in py_splitlines(&text) {
-            let line = py_strip(line);
-            if line.is_empty() {
-                continue;
-            }
-            let Ok(obj) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let Some(message) = parse_message(&obj, &recipient, &sender_role) else {
-                continue;
-            };
-            if seen.insert(message.uuid.clone()) {
-                messages.push(message);
-            }
-        }
-    }
-    messages.sort_by(|a, b| a.ts.partial_cmp(&b.ts).unwrap_or(Ordering::Equal));
-    messages
-}
-
-/// A stat-only digest (sha1 hex) of every message source — `path:size:mtime_ns` lines — so a
-/// dashboard rebuilds the feed only when a transcript grows or appears.
-pub fn source_signature(sessions: &[Session], history_dir: &Path) -> String {
-    let parts: Vec<String> = sources(sessions, history_dir)
-        .into_iter()
-        .filter_map(|source| {
-            let status = std::fs::metadata(&source.path).ok()?;
-            let mtime_ns =
-                i128::from(status.mtime()) * 1_000_000_000 + i128::from(status.mtime_nsec());
-            Some(format!(
-                "{}:{}:{mtime_ns}",
-                source.path.display(),
-                status.len()
-            ))
-        })
-        .collect();
-    sha1_hex(parts.join("\n").as_bytes())
-}
-
-struct Source {
-    path: PathBuf,
-    recipient_id: String,
-    recipient_name: String,
-    chat_id: String,
-}
-
-/// Every transcript to read: the history bundles (`<history_dir>/*/*/transcript.jsonl`,
-/// path-sorted), then the mirrored transcripts of running records (`ext.history.chats`). Shared
-/// by the collector and the signature.
-fn sources(sessions: &[Session], history_dir: &Path) -> Vec<Source> {
-    let by_id: HashMap<&str, &Session> = sessions
-        .iter()
-        .map(|session| (session.id.as_str(), session))
-        .collect();
-    let mut bundles = Vec::new();
-    for tx_dir in read_dir_paths(history_dir) {
-        for chat_dir in read_dir_paths(&tx_dir) {
-            let path = chat_dir.join(BUNDLE_TRANSCRIPT_NAME);
-            if std::fs::symlink_metadata(&path).is_ok() {
-                bundles.push(path);
-            }
-        }
-    }
-    bundles.sort();
-    let mut out = Vec::new();
-    for path in bundles {
-        let name_of = |dir: Option<&Path>| {
-            dir.and_then(|dir| dir.file_name())
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        };
-        let chat_id = name_of(path.parent());
-        let recipient_id = name_of(path.parent().and_then(|dir| dir.parent()));
-        let session = by_id.get(recipient_id.as_str());
-        out.push(Source {
-            recipient_name: session.map_or_else(|| recipient_id.clone(), |s| s.name.clone()),
-            path,
-            recipient_id,
-            chat_id,
-        });
-    }
-    for session in sessions {
-        if session.lifecycle != Lifecycle::Running {
-            continue;
-        }
-        let Ok(history) = history_ext(session) else {
-            continue;
-        };
-        for (chat_id, chat) in history.chats {
-            out.push(Source {
-                path: PathBuf::from(chat.transcript),
-                recipient_id: session.id.to_string(),
-                recipient_name: session.name.clone(),
-                chat_id,
-            });
-        }
-    }
-    out
-}
-
-/// Child directories of `dir` (a missing dir has none).
-fn read_dir_paths(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect()
-}
-
-/// The latest sign of life: the record's last write (creation, a state change, the end, a
-/// rename or a tag).
-fn activity_at(session: &Session) -> f64 {
-    session.last_modified_at
-}
-
-/// name → role of the most recently active record of that name (names are reusable). Every
-/// core record is an agent.
-fn role_resolver(sessions: &[Session]) -> HashMap<String, SenderRole> {
-    let mut best: HashMap<&str, (f64, SenderRole)> = HashMap::new();
-    for session in sessions {
-        let activity = activity_at(session);
-        let role = SenderRole::Agent;
-        let replace = best
-            .get(session.name.as_str())
-            .is_none_or(|(current, _)| activity > *current);
-        if replace {
-            best.insert(&session.name, (activity, role));
-        }
-    }
-    best.into_iter()
-        .map(|(name, (_, role))| (name.to_owned(), role))
-        .collect()
-}
-
 // ----- Python str semantics ----------------------------------------------------------------------
 
 /// `str.isspace` (also the `\s` of a `str` regex): Unicode White_Space plus `\x1c`–`\x1f`.
@@ -536,43 +368,6 @@ fn py_lstrip(s: &str) -> &str {
 /// `\w` of a `str` regex.
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
-}
-
-/// `str.splitlines()` (no trailing empty piece).
-fn py_splitlines(text: &str) -> Vec<&str> {
-    let is_break = |c: char| {
-        matches!(
-            c,
-            '\n' | '\r'
-                | '\u{b}'
-                | '\u{c}'
-                | '\u{1c}'
-                | '\u{1d}'
-                | '\u{1e}'
-                | '\u{85}'
-                | '\u{2028}'
-                | '\u{2029}'
-        )
-    };
-    let mut lines = Vec::new();
-    let mut start = 0;
-    let mut chars = text.char_indices().peekable();
-    while let Some((index, c)) = chars.next() {
-        if !is_break(c) {
-            continue;
-        }
-        lines.push(&text[start..index]);
-        let mut end = index + c.len_utf8();
-        if c == '\r' && chars.peek().is_some_and(|&(_, next)| next == '\n') {
-            chars.next();
-            end += 1;
-        }
-        start = end;
-    }
-    if start < text.len() {
-        lines.push(&text[start..]);
-    }
-    lines
 }
 
 // ----- datetime.fromisoformat(...).timestamp() ---------------------------------------------------
@@ -833,57 +628,6 @@ fn truthy(value: Option<&Value>) -> bool {
     }
 }
 
-// ----- sha1 (hashlib.sha1(...).hexdigest()) ------------------------------------------------------
-
-fn sha1_hex(data: &[u8]) -> String {
-    let mut h: [u32; 5] = [
-        0x6745_2301,
-        0xEFCD_AB89,
-        0x98BA_DCFE,
-        0x1032_5476,
-        0xC3D2_E1F0,
-    ];
-    let mut message = data.to_vec();
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
-    }
-    message.extend_from_slice(&(data.len() as u64 * 8).to_be_bytes());
-    for block in message.as_chunks::<64>().0 {
-        let mut w = [0u32; 80];
-        for (slot, word) in w.iter_mut().zip(block.as_chunks::<4>().0) {
-            *slot = u32::from_be_bytes(*word);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e] = h;
-        for (i, &word) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
-                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
-                _ => (b ^ c ^ d, 0xCA62_C1D6u32),
-            };
-            let next = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(word);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = next;
-        }
-        for (state, value) in h.iter_mut().zip([a, b, c, d, e]) {
-            *state = state.wrapping_add(value);
-        }
-    }
-    h.iter().map(|word| format!("{word:08x}")).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1007,12 +751,6 @@ mod tests {
 
     #[test]
     fn python_str_helpers() {
-        assert_eq!(
-            py_splitlines("a\r\nb\rc\u{2028}d\u{1c}e\n"),
-            ["a", "b", "c", "d", "e"]
-        );
-        assert_eq!(py_splitlines("\n"), [""]);
-        assert!(py_splitlines("").is_empty());
         assert_eq!(py_strip("\u{1f} x \u{3000}"), "x");
         assert!(is_priming(&format!(
             "{}as your first actions",
@@ -1022,15 +760,5 @@ mod tests {
             "{}as your first actions",
             "é".repeat(380)
         )));
-    }
-
-    #[test]
-    fn sha1_matches_hashlib() {
-        assert_eq!(sha1_hex(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
-        assert_eq!(sha1_hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
-        assert_eq!(
-            sha1_hex(&[b'a'; 1000]),
-            "291e9a6c66994949b57ba5e650361e98fc36b1ba"
-        );
     }
 }

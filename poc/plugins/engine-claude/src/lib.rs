@@ -37,9 +37,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
-    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command, mirror_file,
-    mirror_file_exact, mirror_tree,
+    Conversation, EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
+    LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
+    mirror_file, mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -366,6 +366,15 @@ impl LlmEngine for ClaudeAdapter {
         mirror_file(&archived_transcript, &transcript)?;
         mirror_tree(&archived_sidecars, &sidecars)?;
         Ok(true)
+    }
+
+    /// The recorded `conversation_id` and `transcript_path`; `None` until both are known.
+    fn conversation(&self, session: &Session) -> Option<Conversation> {
+        let data = engine_data(self, session);
+        Some(Conversation {
+            id: data.get(CONVERSATION_ID_KEY)?.as_str()?.to_owned(),
+            transcript_path: PathBuf::from(data.get(TRANSCRIPT_PATH_KEY)?.as_str()?),
+        })
     }
 }
 
@@ -1316,5 +1325,34 @@ mod tests {
             std::fs::read(project.join("c1/subagents/s.jsonl")).unwrap(),
             b"S"
         );
+    }
+
+    #[test]
+    fn conversation_is_the_recorded_id_and_path_once_both_are_known() {
+        let adapter = adapter();
+        let full = session(
+            LlmEngineState::Idle,
+            serde_json::json!({CONVERSATION_ID_KEY: "c1", TRANSCRIPT_PATH_KEY: "/t/c1.jsonl", "model": "m"}),
+        );
+        assert_eq!(
+            adapter.conversation(&full),
+            Some(Conversation {
+                id: "c1".into(),
+                transcript_path: PathBuf::from("/t/c1.jsonl"),
+            })
+        );
+        for partial in [
+            serde_json::Value::Null,
+            serde_json::json!({"model": "m"}),
+            serde_json::json!({CONVERSATION_ID_KEY: "c1"}),
+            serde_json::json!({TRANSCRIPT_PATH_KEY: "/t/c1.jsonl"}),
+            serde_json::json!("not an object"),
+        ] {
+            assert_eq!(
+                adapter.conversation(&session(LlmEngineState::Idle, partial.clone())),
+                None,
+                "{partial}"
+            );
+        }
     }
 }

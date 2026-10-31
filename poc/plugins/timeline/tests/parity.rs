@@ -27,9 +27,15 @@ fn build() -> Built {
         .map(|record| Session::from_json(&record.to_string()).unwrap())
         .collect();
     let dir = tempfile::tempdir().unwrap();
-    let mut builder = Builder::new(dir.path().join("history"), dir.path().join("timeline"));
+    let mut builder = Builder::new(dir.path().join("timeline"));
     let now = world["now"].as_f64().unwrap();
-    let payload = builder.build(&sessions, world["days"].as_f64().unwrap(), now);
+    let transcripts = world::transcripts(&sessions);
+    let payload = builder.build(
+        &sessions,
+        &transcripts,
+        world["days"].as_f64().unwrap(),
+        now,
+    );
     Built {
         payload,
         now,

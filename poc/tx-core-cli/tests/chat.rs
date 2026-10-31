@@ -1,5 +1,6 @@
-//! The chat plugin through the binary: capture (`_chat-hook`, `chat ls`, `chat hooks`) and
-//! prefix+f (`_fork-pane`) over core's built-in `fork`.
+//! The chat plugin through the binary: `chat ls` (the engine's conversation), `doctor
+//! --fix-hooks` (the retired global hooks) and prefix+f (`_fork-pane`) over core's built-in
+//! `fork`.
 
 mod common;
 
@@ -109,130 +110,30 @@ impl Cli {
             .filter(|record| record["name"] == name)
             .collect()
     }
-    fn capture(&self, id: &str, chat: &str) {
-        let body = payload(chat, &self.dir.path().join(format!("{chat}.jsonl")));
-        assert!(self.hook("session-start", id, &body).status.success());
-    }
-    fn hook(&self, event: &str, id: &str, payload: &str) -> std::process::Output {
-        self.run(&["_chat-hook", event], &[("TX_SESSION_ID", id)], payload)
-    }
-}
-
-type Case<'a> = (Vec<(&'a str, &'a str)>, &'a str, &'a str);
-
-fn payload(chat: &str, transcript: &Path) -> String {
-    json!({"session_id": chat, "transcript_path": transcript}).to_string()
 }
 
 #[test]
-fn chat_hook_captures_the_primary_chat() {
+fn chat_ls_prints_the_conversation_the_engine_recorded() {
     require_tmux!();
     let cli = Cli::new();
     let id = cli.create_agent("a");
-    let transcript = cli.dir.path().join("c1.jsonl");
-    let body = payload("c1", &transcript);
-    assert!(cli.hook("session-start", &id, &body).status.success());
-    let shown = cli.show("a");
-    let chat = &shown["ext"]["chat"];
-    assert_eq!(chat["engine"], "claude");
-    let first = &chat["chats"][0];
-    assert_eq!(first["id"], "c1");
-    assert_eq!(first["role"], "primary");
-    assert_eq!(first["how"], "spawn");
-    assert_eq!(first["transcript"], transcript.to_str().unwrap());
-    assert_eq!(chat["chats"].as_array().unwrap().len(), 1);
-
-    let before = std::fs::read(cli.record_path(&id)).unwrap();
-    assert!(cli.hook("session-start", &id, &body).status.success());
-    assert!(cli.hook("stop", &id, &body).status.success());
-    assert_eq!(std::fs::read(cli.record_path(&id)).unwrap(), before);
+    let transcript = cli.show("a")["ext"]["claude"]["transcript_path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     assert!(
-        cli.ok(&["chat", "ls", "a"])
-            .starts_with("a — 1 chat(s)\n  c1 ")
+        transcript.ends_with(&format!("/{id}.jsonl")),
+        "{transcript}"
     );
-}
-
-#[test]
-fn a_chat_owned_by_another_session_is_never_bound() {
-    require_tmux!();
-    let cli = Cli::new();
-    let a = cli.create_agent("a");
-    let b = cli.create_agent("b");
-    let body = payload("c1", &cli.dir.path().join("c1.jsonl"));
-    assert!(cli.hook("session-start", &a, &body).status.success());
-    assert!(cli.hook("prompt-submit", &b, &body).status.success());
-    let ingest = cli.run(&["_history-ingest"], &[("TX_SESSION_ID", &b)], &body);
-    assert!(ingest.status.success());
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let shown = cli.show("b");
-    assert!(shown["ext"].get("chat").is_none(), "{shown}");
-    assert!(shown["ext"].get("history").is_none(), "{shown}");
-    assert!(
-        !cli.state()
-            .join("plugins/history")
-            .join(&b)
-            .join("c1")
-            .exists()
+    assert_eq!(
+        cli.ok(&["chat", "ls", "a"]),
+        format!("a — conversation {id}\n  transcript {transcript}\n")
     );
-}
-
-#[test]
-fn chat_hook_not_ours_or_bad_payload_writes_nothing() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create_agent("a");
-    let good = payload("c1", &cli.dir.path().join("c1.jsonl"));
-    let record = || std::fs::read(cli.record_path(&id)).unwrap();
-    let before = record();
-    let other = "0f6b3b8a-1111-4222-8333-444444444444";
-    let cases: Vec<Case> = vec![
-        (vec![], "session-start", good.as_str()),
-        (
-            vec![("TX_SESSION_ID", other)],
-            "session-start",
-            good.as_str(),
-        ),
-        (vec![("TX_SESSION_ID", "not-an-id")], "stop", good.as_str()),
-        (vec![("TX_SESSION_ID", id.as_str())], "stop", ""),
-        (vec![("TX_SESSION_ID", id.as_str())], "stop", "[1]"),
-        (
-            vec![("TX_SESSION_ID", id.as_str())],
-            "stop",
-            r#"{"session_id":3}"#,
-        ),
-        (
-            vec![("TX_SESSION_ID", id.as_str())],
-            "stop",
-            r#"{"session_id":"c1"}"#,
-        ),
-        (vec![("TX_SESSION_ID", id.as_str())], "bogus", good.as_str()),
-    ];
-    for (env, event, stdin) in cases {
-        let output = cli.run(&["_chat-hook", event], &env, stdin);
-        assert!(output.status.success(), "{env:?} {event} {stdin}");
-        assert_eq!(record(), before, "{env:?} {event} {stdin}");
-    }
-}
-
-#[test]
-fn malformed_ext_chat_is_reported_and_never_breaks_listing() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create_agent("a");
     let path = cli.record_path(&id);
     let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    record["ext"] = json!({"chat": 5});
+    record["ext"] = json!({"claude": {"model": "sonnet"}});
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
-
-    let error = cli.fails(&["chat", "ls", "a"], 1);
-    assert!(error.contains("malformed"), "{error}");
-    assert!(error.contains("ext.chat of 'a' is malformed"), "{error}");
-    cli.ok(&["ls"]);
-    cli.ok(&["show", "a"]);
-    cli.ok(&["_list"]);
-    let body = payload("c1", &cli.dir.path().join("c1.jsonl"));
-    assert!(cli.hook("session-start", &id, &body).status.success());
-    assert_eq!(cli.show("a")["ext"]["chat"], 5);
+    assert_eq!(cli.ok(&["chat", "ls", "a"]), "a — no conversation yet\n");
 }
 
 #[test]
@@ -245,61 +146,50 @@ fn chat_ls_unknown_session_exits_1() {
     );
     cli.fails(&["chat", "ls"], 2);
     cli.fails(&["chat", "bogus"], 2);
+    cli.fails(&["chat", "hooks", "install"], 2);
 }
 
 #[test]
-fn chat_hooks_install_coexists_with_other_hooks() {
-    require_tmux!();
+fn help_no_longer_lists_the_hook_installers_or_the_mirror() {
+    let help = Cli::new().ok(&["help"]);
+    for gone in ["chat hooks", "history"] {
+        assert!(!help.contains(gone), "{gone}: {help}");
+    }
+    assert!(help.contains("doctor --fix-hooks"), "{help}");
+}
+
+#[test]
+fn doctor_fix_hooks_removes_only_the_retired_entries_and_is_idempotent() {
     let cli = Cli::new();
     let home = cli.dir.path().join("home");
-    std::fs::create_dir_all(&home).unwrap();
+    let claude = home.join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
     let env = [("HOME", home.to_str().unwrap())];
-    let run = |args: &[&str]| {
-        let output = cli.run(args, &env, "");
-        assert!(
-            output.status.success(),
-            "{args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-    let settings = home.join(".claude/settings.json");
-    let stop_commands = || -> Vec<String> {
-        let json: Value =
-            serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
-        json["hooks"]["Stop"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|b| b["hooks"].as_array().unwrap().clone())
-            .map(|h| h["command"].as_str().unwrap().to_owned())
-            .collect()
-    };
-    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let block =
+        |command: &str| json!({"matcher": "", "hooks": [{"type": "command", "command": command}]});
+    let ours = "'/opt/txc' _capture stop || exit 1";
+    let settings = claude.join("settings.json");
     std::fs::write(
         &settings,
-        r#"{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"say done"}]}]}}"#,
+        json!({"hooks": {"Stop": [block("say done"), block(ours)]}}).to_string(),
     )
     .unwrap();
-    let with_hooks = std::fs::read(&settings).unwrap();
-    run(&["chat", "hooks", "install", "--dry-run"]);
-    assert_eq!(std::fs::read(&settings).unwrap(), with_hooks, "dry run");
-    run(&["chat", "hooks", "install"]);
-    run(&["history-hooks", "install"]);
-    let commands = stop_commands();
-    for needle in ["say done", " _chat-hook stop", " _history-ingest"] {
-        assert!(
-            commands.iter().any(|c| c.contains(needle)),
-            "{needle}: {commands:?}"
-        );
-    }
-    run(&["chat", "hooks", "uninstall"]);
-    let commands = stop_commands();
-    assert!(
-        !commands.iter().any(|c| c.contains("_chat-hook")),
-        "{commands:?}"
-    );
-    assert!(commands.iter().any(|c| c.contains("_history-ingest")));
-    assert!(commands.iter().any(|c| c == "say done"));
+    std::fs::write(
+        claude.join(".tx-chat-managed.json"),
+        json!({"version": 1, "backup": null, "added": [{"event": "Stop", "command": ours}]})
+            .to_string(),
+    )
+    .unwrap();
+    let first = cli.run(&["doctor", "--fix-hooks"], &env, "");
+    assert!(first.status.success(), "{first:?}");
+    let read = || -> Value { serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap() };
+    assert_eq!(read(), json!({"hooks": {"Stop": [block("say done")]}}));
+    assert!(!claude.join(".tx-chat-managed.json").exists());
+    let second = cli.run(&["doctor", "--fix-hooks"], &env, "");
+    assert!(second.status.success(), "{second:?}");
+    assert!(String::from_utf8_lossy(&second.stdout).contains("nothing to do"));
+    assert_eq!(read(), json!({"hooks": {"Stop": [block("say done")]}}));
+    assert_eq!(cli.run(&["doctor"], &env, "").status.code(), Some(2));
 }
 
 fn has_run(argv: &[String], run: &[&str]) -> bool {
@@ -364,7 +254,6 @@ fn fork_pane_background_half_forks_the_pane_session_and_reports() {
     require_tmux!();
     let cli = Cli::new();
     let id = cli.create_agent("a");
-    cli.capture(&id, "c1");
     let pane = common::pane_id_of(&cli, "a").trim().to_owned();
     let output = cli.op(&["_fork-pane", &pane, "nosuchclient", "a-f"], &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");

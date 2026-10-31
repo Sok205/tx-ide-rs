@@ -169,6 +169,15 @@ impl LaunchPlan {
     }
 }
 
+/// The conversation a record's engine data names: the engine's own id for it and where the CLI
+/// keeps its live transcript. Readers (the timeline, `chat ls`) ask for it through
+/// [`crate::TxCore::conversation`]; only the engine knows how its data spells it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Conversation {
+    pub id: String,
+    pub transcript_path: PathBuf,
+}
+
 /// One coding-agent engine. Five required methods; no I/O in `configure`, `launch` or `on_hook`.
 /// `archive` and `restore` are the two methods that touch the filesystem. `Send + Sync` so a
 /// core can be shared across threads.
@@ -229,6 +238,14 @@ pub trait LlmEngine: Send + Sync {
     fn restore(&self, session: &Session, archive_directory: &Path) -> Result<bool, EngineError> {
         let _ = (session, archive_directory);
         Ok(false)
+    }
+
+    /// The conversation this session's engine data names, for readers (the timeline, `chat
+    /// ls`). `None` while it is not known yet (a Codex agent before its first `SessionStart`).
+    /// Pure. The default knows none.
+    fn conversation(&self, session: &Session) -> Option<Conversation> {
+        let _ = session;
+        None
     }
 }
 
