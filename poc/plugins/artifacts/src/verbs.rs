@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use tx_client::tmux::Ui;
-use tx_core::{CoreError, ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
+use tx_core::{Agent, AgentId, CoreError, ListFilter, TxCore, Verb, VerbError, VerbIo};
 
 use crate::artifact::{Artifact, Kind, USER_ACTOR};
 use crate::grouping::{GroupResolver, ext_of, own_group};
@@ -120,11 +120,11 @@ impl Args {
 }
 
 /// Every record the core holds; unreadable ones are skipped.
-fn all_sessions(core: &TxCore) -> Vec<Session> {
-    core.list_sessions(&ListFilter::new())
+fn all_sessions(core: &TxCore) -> Vec<Agent> {
+    core.list_agents(&ListFilter::new())
         .unwrap_or_default()
         .iter()
-        .filter_map(|id| core.get_session(id).ok())
+        .filter_map(|id| core.get_agent(id).ok())
         .collect()
 }
 
@@ -136,9 +136,9 @@ fn names_for<'a>(core: &TxCore, ids: impl IntoIterator<Item = &'a str>) -> HashM
             continue;
         }
         if let Some(session) = id
-            .parse::<SessionId>()
+            .parse::<AgentId>()
             .ok()
-            .and_then(|sid| core.get_session(&sid).ok())
+            .and_then(|sid| core.get_agent(&sid).ok())
         {
             names.insert(id.to_owned(), session.name);
         }
@@ -567,12 +567,12 @@ impl Ctx<'_, '_> {
         Ok(Outcome::Code(0))
     }
 
-    fn invoker(&self) -> Option<Session> {
+    fn invoker(&self) -> Option<Agent> {
         let actor = self.artifacts.actor();
         if actor == USER_ACTOR {
             return None;
         }
-        self.core.get_session(&actor.parse().ok()?).ok()
+        self.core.get_agent(&actor.parse().ok()?).ok()
     }
 
     /// Open-by-convention: a kind the plugin does not handle itself is opened by the plugin that
@@ -743,7 +743,7 @@ impl Verb for GroupVerb {
             }
             Err(error) => return Err(error.into()),
         };
-        let session = core.get_session(&id)?;
+        let session = core.get_agent(&id)?;
         if let Err(problem) = ext_of(&session) {
             let _ = writeln!(io.stderr, "txc group: {problem}");
         }

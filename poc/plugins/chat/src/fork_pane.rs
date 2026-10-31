@@ -1,7 +1,7 @@
 //! `_fork-pane`: the prefix+f seam. In the key's popup (bin/tmux-fork-tx-session) it asks for the
 //! fork's name (blank: the `<source>-fork` default) and hands the fork to a background
 //! `run-shell`, so the popup closes at once; the background half forks the tx session shown in
-//! the firing pane through `TxCore::fork_session` (a new worktree, the source's engine, the
+//! the firing pane through `TxCore::fork_agent` (a new worktree, the source's engine, the
 //! fixed first prompt below) and reports the outcome on the firing client's status line.
 
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tx_client::prompt::prompt_with_default;
 use tx_client::render::{ACCENT_ANSI, BOLD, RESET};
 use tx_client::tmux::{Ui, shell_quote};
-use tx_core::{CoreError, ForkOptions, Session, TxCore, Verb, VerbError, VerbIo};
+use tx_core::{Agent, CoreError, ForkOptions, TxCore, Verb, VerbError, VerbIo};
 
 /// What a fork made from the key is first told; `{source}` is the source's name. Core has no
 /// default prompt, and the popup asks only for a name.
@@ -92,9 +92,9 @@ fn fork(core: &TxCore, pane: &str, client: &str, name: &str) -> Result<i32, Verb
     if !name.is_empty() {
         options = options.name(name);
     }
-    match core.fork_session(&source.id, options) {
+    match core.fork_agent(&source.id, options) {
         Ok(forked) => {
-            let forked = core.get_session(&forked)?;
+            let forked = core.get_agent(&forked)?;
             ui.display_status(client, &format!("forked {} → {}", source.name, forked.name));
             Ok(0)
         }
@@ -112,13 +112,13 @@ fn source_in_pane(
     ui: &Ui,
     pane: &str,
     client: &str,
-) -> Result<Option<Session>, VerbError> {
+) -> Result<Option<Agent>, VerbError> {
     let target = ui
         .inner_for_pane(pane)
         .or_else(|| ui.display_message("#{session_name}", Some(pane)))
         .filter(|target| !ui.is_view(target));
     let source = match target.map(|target| core.resolve(&target)) {
-        Some(Ok(id)) => Some(core.get_session(&id)?),
+        Some(Ok(id)) => Some(core.get_agent(&id)?),
         Some(Err(CoreError::NotFound(_))) | None => None,
         Some(Err(error)) => return Err(error.into()),
     };

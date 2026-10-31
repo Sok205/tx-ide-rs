@@ -12,11 +12,11 @@ use std::process::Command;
 
 use serde_json::{Map, Value};
 
+use crate::agent::{Agent, AgentId};
 use crate::config::{AGENTS_DIR, CONF_FILE, Directories, SOCKET_FILE};
 use crate::core::{DEFAULT_TMUX_CONF, SESSIONS_DIR, TMUX_BINARY, TxCore};
 use crate::engine::EngineKind;
 use crate::events::now;
-use crate::session::{Session, SessionId};
 use crate::state::LlmEngineState;
 use crate::store::StoreError;
 
@@ -299,18 +299,18 @@ pub fn version_one_records(data: &Path) -> io::Result<Vec<PathBuf>> {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct RecordReport {
     /// `(id, name)` of the agents now at `agents/<id>/agent.json`, their conversation known.
-    pub migrated: Vec<(SessionId, String)>,
+    pub migrated: Vec<(AgentId, String)>,
     /// Migrated too, but their engine names no conversation for them
     /// (`LlmEngine::conversation` is `None`): nothing recorded, or an id without a transcript.
-    pub without_conversation: Vec<(SessionId, String)>,
+    pub without_conversation: Vec<(AgentId, String)>,
     /// `(file name, why)` of the records moved to `legacy/`.
     pub legacy: Vec<(String, String)>,
     /// Records that were already at version 2 under `agents/`; their stale version-1 file was
     /// backed up and removed.
-    pub skipped: Vec<SessionId>,
+    pub skipped: Vec<AgentId>,
     /// `(id, why)` of the records left in `sessions/` for a later run: their engine's plugin is
     /// disabled, so nobody can build their engine data.
-    pub deferred: Vec<(SessionId, String)>,
+    pub deferred: Vec<(AgentId, String)>,
 }
 
 impl RecordReport {
@@ -358,9 +358,9 @@ pub fn version_one_conversation<'a>(
 /// Why one version-1 file is not an agent of this build.
 #[derive(Debug)]
 enum Outcome {
-    Agent(Box<Session>),
+    Agent(Box<Agent>),
     Legacy(String),
-    Deferred(SessionId, String),
+    Deferred(AgentId, String),
 }
 
 /// The top-level keys of a version-1 record this build knows; the rest survive in `other`.
@@ -387,7 +387,7 @@ fn text_of(record: &Map<String, Value>, key: &str) -> Option<String> {
 
 /// The version-2 record a version-1 one maps to, per the Storage plan's table, or why it is
 /// not an agent. `path` is the file (its mtime stands in for a missing `last_modified_at`).
-fn upgrade_one(core: &TxCore, path: &Path, record: &Map<String, Value>, id: &SessionId) -> Outcome {
+fn upgrade_one(core: &TxCore, path: &Path, record: &Map<String, Value>, id: &AgentId) -> Outcome {
     match record.get("version") {
         Some(Value::Number(version)) if version.as_u64() == Some(1) => {}
         other => {
@@ -500,7 +500,7 @@ fn upgrade_one(core: &TxCore, path: &Path, record: &Map<String, Value>, id: &Ses
         .filter(|(key, _)| !VERSION_ONE_KEYS.contains(&key.as_str()))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    Outcome::Agent(Box::new(Session {
+    Outcome::Agent(Box::new(Agent {
         id: id.clone(),
         name,
         engine,
@@ -570,7 +570,7 @@ pub fn upgrade_records(core: &TxCore) -> Result<RecordReport, MigrationError> {
                 continue;
             }
         };
-        let Ok(id) = stem.parse::<SessionId>() else {
+        let Ok(id) = stem.parse::<AgentId>() else {
             legacy(
                 path,
                 &mut report,
@@ -589,7 +589,7 @@ pub fn upgrade_records(core: &TxCore) -> Result<RecordReport, MigrationError> {
             )?;
             continue;
         }
-        let _session = core.locks().session(&id).map_err(MigrationError::Lock)?;
+        let _session = core.locks().agent(&id).map_err(MigrationError::Lock)?;
         let backup = data.join(BACKUP_DIR).join(format!("{id}.v1.json"));
         if core.store().load(&id)?.is_some() {
             retire(path, &backup, &text, data)?;
@@ -777,7 +777,7 @@ mod tests {
     struct Stub;
 
     impl LlmEngine for Stub {
-        fn on_hook(&self, _: &Session, _: &crate::LlmEngineHook) -> LlmEngineChange {
+        fn on_hook(&self, _: &Agent, _: &crate::LlmEngineHook) -> LlmEngineChange {
             LlmEngineChange::NONE
         }
 
@@ -789,7 +789,7 @@ mod tests {
             "claude"
         }
 
-        fn configure(&self, _: &Session, options: &Value) -> Result<Value, EngineError> {
+        fn configure(&self, _: &Agent, options: &Value) -> Result<Value, EngineError> {
             Ok(options.clone())
         }
 
@@ -804,13 +804,13 @@ mod tests {
         fn fork(
             &self,
             _: &LaunchRequest<'_>,
-            _: &Session,
+            _: &Agent,
             _: &str,
         ) -> Result<LaunchPlan, EngineError> {
             Ok(LaunchPlan::default())
         }
 
-        fn conversation(&self, session: &Session) -> Option<crate::engine::Conversation> {
+        fn conversation(&self, session: &Agent) -> Option<crate::engine::Conversation> {
             let data = session.ext.get("claude")?;
             Some(crate::engine::Conversation {
                 id: data.get("conversation_id")?.as_str()?.to_owned(),
@@ -952,7 +952,7 @@ mod tests {
         );
 
         let report = upgrade_records(&core).unwrap();
-        let names = |entries: &[(SessionId, String)]| -> Vec<String> {
+        let names = |entries: &[(AgentId, String)]| -> Vec<String> {
             entries.iter().map(|(_, name)| name.clone()).collect()
         };
         assert_eq!(names(&report.migrated), ["lead", "stopped", "fork"]);
@@ -1105,7 +1105,7 @@ mod tests {
         core.store().save(&renamed).unwrap();
         plant(&core, "a", &version_one("a", "lead", "running"));
         let again = upgrade_records(&core).unwrap();
-        assert_eq!(again.skipped, ["a".parse::<SessionId>().unwrap()]);
+        assert_eq!(again.skipped, ["a".parse::<AgentId>().unwrap()]);
         assert!(again.migrated.is_empty() && again.without_conversation.is_empty());
         assert_eq!(
             core.store().load(&"a".parse().unwrap()).unwrap().unwrap(),

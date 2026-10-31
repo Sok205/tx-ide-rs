@@ -6,20 +6,20 @@
 //! `idle` / `working`); an ended record is `archived` and `ended`. `chat_origin` needs a
 //! chat plugin, which this port does not have yet, so it matches nothing.
 
-use tx_core::{LlmEngineState, Session};
+use tx_core::{Agent, LlmEngineState};
 
 use crate::pack::{SessionFilter, TxCheck};
 
-fn role_matches(_: &Session, role: &str) -> bool {
+fn role_matches(_: &Agent, role: &str) -> bool {
     matches!(role, "llm" | "agent")
 }
 
-fn engine_of(session: &Session) -> &str {
+fn engine_of(session: &Agent) -> &str {
     session.engine.as_str()
 }
 
 /// Every state name the record answers to.
-pub fn states(session: &Session) -> Vec<String> {
+pub fn states(session: &Agent) -> Vec<String> {
     match session.state {
         LlmEngineState::Ended => vec!["archived".to_owned(), "ended".to_owned()],
         state => vec![
@@ -30,7 +30,7 @@ pub fn states(session: &Session) -> Vec<String> {
     }
 }
 
-pub fn matches(filter: &SessionFilter, session: &Session) -> bool {
+pub fn matches(filter: &SessionFilter, session: &Agent) -> bool {
     filter
         .tag
         .as_ref()
@@ -57,7 +57,7 @@ pub fn matches(filter: &SessionFilter, session: &Session) -> bool {
         && filter.chat_origin.is_none()
 }
 
-pub fn evaluate(check: &TxCheck, sessions: &[Session]) -> Result<(), String> {
+pub fn evaluate(check: &TxCheck, sessions: &[Agent]) -> Result<(), String> {
     let hits: Vec<&str> = sessions
         .iter()
         .filter(|session| matches(&check.session, session))
@@ -95,13 +95,13 @@ mod tests {
 
     /// A record whose `state` is `state` (`"running"` stands for a running record at `idle`;
     /// `"stopped"` and `"exited"` for an ended one).
-    fn agent(name: &str, state: &str, tags: &[&str], parent: Option<&str>) -> Session {
+    fn agent(name: &str, state: &str, tags: &[&str], parent: Option<&str>) -> Agent {
         let state = match state {
             "running" => "idle",
             "stopped" | "exited" => "ended",
             other => other,
         };
-        Session::from_json(
+        Agent::from_json(
             &json!({"version": 2, "id": format!("id-{name}"), "name": name, "engine": "claude",
                 "working_directory": "/r", "roles": [], "state": state, "created_at": 1.0,
                 "last_modified_at": 1.0, "archived_at": null, "tags": tags, "parent_id": parent})

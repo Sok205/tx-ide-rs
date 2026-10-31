@@ -17,7 +17,7 @@ use tx_client::render::{
 };
 use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::View;
-use tx_core::{ListFilter, LlmEngineState, Session, SessionId, TxCore, VerbError, VerbIo};
+use tx_core::{Agent, AgentId, ListFilter, LlmEngineState, TxCore, VerbError, VerbIo};
 
 use crate::artifact::{Artifact, Kind, USER_ACTOR};
 use crate::picker::{self, HINT, Item, Pick, row_label, visible_width};
@@ -101,9 +101,9 @@ pub struct Sections {
 /// tx-client views; `live` the running core records. `locate` gives a tmux session's LOCATION
 /// cell, `name_of` a touch author's name.
 pub fn sections(
-    record: &Session,
+    record: &Agent,
     touched: &[Artifact],
-    live: &[Session],
+    live: &[Agent],
     views: &[View],
     locate: impl Fn(&str) -> String,
     name_of: impl Fn(&str) -> String,
@@ -140,7 +140,7 @@ pub fn sections(
     if !rows.is_empty() {
         out.sections.push(("ARTIFACTS", std::mem::take(&mut rows)));
     }
-    let session_row = |session: &Session| {
+    let session_row = |session: &Agent| {
         (
             Row {
                 name: session.name.clone(),
@@ -214,11 +214,11 @@ fn failed(error: impl std::fmt::Display) -> VerbError {
 
 impl Nav<'_> {
     /// The record of the session the key fired in; `None` is reported on the status line.
-    fn record(&self, session: &str, client: &str) -> Option<Session> {
+    fn record(&self, session: &str, client: &str) -> Option<Agent> {
         let record = self
             .core
             .resolve(session)
-            .and_then(|id| self.core.get_session(&id))
+            .and_then(|id| self.core.get_agent(&id))
             .ok();
         if record.is_none() {
             self.ui.display_status(client, "prefix+a: not a tx session");
@@ -227,14 +227,14 @@ impl Nav<'_> {
     }
 
     /// Running records, after a refresh so a vanished session does not show (best effort).
-    fn live(&self) -> Vec<Session> {
+    fn live(&self) -> Vec<Agent> {
         let _ = self.core.refresh_all();
         let ids = self
             .core
-            .list_sessions(&ListFilter::new().running())
+            .list_agents(&ListFilter::new().running())
             .unwrap_or_default();
         ids.iter()
-            .filter_map(|id| self.core.get_session(id).ok())
+            .filter_map(|id| self.core.get_agent(id).ok())
             .collect()
     }
 
@@ -244,9 +244,9 @@ impl Nav<'_> {
 
     fn name_of(&self, session_id: &str) -> String {
         let names = session_id
-            .parse::<SessionId>()
+            .parse::<AgentId>()
             .ok()
-            .and_then(|id| self.core.get_session(&id).ok())
+            .and_then(|id| self.core.get_agent(&id).ok())
             .map(|session| (session_id.to_owned(), session.name))
             .into_iter()
             .collect();
@@ -352,7 +352,7 @@ impl Nav<'_> {
         tm::client_width(&self.ui, client).unwrap_or(DEFAULT_WIDTH)
     }
 
-    fn listing(&self, record: &Session, client: &str) -> Result<Listing, VerbError> {
+    fn listing(&self, record: &Agent, client: &str) -> Result<Listing, VerbError> {
         let touched = self.artifacts.artifacts_for_session(record.id.as_str());
         let live = self.live();
         let views = self.views()?;
@@ -394,9 +394,9 @@ impl Nav<'_> {
         Ok(match target.kind {
             "session" => target
                 .id
-                .parse::<SessionId>()
+                .parse::<AgentId>()
                 .ok()
-                .and_then(|id| self.core.get_session(&id).ok())
+                .and_then(|id| self.core.get_agent(&id).ok())
                 .map(|session| session.name),
             "view" => Some(target.id.clone()),
             _ => self.live_view(&target.id)?.map(|shown| shown.name),
@@ -538,11 +538,11 @@ impl Nav<'_> {
     }
 
     /// The target record when it runs and its tmux session exists; otherwise reported.
-    fn running(&self, client: &str, target_id: &str) -> Option<Session> {
+    fn running(&self, client: &str, target_id: &str) -> Option<Agent> {
         let target = target_id
-            .parse::<SessionId>()
+            .parse::<AgentId>()
             .ok()
-            .and_then(|id| self.core.get_session(&id).ok());
+            .and_then(|id| self.core.get_agent(&id).ok());
         let Some(target) = target else {
             self.ui
                 .display_status(client, &format!("prefix+a: session {target_id} not found"));
@@ -592,7 +592,7 @@ impl Nav<'_> {
                 let owner = self
                     .core
                     .resolve(session)
-                    .and_then(|id| self.core.get_session(&id));
+                    .and_then(|id| self.core.get_agent(&id));
                 self.ui
                     .popup_attach(
                         &outer,
@@ -636,9 +636,9 @@ impl Nav<'_> {
             }
             let running = touch
                 .session_id
-                .parse::<SessionId>()
+                .parse::<AgentId>()
                 .ok()
-                .and_then(|id| self.core.get_session(&id).ok())
+                .and_then(|id| self.core.get_agent(&id).ok())
                 .is_some_and(|session| session.state != LlmEngineState::Ended);
             if running {
                 return Some(touch.session_id.clone());
@@ -650,7 +650,7 @@ impl Nav<'_> {
 }
 
 /// The popup's title: the view's name, its tags as chips, then `◂ owner`.
-fn popup_title(view: &Shown, owner: Option<&Session>) -> String {
+fn popup_title(view: &Shown, owner: Option<&Agent>) -> String {
     let mut title = format!(" {} ", view.name);
     for tag in &view.tags {
         title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
@@ -784,7 +784,7 @@ mod tests {
 
     use super::*;
 
-    fn session(id: &str, name: &str, extra: Value) -> Session {
+    fn session(id: &str, name: &str, extra: Value) -> Agent {
         let mut record = json!({
             "version": 2, "id": id, "name": name, "engine": "claude", "working_directory": "/r",
             "roles": [], "state": "idle", "created_at": 1.0, "last_modified_at": 1.0,
@@ -793,7 +793,7 @@ mod tests {
         for (key, value) in extra.as_object().unwrap() {
             record[key] = value.clone();
         }
-        Session::from_json(&record.to_string()).unwrap()
+        Agent::from_json(&record.to_string()).unwrap()
     }
 
     fn artifact(id: &str, title: &str, at: f64, authors: &[&str]) -> Artifact {

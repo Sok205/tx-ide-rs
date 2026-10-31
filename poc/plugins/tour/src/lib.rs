@@ -349,7 +349,7 @@ fn open(
     let invoker = (artifacts.actor() != USER_ACTOR)
         .then(|| artifacts.actor().parse().ok())
         .flatten()
-        .and_then(|id| core.get_session(&id).ok());
+        .and_then(|id| core.get_agent(&id).ok());
     let tags = tags
         .or_else(|| {
             invoker

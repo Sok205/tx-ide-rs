@@ -3,9 +3,9 @@
 use std::io;
 use std::path::PathBuf;
 
+use crate::agent::AgentId;
 use crate::engine::{EngineError, EngineKind};
 use crate::profile::RoleError;
-use crate::session::SessionId;
 use crate::store::StoreError;
 use crate::tmux::TmuxError;
 use crate::worktree::WorktreeError;
@@ -21,17 +21,17 @@ pub enum CoreError {
     #[error(
         "cannot respawn: the name {name:?} is held by session {holder}; rename one of them first"
     )]
-    NameHeld { name: String, holder: SessionId },
-    #[error("invalid session name {0:?} (allowed: [A-Za-z0-9_-]+, at most {max} bytes)", max = crate::session::MAX_NAME_BYTES)]
+    NameHeld { name: String, holder: AgentId },
+    #[error("invalid session name {0:?} (allowed: [A-Za-z0-9_-]+, at most {max} bytes)", max = crate::agent::MAX_NAME_BYTES)]
     InvalidName(String),
     #[error("invalid environment key {0:?} (a name without '=' or NUL)")]
     InvalidEnvKey(String),
     #[error("{} is not a directory", .0.display())]
     NotADirectory(PathBuf),
     #[error("session {0} is not running")]
-    NotRunning(SessionId),
+    NotRunning(AgentId),
     #[error("session {0} is still running; stop it before a respawn")]
-    StillRunning(SessionId),
+    StillRunning(AgentId),
     #[error("worktree {} is gone; a respawn never recreates one", .0.display())]
     WorktreeMissing(PathBuf),
     /// `<data>/sessions/` still holds version-1 records; nothing opens until `txc migrate`

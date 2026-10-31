@@ -7,9 +7,7 @@ use std::sync::Arc;
 
 use tx_client::tmux::Ui;
 use tx_client::views::{self, ViewError};
-use tx_core::{
-    CoreError, Plugin, PluginError, Registry, SessionId, TxCore, Verb, VerbError, VerbIo,
-};
+use tx_core::{AgentId, CoreError, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo};
 
 pub const PLUGIN_ID: &str = "kill";
 
@@ -38,7 +36,7 @@ fn write_out(io: &mut VerbIo<'_>, text: &str) -> Result<(), VerbError> {
 }
 
 /// `None` when nothing has that name or id.
-fn resolve_or_not_found(core: &TxCore, token: &str) -> Result<Option<SessionId>, VerbError> {
+fn resolve_or_not_found(core: &TxCore, token: &str) -> Result<Option<AgentId>, VerbError> {
     match core.resolve(token) {
         Ok(id) => Ok(Some(id)),
         Err(CoreError::NotFound(_)) => Ok(None),
@@ -64,7 +62,7 @@ impl Verb for Kill {
         };
         let ui = Ui::from_core(core);
         let name = match resolve_or_not_found(core, token)? {
-            Some(id) => core.stop_session(&id)?.name,
+            Some(id) => core.stop_agent(&id)?.name,
             None => match views::close(&ui, token) {
                 Ok(()) => token.clone(),
                 Err(ViewError::NotFound(_) | ViewError::NotAView(_)) => {

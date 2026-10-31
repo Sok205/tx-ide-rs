@@ -9,7 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::session::SessionId;
+use crate::agent::AgentId;
 
 /// The session option that links a tmux session to its record.
 pub const TX_ID_OPTION: &str = "@tx-id";
@@ -42,7 +42,7 @@ pub struct Live {
 /// One `list-sessions` scan: every live session that carries a `@tx-id`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LiveTable {
-    by_id: HashMap<SessionId, Live>,
+    by_id: HashMap<AgentId, Live>,
 }
 
 const LIST_FORMAT: &str = "#{@tx-id}\t#{session_id}\t#{pane_id}";
@@ -63,7 +63,7 @@ impl LiveTable {
                 });
             };
             // No `@tx-id`, or one core never minted: not ours.
-            let Ok(id) = id.parse::<SessionId>() else {
+            let Ok(id) = id.parse::<AgentId>() else {
                 continue;
             };
             by_id.entry(id).or_insert_with(|| Live {
@@ -74,11 +74,11 @@ impl LiveTable {
         Ok(Self { by_id })
     }
 
-    pub fn get(&self, id: &SessionId) -> Option<&Live> {
+    pub fn get(&self, id: &AgentId) -> Option<&Live> {
         self.by_id.get(id)
     }
 
-    pub fn contains(&self, id: &SessionId) -> bool {
+    pub fn contains(&self, id: &AgentId) -> bool {
         self.by_id.contains_key(id)
     }
 
@@ -263,7 +263,7 @@ impl Tmux {
     }
 
     /// Links the session named exactly `name` to `id`. Session scope only.
-    pub fn set_tx_id(&self, name: &str, id: &SessionId) -> Result<(), TmuxError> {
+    pub fn set_tx_id(&self, name: &str, id: &AgentId) -> Result<(), TmuxError> {
         self.run(&[
             "set-option".into(),
             "-t".into(),
@@ -368,7 +368,7 @@ impl Tmux {
         Err(TmuxError::InspectionFailed { stderr })
     }
 
-    pub fn is_live(&self, id: &SessionId) -> Result<Option<Live>, TmuxError> {
+    pub fn is_live(&self, id: &AgentId) -> Result<Option<Live>, TmuxError> {
         Ok(self.list_live()?.by_id.remove(id))
     }
 }
@@ -377,7 +377,7 @@ impl Tmux {
 mod tests {
     use super::*;
 
-    fn sid(id: &str) -> SessionId {
+    fn sid(id: &str) -> AgentId {
         id.parse().unwrap()
     }
     use std::ffi::OsString;

@@ -10,9 +10,9 @@ use std::path::PathBuf;
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Directories, EngineKind, EventType, LaunchOptions,
-    LaunchPlan, LaunchRequest, ListFilter, LlmEngine, LlmEngineState, MAX_SOCKET_PATH_BYTES,
-    Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
+    Agent, AgentId, CoreConfig, CoreError, CreateOptions, Directories, EngineKind, EventType,
+    LaunchOptions, LaunchPlan, LaunchRequest, ListFilter, LlmEngine, LlmEngineState,
+    MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Sender, TxCore, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -70,7 +70,7 @@ fn state() -> impl Strategy<Value = LlmEngineState> {
     prop::sample::select(LlmEngineState::ALL.to_vec())
 }
 
-fn session_id() -> impl Strategy<Value = SessionId> {
+fn session_id() -> impl Strategy<Value = AgentId> {
     bare_name().prop_map(|s| s.parse().unwrap())
 }
 
@@ -110,9 +110,9 @@ fn short_tempdir() -> tempfile::TempDir {
         .unwrap()
 }
 
-fn session_with(parent: Option<SessionId>, tags: Vec<String>, state: LlmEngineState) -> Session {
-    Session {
-        id: SessionId::mint(),
+fn session_with(parent: Option<AgentId>, tags: Vec<String>, state: LlmEngineState) -> Agent {
+    Agent {
+        id: AgentId::mint(),
         name: "s".into(),
         engine: EngineKind::Claude,
         working_directory: "/w".into(),
@@ -349,7 +349,7 @@ fn engine_adapter_object_is_usable_from_another_thread() {
     impl LlmEngine for Stub {
         fn on_hook(
             &self,
-            _: &tx_core::Session,
+            _: &tx_core::Agent,
             _: &tx_core::LlmEngineHook,
         ) -> tx_core::LlmEngineChange {
             tx_core::LlmEngineChange::NONE
@@ -365,7 +365,7 @@ fn engine_adapter_object_is_usable_from_another_thread() {
 
         fn configure(
             &self,
-            _: &tx_core::Session,
+            _: &tx_core::Agent,
             options: &serde_json::Value,
         ) -> Result<serde_json::Value, tx_core::EngineError> {
             Ok(options.clone())
@@ -386,7 +386,7 @@ fn engine_adapter_object_is_usable_from_another_thread() {
         fn fork(
             &self,
             _: &LaunchRequest<'_>,
-            _: &tx_core::Session,
+            _: &tx_core::Agent,
             _: &str,
         ) -> Result<LaunchPlan, tx_core::EngineError> {
             Ok(LaunchPlan::new("true"))

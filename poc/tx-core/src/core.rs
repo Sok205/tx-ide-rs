@@ -4,6 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::agent::{Agent, AgentId, validate_name};
 use crate::config::{AGENTS_DIR, CoreConfig};
 use crate::engine::{
     Conversation, EngineError, EngineKind, EngineRegistry, Input, LaunchRequest, LlmEngine,
@@ -14,9 +15,8 @@ use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, EnvelopeSender, build_envelope, deliver};
 use crate::profile::{Profile, Profiles, ResolvedProfile};
-use crate::session::{Session, SessionId, validate_name};
 use crate::state::{LlmEngineHook, LlmEngineState};
-use crate::store::{SessionStore, SkippedRecord, StoreError};
+use crate::store::{AgentStore, SkippedRecord, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 use crate::worktree::WorktreeManager;
 
@@ -49,7 +49,7 @@ pub struct CreateOptions {
     /// detached worktree at that checkout's `HEAD`, and the record's `working_directory` names
     /// the worktree.
     pub cwd: PathBuf,
-    pub parent: Option<SessionId>,
+    pub parent: Option<AgentId>,
     pub tags: Vec<String>,
     pub env: Vec<(String, String)>,
     pub launch: LaunchOptions,
@@ -67,7 +67,7 @@ impl CreateOptions {
         }
     }
 
-    pub fn parent(mut self, parent: SessionId) -> Self {
+    pub fn parent(mut self, parent: AgentId) -> Self {
         self.parent = Some(parent);
         self
     }
@@ -87,7 +87,7 @@ impl CreateOptions {
     }
 }
 
-/// How `fork_session` names and starts the new agent. Everything else (engine, roles, model,
+/// How `fork_agent` names and starts the new agent. Everything else (engine, roles, model,
 /// effort, starting checkout) comes from the source record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -212,7 +212,7 @@ impl LaunchOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ListFilter {
-    pub parent: Option<SessionId>,
+    pub parent: Option<AgentId>,
     pub tag: Option<String>,
     /// `Some(false)`: running records only (`state` not `Ended`); `Some(true)`: ended ones.
     pub ended: Option<bool>,
@@ -224,7 +224,7 @@ impl ListFilter {
         Self::default()
     }
 
-    pub fn parent(mut self, parent: SessionId) -> Self {
+    pub fn parent(mut self, parent: AgentId) -> Self {
         self.parent = Some(parent);
         self
     }
@@ -252,7 +252,7 @@ impl ListFilter {
         self
     }
 
-    pub fn matches(&self, session: &Session) -> bool {
+    pub fn matches(&self, session: &Agent) -> bool {
         self.parent
             .as_ref()
             .is_none_or(|parent| session.parent_id.as_ref() == Some(parent))
@@ -273,7 +273,7 @@ pub enum Sender {
     /// The operator; `via` names where they typed (a view, an nvim buffer).
     User { via: Option<String> },
     /// Another agent.
-    Agent { id: SessionId },
+    Agent { id: AgentId },
 }
 
 impl Default for Sender {
@@ -290,7 +290,7 @@ pub struct SendOptions {
 }
 
 impl SendOptions {
-    pub fn from_agent(id: SessionId) -> Self {
+    pub fn from_agent(id: AgentId) -> Self {
         Self {
             sender: Sender::Agent { id },
         }
@@ -306,7 +306,7 @@ impl From<Sender> for SendOptions {
 /// Input was submitted to the pane. Not read, not completed, not retried.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeliveryReceipt {
-    pub recipient: SessionId,
+    pub recipient: AgentId,
     pub pane: String,
     pub submitted_at: f64,
 }
@@ -314,12 +314,12 @@ pub struct DeliveryReceipt {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum RefreshResult {
-    Unchanged(Session),
-    Exited(Session),
+    Unchanged(Agent),
+    Exited(Agent),
 }
 
 impl RefreshResult {
-    pub fn session(&self) -> &Session {
+    pub fn agent(&self) -> &Agent {
         match self {
             RefreshResult::Unchanged(session) | RefreshResult::Exited(session) => session,
         }
@@ -338,7 +338,7 @@ pub struct ExecutionLocation {
 /// Not `Clone`: one core per process is the intended shape; locks and the registry are owned.
 pub struct TxCore {
     config: CoreConfig,
-    store: SessionStore,
+    store: AgentStore,
     tmux: Tmux,
     events: EventLog,
     engines: EngineRegistry,
@@ -388,8 +388,8 @@ fn merge_env(env: &mut Vec<(String, String)>, layer: &[(String, String)]) {
 
 fn event(
     type_: EventType,
-    session: &Session,
-    actor: Option<SessionId>,
+    session: &Agent,
+    actor: Option<AgentId>,
     detail: impl Into<String>,
 ) -> Event {
     Event::new(
@@ -401,7 +401,7 @@ fn event(
     )
 }
 
-fn exited_before_registration(session: &Session) -> Event {
+fn exited_before_registration(session: &Agent) -> Event {
     event(
         EventType::Exited,
         session,
@@ -434,7 +434,7 @@ fn archive_lock(directory: &Path) -> Result<Option<std::fs::File>, EngineError> 
 
 /// The process is gone, whatever the adapter last said: the state becomes `Ended`. No
 /// `StateChanged`: `Exited` / `Stopped` already say so, and the save stamps when.
-fn mark_ended(session: &mut Session) {
+fn mark_ended(session: &mut Agent) {
     session.state = LlmEngineState::Ended;
 }
 
@@ -486,14 +486,9 @@ struct EngineLaunch<'a> {
 
 /// Which of the engine's launch methods opens the conversation, with its arguments.
 enum Opening<'a> {
-    Start {
-        prompt: &'a str,
-    },
+    Start { prompt: &'a str },
     Resume,
-    Fork {
-        source: &'a Session,
-        prompt: &'a str,
-    },
+    Fork { source: &'a Agent, prompt: &'a str },
 }
 
 fn store_io(path: &Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {
@@ -557,7 +552,7 @@ impl TxCore {
             std::fs::write(&conf, DEFAULT_TMUX_CONF).map_err(store_io(&conf))?;
         }
         Ok(Self {
-            store: SessionStore::new(directories.data.join(AGENTS_DIR)),
+            store: AgentStore::new(directories.data.join(AGENTS_DIR)),
             tmux: Tmux::new(TMUX_BINARY, config.socket_path(), conf),
             events: EventLog::new(directories.data.join(LOG_FILE)),
             engines: EngineRegistry::new(),
@@ -574,7 +569,7 @@ impl TxCore {
         &self.config
     }
 
-    pub(crate) fn store(&self) -> &SessionStore {
+    pub(crate) fn store(&self) -> &AgentStore {
         &self.store
     }
 
@@ -587,7 +582,7 @@ impl TxCore {
     }
 
     /// `<state>/profiles/<id>.md`: the composed role prompt a session was launched with.
-    fn profile_path(&self, id: &SessionId) -> PathBuf {
+    fn profile_path(&self, id: &AgentId) -> PathBuf {
         self.config
             .directories
             .state
@@ -631,7 +626,7 @@ impl TxCore {
 
     // ----- reads: stored snapshots, never tmux ------------------------------------------------
 
-    pub fn list_sessions(&self, filter: &ListFilter) -> Result<Vec<SessionId>, CoreError> {
+    pub fn list_agents(&self, filter: &ListFilter) -> Result<Vec<AgentId>, CoreError> {
         Ok(self
             .store
             .all()?
@@ -648,7 +643,7 @@ impl TxCore {
         Ok(self.store.skipped()?)
     }
 
-    pub fn get_session(&self, id: &SessionId) -> Result<Session, CoreError> {
+    pub fn get_agent(&self, id: &AgentId) -> Result<Agent, CoreError> {
         self.store
             .load(id)?
             .ok_or_else(|| CoreError::NotFound(id.to_string()))
@@ -656,8 +651,8 @@ impl TxCore {
 
     /// The session's current conversation, asked from its engine. `None`: not known yet.
     /// `EngineDisabled` when the record's engine is not registered (its plugin disabled).
-    pub fn conversation(&self, id: &SessionId) -> Result<Option<Conversation>, CoreError> {
-        let session = self.get_session(id)?;
+    pub fn conversation(&self, id: &AgentId) -> Result<Option<Conversation>, CoreError> {
+        let session = self.get_agent(id)?;
         let adapter = self
             .engines
             .get(session.engine)
@@ -668,13 +663,13 @@ impl TxCore {
     /// An id first, then a name: the `Running` record with it, else the most recently created
     /// unarchived one, else the most recently created archived one (so an archived agent can
     /// still be shown and respawned by name).
-    pub fn resolve(&self, name_or_id: &str) -> Result<SessionId, CoreError> {
-        if let Ok(id) = name_or_id.parse::<SessionId>()
+    pub fn resolve(&self, name_or_id: &str) -> Result<AgentId, CoreError> {
+        if let Ok(id) = name_or_id.parse::<AgentId>()
             && self.store.load(&id)?.is_some()
         {
             return Ok(id);
         }
-        let mut named: Vec<Session> = self
+        let mut named: Vec<Agent> = self
             .store
             .all()?
             .into_iter()
@@ -704,7 +699,7 @@ impl TxCore {
     /// Starts an agent and returns its id. It runs in its own detached worktree of the
     /// checkout `opts.cwd`, under the first free name (`opts.name`, else `opts.name-2` …); the
     /// record carries the name and the worktree.
-    pub fn create_session(&self, opts: CreateOptions) -> Result<SessionId, CoreError> {
+    pub fn create_agent(&self, opts: CreateOptions) -> Result<AgentId, CoreError> {
         let (id, events) = self.create_locked(opts, None)?;
         self.emit(events);
         Ok(id)
@@ -716,11 +711,7 @@ impl TxCore {
     /// and effort included) under `options.options`, carries `parent = source`, and starts with
     /// `options.prompt`. The source keeps running. Whether the source has a conversation to
     /// branch is the engine's answer, surfaced as its `EngineError`.
-    pub fn fork_session(
-        &self,
-        source: &SessionId,
-        options: ForkOptions,
-    ) -> Result<SessionId, CoreError> {
+    pub fn fork_agent(&self, source: &AgentId, options: ForkOptions) -> Result<AgentId, CoreError> {
         let (id, events) = self.fork_locked(source, options)?;
         self.emit(events);
         Ok(id)
@@ -728,16 +719,16 @@ impl TxCore {
 
     fn fork_locked(
         &self,
-        source: &SessionId,
+        source: &AgentId,
         options: ForkOptions,
-    ) -> Result<(SessionId, Vec<Event>), CoreError> {
+    ) -> Result<(AgentId, Vec<Event>), CoreError> {
         if options.prompt.trim().is_empty() {
             return Err(CoreError::PromptRequired);
         }
         // A snapshot under the source's lock; the fork never holds the source afterwards.
         let source = {
-            let _session = self.locks.session(source).map_err(CoreError::Lock)?;
-            self.get_session(source)?
+            let _session = self.locks.agent(source).map_err(CoreError::Lock)?;
+            self.get_agent(source)?
         };
         let name = options
             .name
@@ -764,8 +755,8 @@ impl TxCore {
     fn create_locked(
         &self,
         opts: CreateOptions,
-        fork_of: Option<&Session>,
-    ) -> Result<(SessionId, Vec<Event>), CoreError> {
+        fork_of: Option<&Agent>,
+    ) -> Result<(AgentId, Vec<Event>), CoreError> {
         validate_name(&opts.name)?;
         validate_env(&opts.env)?;
         if !opts.cwd.is_dir() {
@@ -821,9 +812,9 @@ impl TxCore {
         opts: CreateOptions,
         engine: (&dyn LlmEngine, ResolvedProfile),
         roles: Vec<String>,
-        fork_of: Option<&Session>,
-    ) -> Result<(SessionId, Vec<Event>), CoreError> {
-        let id = SessionId::mint();
+        fork_of: Option<&Agent>,
+    ) -> Result<(AgentId, Vec<Event>), CoreError> {
+        let id = AgentId::mint();
         // The record exists before the engine is asked: the engine reads its id, cwd and data
         // from it. A fork starts from a copy of the source's data (its options among it), which
         // the engine's `configure` then adjusts and its fork plan replaces with the fork's own.
@@ -840,7 +831,7 @@ impl TxCore {
             ext.insert(adapter.ext_key().to_owned(), data.clone());
         }
         let created_at = now();
-        let mut session = Session {
+        let mut session = Agent {
             id: id.clone(),
             name: opts.name,
             engine,
@@ -896,7 +887,7 @@ impl TxCore {
     /// leaves no tmux session and no profile behind.
     fn start_locked(
         &self,
-        session: &mut Session,
+        session: &mut Agent,
         engine: EngineLaunch<'_>,
         extra_env: &[(String, String)],
     ) -> Result<bool, CoreError> {
@@ -989,16 +980,16 @@ impl TxCore {
     /// session; `WorktreeMissing` when `cwd` is gone, since a respawn never recreates one;
     /// `NameHeld` when an unarchived record took the name meanwhile. Comes back `Starting`,
     /// with `archived_at` cleared, and announced as `Respawned`.
-    pub fn respawn_session(&self, id: &SessionId) -> Result<Session, CoreError> {
+    pub fn respawn_agent(&self, id: &AgentId) -> Result<Agent, CoreError> {
         let (session, events) = self.respawn_locked(id)?;
         self.emit(events);
         Ok(session)
     }
 
-    fn respawn_locked(&self, id: &SessionId) -> Result<(Session, Vec<Event>), CoreError> {
+    fn respawn_locked(&self, id: &AgentId) -> Result<(Agent, Vec<Event>), CoreError> {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
-        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-        let mut session = self.get_session(id)?;
+        let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+        let mut session = self.get_agent(id)?;
         let adapter = self
             .engines
             .get(session.engine)
@@ -1035,7 +1026,7 @@ impl TxCore {
     }
 
     /// Every record write goes through here: stamps `last_modified_at`, then saves.
-    fn save(&self, session: &mut Session) -> Result<(), StoreError> {
+    fn save(&self, session: &mut Agent) -> Result<(), StoreError> {
         session.last_modified_at = now();
         self.store.save(session)
     }
@@ -1056,8 +1047,8 @@ impl TxCore {
     fn name_holder(
         &self,
         name: &str,
-        except: Option<&SessionId>,
-    ) -> Result<Option<SessionId>, CoreError> {
+        except: Option<&AgentId>,
+    ) -> Result<Option<AgentId>, CoreError> {
         Ok(self
             .store
             .all()?
@@ -1070,21 +1061,17 @@ impl TxCore {
 
     // ----- mutations -------------------------------------------------------------------------
 
-    pub fn rename_session(&self, id: &SessionId, name: &str) -> Result<Session, CoreError> {
+    pub fn rename_agent(&self, id: &AgentId, name: &str) -> Result<Agent, CoreError> {
         let (session, events) = self.rename_locked(id, name)?;
         self.emit(events);
         Ok(session)
     }
 
-    fn rename_locked(
-        &self,
-        id: &SessionId,
-        name: &str,
-    ) -> Result<(Session, Vec<Event>), CoreError> {
+    fn rename_locked(&self, id: &AgentId, name: &str) -> Result<(Agent, Vec<Event>), CoreError> {
         validate_name(name)?;
         let _create = self.locks.create().map_err(CoreError::Lock)?;
-        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-        let mut session = self.get_session(id)?;
+        let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+        let mut session = self.get_agent(id)?;
         if session.name == name {
             return Ok((session, Vec::new()));
         }
@@ -1120,12 +1107,12 @@ impl TxCore {
     /// happened. `f` must not call back into the core (the lock is held).
     pub fn update_ext(
         &self,
-        id: &SessionId,
+        id: &AgentId,
         plugin: &str,
         f: impl FnOnce(&mut serde_json::Value),
     ) -> Result<bool, CoreError> {
-        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-        let mut session = self.get_session(id)?;
+        let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+        let mut session = self.get_agent(id)?;
         let before = session
             .ext
             .get(plugin)
@@ -1163,12 +1150,12 @@ impl TxCore {
     /// agent.
     pub fn hook(
         &self,
-        id: &SessionId,
+        id: &AgentId,
         hook: LlmEngineHook,
     ) -> Result<Option<LlmEngineState>, CoreError> {
         let (state, changed, session) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-            let mut session = self.get_session(id)?;
+            let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+            let mut session = self.get_agent(id)?;
             if session.state == LlmEngineState::Ended {
                 return Ok(None);
             }
@@ -1209,7 +1196,7 @@ impl TxCore {
     /// holder. Failure is an `ArchiveFailed` event, never an error. Called after every hook, and
     /// after a stop or an exit, once the process is gone and the transcript final. An
     /// unregistered engine archives nothing.
-    fn archive_conversation(&self, session: &Session) {
+    fn archive_conversation(&self, session: &Agent) {
         let Some(adapter) = self.engines.get(session.engine) else {
             return;
         };
@@ -1228,14 +1215,10 @@ impl TxCore {
         }
     }
 
-    pub fn set_session_tags(
-        &self,
-        id: &SessionId,
-        tags: Vec<String>,
-    ) -> Result<Session, CoreError> {
+    pub fn set_agent_tags(&self, id: &AgentId, tags: Vec<String>) -> Result<Agent, CoreError> {
         let (session, tagged) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-            let mut session = self.get_session(id)?;
+            let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+            let mut session = self.get_agent(id)?;
             session.tags = tags;
             self.save(&mut session)?;
             let tagged = event(EventType::Tagged, &session, None, session.tags.join(", "));
@@ -1246,10 +1229,10 @@ impl TxCore {
     }
 
     /// One `list-sessions`; a `Running` record without a live `@tx-id` becomes `Exited`.
-    pub fn refresh_session(&self, id: &SessionId) -> Result<RefreshResult, CoreError> {
+    pub fn refresh_agent(&self, id: &AgentId) -> Result<RefreshResult, CoreError> {
         let (result, exited) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-            let session = self.get_session(id)?;
+            let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+            let session = self.get_agent(id)?;
             if session.state == LlmEngineState::Ended || self.tmux.list_live()?.contains(id) {
                 (RefreshResult::Unchanged(session), None)
             } else {
@@ -1265,7 +1248,7 @@ impl TxCore {
     /// scanned before tmux is listed: a record exists only after its tmux session does, so a
     /// record missing from a later listing has truly gone (the other order would mark a session
     /// created between the two calls as exited).
-    pub fn refresh_all(&self) -> Result<Vec<Session>, CoreError> {
+    pub fn refresh_all(&self) -> Result<Vec<Agent>, CoreError> {
         let records = self.store.all()?;
         let live = self.tmux.list_live()?;
         let mut changed = Vec::new();
@@ -1274,7 +1257,7 @@ impl TxCore {
                 continue;
             }
             let exited = {
-                let _lock = self.locks.session(&session.id).map_err(CoreError::Lock)?;
+                let _lock = self.locks.agent(&session.id).map_err(CoreError::Lock)?;
                 // Re-load under the lock: another process may have stopped it meanwhile.
                 match self.store.load(&session.id)? {
                     Some(current) if current.state != LlmEngineState::Ended => {
@@ -1294,7 +1277,7 @@ impl TxCore {
     }
 
     /// Saves the record as `Exited`; the caller emits the returned event once its lock is gone.
-    fn mark_exited(&self, mut session: Session) -> Result<(Session, Event), CoreError> {
+    fn mark_exited(&self, mut session: Agent) -> Result<(Agent, Event), CoreError> {
         mark_ended(&mut session);
         self.save(&mut session)?;
         self.archive_conversation(&session);
@@ -1302,8 +1285,8 @@ impl TxCore {
         Ok((session, exited))
     }
 
-    pub fn get_execution_location(&self, id: &SessionId) -> Result<ExecutionLocation, CoreError> {
-        if self.get_session(id)?.state == LlmEngineState::Ended {
+    pub fn get_execution_location(&self, id: &AgentId) -> Result<ExecutionLocation, CoreError> {
+        if self.get_agent(id)?.state == LlmEngineState::Ended {
             return Err(CoreError::NotRunning(id.clone()));
         }
         let live = self.live_or_not_running(id)?;
@@ -1316,7 +1299,7 @@ impl TxCore {
 
     /// The recipient's engine says what to type for a message when it is registered here; an
     /// agent whose engine this core does not know gets the default envelope, submitted.
-    fn input_for(&self, recipient: &Session, sender: &EnvelopeSender<'_>, text: &str) -> Input {
+    fn input_for(&self, recipient: &Agent, sender: &EnvelopeSender<'_>, text: &str) -> Input {
         match self.engines.get(recipient.engine) {
             Some(adapter) => adapter.receive_message(sender, text),
             None => Input::line(build_envelope(sender, text)),
@@ -1327,10 +1310,10 @@ impl TxCore {
     /// state the engine says the agent is in afterwards (an aborted turn fires no end-of-turn
     /// hook on Claude), with its `StateChanged`, as for a hook. `NotRunning` when the record or
     /// tmux says so; `Engine(Refused)` when the engine has no such input.
-    pub fn interrupt_session(&self, id: &SessionId) -> Result<(), CoreError> {
+    pub fn interrupt_agent(&self, id: &AgentId) -> Result<(), CoreError> {
         let changed = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-            let mut session = self.get_session(id)?;
+            let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+            let mut session = self.get_agent(id)?;
             if session.state == LlmEngineState::Ended {
                 return Err(CoreError::NotRunning(id.clone()));
             }
@@ -1356,7 +1339,7 @@ impl TxCore {
         Ok(())
     }
 
-    fn live_or_not_running(&self, id: &SessionId) -> Result<Live, CoreError> {
+    fn live_or_not_running(&self, id: &AgentId) -> Result<Live, CoreError> {
         self.tmux
             .is_live(id)?
             .ok_or_else(|| CoreError::NotRunning(id.clone()))
@@ -1371,7 +1354,7 @@ impl TxCore {
     /// is the lock a respawn takes first. The `Stopped` event's detail is empty when the CLI
     /// left by itself and `killed` when it had to be killed. A record whose session had already
     /// vanished becomes `Exited` instead (what happened, not what was asked).
-    pub fn stop_session(&self, id: &SessionId) -> Result<Session, CoreError> {
+    pub fn stop_agent(&self, id: &AgentId) -> Result<Agent, CoreError> {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
         let (session, ended) = self.stop_locked(id)?;
         drop(_create);
@@ -1379,12 +1362,12 @@ impl TxCore {
         Ok(session)
     }
 
-    /// `stop_session` under the create lock the caller holds, the wait included; the caller
+    /// `stop_agent` under the create lock the caller holds, the wait included; the caller
     /// emits the returned event.
-    fn stop_locked(&self, id: &SessionId) -> Result<(Session, Event), CoreError> {
+    fn stop_locked(&self, id: &AgentId) -> Result<(Agent, Event), CoreError> {
         let (session, live) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-            let mut session = self.get_session(id)?;
+            let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+            let mut session = self.get_agent(id)?;
             if session.state == LlmEngineState::Ended {
                 return Err(CoreError::NotRunning(id.clone()));
             }
@@ -1427,14 +1410,14 @@ impl TxCore {
     }
 
     /// Hides the session from listings and frees its name; nothing is deleted (record,
-    /// worktree, profile and `ext` stay), and `respawn_session` brings it back. A running
-    /// session is stopped first, waiting as `stop_session` does. An already archived record
+    /// worktree, profile and `ext` stay), and `respawn_agent` brings it back. A running
+    /// session is stopped first, waiting as `stop_agent` does. An already archived record
     /// comes back unchanged, with no event. The create lock is held throughout, so no stop or
     /// respawn slips in between the two steps.
-    pub fn archive_session(&self, id: &SessionId) -> Result<Session, CoreError> {
+    pub fn archive_agent(&self, id: &AgentId) -> Result<Agent, CoreError> {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
         let mut events = Vec::new();
-        if self.get_session(id)?.state != LlmEngineState::Ended {
+        if self.get_agent(id)?.state != LlmEngineState::Ended {
             let (_, ended) = self.stop_locked(id)?;
             events.push(ended);
         }
@@ -1447,9 +1430,9 @@ impl TxCore {
         archived
     }
 
-    fn archive_locked(&self, id: &SessionId) -> Result<(Session, Vec<Event>), CoreError> {
-        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-        let mut session = self.get_session(id)?;
+    fn archive_locked(&self, id: &AgentId) -> Result<(Agent, Vec<Event>), CoreError> {
+        let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
+        let mut session = self.get_agent(id)?;
         if session.archived_at.is_some() {
             return Ok((session, Vec::new()));
         }
@@ -1463,7 +1446,7 @@ impl TxCore {
 
     pub fn send_message(
         &self,
-        to: &SessionId,
+        to: &AgentId,
         text: &str,
         opts: SendOptions,
     ) -> Result<DeliveryReceipt, CoreError> {
@@ -1476,7 +1459,7 @@ impl TxCore {
                 None,
             ),
             Sender::Agent { id } => {
-                agent_name = self.get_session(id)?.name;
+                agent_name = self.get_agent(id)?.name;
                 (
                     EnvelopeSender::Agent { name: &agent_name },
                     Some(id.clone()),
@@ -1489,8 +1472,8 @@ impl TxCore {
             EnvelopeSender::Agent { name } => format!("from {name}"),
         };
         let (receipt, sent) = {
-            let _session = self.locks.session(to).map_err(CoreError::Lock)?;
-            let recipient = self.get_session(to)?;
+            let _session = self.locks.agent(to).map_err(CoreError::Lock)?;
+            let recipient = self.get_agent(to)?;
             if recipient.state == LlmEngineState::Ended {
                 return Err(CoreError::NotRunning(to.clone()));
             }
@@ -1592,7 +1575,7 @@ mod tests {
 
     struct Stub;
     impl LlmEngine for Stub {
-        fn on_hook(&self, _: &Session, _: &crate::LlmEngineHook) -> crate::LlmEngineChange {
+        fn on_hook(&self, _: &Agent, _: &crate::LlmEngineHook) -> crate::LlmEngineChange {
             crate::LlmEngineChange::NONE
         }
 
@@ -1606,7 +1589,7 @@ mod tests {
 
         fn configure(
             &self,
-            _: &Session,
+            _: &Agent,
             options: &serde_json::Value,
         ) -> Result<serde_json::Value, EngineError> {
             Ok(options.clone())
@@ -1623,7 +1606,7 @@ mod tests {
         fn fork(
             &self,
             _: &LaunchRequest<'_>,
-            _: &Session,
+            _: &Agent,
             _: &str,
         ) -> Result<LaunchPlan, EngineError> {
             Ok(LaunchPlan::default())
@@ -1695,24 +1678,24 @@ mod tests {
         let mut bad = opts(agent());
         bad.name = "no spaces".into();
         assert!(matches!(
-            core.create_session(bad).unwrap_err(),
+            core.create_agent(bad).unwrap_err(),
             CoreError::InvalidName(_)
         ));
         let mut bad = opts(agent());
         bad.env = vec![("=".into(), "1".into())];
         assert!(matches!(
-            core.create_session(bad).unwrap_err(),
+            core.create_agent(bad).unwrap_err(),
             CoreError::InvalidEnvKey(_)
         ));
         let mut bad = opts(agent());
         bad.cwd = dir.path().join("missing");
         assert!(matches!(
-            core.create_session(bad).unwrap_err(),
+            core.create_agent(bad).unwrap_err(),
             CoreError::NotADirectory(_)
         ));
         let bad = opts(agent());
         assert!(matches!(
-            core.create_session(bad).unwrap_err(),
+            core.create_agent(bad).unwrap_err(),
             CoreError::EngineDisabled(EngineKind::Codex)
         ));
         assert!(
@@ -1751,7 +1734,7 @@ mod tests {
 
     #[test]
     fn filters_match_records() {
-        let session = |parent: Option<&str>, tags: &[&str], state| Session {
+        let session = |parent: Option<&str>, tags: &[&str], state| Agent {
             id: "i".parse().unwrap(),
             name: "n".into(),
             engine: EngineKind::Claude,

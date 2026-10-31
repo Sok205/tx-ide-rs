@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tx_core::{
-    CoreError, Plugin, PluginError, Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
+    Agent, AgentId, CoreError, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo,
 };
 
 use tx_client::editor::edit_session;
@@ -56,17 +56,17 @@ pub fn split_tags(s: &str) -> Vec<String> {
 /// first error; earlier parts stay written.
 pub fn apply_edit(
     core: &TxCore,
-    id: &SessionId,
-    before: &Session,
+    id: &AgentId,
+    before: &Agent,
     edited: (String, String, String),
 ) -> Result<(), CoreError> {
     let (name, tags, group) = edited;
     if name != before.name {
-        core.rename_session(id, &name)?;
+        core.rename_agent(id, &name)?;
     }
     let tags = split_tags(&tags);
     if tags != before.tags {
-        core.set_session_tags(id, tags)?;
+        core.set_agent_tags(id, tags)?;
     }
     let group = Some(group.trim().to_owned()).filter(|group| !group.is_empty());
     if group != current_group(before) {
@@ -81,7 +81,7 @@ pub fn apply_edit(
     Ok(())
 }
 
-fn current_group(session: &Session) -> Option<String> {
+fn current_group(session: &Agent) -> Option<String> {
     session
         .ext::<Ext>(PLUGIN_ID)
         .ok()
@@ -117,7 +117,7 @@ impl Verb for EditSession {
             ui.display_status(client, NOT_MANAGED);
             return Ok(1);
         };
-        let before = core.get_session(&id)?;
+        let before = core.get_agent(&id)?;
         let group = current_group(&before).unwrap_or_default();
         let edited = edit_session(&before.name, &before.tags.join(","), &group, "")
             .map_err(|e| VerbError::Failed(format!("editor: {e}")))?;
@@ -153,14 +153,14 @@ impl Verb for EditTag {
             let _ = writeln!(io.stderr, "txc: session '{token}' not found");
             return Ok(1);
         };
-        let session = core.get_session(&id)?;
+        let session = core.get_agent(&id)?;
         let header = format!("Tags for {ACCENT_ANSI}{BOLD}{}{RESET}", session.name);
         let Some(answer) = prompt_with_default(&header, &session.tags.join(","))
             .map_err(|e| VerbError::Failed(format!("could not run fzf: {e}")))?
         else {
             return Ok(1);
         };
-        core.set_session_tags(&id, split_tags(&answer))?;
+        core.set_agent_tags(&id, split_tags(&answer))?;
         Ok(0)
     }
 }

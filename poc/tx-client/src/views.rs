@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use tx_core::{CoreError, SessionId, TxCore};
+use tx_core::{AgentId, CoreError, TxCore};
 
 use crate::tmux::{Ui, UiError};
 
@@ -102,7 +102,7 @@ pub struct View {
     pub working_directory: PathBuf,
     pub tags: Vec<String>,
     /// The agent it belongs to (tx id), if any; the view closes once that agent is gone.
-    pub parent_id: Option<SessionId>,
+    pub parent_id: Option<AgentId>,
     /// Owner-defined, e.g. an artifact id.
     pub bound: Option<String>,
     pub created_at: f64,
@@ -115,7 +115,7 @@ pub struct ViewRequest<'a> {
     pub arguments: &'a [String],
     pub working_directory: &'a Path,
     pub tags: &'a [String],
-    pub parent_id: Option<&'a SessionId>,
+    pub parent_id: Option<&'a AgentId>,
     pub bound: Option<&'a str>,
 }
 
@@ -268,15 +268,15 @@ pub fn rename(ui: &Ui, name: &str, new_name: &str) -> Result<(), ViewError> {
 }
 
 /// Closes every view whose parent agent is gone: forgotten by core, or no longer running
-/// (checked against tmux through `refresh_session`). Returns the closed names.
+/// (checked against tmux through `refresh_agent`). Returns the closed names.
 pub fn close_orphans(ui: &Ui, core: &TxCore) -> Result<Vec<String>, ViewError> {
     let mut closed = Vec::new();
     for view in list(ui)? {
         let Some(parent) = &view.parent_id else {
             continue;
         };
-        let orphaned = match core.refresh_session(parent) {
-            Ok(refreshed) => refreshed.session().state == tx_core::LlmEngineState::Ended,
+        let orphaned = match core.refresh_agent(parent) {
+            Ok(refreshed) => refreshed.agent().state == tx_core::LlmEngineState::Ended,
             Err(CoreError::NotFound(_)) => true,
             Err(error) => return Err(error.into()),
         };
@@ -410,7 +410,7 @@ mod tests {
         let conf = dir.path().join("tmux.conf");
         std::fs::write(&conf, "").unwrap();
         let ui = Ui::new(dir.path().join("tmux.sock"), conf, dir.path().join("nvim"));
-        let parent: SessionId = "11111111-2222-3333-4444-555555555555".parse().unwrap();
+        let parent: AgentId = "11111111-2222-3333-4444-555555555555".parse().unwrap();
         // No server yet: no views, no session, and `open` below starts the server.
         match list(&ui) {
             Ok(views) => assert!(views.is_empty()),

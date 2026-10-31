@@ -1,4 +1,4 @@
-//! Plugin-owned record data: `Session.ext`, written under the session lock.
+//! Plugin-owned record data: `Agent.ext`, written under the session lock.
 
 mod common;
 
@@ -7,7 +7,7 @@ use std::thread;
 
 use common::{Harness, STUB_ID, agent};
 use serde_json::{Value, json};
-use tx_core::{Session, SessionId};
+use tx_core::{Agent, AgentId};
 
 const RECORD: &str = r#"{"version":2,"id":"0f6b3b8a-1111-4222-8333-444444444444","name":"a","engine":"claude",
     "working_directory":"/tmp","roles":[],"state":"idle","created_at":1.0,"last_modified_at":1.0,
@@ -15,7 +15,7 @@ const RECORD: &str = r#"{"version":2,"id":"0f6b3b8a-1111-4222-8333-444444444444"
 
 #[test]
 fn record_without_ext_loads_as_empty() {
-    let session = Session::from_json(&format!("{RECORD}}}")).unwrap();
+    let session = Agent::from_json(&format!("{RECORD}}}")).unwrap();
     assert!(session.ext.is_empty());
     assert!(
         !session.to_json().unwrap().contains("\"ext\""),
@@ -25,12 +25,12 @@ fn record_without_ext_loads_as_empty() {
 
 #[test]
 fn ext_round_trips() {
-    let session = Session::from_json(&format!(
+    let session = Agent::from_json(&format!(
         r#"{RECORD},"ext":{{"hooks":{{"state":"idle"}}}}}}"#
     ))
     .unwrap();
     assert_eq!(session.ext["hooks"], json!({"state": "idle"}));
-    let again = Session::from_json(&session.to_json().unwrap()).unwrap();
+    let again = Agent::from_json(&session.to_json().unwrap()).unwrap();
     assert_eq!(again, session);
 }
 
@@ -39,13 +39,13 @@ fn update_ext_writes_only_on_change() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let id = core.create_agent(agent("a", &h.repository("a"))).unwrap();
     assert!(
         core.update_ext(&id, "hooks", |v| *v = json!({"state": "working"}))
             .unwrap()
     );
     assert_eq!(
-        core.get_session(&id).unwrap().ext["hooks"]["state"],
+        core.get_agent(&id).unwrap().ext["hooks"]["state"],
         "working"
     );
     assert!(
@@ -57,7 +57,7 @@ fn update_ext_writes_only_on_change() {
         "untouched → false"
     );
     assert!(core.update_ext(&id, "other", |v| *v = json!(1)).unwrap());
-    let ext = core.get_session(&id).unwrap().ext;
+    let ext = core.get_agent(&id).unwrap().ext;
     assert_eq!(
         ext.len(),
         3,
@@ -70,16 +70,12 @@ fn null_removes_the_key() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let id = core.create_agent(agent("a", &h.repository("a"))).unwrap();
     core.update_ext(&id, "hooks", |v| *v = json!({"state": "idle"}))
         .unwrap();
     assert!(core.update_ext(&id, "hooks", |v| *v = Value::Null).unwrap());
     assert_eq!(
-        core.get_session(&id)
-            .unwrap()
-            .ext
-            .keys()
-            .collect::<Vec<_>>(),
+        core.get_agent(&id).unwrap().ext.keys().collect::<Vec<_>>(),
         [STUB_ID],
         "only the engine's own entry is left"
     );
@@ -94,7 +90,7 @@ fn update_ext_on_unknown_session_is_not_found() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open();
-    let id: SessionId = "0f6b3b8a-1111-4222-8333-444444444444".parse().unwrap();
+    let id: AgentId = "0f6b3b8a-1111-4222-8333-444444444444".parse().unwrap();
     assert!(matches!(
         core.update_ext(&id, "hooks", |_| {}),
         Err(tx_core::CoreError::NotFound(_))
@@ -106,7 +102,7 @@ fn concurrent_updates_both_survive() {
     require_tmux!();
     let h = Harness::new();
     let core = Arc::new(h.open_with_engine());
-    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let id = core.create_agent(agent("a", &h.repository("a"))).unwrap();
     let handles: Vec<_> = ["x", "y"]
         .into_iter()
         .map(|key| {
@@ -122,7 +118,7 @@ fn concurrent_updates_both_survive() {
     for handle in handles {
         handle.join().unwrap();
     }
-    let ext = core.get_session(&id).unwrap().ext;
+    let ext = core.get_agent(&id).unwrap().ext;
     assert_eq!(ext["x"], json!(49));
     assert_eq!(ext["y"], json!(49));
 }

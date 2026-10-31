@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use common::{Harness, STUB_KIND, agent, wait_for};
 use serde_json::json;
-use tx_core::{EventType, LaunchOptions, LlmEngineHook, LlmEngineState, SessionId};
+use tx_core::{AgentId, EventType, LaunchOptions, LlmEngineHook, LlmEngineState};
 
 fn hook(name: &str, payload: serde_json::Value, at: f64) -> LlmEngineHook {
     LlmEngineHook {
@@ -25,7 +25,7 @@ fn archive_lines(h: &Harness) -> Vec<String> {
         .collect()
 }
 
-fn archived(h: &Harness, id: &SessionId, conversation: &str) -> PathBuf {
+fn archived(h: &Harness, id: &AgentId, conversation: &str) -> PathBuf {
     h.config()
         .archive_directory(id)
         .join(format!("{conversation}.jsonl"))
@@ -36,7 +36,7 @@ fn every_hook_archives_the_conversation_and_a_failure_is_an_event() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let id = core.create_agent(agent("a", &h.repository("a"))).unwrap();
     let transcript = h.dir.path().join("live/c-1.jsonl");
     let data = json!({"conversation_id": "c-1", "transcript_path": transcript});
     core.hook(&id, hook("data", data, 10.0)).unwrap();
@@ -79,7 +79,7 @@ fn every_hook_archives_the_conversation_and_a_failure_is_an_event() {
         core.hook(&id, hook("idle", json!({}), 17.0)).unwrap(),
         Some(LlmEngineState::Idle)
     );
-    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Idle);
+    assert_eq!(core.get_agent(&id).unwrap().state, LlmEngineState::Idle);
     assert_eq!(archive_lines(&h), ["archive refused", "archive refused"]);
     assert_eq!(std::fs::read(&copy).unwrap(), b"one\ntwo\nthree\n");
 }
@@ -89,7 +89,7 @@ fn a_held_archive_lock_makes_the_hook_skip_the_archive() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let id = core.create_agent(agent("a", &h.repository("a"))).unwrap();
     let transcript = h.dir.path().join("live/c-1.jsonl");
     let data = json!({"conversation_id": "c-1", "transcript_path": transcript});
     core.hook(&id, hook("data", data, 10.0)).unwrap();
@@ -124,7 +124,7 @@ fn respawn_restores_a_deleted_transcript_from_the_archive() {
     opts.launch = LaunchOptions::agent(STUB_KIND)
         .option("model", "data")
         .initial_prompt("remember OTTER-7");
-    let id = core.create_session(opts).unwrap();
+    let id = core.create_agent(opts).unwrap();
     let transcript = h.dir.path().join("live").join(format!("{id}.jsonl"));
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
     std::fs::write(&transcript, "OTTER-7\n").unwrap();
@@ -138,9 +138,9 @@ fn respawn_restores_a_deleted_transcript_from_the_archive() {
     let copy = archived(&h, &id, id.as_str());
     assert_eq!(std::fs::read(&copy).unwrap(), b"OTTER-7\n");
 
-    core.stop_session(&id).unwrap();
+    core.stop_agent(&id).unwrap();
     std::fs::remove_file(&transcript).unwrap();
-    let session = core.respawn_session(&id).unwrap();
+    let session = core.respawn_agent(&id).unwrap();
     assert_eq!(
         std::fs::read(&transcript).unwrap(),
         b"OTTER-7\n",
@@ -153,9 +153,9 @@ fn respawn_restores_a_deleted_transcript_from_the_archive() {
     }));
 
     // A respawn with the live transcript in place leaves it alone.
-    core.stop_session(&id).unwrap();
+    core.stop_agent(&id).unwrap();
     std::fs::write(&transcript, "OTTER-7\nmore\n").unwrap();
-    core.respawn_session(&id).unwrap();
+    core.respawn_agent(&id).unwrap();
     assert_eq!(std::fs::read(&transcript).unwrap(), b"OTTER-7\nmore\n");
     assert_eq!(std::fs::read(&copy).unwrap(), b"OTTER-7\n");
     assert!(archive_lines(&h).is_empty());
@@ -177,7 +177,7 @@ fn a_stop_and_an_exit_archive_the_final_transcript_exactly() {
     final_bytes[original.len() - 102_400] ^= 0xFF;
     final_bytes.extend_from_slice(b"written after the last hook\n");
 
-    let stopped = core.create_session(agent("s", &h.repository("s"))).unwrap();
+    let stopped = core.create_agent(agent("s", &h.repository("s"))).unwrap();
     let transcript = transcript_of("s");
     std::fs::write(&transcript, &original).unwrap();
     let data = json!({"conversation_id": "s", "transcript_path": transcript});
@@ -192,14 +192,14 @@ fn a_stop_and_an_exit_archive_the_final_transcript_exactly() {
         original[..],
         "a hook appends by offset and misses the early rewrite"
     );
-    core.stop_session(&stopped).unwrap();
+    core.stop_agent(&stopped).unwrap();
     assert_eq!(
         std::fs::read(&copy).unwrap(),
         final_bytes,
         "exact after the stop"
     );
 
-    let exited = core.create_session(agent("e", &h.repository("e"))).unwrap();
+    let exited = core.create_agent(agent("e", &h.repository("e"))).unwrap();
     let transcript = transcript_of("e");
     std::fs::write(&transcript, &original).unwrap();
     let data = json!({"conversation_id": "e", "transcript_path": transcript});
@@ -209,7 +209,7 @@ fn a_stop_and_an_exit_archive_the_final_transcript_exactly() {
     h.tmux_ok(&["kill-session", "-t", &live.session_target]);
     core.refresh_all().unwrap();
     assert_eq!(
-        core.get_session(&exited).unwrap().state,
+        core.get_agent(&exited).unwrap().state,
         LlmEngineState::Ended
     );
     assert_eq!(
@@ -223,7 +223,7 @@ fn a_stop_and_an_exit_archive_the_final_transcript_exactly() {
 #[test]
 fn archive_directory_is_under_the_agents_data_directory() {
     let h = Harness::new();
-    let id = SessionId::mint();
+    let id = AgentId::mint();
     assert_eq!(
         h.config().archive_directory(&id),
         h.data_dir()

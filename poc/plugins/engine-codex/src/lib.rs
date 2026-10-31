@@ -35,8 +35,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::migrate::version_one_conversation;
 use tx_core::{
-    Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data,
+    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
+    LlmEngineChange, LlmEngineHook, LlmEngineState, WorkspaceAction, engine_data,
     hook_shell_command, mirror_file, mirror_file_exact,
 };
 
@@ -198,11 +198,7 @@ impl CodexAdapter {
 
     /// The conversation recorded for `session`; refused when there is none yet (Codex reports
     /// its id only once a first prompt was submitted).
-    fn conversation_of<'a>(
-        &self,
-        session: &'a Session,
-        verb: &str,
-    ) -> Result<&'a str, EngineError> {
+    fn conversation_of<'a>(&self, session: &'a Agent, verb: &str) -> Result<&'a str, EngineError> {
         engine_data(self, session)
             .get(CONVERSATION_ID_KEY)
             .and_then(Value::as_str)
@@ -216,10 +212,7 @@ impl CodexAdapter {
 
     /// The conversation `SessionStart` recorded and the rollout path it came with. `None`
     /// before the first prompt; the path alone is `None` on a record that only ever held the id.
-    fn recorded_conversation<'a>(
-        &self,
-        session: &'a Session,
-    ) -> Option<(&'a str, Option<&'a Path>)> {
+    fn recorded_conversation<'a>(&self, session: &'a Agent) -> Option<(&'a str, Option<&'a Path>)> {
         let data = engine_data(self, session);
         let conversation = data.get(CONVERSATION_ID_KEY)?.as_str()?;
         let transcript = data
@@ -244,7 +237,7 @@ impl LlmEngine for CodexAdapter {
         EXT_KEY
     }
 
-    fn configure(&self, session: &Session, options: &Value) -> Result<Value, EngineError> {
+    fn configure(&self, session: &Agent, options: &Value) -> Result<Value, EngineError> {
         if !options.is_object() {
             return Err(EngineError::Refused(format!(
                 "codex options: expected a JSON object, got {options}"
@@ -287,7 +280,7 @@ impl LlmEngine for CodexAdapter {
     fn fork(
         &self,
         request: &LaunchRequest<'_>,
-        source: &Session,
+        source: &Agent,
         prompt: &str,
     ) -> Result<LaunchPlan, EngineError> {
         let args = vec![
@@ -300,13 +293,13 @@ impl LlmEngine for CodexAdapter {
         Ok(self.plan(request, args, Some(fork_data), prompt))
     }
 
-    fn stop(&self, _: &Session) -> Option<Input> {
+    fn stop(&self, _: &Agent) -> Option<Input> {
         Some(Input::line(QUIT_COMMAND))
     }
 
     /// Escape, as the status line says ("esc to interrupt"); Ctrl-C mid-turn opens a menu. The
     /// agent is at its prompt afterwards.
-    fn interrupt(&self, _: &Session) -> Option<(Input, Option<LlmEngineState>)> {
+    fn interrupt(&self, _: &Agent) -> Option<(Input, Option<LlmEngineState>)> {
         Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
@@ -343,7 +336,7 @@ impl LlmEngine for CodexAdapter {
         Value::Object(data)
     }
 
-    fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange {
+    fn on_hook(&self, session: &Agent, hook: &LlmEngineHook) -> LlmEngineChange {
         let state = match hook.name.as_str() {
             "SessionStart" | "Stop" | "Interrupt" | "PermissionRequest" => {
                 Some(LlmEngineState::Idle)
@@ -362,7 +355,7 @@ impl LlmEngine for CodexAdapter {
     /// conversations before a `/new` stay archived: by offset while the process lives, compared
     /// whole once the record is terminal (the process gone, the rollout final). No conversation
     /// yet, or a rollout not on disk, archives nothing.
-    fn archive(&self, session: &Session, archive_directory: &Path) -> Result<(), EngineError> {
+    fn archive(&self, session: &Agent, archive_directory: &Path) -> Result<(), EngineError> {
         let Some((conversation, Some(transcript))) = self.recorded_conversation(session) else {
             return Ok(());
         };
@@ -382,7 +375,7 @@ impl LlmEngine for CodexAdapter {
     /// overwritten; a conversation the archive does not hold restores nothing. A record whose
     /// archive has the rollout but that recorded no path is refused: the name carries the
     /// creation time, and a rebuilt one would not be the one Codex looks for.
-    fn restore(&self, session: &Session, archive_directory: &Path) -> Result<bool, EngineError> {
+    fn restore(&self, session: &Agent, archive_directory: &Path) -> Result<bool, EngineError> {
         let Some((conversation, transcript)) = self.recorded_conversation(session) else {
             return Ok(false);
         };
@@ -406,7 +399,7 @@ impl LlmEngine for CodexAdapter {
     }
 
     /// The recorded `conversation_id` and `transcript_path`; `None` until both are known.
-    fn conversation(&self, session: &Session) -> Option<Conversation> {
+    fn conversation(&self, session: &Agent) -> Option<Conversation> {
         let data = engine_data(self, session);
         Some(Conversation {
             id: data.get(CONVERSATION_ID_KEY)?.as_str()?.to_owned(),
@@ -526,19 +519,19 @@ mod tests {
     }
 
     /// A starting agent record with this engine's data `data` (absent when `Null`).
-    fn record(data: serde_json::Value) -> Session {
+    fn record(data: serde_json::Value) -> Agent {
         session(LlmEngineState::Starting, data)
     }
 
     /// An agent record in `state` whose `ext.CodexAdapter` is `data` (absent when `Null`).
-    fn session(state: LlmEngineState, data: serde_json::Value) -> Session {
-        use tx_core::SessionId;
+    fn session(state: LlmEngineState, data: serde_json::Value) -> Agent {
+        use tx_core::AgentId;
         let mut ext = std::collections::BTreeMap::new();
         if !data.is_null() {
             ext.insert(EXT_KEY.to_owned(), data);
         }
-        Session {
-            id: SessionId::mint(),
+        Agent {
+            id: AgentId::mint(),
             name: "agent".into(),
             engine: adapter().kind(),
             working_directory: "/tmp".into(),
@@ -1045,7 +1038,7 @@ mod tests {
     }
 
     /// A running record whose data names conversation `id` at rollout `transcript`.
-    fn recorded(id: &str, transcript: &Path) -> Session {
+    fn recorded(id: &str, transcript: &Path) -> Agent {
         session(
             LlmEngineState::Idle,
             serde_json::json!({CONVERSATION_ID_KEY: id, TRANSCRIPT_PATH_KEY: transcript}),
@@ -1129,7 +1122,7 @@ mod tests {
         engine.archive(&running, &archive).unwrap();
         assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), data);
         // ...and the archive of a stopped record is exact.
-        let stopped = Session {
+        let stopped = Agent {
             state: LlmEngineState::Ended,
             ..recorded("c1", &transcript)
         };

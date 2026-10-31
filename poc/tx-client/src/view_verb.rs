@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use tx_core::{SessionId, TxCore, VerbError, VerbIo};
+use tx_core::{AgentId, TxCore, VerbError, VerbIo};
 
 use crate::tmux::Ui;
 use crate::views::{self, ViewKind, ViewRequest};
@@ -90,7 +90,7 @@ fn open(
     io: &mut VerbIo<'_>,
     arguments: OpenArguments,
 ) -> Result<i32, VerbError> {
-    let parent: Option<SessionId> = match &arguments.parent {
+    let parent: Option<AgentId> = match &arguments.parent {
         Some(token) => Some(core.resolve(token)?),
         None => None,
     };
@@ -129,7 +129,7 @@ fn ls(core: &TxCore, ui: &Ui, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     }
     for view in views::list(ui).map_err(failed)? {
         let parent = match &view.parent_id {
-            Some(id) => core.get_session(id)?.name,
+            Some(id) => core.get_agent(id)?.name,
             None => String::new(),
         };
         writeln!(

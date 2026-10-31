@@ -8,7 +8,7 @@
 use std::process::ExitCode;
 
 use tx_core::core::SESSION_ID_ENV;
-use tx_core::{CoreError, LlmEngineHook, SessionId};
+use tx_core::{AgentId, CoreError, LlmEngineHook};
 use tx_core_cli::args::Global;
 use tx_core_cli::setup::{Failure, open};
 
@@ -40,7 +40,7 @@ fn main() -> ExitCode {
 fn hook(name: String) -> Result<(), Failure> {
     let Some(id) = std::env::var(SESSION_ID_ENV)
         .ok()
-        .and_then(|raw| raw.parse::<SessionId>().ok())
+        .and_then(|raw| raw.parse::<AgentId>().ok())
     else {
         return Ok(());
     };

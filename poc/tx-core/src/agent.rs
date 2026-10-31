@@ -15,33 +15,33 @@ use crate::state::LlmEngineState;
 /// The record schema this build reads and writes. Version 1 (one `sessions/<id>.json` per
 /// record, with `lifecycle` and `launch`) is upgraded by `txc migrate`, never read in place.
 pub const RECORD_VERSION: u64 = 2;
-/// Session names are tmux session names and file-name fragments; keep them short.
+/// Agent names are tmux session names and file-name fragments; keep them short.
 pub const MAX_NAME_BYTES: usize = 128;
 /// Ids are uuids (36 bytes); the slack lets other minting schemes in without a format change.
 pub const MAX_ID_BYTES: usize = 64;
 
-/// A record id: a uuid v4 minted by `create_session`. Every way to build one validates the
+/// A record id: a uuid v4 minted by `create_agent`. Every way to build one validates the
 /// grammar `[A-Za-z0-9_-]{1,64}` (parsing, deserializing), so an id is always a safe file-name
 /// fragment and tmux option value: `agents/<id>/`, `<id>.lock`, `@tx-id`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct SessionId(String);
+pub struct AgentId(String);
 
-impl From<SessionId> for String {
-    fn from(id: SessionId) -> Self {
+impl From<AgentId> for String {
+    fn from(id: AgentId) -> Self {
         id.0
     }
 }
 
-impl TryFrom<String> for SessionId {
-    type Error = InvalidSessionId;
+impl TryFrom<String> for AgentId {
+    type Error = InvalidAgentId;
 
     fn try_from(id: String) -> Result<Self, Self::Error> {
         id.parse()
     }
 }
 
-impl SessionId {
+impl AgentId {
     pub fn mint() -> Self {
         Self(uuid::Uuid::new_v4().to_string())
     }
@@ -51,7 +51,7 @@ impl SessionId {
     }
 }
 
-impl fmt::Display for SessionId {
+impl fmt::Display for AgentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -59,16 +59,16 @@ impl fmt::Display for SessionId {
 
 #[derive(Debug, thiserror::Error)]
 #[error("invalid session id {0:?} (allowed: [A-Za-z0-9_-]+, at most {MAX_ID_BYTES} bytes)")]
-pub struct InvalidSessionId(pub String);
+pub struct InvalidAgentId(pub String);
 
-impl FromStr for SessionId {
-    type Err = InvalidSessionId;
+impl FromStr for AgentId {
+    type Err = InvalidAgentId;
 
     fn from_str(id: &str) -> Result<Self, Self::Err> {
         if is_safe_fragment(id, MAX_ID_BYTES) {
             Ok(Self(id.to_owned()))
         } else {
-            Err(InvalidSessionId(id.to_owned()))
+            Err(InvalidAgentId(id.to_owned()))
         }
     }
 }
@@ -88,8 +88,8 @@ fn is_safe_fragment(text: &str, max: usize) -> bool {
 /// An agent is running while `state` is not `Ended`; `Ended` is the terminal state (the
 /// process exited or was stopped; the event log says which). There is no separate lifecycle.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Session {
-    pub id: SessionId,
+pub struct Agent {
+    pub id: AgentId,
     pub name: String,
     /// The engine that runs it, one of the closed [`EngineKind`]s.
     pub engine: EngineKind,
@@ -109,7 +109,7 @@ pub struct Session {
     pub tags: Vec<String>,
     /// Ancestry only; core never schedules or stops children.
     #[serde(default)]
-    pub parent_id: Option<SessionId>,
+    pub parent_id: Option<AgentId>,
     /// Plugin- and engine-owned data keyed by plugin id or `ext_key`; written through
     /// `TxCore::update_ext` and the engine hooks. Core never reads it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -145,10 +145,10 @@ pub enum RecordError {
 struct RecordOut<'a> {
     version: u64,
     #[serde(flatten)]
-    session: &'a Session,
+    session: &'a Agent,
 }
 
-impl Session {
+impl Agent {
     /// Pretty JSON, newline-terminated, `version` first. Fails for what JSON cannot carry: a
     /// non-UTF-8 `working_directory` or a non-finite timestamp (serde_json would write `null`,
     /// which `from_json` then refuses — better to refuse before the record exists).
@@ -221,12 +221,12 @@ mod tests {
     use std::collections::HashSet;
     use std::path::PathBuf;
 
-    fn sid(id: &str) -> SessionId {
+    fn sid(id: &str) -> AgentId {
         id.parse().unwrap()
     }
 
-    fn agent() -> Session {
-        Session {
+    fn agent() -> Agent {
+        Agent {
             id: sid("b0000000-0000-4000-8000-000000000001"),
             name: "worker-1".into(),
             engine: EngineKind::Claude,
@@ -244,8 +244,8 @@ mod tests {
     }
 
     /// An agent that was stopped.
-    fn ended() -> Session {
-        Session {
+    fn ended() -> Agent {
+        Agent {
             id: sid("x"),
             name: "done".into(),
             engine: EngineKind::Codex,
@@ -267,13 +267,13 @@ mod tests {
     #[test]
     fn agent_round_trips_through_json() {
         let text = agent().to_json().unwrap();
-        assert_eq!(Session::from_json(&text).unwrap(), agent());
+        assert_eq!(Agent::from_json(&text).unwrap(), agent());
     }
 
     #[test]
     fn an_ended_agent_round_trips_through_json() {
         let text = ended().to_json().unwrap();
-        assert_eq!(Session::from_json(&text).unwrap(), ended());
+        assert_eq!(Agent::from_json(&text).unwrap(), ended());
     }
 
     #[test]
@@ -333,14 +333,14 @@ mod tests {
     #[test]
     fn optional_fields_may_be_null_or_absent() {
         let text = r#"{"version":2,"id":"i","name":"n","engine":"claude","working_directory":"/","roles":[],"state":"idle","created_at":1.0,"last_modified_at":1.0,"archived_at":null,"tags":[],"parent_id":null}"#;
-        let session = Session::from_json(text).unwrap();
+        let session = Agent::from_json(text).unwrap();
         assert_eq!(session.parent_id, None);
         assert_eq!(session.archived_at, None);
         assert!(session.ext.is_empty() && session.other.is_empty());
         let text = text
             .replace(r#","archived_at":null"#, "")
             .replace(r#","parent_id":null"#, "");
-        assert_eq!(Session::from_json(&text).unwrap(), session);
+        assert_eq!(Agent::from_json(&text).unwrap(), session);
     }
 
     /// Acceptance 5: a key this build does not know survives a read and a rewrite, in place.
@@ -351,7 +351,7 @@ mod tests {
             text.find("\"id\"").unwrap(),
             "\"future_field\": 1,\n  \"future\": {\"x\": [1, 2]},\n  ",
         );
-        let session = Session::from_json(&text).unwrap();
+        let session = Agent::from_json(&text).unwrap();
         assert_eq!(session.other["future_field"], 1);
         assert_eq!(session.other["future"], serde_json::json!({"x": [1, 2]}));
         let mut expected = ended();
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(rewritten["future"]["x"][1], 2);
         assert_eq!(rewritten["version"], RECORD_VERSION);
         assert_eq!(
-            Session::from_json(&session.to_json().unwrap()).unwrap(),
+            Agent::from_json(&session.to_json().unwrap()).unwrap(),
             session
         );
     }
@@ -371,7 +371,7 @@ mod tests {
     /// before any of its fields is looked at (a process record, an unknown engine included).
     #[test]
     fn version_one_needs_migration() {
-        let error = Session::from_json(VERSION_ONE).unwrap_err();
+        let error = Agent::from_json(VERSION_ONE).unwrap_err();
         assert!(matches!(error, RecordError::NeedsMigration(1)), "{error:?}");
         assert_eq!(error.to_string(), "record version 1: run `txc migrate`");
         let process = VERSION_ONE.replace(
@@ -379,15 +379,15 @@ mod tests {
             r#"{"kind":"process","program":"sh","args":[]}"#,
         );
         assert!(matches!(
-            Session::from_json(&process),
+            Agent::from_json(&process),
             Err(RecordError::NeedsMigration(1))
         ));
         assert!(matches!(
-            Session::from_json(&VERSION_ONE.replace("\"claude\"", "\"kodex\"")),
+            Agent::from_json(&VERSION_ONE.replace("\"claude\"", "\"kodex\"")),
             Err(RecordError::NeedsMigration(1))
         ));
         assert!(matches!(
-            Session::from_json(r#"{"version":1}"#),
+            Agent::from_json(r#"{"version":1}"#),
             Err(RecordError::NeedsMigration(1))
         ));
     }
@@ -399,7 +399,7 @@ mod tests {
             .unwrap()
             .replace("\"version\": 2", "\"version\": 3");
         assert!(matches!(
-            Session::from_json(&text),
+            Agent::from_json(&text),
             Err(RecordError::UnsupportedVersion(3))
         ));
         let text = ended()
@@ -407,7 +407,7 @@ mod tests {
             .unwrap()
             .replace("\"version\": 2", "\"version\": 0");
         assert!(matches!(
-            Session::from_json(&text),
+            Agent::from_json(&text),
             Err(RecordError::UnsupportedVersion(0))
         ));
     }
@@ -416,7 +416,7 @@ mod tests {
     fn missing_version_is_refused() {
         let text = ended().to_json().unwrap().replace("\"version\": 2,\n", "");
         assert!(matches!(
-            Session::from_json(&text),
+            Agent::from_json(&text),
             Err(RecordError::MissingVersion)
         ));
     }
@@ -426,28 +426,22 @@ mod tests {
     #[test]
     fn an_unknown_engine_is_refused_by_name() {
         let text = ended().to_json().unwrap().replace("\"codex\"", "\"kodex\"");
-        let error = Session::from_json(&text).unwrap_err();
+        let error = Agent::from_json(&text).unwrap_err();
         assert!(
             matches!(&error, RecordError::UnknownEngine(engine) if engine == "kodex"),
             "{error:?}"
         );
         assert!(error.to_string().contains("claude, codex"), "{error}");
         let text = ended().to_json().unwrap().replace("\"codex\"", "7");
-        assert!(matches!(
-            Session::from_json(&text),
-            Err(RecordError::Json(_))
-        ));
+        assert!(matches!(Agent::from_json(&text), Err(RecordError::Json(_))));
     }
 
     #[test]
     fn garbage_is_a_json_error() {
-        assert!(matches!(Session::from_json("{"), Err(RecordError::Json(_))));
+        assert!(matches!(Agent::from_json("{"), Err(RecordError::Json(_))));
+        assert!(matches!(Agent::from_json("[]"), Err(RecordError::Json(_))));
         assert!(matches!(
-            Session::from_json("[]"),
-            Err(RecordError::Json(_))
-        ));
-        assert!(matches!(
-            Session::from_json(r#"{"version":2}"#),
+            Agent::from_json(r#"{"version":2}"#),
             Err(RecordError::Json(_))
         ));
     }
@@ -486,7 +480,7 @@ mod tests {
         session.created_at = -0.0;
         session.archived_at = Some(f64::MIN_POSITIVE / 2.0);
         assert_eq!(
-            Session::from_json(&session.to_json().unwrap()).unwrap(),
+            Agent::from_json(&session.to_json().unwrap()).unwrap(),
             session
         );
     }
@@ -498,7 +492,7 @@ mod tests {
                 .to_json()
                 .unwrap()
                 .replace("\"version\": 2", &format!("\"version\": {version}"));
-            let error = Session::from_json(&text).unwrap_err();
+            let error = Agent::from_json(&text).unwrap_err();
             assert!(
                 matches!(&error, RecordError::InvalidVersion(found) if found.starts_with(&version[..2])),
                 "{version}: {error:?}"
@@ -517,7 +511,7 @@ mod tests {
 
     #[test]
     fn minted_ids_are_distinct_uuids() {
-        let ids: HashSet<String> = (0..64).map(|_| SessionId::mint().to_string()).collect();
+        let ids: HashSet<String> = (0..64).map(|_| AgentId::mint().to_string()).collect();
         assert_eq!(ids.len(), 64);
         for id in &ids {
             assert_eq!(id.len(), 36);
@@ -529,7 +523,7 @@ mod tests {
     #[test]
     fn session_id_grammar() {
         for ok in ["abc", "a-b_C9", "-", &"x".repeat(MAX_ID_BYTES)] {
-            assert_eq!(ok.parse::<SessionId>().unwrap().as_str(), ok, "{ok:?}");
+            assert_eq!(ok.parse::<AgentId>().unwrap().as_str(), ok, "{ok:?}");
         }
         for bad in [
             "",
@@ -544,12 +538,12 @@ mod tests {
             &"x".repeat(MAX_ID_BYTES + 1),
         ] {
             assert!(
-                matches!(bad.parse::<SessionId>(), Err(InvalidSessionId(found)) if found == bad),
+                matches!(bad.parse::<AgentId>(), Err(InvalidAgentId(found)) if found == bad),
                 "{bad:?}"
             );
         }
         assert_eq!(sid("q").to_string(), "q");
-        assert!(SessionId::mint().as_str().parse::<SessionId>().is_ok());
+        assert!(AgentId::mint().as_str().parse::<AgentId>().is_ok());
     }
 
     #[test]
@@ -560,7 +554,7 @@ mod tests {
                 .unwrap()
                 .replace("\"id\": \"x\"", &format!("\"id\": {bad}"));
             assert!(
-                matches!(Session::from_json(&text), Err(RecordError::Json(_))),
+                matches!(Agent::from_json(&text), Err(RecordError::Json(_))),
                 "{bad}"
             );
             let text = agent()
@@ -568,7 +562,7 @@ mod tests {
                 .unwrap()
                 .replace("\"parent_id\": \"p\"", &format!("\"parent_id\": {bad}"));
             assert!(
-                matches!(Session::from_json(&text), Err(RecordError::Json(_))),
+                matches!(Agent::from_json(&text), Err(RecordError::Json(_))),
                 "{bad}"
             );
         }

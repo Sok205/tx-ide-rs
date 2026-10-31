@@ -9,15 +9,15 @@ use std::str::FromStr;
 
 use proptest::prelude::*;
 
-fn sid(id: &str) -> tx_core::SessionId {
+fn sid(id: &str) -> tx_core::AgentId {
     id.parse().unwrap()
 }
 use serde_json::{Map, Value, json};
+use tx_core::agent::{MAX_NAME_BYTES, RECORD_VERSION};
 use tx_core::config::{MAX_SOCKET_PATH_BYTES, SOCKET_FILE};
-use tx_core::session::{MAX_NAME_BYTES, RECORD_VERSION};
 use tx_core::{
-    CoreConfig, CoreError, Directories, EngineKind, LlmEngineState, RecordError, Session,
-    SessionId, validate_name,
+    Agent, AgentId, CoreConfig, CoreError, Directories, EngineKind, LlmEngineState, RecordError,
+    validate_name,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -34,10 +34,10 @@ fn arb_text() -> impl Strategy<Value = String> {
     ]
 }
 
-fn arb_session_id() -> impl Strategy<Value = SessionId> {
+fn arb_session_id() -> impl Strategy<Value = AgentId> {
     prop_oneof![
         2 => "[A-Za-z0-9_-]{1,64}".prop_map(|s| sid(s.as_str())),
-        1 => Just(SessionId::mint()),
+        1 => Just(AgentId::mint()),
     ]
 }
 
@@ -71,7 +71,7 @@ fn arb_non_finite_f64() -> impl Strategy<Value = f64> {
 fn arb_session_with(
     created_at: impl Strategy<Value = f64>,
     archived_at: impl Strategy<Value = Option<f64>>,
-) -> impl Strategy<Value = Session> {
+) -> impl Strategy<Value = Agent> {
     (
         arb_session_id(),
         arb_text(),
@@ -98,7 +98,7 @@ fn arb_session_with(
                 tags,
                 parent_id,
                 ext,
-            )| Session {
+            )| Agent {
                 id,
                 name,
                 engine,
@@ -116,7 +116,7 @@ fn arb_session_with(
         )
 }
 
-fn arb_session() -> impl Strategy<Value = Session> {
+fn arb_session() -> impl Strategy<Value = Agent> {
     arb_session_with(arb_finite_f64(), prop::option::of(arb_finite_f64()))
 }
 
@@ -139,7 +139,7 @@ fn arb_json() -> impl Strategy<Value = Value> {
     })
 }
 
-fn session_value(session: &Session) -> Map<String, Value> {
+fn session_value(session: &Agent) -> Map<String, Value> {
     match serde_json::from_str(&session.to_json().unwrap()).unwrap() {
         Value::Object(map) => map,
         other => panic!("to_json produced a non-object: {other}"),
@@ -181,7 +181,7 @@ fn is_valid_name(name: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 1. Session JSON round trip
+// 1. Agent JSON round trip
 // ---------------------------------------------------------------------------------------------
 
 proptest! {
@@ -192,7 +192,7 @@ proptest! {
         let text = session.to_json().unwrap();
         prop_assert!(text.ends_with("}\n"), "{text:?}");
         prop_assert!(text.starts_with("{\n  \"version\": 2,"), "{text:?}");
-        let back = Session::from_json(&text).unwrap();
+        let back = Agent::from_json(&text).unwrap();
         prop_assert_eq!(&back, &session);
         // PartialEq treats -0.0 == 0.0; make sure the sign bit survives too.
         prop_assert_eq!(back.created_at.to_bits(), session.created_at.to_bits());
@@ -246,7 +246,7 @@ fn to_json_does_not_panic_on_non_utf8_working_directory() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
 
-    let mut session = Session::from_json(&sample().to_json().unwrap()).unwrap();
+    let mut session = Agent::from_json(&sample().to_json().unwrap()).unwrap();
     session.working_directory = PathBuf::from(OsStr::from_bytes(b"/tmp/\xff\xfe"));
     let result = std::panic::catch_unwind(|| session.to_json());
     assert!(
@@ -255,8 +255,8 @@ fn to_json_does_not_panic_on_non_utf8_working_directory() {
     );
 }
 
-fn sample() -> Session {
-    Session {
+fn sample() -> Agent {
+    Agent {
         id: sid("x"),
         name: "shell".into(),
         engine: EngineKind::Claude,
@@ -315,13 +315,13 @@ proptest! {
     fn from_json_accepts_names_outside_the_grammar(name in arb_text().prop_filter("invalid", |n| !is_valid_name(n))) {
         let mut session = sample();
         session.name = name.clone();
-        let back = Session::from_json(&session.to_json().unwrap()).unwrap();
+        let back = Agent::from_json(&session.to_json().unwrap()).unwrap();
         prop_assert_eq!(back.name, name);
     }
 }
 
 // ---------------------------------------------------------------------------------------------
-// 3. SessionId
+// 3. AgentId
 // ---------------------------------------------------------------------------------------------
 
 proptest! {
@@ -332,7 +332,7 @@ proptest! {
         let expected_ok = !text.is_empty()
             && text.len() <= 64
             && text.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-        let parsed = SessionId::from_str(&text);
+        let parsed = AgentId::from_str(&text);
         prop_assert_eq!(parsed.is_ok(), expected_ok, "{:?} -> {:?}", text, parsed);
         if let Ok(id) = parsed {
             prop_assert_eq!(id.as_str(), text.as_str());
@@ -346,19 +346,19 @@ proptest! {
         let id = sid(text.as_str());
         let json = serde_json::to_string(&id).unwrap();
         prop_assert_eq!(&json, &serde_json::to_string(&text).unwrap());
-        let back: SessionId = serde_json::from_str(&json).unwrap();
+        let back: AgentId = serde_json::from_str(&json).unwrap();
         prop_assert_eq!(back, id);
     }
 
-    /// `SessionId` deserialization is transparent, so a record on disk may carry an id that
+    /// `AgentId` deserialization is transparent, so a record on disk may carry an id that
     /// `from_str` would refuse (`""`, `"a/b"`, `".."`). Core only writes minted ids, but
     /// `from_json` does not enforce that.
     #[test]
-    fn from_json_rejects_ids_from_str_rejects(text in arb_text().prop_filter("valid", |t| SessionId::from_str(t).is_err())) {
+    fn from_json_rejects_ids_from_str_rejects(text in arb_text().prop_filter("valid", |t| AgentId::from_str(t).is_err())) {
         for key in ["id", "parent_id"] {
             let mut value = session_value(&sample());
             value.insert(key.into(), Value::String(text.clone()));
-            let rejected = matches!(Session::from_json(&Value::Object(value).to_string()), Err(RecordError::Json(_)));
+            let rejected = matches!(Agent::from_json(&Value::Object(value).to_string()), Err(RecordError::Json(_)));
             prop_assert!(rejected, "{} = {:?} was accepted", key, text);
         }
     }
@@ -367,7 +367,7 @@ proptest! {
 #[test]
 fn minted_ids_are_hyphenated_lowercase_uuid_v4() {
     for _ in 0..256 {
-        let id = SessionId::mint();
+        let id = AgentId::mint();
         let s = id.as_str();
         assert_eq!(s.len(), 36, "{s}");
         let bytes = s.as_bytes();
@@ -383,7 +383,7 @@ fn minted_ids_are_hyphenated_lowercase_uuid_v4() {
             matches!(bytes[19], b'8' | b'9' | b'a' | b'b'),
             "variant nibble in {s}"
         );
-        assert_eq!(SessionId::from_str(s).unwrap(), id);
+        assert_eq!(AgentId::from_str(s).unwrap(), id);
         assert_eq!(id.to_string(), s);
     }
 }
@@ -493,13 +493,13 @@ proptest! {
 
     #[test]
     fn from_json_never_panics_on_arbitrary_text(text in arb_text()) {
-        let _ = Session::from_json(&text);
+        let _ = Agent::from_json(&text);
     }
 
     #[test]
     fn from_json_never_panics_on_arbitrary_json(value in arb_json()) {
-        let _ = Session::from_json(&value.to_string());
-        let _ = Session::from_json(&serde_json::to_string_pretty(&value).unwrap());
+        let _ = Agent::from_json(&value.to_string());
+        let _ = Agent::from_json(&serde_json::to_string_pretty(&value).unwrap());
     }
 
     #[test]
@@ -521,7 +521,7 @@ proptest! {
     ) {
         let mut value = session_value(&sample());
         value.insert("version".into(), version.clone());
-        let result = Session::from_json(&Value::Object(value).to_string());
+        let result = Agent::from_json(&Value::Object(value).to_string());
         match version.as_u64() {
             Some(RECORD_VERSION) => prop_assert!(result.is_ok(), "{result:?}"),
             Some(1) => prop_assert!(matches!(result, Err(RecordError::NeedsMigration(1))), "{result:?}"),
@@ -543,7 +543,7 @@ proptest! {
     ) {
         let mut value = session_value(&sample());
         value.insert(key.to_owned(), replacement);
-        let _ = Session::from_json(&Value::Object(value).to_string());
+        let _ = Agent::from_json(&Value::Object(value).to_string());
     }
 
 }
@@ -553,7 +553,7 @@ fn version_zero_is_reported_as_newer() {
     // Sharp edge: the message says "newer than this build supports" for version 0 too.
     let mut value = session_value(&sample());
     value.insert("version".into(), json!(0));
-    let err = Session::from_json(&Value::Object(value).to_string()).unwrap_err();
+    let err = Agent::from_json(&Value::Object(value).to_string()).unwrap_err();
     assert!(matches!(err, RecordError::UnsupportedVersion(0)), "{err:?}");
     assert!(err.to_string().contains("not supported"), "{err}");
 }
@@ -563,7 +563,7 @@ fn from_json_requires_all_mandatory_fields() {
     for key in TOP_KEYS {
         let mut value = session_value(&sample());
         value.remove(key);
-        let result = Session::from_json(&Value::Object(value).to_string());
+        let result = Agent::from_json(&Value::Object(value).to_string());
         match key {
             "version" => assert!(
                 matches!(result, Err(RecordError::MissingVersion)),
@@ -598,7 +598,7 @@ proptest! {
             value.insert(k.clone(), v.clone());
         }
         let text = Value::Object(value).to_string();
-        let back = Session::from_json(&text).unwrap();
+        let back = Agent::from_json(&text).unwrap();
         let mut expected = session.clone();
         expected.other = top_extra.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         prop_assert_eq!(&back, &expected);
@@ -606,6 +606,6 @@ proptest! {
         for (k, v) in &top_extra {
             prop_assert_eq!(rewritten.get(k), Some(v), "{:?} lost on rewrite", k);
         }
-        prop_assert_eq!(Session::from_json(&back.to_json().unwrap()).unwrap(), back);
+        prop_assert_eq!(Agent::from_json(&back.to_json().unwrap()).unwrap(), back);
     }
 }

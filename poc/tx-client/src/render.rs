@@ -1,7 +1,7 @@
 //! Picker row rendering: port of main's `render.rs` picker feed and `palette.rs` tag colours.
 //! Pure formatting; every function takes the records and `now`, nothing reads the clock.
 
-use tx_core::Session;
+use tx_core::Agent;
 
 use crate::tmux::Location;
 use crate::views::View;
@@ -122,7 +122,7 @@ pub fn chips(tags: &[String]) -> String {
 /// One picker row's subject: an agent (a core record) or a view (a tx-client tmux session).
 #[derive(Clone, Copy, Debug)]
 pub enum PickerEntry<'a> {
-    Agent(&'a Session),
+    Agent(&'a Agent),
     View(&'a View),
 }
 
@@ -159,7 +159,7 @@ pub fn role_of(entry: PickerEntry<'_>) -> &'static str {
 }
 
 /// When the record was last written: a state change, mostly, but also a rename or a tag.
-pub fn activity_at(session: &Session) -> f64 {
+pub fn activity_at(session: &Agent) -> f64 {
     session.last_modified_at
 }
 
@@ -220,7 +220,7 @@ fn picker_row(row: &Row<'_>, nested: bool, namew: i64, now: f64) -> String {
 /// The fzf picker feed: agents newest activity first (stable for ties), each followed by its
 /// views, oldest first; then every view without a listed agent, newest first.
 pub fn picker_rows(rows: &[Row<'_>], namew: i64, now: f64) -> String {
-    let mut agents: Vec<(&Row<'_>, &Session)> = Vec::new();
+    let mut agents: Vec<(&Row<'_>, &Agent)> = Vec::new();
     let mut views: Vec<(&Row<'_>, &View)> = Vec::new();
     for row in rows {
         match row.entry {
@@ -255,7 +255,7 @@ pub fn picker_rows(rows: &[Row<'_>], namew: i64, now: f64) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use tx_core::SessionId;
+    use tx_core::AgentId;
 
     use super::*;
     use crate::views::ViewKind;
@@ -272,9 +272,9 @@ mod tests {
         }
     }
 
-    fn agent(name: &str, created_at: f64) -> Session {
-        Session {
-            id: format!("id-{name}").parse::<SessionId>().unwrap(),
+    fn agent(name: &str, created_at: f64) -> Agent {
+        Agent {
+            id: format!("id-{name}").parse::<AgentId>().unwrap(),
             name: name.into(),
             engine: tx_core::EngineKind::Claude,
             working_directory: PathBuf::from("/r"),
@@ -290,7 +290,7 @@ mod tests {
         }
     }
 
-    fn view(name: &str, kind: ViewKind, parent: Option<&Session>, created_at: f64) -> View {
+    fn view(name: &str, kind: ViewKind, parent: Option<&Agent>, created_at: f64) -> View {
         View {
             name: name.into(),
             kind,

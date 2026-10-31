@@ -15,11 +15,7 @@ use tx_core::{
 struct Shout;
 
 impl LlmEngine for Shout {
-    fn on_hook(
-        &self,
-        _: &tx_core::Session,
-        _: &tx_core::LlmEngineHook,
-    ) -> tx_core::LlmEngineChange {
+    fn on_hook(&self, _: &tx_core::Agent, _: &tx_core::LlmEngineHook) -> tx_core::LlmEngineChange {
         tx_core::LlmEngineChange::NONE
     }
 
@@ -34,7 +30,7 @@ impl LlmEngine for Shout {
 
     fn configure(
         &self,
-        _: &tx_core::Session,
+        _: &tx_core::Agent,
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, EngineError> {
         Ok(options.clone())
@@ -51,7 +47,7 @@ impl LlmEngine for Shout {
     fn fork(
         &self,
         request: &LaunchRequest<'_>,
-        _: &tx_core::Session,
+        _: &tx_core::Agent,
         _: &str,
     ) -> Result<LaunchPlan, EngineError> {
         self.start(request, "")
@@ -73,7 +69,7 @@ fn the_recipients_engine_frames_the_message() {
     let mut core = h.open_with_engine();
     core.register_engine(Box::new(Shout)).unwrap();
     let shouter = core
-        .create_session(CreateOptions::new(
+        .create_agent(CreateOptions::new(
             "shouter",
             h.repository("s"),
             LaunchOptions::agent(EngineKind::Codex).initial_prompt("start"),
@@ -81,11 +77,11 @@ fn the_recipients_engine_frames_the_message() {
         .unwrap();
     let cwd = cwd_of(&core, &shouter);
     let plain = core
-        .create_session(agent("plain", &h.repository("p")))
+        .create_agent(agent("plain", &h.repository("p")))
         .unwrap();
     let plain_dir = cwd_of(&core, &plain);
     let stub = core
-        .create_session(agent("stubbed", &h.repository("a")))
+        .create_agent(agent("stubbed", &h.repository("a")))
         .unwrap();
     let stub_dir = cwd_of(&core, &stub);
     for dir in [&cwd, &plain_dir, &stub_dir] {

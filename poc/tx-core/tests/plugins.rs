@@ -126,7 +126,7 @@ fn a_plugin_fills_all_three_slots() {
     core.plug(vec![plugin], &cfg).unwrap();
     assert_eq!(core.engine_kinds(), vec![STUB_KIND]);
     assert_eq!(*settings.lock().unwrap(), json!({"k": 1}));
-    core.create_session(agent("alice", &h.repository("a")))
+    core.create_agent(agent("alice", &h.repository("a")))
         .unwrap();
     assert_eq!(*seen.0.lock().unwrap(), vec!["alice".to_owned()]);
     let verb = core.verb("echo").expect("verb registered");

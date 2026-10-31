@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use proptest::prelude::*;
 use tx_core::tmux::exact;
-use tx_core::{Live, LiveTable, SessionId, Tmux, TmuxError};
+use tx_core::{AgentId, Live, LiveTable, Tmux, TmuxError};
 
 // ---------------------------------------------------------------------------------------------
 // Private server helper
@@ -54,7 +54,7 @@ impl Server {
     }
 
     /// A session whose pane runs `cat > <file>`, returning (id, live, file).
-    fn cat_pane(&self, name: &str) -> (SessionId, Live, std::path::PathBuf) {
+    fn cat_pane(&self, name: &str) -> (AgentId, Live, std::path::PathBuf) {
         let out = self.dir.path().join(format!("{name}.typed"));
         self.tmux
             .new_session(
@@ -103,7 +103,7 @@ fn wait_for(path: &Path, pred: impl Fn(&[u8]) -> bool) -> Vec<u8> {
     }
 }
 
-fn sid(s: &str) -> SessionId {
+fn sid(s: &str) -> AgentId {
     s.parse().unwrap()
 }
 
@@ -128,7 +128,7 @@ fn model_parse(out: &str) -> Option<HashMap<String, (String, String)>> {
         if fields.len() != 3 {
             return None;
         }
-        if fields[0].parse::<SessionId>().is_err() {
+        if fields[0].parse::<AgentId>().is_err() {
             continue;
         }
         map.entry(fields[0].to_owned())
@@ -723,7 +723,7 @@ fn missing_conf_file_does_not_stop_the_server() {
 fn fifty_sessions_all_listed_with_unique_targets() {
     let server = server!();
     let tmux = &server.tmux;
-    let ids: Vec<SessionId> = (0..50).map(|i| sid(&format!("id-{i:02}"))).collect();
+    let ids: Vec<AgentId> = (0..50).map(|i| sid(&format!("id-{i:02}"))).collect();
     for (i, id) in ids.iter().enumerate() {
         let name = format!("s{i}");
         server.sleeper(&name).unwrap();

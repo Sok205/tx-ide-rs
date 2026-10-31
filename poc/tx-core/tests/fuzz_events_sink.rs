@@ -16,7 +16,7 @@ use std::time::Duration;
 use common::{Harness, agent, exiting, wait_for};
 use proptest::prelude::*;
 use serde_json::Value;
-use tx_core::{CoreError, Event, EventSink, EventType, Locks, SendOptions, SessionId, TxCore};
+use tx_core::{AgentId, CoreError, Event, EventSink, EventType, Locks, SendOptions, TxCore};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -144,15 +144,15 @@ fn check_lifecycle(id: &str, types: &[String]) -> Result<(), String> {
 }
 
 /// Refreshes `id` until its record is `Exited`, so both exit paths reach the same log. Whether
-/// the `exited` of an [`exiting`] agent lands in the `create_session` batch depends on `true`
+/// the `exited` of an [`exiting`] agent lands in the `create_agent` batch depends on `true`
 /// dying before `set-option @tx-id` runs; otherwise a later refresh records it, so tests that
 /// need a fixed log call this right after creating one.
-fn await_exit(core: &TxCore, id: &SessionId) {
+fn await_exit(core: &TxCore, id: &AgentId) {
     assert!(
         wait_for(Duration::from_secs(5), || core
-            .refresh_session(id)
+            .refresh_agent(id)
             .unwrap()
-            .session()
+            .agent()
             .state
             == LlmEngineState::Ended),
         "{id} never exited"
@@ -196,7 +196,7 @@ fn arb_op() -> impl Strategy<Value = Op> {
     ]
 }
 
-fn id_for(ids: &[SessionId], who: usize) -> SessionId {
+fn id_for(ids: &[AgentId], who: usize) -> AgentId {
     if who >= 6 || ids.is_empty() {
         format!("ghost-{who}").parse().unwrap()
     } else {
@@ -204,7 +204,7 @@ fn id_for(ids: &[SessionId], who: usize) -> SessionId {
     }
 }
 
-fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<SessionId>, step: usize, op: &Op) -> String {
+fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<AgentId>, step: usize, op: &Op) -> String {
     match op {
         Op::Create {
             name,
@@ -216,16 +216,16 @@ fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<SessionId>, step: usize, op:
             } else {
                 agent(NAMES[*name], &repository)
             };
-            let result = core.create_session(opts);
+            let result = core.create_agent(opts);
             if let Ok(id) = &result {
                 ids.push(id.clone());
             }
             verdict(&result)
         }
-        Op::Rename { who, name } => verdict(&core.rename_session(&id_for(ids, *who), NAMES[*name])),
+        Op::Rename { who, name } => verdict(&core.rename_agent(&id_for(ids, *who), NAMES[*name])),
         Op::SetTags { who, tags } => {
             let tags = (0..*tags).map(|t| format!("t{t}")).collect();
-            verdict(&core.set_session_tags(&id_for(ids, *who), tags))
+            verdict(&core.set_agent_tags(&id_for(ids, *who), tags))
         }
         Op::Send { to, from } => {
             let opts = match from {
@@ -234,9 +234,9 @@ fn run_op(h: &Harness, core: &TxCore, ids: &mut Vec<SessionId>, step: usize, op:
             };
             verdict(&core.send_message(&id_for(ids, *to), "hi", opts))
         }
-        Op::Stop(who) => verdict(&core.stop_session(&id_for(ids, *who))),
-        Op::Archive(who) => verdict(&core.archive_session(&id_for(ids, *who))),
-        Op::Refresh(who) => verdict(&core.refresh_session(&id_for(ids, *who))),
+        Op::Stop(who) => verdict(&core.stop_agent(&id_for(ids, *who))),
+        Op::Archive(who) => verdict(&core.archive_agent(&id_for(ids, *who))),
+        Op::Refresh(who) => verdict(&core.refresh_agent(&id_for(ids, *who))),
         Op::RefreshAll => verdict(&core.refresh_all()),
         Op::Kill(name) => {
             let _ = h.tmux(&["kill-session", "-t", &format!("={}", NAMES[*name])]);
@@ -391,7 +391,7 @@ impl EventSink for Relocker {
         let id = event.id.clone();
         std::thread::spawn(move || {
             let create = locks.create();
-            let session = locks.session(&id);
+            let session = locks.agent(&id);
             let _ = tx.send(create.is_ok() && session.is_ok());
         });
         match rx.recv_timeout(Duration::from_secs(2)) {
@@ -416,25 +416,23 @@ fn every_lock_is_free_when_sinks_run() {
     });
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&relocker)));
-    let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
-    let cwd = core.get_session(&a).unwrap().working_directory;
-    let b = core.create_session(agent("b", &h.repository("b"))).unwrap();
-    let c = core
-        .create_session(exiting("c", &h.repository("c")))
-        .unwrap();
+    let a = core.create_agent(agent("a", &h.repository("a"))).unwrap();
+    let cwd = core.get_agent(&a).unwrap().working_directory;
+    let b = core.create_agent(agent("b", &h.repository("b"))).unwrap();
+    let c = core.create_agent(exiting("c", &h.repository("c"))).unwrap();
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
-    core.rename_session(&a, "a2").unwrap();
-    core.set_session_tags(&a, vec!["t".into()]).unwrap();
+    core.rename_agent(&a, "a2").unwrap();
+    core.set_agent_tags(&a, vec!["t".into()]).unwrap();
     core.send_message(&a, "hi", SendOptions::from_agent(b.clone()))
         .unwrap();
     h.tmux_ok(&["kill-session", "-t", "=b"]);
-    core.refresh_session(&b).unwrap();
+    core.refresh_agent(&b).unwrap();
     core.refresh_all().unwrap();
-    core.stop_session(&a).unwrap();
-    core.archive_session(&b).unwrap();
-    core.archive_session(&c).unwrap();
+    core.stop_agent(&a).unwrap();
+    core.archive_agent(&b).unwrap();
+    core.archive_agent(&c).unwrap();
     assert!(
         !relocker.stuck.load(Ordering::SeqCst),
         "a sink could not take a lock within 2 s"
@@ -445,7 +443,7 @@ fn every_lock_is_free_when_sinks_run() {
 }
 
 /// Stops the session from inside `on_event(Created)` through a second core on the same state
-/// dir. Documents the consequence: the caller's `create_session` returns `Ok(id)` for a record
+/// dir. Documents the consequence: the caller's `create_agent` returns `Ok(id)` for a record
 /// that is already `Stopped`.
 struct Stopper {
     core: TxCore,
@@ -455,7 +453,7 @@ struct Stopper {
 impl EventSink for Stopper {
     fn on_event(&self, event: &Event) {
         if event.type_ == EventType::Created {
-            let result = self.core.stop_session(&event.id);
+            let result = self.core.stop_agent(&event.id);
             self.outcome.lock().unwrap().push(verdict(&result));
         }
     }
@@ -479,14 +477,14 @@ fn a_sink_may_stop_the_session_it_was_told_about() {
         let repository = h.repository("p");
         let core = Arc::new(core);
         std::thread::spawn(move || {
-            let id = core.create_session(agent("p", &repository));
+            let id = core.create_agent(agent("p", &repository));
             done.store(true, Ordering::SeqCst);
-            id.map(|id| core.get_session(&id).unwrap())
+            id.map(|id| core.get_agent(&id).unwrap())
         })
     };
     assert!(
         wait_for(Duration::from_secs(5), || done.load(Ordering::SeqCst)),
-        "create_session deadlocked against a sink that stops the session"
+        "create_agent deadlocked against a sink that stops the session"
     );
     let session = worker.join().unwrap().unwrap();
     assert_eq!(
@@ -510,11 +508,11 @@ fn a_sink_may_archive_the_session_it_was_told_about() {
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(move |event: &Event| {
         if event.type_ == EventType::Created {
-            other.archive_session(&event.id).unwrap();
+            other.archive_agent(&event.id).unwrap();
         }
     }));
-    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
-    let session = core.get_session(&id).unwrap();
+    let id = core.create_agent(agent("p", &h.repository("p"))).unwrap();
+    let session = core.get_agent(&id).unwrap();
     assert_eq!(session.state, LlmEngineState::Ended);
     assert!(session.archived_at.is_some());
     assert_eq!(log_types(&h), ["created", "stopped", "archived"]);
@@ -550,15 +548,13 @@ fn sixteen_sinks_run_in_registration_order_once_per_event() {
             out: Arc::clone(&out),
         }));
     }
-    let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
-    let b = core
-        .create_session(exiting("b", &h.repository("b")))
-        .unwrap();
+    let a = core.create_agent(agent("a", &h.repository("a"))).unwrap();
+    let b = core.create_agent(exiting("b", &h.repository("b"))).unwrap();
     await_exit(&core, &b);
-    core.rename_session(&a, "a2").unwrap();
-    core.set_session_tags(&a, vec![]).unwrap();
-    core.stop_session(&a).unwrap();
-    core.archive_session(&b).unwrap();
+    core.rename_agent(&a, "a2").unwrap();
+    core.set_agent_tags(&a, vec![]).unwrap();
+    core.stop_agent(&a).unwrap();
+    core.archive_agent(&b).unwrap();
     let calls = out.lock().unwrap().clone();
     let lines = log(&h);
     assert_eq!(lines.len(), 7);
@@ -646,9 +642,9 @@ fn a_failure_after_the_lock_is_taken_emits_nothing_and_leaves_the_record() {
     let recorder = Arc::new(Recorder::default());
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
-    let b = core.create_session(agent("b", &h.repository("b"))).unwrap();
-    core.stop_session(&b).unwrap();
+    let a = core.create_agent(agent("a", &h.repository("a"))).unwrap();
+    let b = core.create_agent(agent("b", &h.repository("b"))).unwrap();
+    core.stop_agent(&b).unwrap();
     let before = h.log_lines().len();
     assert_eq!(before, 3);
 
@@ -666,30 +662,27 @@ fn a_failure_after_the_lock_is_taken_emits_nothing_and_leaves_the_record() {
     );
     assert!(not_live);
     assert_ne!(
-        core.get_session(&a).unwrap().state,
+        core.get_agent(&a).unwrap().state,
         LlmEngineState::Ended,
         "send never marks exited"
     );
 
-    // rename_session: name free in the store, taken on the server by a foreign session.
-    let c = core.create_session(agent("c", &h.repository("c"))).unwrap();
+    // rename_agent: name free in the store, taken on the server by a foreign session.
+    let c = core.create_agent(agent("c", &h.repository("c"))).unwrap();
     let output = h.tmux(&["new-session", "-d", "-s", "taken", "sleep", "30"]);
     assert!(output.status.success());
     let record = h.record_bytes(&c);
-    let taken = matches!(
-        core.rename_session(&c, "taken"),
-        Err(CoreError::NameTaken(_))
-    );
+    let taken = matches!(core.rename_agent(&c, "taken"), Err(CoreError::NameTaken(_)));
     assert!(taken);
     assert_eq!(
         h.record_bytes(&c),
         record,
         "record rewritten by a failed rename"
     );
-    assert_eq!(core.get_session(&c).unwrap().name, "c");
-    // create_session: same foreign name, fails at `new-session` after `create.lock`.
+    assert_eq!(core.get_agent(&c).unwrap().name, "c");
+    // create_agent: same foreign name, fails at `new-session` after `create.lock`.
     let taken = matches!(
-        core.create_session(agent("taken", &h.repository("t"))),
+        core.create_agent(agent("taken", &h.repository("t"))),
         Err(CoreError::NameTaken(_))
     );
     assert!(taken);
@@ -723,7 +716,7 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
     const THREADS: usize = 4;
     const OPS: usize = 20;
     let h = Arc::new(Harness::new());
-    let pool: Arc<Mutex<Vec<SessionId>>> = Arc::new(Mutex::new(Vec::new()));
+    let pool: Arc<Mutex<Vec<AgentId>>> = Arc::new(Mutex::new(Vec::new()));
     let barrier = Arc::new(Barrier::new(THREADS));
     let recorders: Vec<Arc<Recorder>> = (0..THREADS)
         .map(|_| Arc::new(Recorder::default()))
@@ -748,21 +741,21 @@ fn four_cores_with_their_own_sinks_cover_the_log_exactly() {
                     };
                     let result: Result<(), CoreError> = match step % 5 {
                         0 => core
-                            .create_session(agent(
+                            .create_agent(agent(
                                 &format!("w{worker}s{step}"),
                                 &h.repository(&format!("w{worker}s{step}")),
                             ))
                             .map(|id| pool.lock().unwrap().push(id)),
                         1 => pick(step).map_or(Ok(()), |id| {
-                            core.rename_session(&id, &format!("r{worker}s{step}"))
+                            core.rename_agent(&id, &format!("r{worker}s{step}"))
                                 .map(drop)
                         }),
                         2 => pick(step).map_or(Ok(()), |id| {
-                            core.set_session_tags(&id, vec![format!("{worker}")])
+                            core.set_agent_tags(&id, vec![format!("{worker}")])
                                 .map(drop)
                         }),
-                        3 => pick(step).map_or(Ok(()), |id| core.stop_session(&id).map(drop)),
-                        _ => pick(step).map_or(Ok(()), |id| core.archive_session(&id).map(drop)),
+                        3 => pick(step).map_or(Ok(()), |id| core.stop_agent(&id).map(drop)),
+                        _ => pick(step).map_or(Ok(()), |id| core.archive_agent(&id).map(drop)),
                     };
                     if let Err(error) = result {
                         *failures.entry(kind(&error)).or_insert(0usize) += 1;
@@ -838,7 +831,7 @@ fn log_line_order_per_id_follows_the_lifecycle_under_contention() {
     for round in 0..ROUNDS {
         let core = h.open_with_engine();
         let id = core
-            .create_session(agent(
+            .create_agent(agent(
                 &format!("s{round}"),
                 &h.repository(&format!("s{round}")),
             ))
@@ -853,9 +846,9 @@ fn log_line_order_per_id_follows_the_lifecycle_under_contention() {
                     let core = h.open();
                     barrier.wait();
                     match worker {
-                        0 => core.stop_session(&id).map(drop),
-                        1 => core.set_session_tags(&id, vec!["x".into()]).map(drop),
-                        _ => core.archive_session(&id).map(drop),
+                        0 => core.stop_agent(&id).map(drop),
+                        1 => core.set_agent_tags(&id, vec!["x".into()]).map(drop),
+                        _ => core.archive_agent(&id).map(drop),
                     }
                 })
             })
@@ -896,8 +889,8 @@ fn event_is_clone_send_sync_and_closures_and_shared_sinks_register() {
     core.subscribe(closure);
     core.subscribe(Box::new(Arc::clone(&recorder)));
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
-    core.stop_session(&id).unwrap();
+    let id = core.create_agent(agent("p", &h.repository("p"))).unwrap();
+    core.stop_agent(&id).unwrap();
     assert_eq!(*names.lock().unwrap(), ["p", "p"]);
     // The same Arc registered twice is called twice per event.
     assert_eq!(
@@ -925,13 +918,13 @@ fn sinks_still_run_when_the_log_cannot_be_appended() {
     let recorder = Arc::new(Recorder::default());
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
+    let id = core.create_agent(agent("p", &h.repository("p"))).unwrap();
     assert_eq!(h.log_lines().len(), 1);
     let path = h.data_dir().join("log.jsonl");
     std::fs::remove_file(&path).unwrap();
     std::fs::create_dir(&path).unwrap();
-    core.stop_session(&id).unwrap();
-    assert_eq!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
+    core.stop_agent(&id).unwrap();
+    assert_eq!(core.get_agent(&id).unwrap().state, LlmEngineState::Ended);
     assert_eq!(
         types(&recorder.events()),
         [EventType::Created, EventType::Stopped]

@@ -16,11 +16,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use proptest::prelude::*;
 
-fn sid(id: &str) -> tx_core::SessionId {
+fn sid(id: &str) -> tx_core::AgentId {
     id.parse().unwrap()
 }
 use tx_core::locks::CREATE_LOCK;
-use tx_core::{LockGuard, Locks, SessionId};
+use tx_core::{AgentId, LockGuard, Locks};
 
 const CHILD_DIR_ENV: &str = "TX_FUZZ_LOCKS_CHILD_DIR";
 const CHILD_HELPER: &str = "helper_child_hold_create";
@@ -174,7 +174,7 @@ fn shared_locks_value_serializes_session_lock() {
     hammer(
         16,
         200,
-        move |_| locks.session(&sid("x")).unwrap(),
+        move |_| locks.agent(&sid("x")).unwrap(),
         "one shared Locks",
     );
 }
@@ -215,7 +215,7 @@ fn different_sessions_run_concurrently_under_load() {
             let locks = Arc::clone(&locks);
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
-                let _guard = locks.session(&sid(format!("s{t}").as_str())).unwrap();
+                let _guard = locks.agent(&sid(format!("s{t}").as_str())).unwrap();
                 // Every thread holds its own lock here; a wrongly-serialized lock would deadlock.
                 barrier.wait();
             })
@@ -319,12 +319,12 @@ fn create_then_session_order_never_deadlocks() {
             for i in 0..50 {
                 let id = sid(format!("s{}", (t + i) % 3).as_str());
                 let create = locks.create().unwrap();
-                let session = locks.session(&id).unwrap();
+                let session = locks.agent(&id).unwrap();
                 thread::yield_now();
                 drop(session);
                 drop(create);
                 // A sibling that only takes the session lock, out of band from create().
-                let _only = locks.session(&id).unwrap();
+                let _only = locks.agent(&id).unwrap();
             }
             tx.send(()).unwrap();
         });
@@ -365,7 +365,7 @@ fn ids_that_could_escape_the_locks_dir_cannot_be_built() {
         "/tmp/evil",
         &"x".repeat(65),
     ] {
-        assert!(bad.parse::<SessionId>().is_err(), "{bad:?}");
+        assert!(bad.parse::<AgentId>().is_err(), "{bad:?}");
     }
 }
 
@@ -377,7 +377,7 @@ proptest! {
     fn every_id_stays_inside_locks_dir(id in "[A-Za-z0-9_-]{1,64}") {
         let scratch = Scratch::new("prop");
         let locks = Locks::new(scratch.locks_dir());
-        let _guard = locks.session(&sid(id.as_str())).unwrap();
+        let _guard = locks.agent(&sid(id.as_str())).unwrap();
         let names = entries(&scratch.locks_dir());
         prop_assert_eq!(names, vec![format!("{id}.lock")]);
         prop_assert_eq!(entries(scratch.path()), vec!["locks".to_owned()]);
@@ -390,9 +390,9 @@ proptest! {
         prop_assume!(a.to_lowercase() != b.to_lowercase());
         let scratch = Scratch::new("prop-distinct");
         let locks = Locks::new(scratch.locks_dir());
-        let _a = locks.session(&sid(a.as_str())).unwrap();
+        let _a = locks.agent(&sid(a.as_str())).unwrap();
         let started = Instant::now();
-        let _b = locks.session(&sid(b.as_str())).unwrap();
+        let _b = locks.agent(&sid(b.as_str())).unwrap();
         prop_assert!(started.elapsed() < Duration::from_millis(100));
     }
 }
@@ -402,7 +402,7 @@ proptest! {
 fn ids_differing_only_by_case_observed_to_share_a_lock_on_macos() {
     let scratch = Scratch::new("case");
     let locks = Locks::new(scratch.locks_dir());
-    let _lower = locks.session(&sid("abc")).unwrap();
+    let _lower = locks.agent(&sid("abc")).unwrap();
     let (tx, rx) = mpsc::channel();
     let other = locks.clone();
     thread::spawn(move || {
@@ -425,7 +425,7 @@ fn waiter_proceeds_promptly_after_drop() {
     let scratch = Scratch::new("prompt");
     let locks = Locks::new(scratch.locks_dir());
     let id = sid("x");
-    let guard = locks.session(&id).unwrap();
+    let guard = locks.agent(&id).unwrap();
     let (tx, rx) = mpsc::channel();
     let other = locks.clone();
     let waiter = thread::spawn(move || {
@@ -467,8 +467,8 @@ fn same_thread_reacquire_is_not_reentrant() {
     let locks = Locks::new(scratch.locks_dir());
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let _outer = locks.session(&sid("x")).unwrap();
-        let _inner = locks.session(&sid("x")).unwrap();
+        let _outer = locks.agent(&sid("x")).unwrap();
+        let _inner = locks.agent(&sid("x")).unwrap();
         tx.send(()).unwrap();
     });
     assert!(
@@ -489,7 +489,7 @@ fn lock_files_are_never_truncated_or_deleted() {
     let id = sid("x");
     // First acquisition creates the files; then plant content and a distinctive mode.
     drop(locks.create().unwrap());
-    drop(locks.session(&id).unwrap());
+    drop(locks.agent(&id).unwrap());
     let create_path = scratch.locks_dir().join(CREATE_LOCK);
     let session_path = scratch.locks_dir().join("x.lock");
     let payload = b"do not touch\n".repeat(5);
@@ -503,7 +503,7 @@ fn lock_files_are_never_truncated_or_deleted() {
         .collect();
     for _ in 0..1000 {
         let _create = locks.create().unwrap();
-        let _session = locks.session(&id).unwrap();
+        let _session = locks.agent(&id).unwrap();
     }
     for (path, meta) in [&create_path, &session_path].into_iter().zip(before) {
         let after = fs::metadata(path).unwrap();

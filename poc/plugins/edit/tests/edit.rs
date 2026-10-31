@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, EngineError, EngineKind, LaunchOptions, LaunchPlan,
-    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, Session, SessionId, TxCore,
+    Agent, AgentId, CoreConfig, CoreError, CreateOptions, EngineError, EngineKind, LaunchOptions,
+    LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, TxCore,
 };
 use tx_edit::{Ext, apply_edit};
 
@@ -23,7 +23,7 @@ impl LlmEngine for SleepStub {
 
     fn configure(
         &self,
-        _: &Session,
+        _: &Agent,
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, EngineError> {
         Ok(options.clone())
@@ -40,13 +40,13 @@ impl LlmEngine for SleepStub {
     fn fork(
         &self,
         request: &LaunchRequest<'_>,
-        _: &Session,
+        _: &Agent,
         _: &str,
     ) -> Result<LaunchPlan, EngineError> {
         self.start(request, "")
     }
 
-    fn on_hook(&self, _: &Session, _: &LlmEngineHook) -> LlmEngineChange {
+    fn on_hook(&self, _: &Agent, _: &LlmEngineHook) -> LlmEngineChange {
         LlmEngineChange::NONE
     }
 }
@@ -105,10 +105,10 @@ impl Harness {
         core
     }
 
-    fn create(&self, core: &TxCore, name: &str) -> SessionId {
+    fn create(&self, core: &TxCore, name: &str) -> AgentId {
         let cwd = self.dir.path().join("work").join(name);
         repository(&cwd);
-        core.create_session(CreateOptions::new(
+        core.create_agent(CreateOptions::new(
             name,
             cwd,
             LaunchOptions::agent(EngineKind::Claude).initial_prompt("start"),
@@ -116,7 +116,7 @@ impl Harness {
         .unwrap()
     }
 
-    fn record(&self, id: &SessionId) -> PathBuf {
+    fn record(&self, id: &AgentId) -> PathBuf {
         self.directories()
             .data
             .join(format!("agents/{id}/agent.json"))
@@ -152,9 +152,9 @@ fn apply_edit_renames_tags_and_groups() {
     let harness = Harness::new();
     let core = harness.core();
     let id = harness.create(&core, "a");
-    let before = core.get_session(&id).unwrap();
+    let before = core.get_agent(&id).unwrap();
     apply_edit(&core, &id, &before, edited("b", "x,,y,", " g ")).unwrap();
-    let after = core.get_session(&id).unwrap();
+    let after = core.get_agent(&id).unwrap();
     assert_eq!(after.name, "b");
     assert_eq!(after.tags, ["x", "y"]);
     assert_eq!(
@@ -177,10 +177,10 @@ fn apply_edit_keeps_other_ext_fields() {
         *v = serde_json::json!({"kind": "nvim", "group": "old", "attached_to": "x"});
     })
     .unwrap();
-    let before = core.get_session(&id).unwrap();
+    let before = core.get_agent(&id).unwrap();
     apply_edit(&core, &id, &before, edited("a", "", "new")).unwrap();
     let ext = core
-        .get_session(&id)
+        .get_agent(&id)
         .unwrap()
         .ext::<Ext>("edit")
         .unwrap()
@@ -200,7 +200,7 @@ fn apply_edit_replaces_a_non_object_ext() {
     let id = harness.create(&core, "a");
     core.update_ext(&id, "edit", |v| *v = serde_json::json!(5))
         .unwrap();
-    let before = core.get_session(&id).unwrap();
+    let before = core.get_agent(&id).unwrap();
     apply_edit(&core, &id, &before, edited("a", "", "g")).unwrap();
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(harness.record(&id)).unwrap()).unwrap();
@@ -213,9 +213,9 @@ fn apply_edit_noop_writes_nothing() {
     let harness = Harness::new();
     let core = harness.core();
     let id = harness.create(&core, "a");
-    core.set_session_tags(&id, vec!["x".into(), "y".into()])
+    core.set_agent_tags(&id, vec!["x".into(), "y".into()])
         .unwrap();
-    let before = core.get_session(&id).unwrap();
+    let before = core.get_agent(&id).unwrap();
     let path = harness.record(&id);
     let bytes = std::fs::read(&path).unwrap();
     let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
@@ -232,7 +232,7 @@ fn apply_edit_name_clash_leaves_record() {
     let core = harness.core();
     let id = harness.create(&core, "a");
     harness.create(&core, "taken");
-    let before = core.get_session(&id).unwrap();
+    let before = core.get_agent(&id).unwrap();
     let bytes = std::fs::read(harness.record(&id)).unwrap();
     let error = apply_edit(&core, &id, &before, edited("taken", "t", "g")).unwrap_err();
     assert!(matches!(error, CoreError::NameTaken(_)), "{error:?}");

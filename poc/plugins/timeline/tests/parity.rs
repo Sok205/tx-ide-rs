@@ -7,7 +7,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::Value;
-use tx_core::Session;
+use tx_core::Agent;
 use tx_timeline::app::App;
 use tx_timeline::model::{Builder, Payload};
 use tx_timeline::{run, ui};
@@ -22,9 +22,9 @@ fn build() -> Built {
     world::set_utc();
     let fixtures = world::fixture_dir();
     let world = world::world(&fixtures);
-    let sessions: Vec<Session> = world::records(&fixtures)
+    let sessions: Vec<Agent> = world::records(&fixtures)
         .into_iter()
-        .map(|record| Session::from_json(&record.to_string()).unwrap())
+        .map(|record| Agent::from_json(&record.to_string()).unwrap())
         .collect();
     let dir = tempfile::tempdir().unwrap();
     let mut builder = Builder::new(dir.path().join("timeline"));

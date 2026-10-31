@@ -7,7 +7,7 @@ use std::path::Path;
 
 use tx_client::tmux::Ui;
 use tx_client::views::{self, View, ViewKind, ViewRequest};
-use tx_core::{Session, SessionId, VerbError};
+use tx_core::{Agent, AgentId, VerbError};
 
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::kinds::view_suffix;
@@ -16,7 +16,7 @@ use crate::service::ArtifactService;
 /// Who opens the view: the calling session (its id becomes the view's parent) and the tags the
 /// view inherits.
 pub struct Opener {
-    pub id: Option<SessionId>,
+    pub id: Option<AgentId>,
     pub tags: Vec<String>,
 }
 
@@ -62,8 +62,8 @@ pub struct Shown {
     pub tags: Vec<String>,
 }
 
-impl From<Session> for Shown {
-    fn from(session: Session) -> Self {
+impl From<Agent> for Shown {
+    fn from(session: Agent) -> Self {
         Self {
             name: session.name,
             tags: session.tags,

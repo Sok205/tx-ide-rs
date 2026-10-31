@@ -24,7 +24,7 @@ fn child_entry() {
     assert_eq!(parts[0], "create");
     let mut core = TxCore::open(CoreConfig::new(Directories::under(parts[1]))).unwrap();
     core.register_engine(Box::new(ShellStub)).unwrap();
-    match core.create_session(agent(parts[2], std::path::Path::new(parts[3]))) {
+    match core.create_agent(agent(parts[2], std::path::Path::new(parts[3]))) {
         Ok(id) => println!("\nTXC-VERDICT ok {id}"),
         Err(CoreError::NameTaken(_)) => println!("\nTXC-VERDICT err NameTaken"),
         Err(other) => println!("\nTXC-VERDICT err {other:?}"),
@@ -89,7 +89,7 @@ fn concurrent_create_from_eight_processes_yields_eight_distinct_names() {
     expected.sort();
     assert_eq!(names, expected);
     let core = h.open();
-    assert_eq!(core.list_sessions(&ListFilter::default()).unwrap().len(), 8);
+    assert_eq!(core.list_agents(&ListFilter::default()).unwrap().len(), 8);
     assert_eq!(h.log_lines().len(), 8);
 }
 
@@ -99,7 +99,7 @@ fn concurrent_tag_and_rename_lose_no_update() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core
-        .create_session(agent("target", &h.repository("w")))
+        .create_agent(agent("target", &h.repository("w")))
         .unwrap();
     let barrier = Arc::new(Barrier::new(4));
     let handles: Vec<_> = (0..4)
@@ -112,10 +112,10 @@ fn concurrent_tag_and_rename_lose_no_update() {
                 barrier.wait();
                 for i in 0..25 {
                     if worker % 2 == 0 {
-                        core.set_session_tags(&id, vec![format!("w{worker}-{i}")])
+                        core.set_agent_tags(&id, vec![format!("w{worker}-{i}")])
                             .unwrap();
                     } else {
-                        core.rename_session(&id, &format!("n{worker}-{i}")).unwrap();
+                        core.rename_agent(&id, &format!("n{worker}-{i}")).unwrap();
                     }
                 }
             })
@@ -124,7 +124,7 @@ fn concurrent_tag_and_rename_lose_no_update() {
     for handle in handles {
         handle.join().unwrap();
     }
-    let session = core.get_session(&id).unwrap();
+    let session = core.get_agent(&id).unwrap();
     assert!(
         session.name == "n1-24" || session.name == "n3-24",
         "{}",
@@ -159,7 +159,7 @@ fn parallel_senders_never_interleave_inside_one_recipient() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core
-        .create_session(agent("inbox", &h.repository("w")))
+        .create_agent(agent("inbox", &h.repository("w")))
         .unwrap();
     let cwd = cwd_of(&core, &id);
     assert!(wait_for(Duration::from_secs(5), || cwd
@@ -242,7 +242,7 @@ fn refresh_all_never_marks_a_freshly_created_session_exited() {
     };
     let mut ids = Vec::new();
     for i in 0..24 {
-        ids.push(core.create_session(agent(&format!("s{i}"), &cwd)).unwrap());
+        ids.push(core.create_agent(agent(&format!("s{i}"), &cwd)).unwrap());
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     let wrongly_exited = refresher.join().unwrap();
@@ -253,7 +253,7 @@ fn refresh_all_never_marks_a_freshly_created_session_exited() {
     assert_eq!(h.live_names().len(), 24);
     for id in &ids {
         assert_ne!(
-            core.get_session(id).unwrap().state,
+            core.get_agent(id).unwrap().state,
             tx_core::LlmEngineState::Ended
         );
     }

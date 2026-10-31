@@ -38,8 +38,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::migrate::version_one_conversation;
 use tx_core::{
-    Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data,
+    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
+    LlmEngineChange, LlmEngineHook, LlmEngineState, WorkspaceAction, engine_data,
     hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
 };
 
@@ -211,7 +211,7 @@ impl ClaudeAdapter {
 
     /// The engine data of a conversation named after `session`: the current data (its options)
     /// with the session's id and transcript path.
-    fn named_after(&self, session: &Session) -> Value {
+    fn named_after(&self, session: &Agent) -> Value {
         let id = session.id.as_str();
         let mut data = engine_data(self, session)
             .as_object()
@@ -228,7 +228,7 @@ impl ClaudeAdapter {
     }
 
     /// The conversation recorded for `session`, else the one named after it.
-    fn conversation_of<'a>(&self, session: &'a Session) -> &'a str {
+    fn conversation_of<'a>(&self, session: &'a Agent) -> &'a str {
         engine_data(self, session)
             .get(CONVERSATION_ID_KEY)
             .and_then(Value::as_str)
@@ -237,7 +237,7 @@ impl ClaudeAdapter {
 
     /// Where the session's current conversation lives: the recorded `transcript_path`, else
     /// the computed one; and the sidecar directory next to it, `<project dir>/<conversation>/`.
-    fn live_paths(&self, session: &Session) -> (PathBuf, PathBuf) {
+    fn live_paths(&self, session: &Agent) -> (PathBuf, PathBuf) {
         let conversation = self.conversation_of(session);
         let transcript = engine_data(self, session)
             .get(TRANSCRIPT_PATH_KEY)
@@ -253,7 +253,7 @@ impl ClaudeAdapter {
 
     /// The archive's copies of the session's current conversation: `<archive>/<conversation
     /// id>.jsonl` and `<archive>/<conversation id>/`.
-    fn archived_paths(&self, session: &Session, archive_directory: &Path) -> (PathBuf, PathBuf) {
+    fn archived_paths(&self, session: &Agent, archive_directory: &Path) -> (PathBuf, PathBuf) {
         let conversation = self.conversation_of(session);
         (
             archive_directory.join(format!("{conversation}.jsonl")),
@@ -271,7 +271,7 @@ impl LlmEngine for ClaudeAdapter {
         EXT_KEY
     }
 
-    fn configure(&self, session: &Session, options: &Value) -> Result<Value, EngineError> {
+    fn configure(&self, session: &Agent, options: &Value) -> Result<Value, EngineError> {
         if !options.is_object() {
             return Err(EngineError::Refused(format!(
                 "claude options: expected a JSON object, got {options}"
@@ -318,7 +318,7 @@ impl LlmEngine for ClaudeAdapter {
     fn fork(
         &self,
         request: &LaunchRequest<'_>,
-        source: &Session,
+        source: &Agent,
         prompt: &str,
     ) -> Result<LaunchPlan, EngineError> {
         let args = vec![
@@ -336,13 +336,13 @@ impl LlmEngine for ClaudeAdapter {
         ))
     }
 
-    fn stop(&self, _: &Session) -> Option<Input> {
+    fn stop(&self, _: &Agent) -> Option<Input> {
         Some(Input::line(EXIT_COMMAND))
     }
 
     /// Escape; Claude's `Stop` hook does not run for an interrupted turn, so the engine says
     /// the agent is at its prompt.
-    fn interrupt(&self, _: &Session) -> Option<(Input, Option<LlmEngineState>)> {
+    fn interrupt(&self, _: &Agent) -> Option<(Input, Option<LlmEngineState>)> {
         Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
@@ -383,7 +383,7 @@ impl LlmEngine for ClaudeAdapter {
         Value::Object(data)
     }
 
-    fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange {
+    fn on_hook(&self, session: &Agent, hook: &LlmEngineHook) -> LlmEngineChange {
         let field = |key: &str| hook.payload.get(key).and_then(Value::as_str);
         let state = match hook.name.as_str() {
             "SessionStart" | "Stop" | "StopFailure" => Some(LlmEngineState::Idle),
@@ -416,7 +416,7 @@ impl LlmEngine for ClaudeAdapter {
     /// directory copy-if-absent; both keyed by conversation id, so the conversations before a
     /// `/clear` stay archived. A live transcript that is not on disk yet (a `SessionStart`
     /// before the first line) archives nothing.
-    fn archive(&self, session: &Session, archive_directory: &Path) -> Result<(), EngineError> {
+    fn archive(&self, session: &Agent, archive_directory: &Path) -> Result<(), EngineError> {
         let (transcript, sidecars) = self.live_paths(session);
         if !transcript.is_file() {
             return Ok(());
@@ -434,7 +434,7 @@ impl LlmEngine for ClaudeAdapter {
     /// When the live transcript is gone and the archive has it: the transcript back as a whole
     /// (its project directory created) and the sidecars that are missing. A live transcript is
     /// never overwritten, and a conversation the archive does not hold restores nothing.
-    fn restore(&self, session: &Session, archive_directory: &Path) -> Result<bool, EngineError> {
+    fn restore(&self, session: &Agent, archive_directory: &Path) -> Result<bool, EngineError> {
         let (transcript, sidecars) = self.live_paths(session);
         let (archived_transcript, archived_sidecars) =
             self.archived_paths(session, archive_directory);
@@ -447,7 +447,7 @@ impl LlmEngine for ClaudeAdapter {
     }
 
     /// The recorded `conversation_id` and `transcript_path`; `None` until both are known.
-    fn conversation(&self, session: &Session) -> Option<Conversation> {
+    fn conversation(&self, session: &Agent) -> Option<Conversation> {
         let data = engine_data(self, session);
         Some(Conversation {
             id: data.get(CONVERSATION_ID_KEY)?.as_str()?.to_owned(),
@@ -590,14 +590,14 @@ mod tests {
     }
 
     /// An agent record in `state` whose `ext.ClaudeAdapter` is `data` (absent when `Null`).
-    fn session(state: LlmEngineState, data: serde_json::Value) -> Session {
-        use tx_core::SessionId;
+    fn session(state: LlmEngineState, data: serde_json::Value) -> Agent {
+        use tx_core::AgentId;
         let mut ext = std::collections::BTreeMap::new();
         if !data.is_null() {
             ext.insert(EXT_KEY.to_owned(), data);
         }
-        Session {
-            id: SessionId::mint(),
+        Agent {
+            id: AgentId::mint(),
             name: "agent".into(),
             engine: adapter().kind(),
             working_directory: "/tmp".into(),
@@ -868,8 +868,8 @@ mod tests {
     }
 
     /// An agent record in `cwd` with this engine's data `data` (absent when `Null`).
-    fn record(cwd: &Path, data: serde_json::Value) -> Session {
-        Session {
+    fn record(cwd: &Path, data: serde_json::Value) -> Agent {
+        Agent {
             working_directory: cwd.to_owned(),
             ..session(LlmEngineState::Starting, data)
         }
@@ -1211,7 +1211,7 @@ mod tests {
     }
 
     /// A record whose conversation `conversation` lives at `transcript`.
-    fn recorded(cwd: &Path, conversation: &str, transcript: &Path) -> Session {
+    fn recorded(cwd: &Path, conversation: &str, transcript: &Path) -> Agent {
         record(
             cwd,
             serde_json::json!({
@@ -1296,7 +1296,7 @@ mod tests {
         engine.archive(&running, &archive).unwrap();
         assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), data);
         // ...and the archive of a stopped record is exact.
-        let stopped = Session {
+        let stopped = Agent {
             state: LlmEngineState::Ended,
             ..recorded(dir.path(), "c1", &transcript)
         };
