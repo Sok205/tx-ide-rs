@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, EngineError, LaunchOptions, LaunchPlan, LaunchRequest,
-    LlmEngine, SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CreateOptions, Directories, EngineError, LaunchMode, LaunchOptions, LaunchPlan,
+    LaunchRequest, LlmEngine, SessionId, TxCore, WorkspaceAction,
 };
 
 /// `None` when tmux is not installed; callers skip.
@@ -192,7 +192,18 @@ impl LlmEngine for ShellStub {
             "env > env.txt; echo \"{}\" > prompt.txt; cat > input.txt",
             req.initial_prompt.unwrap_or("")
         );
-        Ok(LaunchPlan::new("sh")
+        // A resume reads its conversation from the record, as a real engine does.
+        let (mode, resume) = match req.mode {
+            LaunchMode::Start => ("start", ""),
+            LaunchMode::Resume => (
+                "resume",
+                req.session.ext[STUB_ID]["conversation_id"]
+                    .as_str()
+                    .unwrap(),
+            ),
+            LaunchMode::Fork { .. } => ("fork", ""),
+        };
+        let plan = LaunchPlan::new("sh")
             .args(["-c".to_owned(), script])
             .env("STUB_PROFILE", req.profile.file().display().to_string())
             .env(
@@ -200,11 +211,20 @@ impl LlmEngine for ShellStub {
                 req.effort.map(|e| e.as_str()).unwrap_or("none"),
             )
             .env("FROM_PLAN", "plan")
-            .env("STUB_RESUME", req.resume.unwrap_or(""))
+            .env("STUB_MODE", mode)
+            .env("STUB_RESUME", resume)
+            .env("STUB_SESSION_ID", req.session.id.as_str())
             .workspace(WorkspaceAction::Write {
                 path: "stub-marker.txt".into(),
                 content: req.profile.text().to_owned(),
-            }))
+            });
+        // Model `data`: the plan names the conversation up front, as Claude's does.
+        Ok(match req.model {
+            Some("data") => plan.engine_data(serde_json::json!({
+                "conversation_id": req.session.id.as_str(),
+            })),
+            _ => plan,
+        })
     }
 }
 

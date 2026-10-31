@@ -22,35 +22,52 @@ pub enum EngineError {
     Workspace { path: PathBuf, reason: String },
 }
 
+/// Which conversation a launch opens.
+#[derive(Clone, Copy, Debug)]
+pub enum LaunchMode<'a> {
+    /// A new conversation, beginning with the request's `initial_prompt`.
+    Start,
+    /// Continue the conversation the engine recorded in `session.ext[ext_key]`.
+    Resume,
+    /// Branch the conversation of `source` (the engine reads `source.ext[ext_key]`) into the
+    /// launched session.
+    Fork { source: &'a Session },
+}
+
 /// What core asks an engine to turn into a command line. Borrowed: `launch` is pure.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct LaunchRequest<'a> {
-    pub cwd: &'a Path,
+    /// The record being launched: the engine reads its id, `cwd` and its own `ext[ext_key]`.
+    pub session: &'a Session,
+    pub mode: LaunchMode<'a>,
     /// Combined role text, the file holding it, and the granted skill dirs.
     pub profile: &'a Profile,
     pub model: Option<&'a str>,
     pub effort: Option<Effort>,
     pub initial_prompt: Option<&'a str>,
-    /// An engine-specific conversation id to continue instead of starting fresh. Core never
-    /// interprets it.
-    pub resume: Option<&'a str>,
     /// The argv prefix every hook the adapter wires runs, with the CLI's event name appended:
     /// `["/abs/txc", "chat", "hook"]`. Empty: wire no hooks.
     pub hook_command: &'a [String],
 }
 
 impl<'a> LaunchRequest<'a> {
-    pub fn new(cwd: &'a Path, profile: &'a Profile) -> Self {
+    /// A `Start` of `session` with no options.
+    pub fn new(session: &'a Session, profile: &'a Profile) -> Self {
         Self {
-            cwd,
+            session,
+            mode: LaunchMode::Start,
             profile,
             model: None,
             effort: None,
             initial_prompt: None,
-            resume: None,
             hook_command: &[],
         }
+    }
+
+    pub fn mode(mut self, mode: LaunchMode<'a>) -> Self {
+        self.mode = mode;
+        self
     }
 
     pub fn model(mut self, model: &'a str) -> Self {
@@ -65,11 +82,6 @@ impl<'a> LaunchRequest<'a> {
 
     pub fn initial_prompt(mut self, prompt: &'a str) -> Self {
         self.initial_prompt = Some(prompt);
-        self
-    }
-
-    pub fn resume(mut self, resume: &'a str) -> Self {
-        self.resume = Some(resume);
         self
     }
 
@@ -108,7 +120,8 @@ pub enum WorkspaceAction {
     Symlink { src: PathBuf, dst: PathBuf },
 }
 
-/// How to start the engine: `program args…`, extra environment, and workspace preparation.
+/// How to start the engine: `program args…`, extra environment, workspace preparation, and the
+/// engine data known before the process starts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LaunchPlan {
@@ -116,6 +129,10 @@ pub struct LaunchPlan {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub workspace: Vec<WorkspaceAction>,
+    /// The complete value core stores under `ext[ext_key]` before the process starts (Claude:
+    /// its id and transcript path are known up front). `None`: the record's data stays as it
+    /// is, and anything new arrives by hook (Codex).
+    pub engine_data: Option<serde_json::Value>,
 }
 
 impl LaunchPlan {
@@ -149,6 +166,11 @@ impl LaunchPlan {
 
     pub fn workspace(mut self, action: WorkspaceAction) -> Self {
         self.workspace.push(action);
+        self
+    }
+
+    pub fn engine_data(mut self, engine_data: serde_json::Value) -> Self {
+        self.engine_data = Some(engine_data);
         self
     }
 }
@@ -419,16 +441,14 @@ mod tests {
         assert_eq!(registry.ids(), ["one"]);
     }
 
-    #[test]
-    fn engine_data_is_the_object_under_the_key_or_null() {
+    fn record(cwd: &Path) -> Session {
         use crate::session::{Launch, Lifecycle, SessionId};
-        let engine = Keyed("e", "e");
-        let mut session = Session {
+        Session {
             id: SessionId::mint(),
             name: "s".into(),
             parent: None,
             tags: Vec::new(),
-            cwd: "/tmp".into(),
+            cwd: cwd.to_owned(),
             created_at: 0.0,
             ended_at: None,
             last_modified_at: 0.0,
@@ -439,7 +459,13 @@ mod tests {
             },
             state: None,
             ext: BTreeMap::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn engine_data_is_the_object_under_the_key_or_null() {
+        let engine = Keyed("e", "e");
+        let mut session = record(Path::new("/tmp"));
         assert_eq!(engine_data(&engine, &session), &serde_json::Value::Null);
         session.ext.insert("e".into(), serde_json::json!("text"));
         assert_eq!(engine_data(&engine, &session), &serde_json::Value::Null);
@@ -470,13 +496,23 @@ mod tests {
             &dir.path().join("p.md"),
         )
         .unwrap();
-        let request = LaunchRequest::new(dir.path(), &profile)
+        let session = record(dir.path());
+        let source = record(dir.path());
+        let request = LaunchRequest::new(&session, &profile)
             .model("m")
             .effort(Effort::Low);
+        assert!(matches!(request.mode, LaunchMode::Start));
+        let request = request.mode(LaunchMode::Fork { source: &source });
+        assert!(
+            matches!(request.mode, LaunchMode::Fork { source: forked } if forked.id == source.id)
+        );
+        assert_eq!(request.session.id, session.id);
         let plan = Stub("x").launch(&request).unwrap();
         assert_eq!(plan.program, "x");
         assert_eq!(plan.args, [dir.path().join("p.md").display().to_string()]);
-        assert!(plan.env.is_empty() && plan.workspace.is_empty());
+        assert!(plan.env.is_empty() && plan.workspace.is_empty() && plan.engine_data.is_none());
+        let plan = LaunchPlan::new("y").engine_data(serde_json::json!({"k": 1}));
+        assert_eq!(plan.engine_data, Some(serde_json::json!({"k": 1})));
     }
 
     #[test]

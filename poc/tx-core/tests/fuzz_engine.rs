@@ -7,8 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use proptest::prelude::*;
 use tx_core::engine::{apply_workspace, resolve_in};
 use tx_core::{
-    CoreError, Effort, EngineError, EngineRegistry, LaunchPlan, LaunchRequest, LlmEngine, Profile,
-    ResolvedProfile, WorkspaceAction,
+    CoreError, Effort, EngineError, EngineRegistry, Launch, LaunchPlan, LaunchRequest, Lifecycle,
+    LlmEngine, Profile, ResolvedProfile, Session, SessionId, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -886,7 +886,24 @@ fn core_accepts_a_plan_with_empty_program() {
         &dir.path().join("p.md"),
     )
     .unwrap();
-    let request = LaunchRequest::new(dir.path(), &profile)
+    let session = Session {
+        id: SessionId::mint(),
+        name: "s".into(),
+        parent: None,
+        tags: Vec::new(),
+        cwd: dir.path().to_owned(),
+        created_at: 0.0,
+        ended_at: None,
+        last_modified_at: 0.0,
+        lifecycle: Lifecycle::Running,
+        launch: Launch::Process {
+            program: "sh".into(),
+            args: Vec::new(),
+        },
+        state: None,
+        ext: Default::default(),
+    };
+    let request = LaunchRequest::new(&session, &profile)
         .effort(Effort::Low)
         .initial_prompt("");
     let mut registry = EngineRegistry::new();

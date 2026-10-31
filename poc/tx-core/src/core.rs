@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::config::CoreConfig;
-use crate::engine::{EngineRegistry, LaunchRequest, LlmEngine, apply_workspace};
+use crate::engine::{EngineRegistry, LaunchMode, LaunchRequest, LlmEngine, apply_workspace};
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
@@ -83,7 +83,8 @@ pub enum LaunchOptions {
         model: Option<String>,
         effort: Option<Effort>,
         initial_prompt: Option<String>,
-        /// Handed to the engine untouched; see `LaunchRequest::resume`.
+        /// A conversation id the engine continues: stored as `{"conversation_id": id}` under its
+        /// `ext` key, then launched with `LaunchMode::Resume`.
         resume: Option<String>,
     },
     Process {
@@ -546,27 +547,85 @@ impl TxCore {
         merge_env(&mut env, &self.config.env);
         merge_env(&mut env, &opts.env);
 
-        let (program, args, launch) = match (&opts.launch, engine) {
+        // The record exists before the engine is asked: the engine reads its id, cwd and data
+        // from it. A resume names its conversation there, under the engine's `ext` key.
+        let mut ext = std::collections::BTreeMap::new();
+        let launch = match (&opts.launch, &engine) {
             (
                 LaunchOptions::Agent {
                     engine,
                     model,
                     effort,
-                    initial_prompt,
                     resume,
+                    ..
+                },
+                Some((adapter, _)),
+            ) => {
+                if let Some(resume) = resume.as_deref().filter(|resume| !resume.is_empty()) {
+                    ext.insert(
+                        adapter.ext_key().to_owned(),
+                        serde_json::json!({ "conversation_id": resume }),
+                    );
+                }
+                Launch::Agent {
+                    engine: engine.clone(),
+                    profile: roles,
+                    model: model.clone(),
+                    effort: *effort,
+                    resume: resume.clone(),
+                }
+            }
+            (LaunchOptions::Process { program, args, .. }, _) => Launch::Process {
+                program: program.clone(),
+                args: args.clone(),
+            },
+            (LaunchOptions::Agent { .. }, None) => unreachable!("engine resolved above"),
+        };
+        let created_at = now();
+        let mut session = Session {
+            id: id.clone(),
+            name: opts.name.clone(),
+            parent: opts.parent,
+            tags: opts.tags,
+            cwd: opts.cwd.clone(),
+            created_at,
+            ended_at: None,
+            last_modified_at: created_at,
+            lifecycle: Lifecycle::Running,
+            // An agent starts in `Starting` until its adapter's first change; a process has
+            // no engine and so no state.
+            state: match &launch {
+                Launch::Agent { .. } => Some(LlmEngineState::Starting),
+                Launch::Process { .. } => None,
+            },
+            launch,
+            ext,
+        };
+
+        let (program, args) = match (&opts.launch, engine) {
+            (
+                LaunchOptions::Agent {
+                    model,
+                    effort,
+                    initial_prompt,
                     ..
                 },
                 Some((adapter, resolved)),
             ) => {
                 let profile =
                     Profile::write(resolved, &profile_file).map_err(store_io(&profile_file))?;
+                let mode = if session.ext.contains_key(adapter.ext_key()) {
+                    LaunchMode::Resume
+                } else {
+                    LaunchMode::Start
+                };
                 let request = LaunchRequest {
-                    cwd: &opts.cwd,
+                    session: &session,
+                    mode,
                     profile: &profile,
                     model: model.as_deref(),
                     effort: *effort,
                     initial_prompt: initial_prompt.as_deref(),
-                    resume: resume.as_deref(),
                     hook_command: &self.config.hook_command,
                 };
                 let plan = adapter
@@ -579,26 +638,14 @@ impl TxCore {
                     cleanup_profile();
                     return Err(CoreError::InvalidName(plan.program));
                 }
-                (
-                    plan.program,
-                    plan.args,
-                    Launch::Agent {
-                        engine: engine.clone(),
-                        profile: roles,
-                        model: model.clone(),
-                        effort: *effort,
-                        resume: resume.clone(),
-                    },
-                )
+                if let Some(engine_data) = plan.engine_data {
+                    session
+                        .ext
+                        .insert(adapter.ext_key().to_owned(), engine_data);
+                }
+                (plan.program, plan.args)
             }
-            (LaunchOptions::Process { program, args, .. }, _) => (
-                program.clone(),
-                args.clone(),
-                Launch::Process {
-                    program: program.clone(),
-                    args: args.clone(),
-                },
-            ),
+            (LaunchOptions::Process { program, args, .. }, _) => (program.clone(), args.clone()),
             (LaunchOptions::Agent { .. }, None) => unreachable!("engine resolved above"),
         };
 
@@ -627,31 +674,11 @@ impl TxCore {
             Err(TmuxError::Failed { stderr, .. }) if session_vanished(&stderr) => true,
             Err(error) => return Err(undo(CoreError::Tmux(error))),
         };
-        let created_at = now();
-        let mut session = Session {
-            id: id.clone(),
-            name: opts.name.clone(),
-            parent: opts.parent,
-            tags: opts.tags,
-            cwd: opts.cwd,
-            created_at,
-            ended_at: exited_at_once.then_some(created_at),
-            last_modified_at: created_at,
-            lifecycle: if exited_at_once {
-                Lifecycle::Exited
-            } else {
-                Lifecycle::Running
-            },
-            // An agent starts in `Starting` until its adapter's first change; a process has
-            // no engine and so no state.
-            state: match &launch {
-                Launch::Agent { .. } if exited_at_once => Some(LlmEngineState::Ended),
-                Launch::Agent { .. } => Some(LlmEngineState::Starting),
-                Launch::Process { .. } => None,
-            },
-            launch,
-            ext: std::collections::BTreeMap::new(),
-        };
+        if exited_at_once {
+            session.ended_at = Some(session.created_at);
+            session.lifecycle = Lifecycle::Exited;
+            session.state = session.state.map(|_| LlmEngineState::Ended);
+        }
         if let Err(error) = self.save(&mut session) {
             return Err(undo(CoreError::Store(error)));
         }
