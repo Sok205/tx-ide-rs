@@ -1,5 +1,5 @@
-//! `ui install` and `ui attach`: compose the core's server config from plugin resources and
-//! enter the IDE's server.
+//! `ui install`, `ui attach` and `ui view`: compose the core's server config from plugin
+//! resources, enter the IDE's server, and open, list or close views from a shell.
 
 use std::collections::HashSet;
 use std::io;
@@ -11,6 +11,8 @@ use std::process::Stdio;
 use tx_core::{Resource, TxCore, Verb, VerbError, VerbIo};
 
 use crate::tmux::Ui;
+use crate::view_verb;
+use crate::views::{self, ViewKind, ViewRequest};
 
 const HOME_SESSION: &str = "home";
 const INSTALLED: &str = "keys/.installed";
@@ -146,7 +148,7 @@ fn fail(io: &mut VerbIo<'_>, message: &str) -> Result<i32, VerbError> {
 }
 
 fn usage(io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
-    let _ = writeln!(io.stderr, "usage: txc ui install | attach");
+    let _ = writeln!(io.stderr, "usage: txc ui install | attach | view <open|ls|close> …");
     Ok(2)
 }
 
@@ -158,13 +160,14 @@ impl Verb for UiVerb {
     }
 
     fn usage(&self) -> &'static str {
-        "ui install | attach   write the tmux config from plugin resources; enter the IDE's server"
+        "ui install | attach | view <open|ls|close>   write the tmux config from plugin resources; enter the IDE's server; manage views"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         match argv {
             [sub] if sub == "attach" => attach(core, io),
             [sub] if sub == "install" => install(core, io),
+            [sub, rest @ ..] if sub == "view" => view_verb::run(core, io, rest),
             _ => usage(io),
         }
     }
@@ -401,16 +404,28 @@ fn ensure_home(ui: &Ui, assistant: Option<&str>) -> Result<(), VerbError> {
     }
     let nest = assistant
         .and_then(|name| ui.live_targets().get(name).cloned())
-        .map(|target| ui.nest_attach_command(&target));
+        .map(|target| ui.nest_attach_script(&target));
+    let (program, arguments) = match &nest {
+        Some(script) => ("bash".to_owned(), vec!["-c".to_owned(), script.clone()]),
+        None => (views::default_shell(), Vec::new()),
+    };
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_owned());
+    views::open(
+        ui,
+        &ViewRequest {
+            name: HOME_SESSION,
+            kind: ViewKind::Home,
+            program: &program,
+            arguments: &arguments,
+            working_directory: Path::new(&home),
+            tags: &[],
+            parent_id: None,
+            bound: None,
+        },
+    )
+    .map_err(|e| VerbError::Failed(e.to_string()))?;
     let target = format!("={HOME_SESSION}:");
-    let mut create = vec!["new-session", "-d", "-s", HOME_SESSION, "-c", &home];
-    if let Some(command) = &nest {
-        create.push(command);
-    }
-    let steps: [&[&str]; 4] = [
-        &create,
-        &["set-option", "-t", &target, "@tx-view", "1"],
+    let steps: [&[&str]; 2] = [
         &["set-option", "-t", &target, "status", "on"],
         &[
             "set-window-option",

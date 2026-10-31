@@ -355,11 +355,13 @@ enum OpenMode {
     Attach,
 }
 
-fn open_mode(inside: bool, current_is_view: bool, pane_command: Option<&str>) -> OpenMode {
+/// `current_hosts`: the launching session is a view whose shell panes host nested attaches
+/// (the home base, the tutor); from any other session the client is switched.
+fn open_mode(inside: bool, current_hosts: bool, pane_command: Option<&str>) -> OpenMode {
     if !inside {
         return OpenMode::Attach;
     }
-    if current_is_view && pane_command.is_some_and(|command| HOSTING_COMMANDS.contains(&command)) {
+    if current_hosts && pane_command.is_some_and(|command| HOSTING_COMMANDS.contains(&command)) {
         OpenMode::Nest
     } else {
         OpenMode::Switch
@@ -370,14 +372,14 @@ fn open_mode(inside: bool, current_is_view: bool, pane_command: Option<&str>) ->
 fn open_mode_here(ui: &Ui) -> (OpenMode, Option<String>) {
     let inside = ui.inside();
     let pane = inside.then(|| ui.current_pane_id()).flatten();
-    let current_is_view = pane.is_some()
+    let current_hosts = pane.is_some()
         && ui
             .current_session_name()
-            .is_some_and(|session| ui.is_view(&session));
+            .is_some_and(|session| ui.hosts_nested_attaches(&session));
     let command = pane
         .as_deref()
         .and_then(|pane| ui.display_message("#{pane_current_command}", Some(pane)));
-    let mode = open_mode(inside, current_is_view, command.as_deref());
+    let mode = open_mode(inside, current_hosts, command.as_deref());
     (mode, pane)
 }
 

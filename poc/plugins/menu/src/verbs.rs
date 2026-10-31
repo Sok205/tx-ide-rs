@@ -416,20 +416,21 @@ fn resumed_name(stdout: &str) -> Option<&str> {
 /// Foreground commands of a pane the picker's Enter would replace by a nested attach.
 const HOSTING_COMMANDS: [&str; 6] = ["zsh", "bash", "sh", "fish", "dash", "tmux"];
 
-/// The picker's Enter: nest into the firing pane when it is a view's shell (or nested client).
-fn nests_here(pane_in_view: bool, pane_command: Option<&str>) -> bool {
-    pane_in_view && pane_command.is_some_and(|command| HOSTING_COMMANDS.contains(&command))
+/// The picker's Enter: nest into the firing pane when it is the shell (or nested client) of a
+/// view that hosts nested attaches (the home base, the tutor).
+fn nests_here(pane_hosts: bool, pane_command: Option<&str>) -> bool {
+    pane_hosts && pane_command.is_some_and(|command| HOSTING_COMMANDS.contains(&command))
 }
 
 /// Shows session `name` the way the picker's Enter does: nested into the firing pane, else
 /// the client switched to it.
 fn show(ui: &Ui, pane: &str, client: &str, name: &str) {
-    let in_view = ui
+    let hosts = ui
         .display_message("#{session_name}", Some(pane))
-        .is_some_and(|session| ui.is_view(&session));
+        .is_some_and(|session| ui.hosts_nested_attaches(&session));
     let command = ui.display_message("#{pane_current_command}", Some(pane));
     match ui.live_targets().get(name) {
-        Some(target) if nests_here(in_view, command.as_deref()) => {
+        Some(target) if nests_here(hosts, command.as_deref()) => {
             if let Err(error) = ui.respawn_pane(pane, &ui.nest_attach_command(target)) {
                 status(ui, client, &format!("tx menu: {error}"));
             }

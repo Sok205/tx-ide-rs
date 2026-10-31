@@ -9,8 +9,9 @@ use std::process::{Command, Stdio};
 
 use tx_core::TxCore;
 
+use crate::views::{KIND_OPTION, VIEW_OPTION, ViewKind};
+
 const BINARY: &str = "tmux";
-const VIEW_OPTION: &str = "@tx-view";
 const LABEL_REV_OPTION: &str = "@tx-label-rev";
 const STATUS_MILLISECONDS: &str = "5000";
 
@@ -49,10 +50,12 @@ fn non_empty(value: &str) -> Option<String> {
 
 impl Ui {
     pub fn from_core(core: &TxCore) -> Self {
-        Self {
-            socket: core.socket_path().to_path_buf(),
-            conf: core.config().tmux_conf_path(),
-        }
+        Self::new(core.socket_path().to_path_buf(), core.config().tmux_conf_path())
+    }
+
+    /// Bound to a socket and config of the caller's choosing (scratch servers in tests).
+    pub fn new(socket: PathBuf, conf: PathBuf) -> Self {
+        Self { socket, conf }
     }
 
     pub fn argv(&self, args: &[&str]) -> Vec<OsString> {
@@ -118,8 +121,24 @@ impl Ui {
         self.quiet(&["has-session", "-t", &format!("={name}")]).0
     }
 
+    /// Any view: a session tx-client owns, never a tx session a person can act on.
     pub fn is_view(&self, name: &str) -> bool {
         self.session_option(name, VIEW_OPTION).as_deref() == Some("1")
+    }
+
+    fn view_kind(&self, name: &str) -> Option<ViewKind> {
+        self.session_option(name, KIND_OPTION)?.parse().ok()
+    }
+
+    /// The home base (`@tx-view-kind home`).
+    pub fn is_home(&self, name: &str) -> bool {
+        self.view_kind(name) == Some(ViewKind::Home)
+    }
+
+    /// A view whose shell panes may be replaced by a nested attach (the picker's Enter).
+    pub fn hosts_nested_attaches(&self, name: &str) -> bool {
+        self.view_kind(name)
+            .is_some_and(ViewKind::hosts_nested_attaches)
     }
 
     pub fn session_option(&self, name: &str, option: &str) -> Option<String> {
@@ -240,10 +259,6 @@ impl Ui {
             .map(drop)
     }
 
-    pub fn kill_session(&self, name: &str) -> bool {
-        self.quiet(&["kill-session", "-t", &format!("={name}")]).0
-    }
-
     /// Echo `msg` to stderr and show it on `client`'s status line (best effort).
     pub fn display_status(&self, client: &str, msg: &str) {
         eprintln!("{msg}");
@@ -277,14 +292,18 @@ impl Ui {
             .exec()
     }
 
-    /// A shell command for a pane that nest-attaches `target`, then falls back to a shell.
-    pub fn nest_attach_command(&self, target: &str) -> String {
-        let script = format!(
+    /// A bash script that nest-attaches `target`, then falls back to a shell.
+    pub fn nest_attach_script(&self, target: &str) -> String {
+        format!(
             "set -m; TMUX= tmux -S {} attach -t {}; exec ${{SHELL:-zsh}}",
             shell_quote(&self.socket.to_string_lossy()),
             shell_quote(target),
-        );
-        format!("bash -c {}", shell_quote(&script))
+        )
+    }
+
+    /// `nest_attach_script` as one shell command for a pane.
+    pub fn nest_attach_command(&self, target: &str) -> String {
+        format!("bash -c {}", shell_quote(&self.nest_attach_script(target)))
     }
 }
 

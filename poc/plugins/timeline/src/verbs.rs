@@ -8,7 +8,8 @@ use std::io::Write;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use tx_client::tmux::{Ui, shell_quote};
+use tx_client::tmux::Ui;
+use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
 use crate::app::DEFAULT_WINDOW_MIN;
@@ -195,55 +196,45 @@ impl Verb for Timeline {
     }
 }
 
-/// `<txc> <cli_arguments> _timeline-resident --last 30m`, shell-quoted.
-fn resident_command(core: &TxCore) -> Result<String, VerbError> {
+/// `<txc> <cli_arguments> _timeline-resident --last 30m`, as argv.
+fn resident_argv(core: &TxCore) -> Result<Vec<String>, VerbError> {
     let exe = std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
-    let mut words = vec![shell_quote(&exe.to_string_lossy())];
-    words.extend(
-        core.config()
-            .cli_arguments()
-            .iter()
-            .map(|word| shell_quote(word)),
-    );
+    let mut words = vec![exe.to_string_lossy().into_owned()];
+    words.extend(core.config().cli_arguments().iter().cloned());
     words.extend([
         RESIDENT_VERB.to_owned(),
         "--last".to_owned(),
         RESIDENT_WINDOW.to_owned(),
     ]);
-    Ok(words.join(" "))
+    Ok(words)
 }
 
-/// Starts the resident view unless it is running. Callers hold the popup lock.
+/// Starts the resident view unless it is running, sized for the popup. Callers hold the popup
+/// lock.
 fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
     if ui.has_session(POPUP_SESSION) {
         return Ok(());
     }
-    let command = resident_command(core)?;
-    // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
-    let cwd = core
-        .config()
-        .directories
-        .data
-        .to_string_lossy()
-        .replace('#', "##");
-    ui.run(&[
-        "new-session",
-        "-d",
-        "-s",
-        POPUP_SESSION,
-        "-x",
-        "118",
-        "-y",
-        "30",
-        "-c",
-        &cwd,
-        &command,
-    ])
+    let argv = resident_argv(core)?;
+    views::open(
+        ui,
+        &ViewRequest {
+            name: POPUP_SESSION,
+            kind: ViewKind::Timeline,
+            program: &argv[0],
+            arguments: &argv[1..],
+            working_directory: &core.config().directories.data,
+            tags: &[],
+            parent_id: None,
+            bound: None,
+        },
+    )
     .map_err(failed)?;
-    for (option, value) in [("@tx-view", "1"), ("status", "off")] {
-        ui.set_session_option(POPUP_SESSION, option, value)
-            .map_err(failed)?;
-    }
+    let window = format!("={POPUP_SESSION}:");
+    ui.run(&["resize-window", "-t", &window, "-x", "118", "-y", "30"])
+        .map_err(failed)?;
+    ui.set_session_option(POPUP_SESSION, "status", "off")
+        .map_err(failed)?;
     Ok(())
 }
 

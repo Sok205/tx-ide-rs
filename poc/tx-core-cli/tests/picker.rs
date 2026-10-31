@@ -75,12 +75,15 @@ fn pick_nests_into_a_view_pane() {
             .status
             .success()
     );
-    let set = cli.tmux(&["set-option", "-t", "=Views:", "@tx-view", "1"]);
-    assert!(
-        set.status.success(),
-        "{}",
-        String::from_utf8_lossy(&set.stderr)
-    );
+    // A home base, as `txc ui attach` marks it: its shell pane hosts nested attaches.
+    for (option, value) in [("@tx-view", "1"), ("@tx-view-kind", "home")] {
+        let set = cli.tmux(&["set-option", "-t", "=Views:", option, value]);
+        assert!(
+            set.status.success(),
+            "{}",
+            String::from_utf8_lossy(&set.stderr)
+        );
+    }
     let pane = pane_id_of(&cli, "Views");
     // `run-shell` stands in for the prefix+t popup: like the popup it runs `pick` with `$TMUX`
     // set while the pane's foreground process is still the shell.

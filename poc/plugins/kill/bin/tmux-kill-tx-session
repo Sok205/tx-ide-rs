@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# prefix+X: confirm-then-kill the tx session in the active pane, tmux-native style.
+# prefix+X: confirm-then-kill the session in the active pane, tmux-native style.
 # Mirrors the stock prefix+x / prefix+& UX (a `confirm-before` status-line prompt),
-# but the kill goes through `txc kill` — record marked EXITED + logged — never a raw
-# `kill-session` that would leave the store stale (COMMON.md).
+# but an agent's kill goes through `txc kill` — record marked EXITED + logged — never a
+# raw `kill-session` that would leave the store stale (COMMON.md), and a view's close
+# goes through `txc ui view close`, which refuses an agent's session.
 #
 # Target: the session attached INSIDE the pane when it hosts a nested `tmux attach`
 # (the same pane→client join the border label uses), else the outer session itself
-# (a direct foreground attach). A @tx-view session (Views, a home base) is refused —
-# from a view pane hosting nothing nested there is no tx session to kill.
+# (a direct foreground attach). A view (@tx-view) is closed when it is a shell, editor,
+# timeline, tutor or mockup view (@tx-view-kind); the home base is refused — from a home
+# pane hosting nothing nested there is no session to kill.
 #
 # The prompt shows the store-owned DISPLAY name (a PROCESS is tmux-named by its id);
 # the kill targets the tmux name, which `txc kill` resolves either way.
@@ -28,7 +30,13 @@ inner=$(tmux list-clients -F '#{client_tty} #{client_session}' 2>/dev/null |
 target="${inner:-$outer}"
 
 if [[ -n "$(tmux show-options -vqt "$target" @tx-view 2>/dev/null)" ]]; then
-  tmux display-message "tx: '$target' is a view home, not a tx session — nothing to kill here"
+  kind=$(tmux show-options -vqt "$target" @tx-view-kind 2>/dev/null) || kind=""
+  if [[ -z "$kind" || "$kind" == home ]]; then
+    tmux display-message "tx: '$target' is a view home, not a tx session — nothing to kill here"
+    exit 0
+  fi
+  tmux confirm-before -p "close $kind view \"$target\"? (y/n)" \
+    "run-shell \"$TX ui view close '$target' 2>&1 >/dev/null\"" || true
   exit 0
 fi
 
