@@ -747,11 +747,13 @@ impl TxCore {
         Ok(true)
     }
 
-    /// A hook the session's engine wired fired inside it: the engine decides the new state, core
-    /// writes it under the session lock and emits `StateChanged` (`from → to`) when it moved.
-    /// Returns the state after the hook; `None` when the hook is not for a live agent this core
-    /// can read: the session is no longer `Running` (a stale hook), is a process session, or its
-    /// engine is not registered here.
+    /// A hook the session's engine wired fired inside it: the engine decides the new state and
+    /// its own data, core writes both under the session lock (one save) and emits
+    /// `StateChanged` (`from → to`) when the state moved and `EngineDataChanged` (the ext key)
+    /// when `ext[ext_key]` was rewritten. Core reads `ext` only to hand the engine its own key,
+    /// never to interpret it. Returns the state after the hook; `None` when the hook is not for
+    /// a live agent this core can read: the session is no longer `Running` (a stale hook), is a
+    /// process session, or its engine is not registered here.
     pub fn hook(
         &self,
         id: &SessionId,
@@ -770,18 +772,28 @@ impl TxCore {
                 return Ok(None);
             };
             let current = session.state.expect("agent sessions carry a state");
-            match adapter.on_hook(current, &hook) {
+            let change = adapter.on_hook(&session, &hook);
+            let mut changed = Vec::new();
+            let state = match change.state {
                 Some(to) if to != current => {
                     session.state = Some(to);
-                    self.save(&mut session)?;
                     let detail = format!("{} → {}", current.as_str(), to.as_str());
-                    (
-                        to,
-                        vec![event(EventType::StateChanged, &session, None, detail)],
-                    )
+                    changed.push(event(EventType::StateChanged, &session, None, detail));
+                    to
                 }
-                _ => (current, Vec::new()),
+                _ => current,
+            };
+            let ext_key = adapter.ext_key();
+            if let Some(value) = change.engine_data
+                && session.ext.get(ext_key) != Some(&value)
+            {
+                session.ext.insert(ext_key.to_owned(), value);
+                changed.push(event(EventType::EngineDataChanged, &session, None, ext_key));
             }
+            if !changed.is_empty() {
+                self.save(&mut session)?;
+            }
+            (state, changed)
         };
         self.emit(changed);
         Ok(Some(state))
@@ -1063,15 +1075,15 @@ mod tests {
 
     struct Stub;
     impl LlmEngine for Stub {
-        fn on_hook(
-            &self,
-            _: crate::LlmEngineState,
-            _: &crate::LlmEngineHook,
-        ) -> Option<crate::LlmEngineState> {
-            None
+        fn on_hook(&self, _: &Session, _: &crate::LlmEngineHook) -> crate::LlmEngineChange {
+            crate::LlmEngineChange::NONE
         }
 
         fn id(&self) -> &str {
+            "stub"
+        }
+
+        fn ext_key(&self) -> &'static str {
             "stub"
         }
         fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {

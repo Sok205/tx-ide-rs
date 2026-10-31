@@ -20,14 +20,20 @@ struct Stub(String);
 impl LlmEngine for Stub {
     fn on_hook(
         &self,
-        _: tx_core::LlmEngineState,
+        _: &tx_core::Session,
         _: &tx_core::LlmEngineHook,
-    ) -> Option<tx_core::LlmEngineState> {
-        None
+    ) -> tx_core::LlmEngineChange {
+        tx_core::LlmEngineChange::NONE
     }
 
     fn id(&self) -> &str {
         &self.0
+    }
+
+    /// Ids under test are arbitrary bare names; the key is their hex, so distinct ids never
+    /// share one (leaked: a test stub).
+    fn ext_key(&self) -> &'static str {
+        String::leak(self.0.bytes().map(|byte| format!("{byte:02x}")).collect())
     }
 
     fn launch(&self, _req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {

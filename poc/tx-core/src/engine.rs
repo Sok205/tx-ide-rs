@@ -8,8 +8,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::CoreError;
 use crate::profile::Profile;
-use crate::session::{Effort, validate_name};
-use crate::state::{LlmEngineHook, LlmEngineState};
+use crate::session::{Effort, Session, validate_name};
+use crate::state::{LlmEngineChange, LlmEngineHook};
 
 /// An adapter could not honor a request, or a workspace action could not be applied.
 #[derive(Debug, thiserror::Error)]
@@ -153,11 +153,16 @@ impl LaunchPlan {
     }
 }
 
-/// One coding-agent engine. Three required methods; no I/O in `launch` or `on_hook`. `Send + Sync` so a core
-/// can be shared across threads.
+/// One coding-agent engine. Four required methods; no I/O in `launch` or `on_hook`. `Send + Sync`
+/// so a core can be shared across threads.
 pub trait LlmEngine: Send + Sync {
     /// A bare name (`[A-Za-z0-9_-]+`); stored in every record this engine launches.
     fn id(&self) -> &str;
+
+    /// The `ext` key this engine owns. Core stores engine data under it and never reads it.
+    /// `[a-z0-9-]+`, unique among engines and plugin ids.
+    fn ext_key(&self) -> &'static str;
+
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError>;
 
     /// How a message is framed before it is typed into one of this engine's sessions.
@@ -167,14 +172,38 @@ pub trait LlmEngine: Send + Sync {
         crate::messaging::build_envelope(sender, text)
     }
 
-    /// A hook this adapter wired fired inside the session. Given the current state, say which
-    /// state the agent moves to; `None` when the hook changes nothing. Pure: core applies the
-    /// result under the session's lock. Required, because an engine that wires no hooks never
-    /// leaves `Starting`; returning `None` says so.
-    fn on_hook(&self, current: LlmEngineState, hook: &LlmEngineHook) -> Option<LlmEngineState>;
+    /// A hook this adapter wired fired inside the session. Given the record (its current state is
+    /// `session.state`, this engine's data is `session.ext[self.ext_key()]`, absent at first),
+    /// say which state the agent moves to and what its engine data becomes; an empty change
+    /// when the hook changes nothing. Pure: core applies the result under the session's lock.
+    /// Required, because an engine that wires no hooks never leaves `Starting`; returning
+    /// `LlmEngineChange::NONE` says so.
+    fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange;
 }
 
-/// id → adapter. Ids are unique; registration order does not matter.
+/// This engine's data in a record: `ext[ext_key]`, `Null` when absent. A non-object value (a
+/// hand-edited record) counts as absent, so adapters can rely on `.get(..)` seeing an object.
+pub fn engine_data<'a>(engine: &dyn LlmEngine, session: &'a Session) -> &'a serde_json::Value {
+    const NULL: serde_json::Value = serde_json::Value::Null;
+    match session.ext.get(engine.ext_key()) {
+        Some(value @ serde_json::Value::Object(_)) => value,
+        _ => &NULL,
+    }
+}
+
+/// `InvalidExtKey` unless `key` is `[a-z0-9-]+`.
+pub fn validate_ext_key(key: &str) -> Result<(), CoreError> {
+    if key.is_empty()
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(CoreError::InvalidExtKey(key.to_owned()));
+    }
+    Ok(())
+}
+
+/// id → adapter. Ids and ext keys are unique; registration order does not matter.
 #[derive(Default)]
 pub struct EngineRegistry {
     adapters: BTreeMap<String, Box<dyn LlmEngine>>,
@@ -185,12 +214,22 @@ impl EngineRegistry {
         Self::default()
     }
 
-    /// `EngineTaken` on a duplicate id; `InvalidName` when the id is not a bare name.
+    /// `EngineTaken` on a duplicate id; `InvalidName` when the id is not a bare name;
+    /// `ExtKeyTaken` when another engine owns the same `ext` key; `InvalidExtKey` when the key
+    /// is not `[a-z0-9-]+`.
     pub fn register(&mut self, adapter: Box<dyn LlmEngine>) -> Result<(), CoreError> {
         let id = adapter.id().to_owned();
         validate_name(&id)?;
+        validate_ext_key(adapter.ext_key())?;
         if self.adapters.contains_key(&id) {
             return Err(CoreError::EngineTaken(id));
+        }
+        if self
+            .adapters
+            .values()
+            .any(|registered| registered.ext_key() == adapter.ext_key())
+        {
+            return Err(CoreError::ExtKeyTaken(adapter.ext_key().to_owned()));
         }
         self.adapters.insert(id, adapter);
         Ok(())
@@ -300,15 +339,15 @@ mod tests {
     struct Stub(&'static str);
 
     impl LlmEngine for Stub {
-        fn on_hook(
-            &self,
-            _: crate::LlmEngineState,
-            _: &crate::LlmEngineHook,
-        ) -> Option<crate::LlmEngineState> {
-            None
+        fn on_hook(&self, _: &Session, _: &crate::LlmEngineHook) -> LlmEngineChange {
+            LlmEngineChange::NONE
         }
 
         fn id(&self) -> &str {
+            self.0
+        }
+
+        fn ext_key(&self) -> &'static str {
             self.0
         }
 
@@ -335,6 +374,77 @@ mod tests {
         assert_eq!(registry.get("alpha").unwrap().id(), "alpha");
         assert!(registry.get("omega").is_none());
         assert!(EngineRegistry::default().ids().is_empty());
+    }
+
+    struct Keyed(&'static str, &'static str);
+
+    impl LlmEngine for Keyed {
+        fn on_hook(&self, _: &Session, _: &crate::LlmEngineHook) -> LlmEngineChange {
+            LlmEngineChange::NONE
+        }
+
+        fn id(&self) -> &str {
+            self.0
+        }
+
+        fn ext_key(&self) -> &'static str {
+            self.1
+        }
+
+        fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+            Ok(LaunchPlan::default())
+        }
+    }
+
+    #[test]
+    fn registry_refuses_a_taken_or_invalid_ext_key() {
+        let mut registry = EngineRegistry::new();
+        registry.register(Box::new(Keyed("one", "one-1"))).unwrap();
+        let error = registry
+            .register(Box::new(Keyed("two", "one-1")))
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::ExtKeyTaken(key) if key == "one-1"),
+            "{error:?}"
+        );
+        for bad in ["", "Claude", "a_b", "a.b", "a/b", "ä"] {
+            let error = registry
+                .register(Box::new(Keyed("three", bad)))
+                .unwrap_err();
+            assert!(
+                matches!(&error, CoreError::InvalidExtKey(key) if key == bad),
+                "{bad:?}: {error:?}"
+            );
+        }
+        assert_eq!(registry.ids(), ["one"]);
+    }
+
+    #[test]
+    fn engine_data_is_the_object_under_the_key_or_null() {
+        use crate::session::{Launch, Lifecycle, SessionId};
+        let engine = Keyed("e", "e");
+        let mut session = Session {
+            id: SessionId::mint(),
+            name: "s".into(),
+            parent: None,
+            tags: Vec::new(),
+            cwd: "/tmp".into(),
+            created_at: 0.0,
+            ended_at: None,
+            last_modified_at: 0.0,
+            lifecycle: Lifecycle::Running,
+            launch: Launch::Process {
+                program: "x".into(),
+                args: Vec::new(),
+            },
+            state: None,
+            ext: BTreeMap::new(),
+        };
+        assert_eq!(engine_data(&engine, &session), &serde_json::Value::Null);
+        session.ext.insert("e".into(), serde_json::json!("text"));
+        assert_eq!(engine_data(&engine, &session), &serde_json::Value::Null);
+        session.ext.insert("e".into(), serde_json::json!({"k": 1}));
+        assert_eq!(engine_data(&engine, &session), &serde_json::json!({"k": 1}));
     }
 
     #[test]

@@ -158,18 +158,29 @@ pub struct ShellStub;
 pub const STUB_ID: &str = "stub";
 
 impl LlmEngine for ShellStub {
-    /// A hook named after a state moves to it; any other name changes nothing.
+    /// A hook named after a state moves to it; `data` rewrites the engine data to the payload
+    /// (`{}` clears nothing: it is the complete new value); any other name changes nothing.
     fn on_hook(
         &self,
-        _: tx_core::LlmEngineState,
+        _: &tx_core::Session,
         hook: &tx_core::LlmEngineHook,
-    ) -> Option<tx_core::LlmEngineState> {
-        tx_core::LlmEngineState::ALL
-            .into_iter()
-            .find(|state| state.as_str() == hook.name)
+    ) -> tx_core::LlmEngineChange {
+        if hook.name == "data" {
+            return tx_core::LlmEngineChange::NONE.engine_data(hook.payload.clone());
+        }
+        tx_core::LlmEngineChange {
+            state: tx_core::LlmEngineState::ALL
+                .into_iter()
+                .find(|state| state.as_str() == hook.name),
+            engine_data: None,
+        }
     }
 
     fn id(&self) -> &str {
+        STUB_ID
+    }
+
+    fn ext_key(&self) -> &'static str {
         STUB_ID
     }
 

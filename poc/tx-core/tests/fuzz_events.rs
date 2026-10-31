@@ -373,6 +373,7 @@ fn event_type_names_unique_and_stable() {
             "tagged",
             "message-sent",
             "state-changed",
+            "engine-data-changed",
             "exited",
             "stopped",
             "forgotten"

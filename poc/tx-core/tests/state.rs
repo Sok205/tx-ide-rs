@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{Harness, agent, process};
+use common::{Harness, STUB_ID, agent, process};
 use serde_json::json;
 use tx_core::{EventType, LlmEngineHook, LlmEngineState};
 
@@ -57,6 +57,56 @@ fn hooks_move_an_agent_and_core_ends_it() {
         3,
         "stop logs `stopped`, not a state change"
     );
+}
+
+fn data_lines(h: &Harness) -> Vec<String> {
+    h.log_lines()
+        .into_iter()
+        .filter(|line| line["type"] == EventType::EngineDataChanged.as_str())
+        .map(|line| line["msg"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// The engine's data from a hook lands under `ext[<ext key>]`, logged as `engine-data-changed`
+/// with the key; an unchanged value writes and logs nothing; a plugin's own `ext` entry and the
+/// engine's coexist.
+#[test]
+fn hooks_write_engine_data_under_the_engines_key() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("a", &h.workdir("a"))).unwrap();
+    assert!(core.get_session(&id).unwrap().ext.is_empty());
+
+    let first = json!({"conversation_id": "c-1", "transcript_path": "/t/c-1.jsonl"});
+    core.hook(&id, hook("data", first.clone(), 10.0)).unwrap();
+    let session = core.get_session(&id).unwrap();
+    assert_eq!(session.ext.get(STUB_ID), Some(&first));
+    assert_eq!(
+        session.state,
+        Some(LlmEngineState::Starting),
+        "data alone moves no state"
+    );
+
+    // The same value again: nothing is written or logged.
+    let before = session.last_modified_at;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    core.hook(&id, hook("data", first.clone(), 11.0)).unwrap();
+    assert_eq!(core.get_session(&id).unwrap().last_modified_at, before);
+
+    // Another plugin's entry survives the engine's rewrite, and the reverse.
+    core.update_ext(&id, "other", |value| *value = json!({"x": 1}))
+        .unwrap();
+    let second = json!({"conversation_id": "c-2", "transcript_path": "/t/c-2.jsonl"});
+    core.hook(&id, hook("data", second.clone(), 12.0)).unwrap();
+    core.hook(&id, hook("idle", json!({}), 13.0)).unwrap();
+    let session = core.get_session(&id).unwrap();
+    assert_eq!(session.ext.get(STUB_ID), Some(&second));
+    assert_eq!(session.ext.get("other"), Some(&json!({"x": 1})));
+    assert_eq!(session.state, Some(LlmEngineState::Idle));
+
+    assert_eq!(data_lines(&h), [STUB_ID, STUB_ID]);
+    assert_eq!(state_lines(&h), ["starting → idle"]);
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! The agent's state: one vocabulary core owns, moved by the engine adapter. A hook the adapter
-//! wired fires inside the session; [`crate::LlmEngine::on_hook`] answers with the new state, if
-//! any; core writes it to the record's `state` under the session lock.
+//! wired fires inside the session; [`crate::LlmEngine::on_hook`] answers with an
+//! [`LlmEngineChange`]: the new state, if any, and the engine's own data, if it changed; core
+//! writes both to the record under the session lock.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +45,35 @@ pub struct LlmEngineHook {
     /// The CLI's JSON payload, untouched; always an object.
     pub payload: Value,
     pub at: f64,
+}
+
+/// What the engine decided about one hook. Both fields optional: a hook may change nothing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LlmEngineChange {
+    pub state: Option<LlmEngineState>,
+    /// The complete new value of `ext[engine.ext_key()]`; `None` leaves it as it is.
+    pub engine_data: Option<Value>,
+}
+
+impl LlmEngineChange {
+    /// Nothing changes.
+    pub const NONE: LlmEngineChange = LlmEngineChange {
+        state: None,
+        engine_data: None,
+    };
+
+    /// Only the state moves.
+    pub fn to(state: LlmEngineState) -> Self {
+        Self {
+            state: Some(state),
+            engine_data: None,
+        }
+    }
+
+    pub fn engine_data(mut self, engine_data: Value) -> Self {
+        self.engine_data = Some(engine_data);
+        self
+    }
 }
 
 #[cfg(test)]
