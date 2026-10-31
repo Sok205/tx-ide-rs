@@ -180,6 +180,11 @@ impl ArtifactContent {
             .join(format!("{rev}{}", artifact.extension()))
     }
 
+    /// A file of the plugin's own beside the working copy (`.cleanup.json`).
+    pub fn file_path(&self, artifact: &Artifact, name: &str) -> PathBuf {
+        self.content_dir(artifact).join(name)
+    }
+
     pub fn read_current(&self, artifact: &Artifact) -> io::Result<Vec<u8>> {
         fs::read(self.current_path(artifact))
     }
@@ -279,7 +284,12 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
 
 /// Write `content` to a `<prefix>*.tmp` file in `dir` (mode 0600), fsync it, rename it onto
 /// `target`, fsync the directory. The temp file is removed on any failure.
-fn atomic_write(dir: &Path, prefix: &str, content: &[u8], target: &Path) -> io::Result<()> {
+pub(crate) fn atomic_write(
+    dir: &Path,
+    prefix: &str,
+    content: &[u8],
+    target: &Path,
+) -> io::Result<()> {
     let mut temp = tempfile::Builder::new()
         .prefix(prefix)
         .suffix(".tmp")
@@ -306,7 +316,7 @@ fn rev_number(name: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::USER_ACTOR;
+    use crate::artifact::{Kind, USER_ACTOR};
     use serde_json::Number;
     use std::os::unix::fs::PermissionsExt;
 
@@ -329,6 +339,9 @@ mod tests {
     fn artifact(id: &str, filename: &str) -> Artifact {
         Artifact::new(
             id.into(),
+            Kind::Document {
+                file: filename.into(),
+            },
             None,
             filename.into(),
             Number::from_f64(1.5).unwrap(),

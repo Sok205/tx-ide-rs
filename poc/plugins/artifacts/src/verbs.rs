@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use tx_client::tmux::Ui;
 use tx_core::{CoreError, ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
 
-use crate::artifact::{Artifact, USER_ACTOR};
+use crate::artifact::{Artifact, Kind, USER_ACTOR};
 use crate::grouping::{GroupResolver, ext_of, own_group};
 use crate::menu::{GO_VERB, MENU_VERB, Mode, Nav, PICK_VERB};
 use crate::render::{render_artifact_show, render_artifacts};
@@ -18,42 +18,59 @@ use crate::service::{ArtifactError, ArtifactService};
 use crate::views::{self, Opener};
 use crate::{PLUGIN_ID, service};
 
-const HELP_ROWS: [(&str, &str); 8] = [
+const HELP_ROWS: [(&str, &str); 13] = [
     (
-        "create <file> [--title T] [--group G]",
-        "register a new artifact from a file",
+        "create <file> [--title T] [--group G] [--kind document]",
+        "register a new document from a file",
+    ),
+    (
+        "create --kind diff [--title T] [--cwd W] [--base SHA]",
+        "a diff of worktree W (default: cwd) against SHA (default: merge-base)",
     ),
     (
         "modify <id> [<file>] [--changes ...]",
-        "snapshot a new revision (no file = the working copy)",
+        "snapshot a new revision (no file = the working copy; diff: the patch again)",
     ),
     (
         "group <id> [<group> | --clear]",
         "read or set the effort-group override",
     ),
     (
-        "ls [--session S]",
-        "list artifacts (--session: what a session touched)",
+        "ls [--session S] [--kind K] [--archived]",
+        "list artifacts (--session: what a session touched; --archived: include hidden)",
     ),
-    ("show <id>", "metadata + the full touch/version log"),
+    (
+        "show <id>",
+        "metadata + the kind's facts + the full touch/version log",
+    ),
     (
         "diff <id> [<revA> <revB>]",
         "unified diff between two revisions (default: last two)",
     ),
     (
         "open <id> [--tag T] [--cwd D]",
-        "open the working copy in an nvim view bound to the artifact (reuses an open one)",
+        "document/diff: an nvim view bound to the artifact (reuses an open one); else `txc <kind> open`",
+    ),
+    ("path <id>", "print the artifact directory"),
+    (
+        "archive <id>",
+        "hide a finished artifact from prefix+a and ls (content kept)",
+    ),
+    ("unarchive <id>", "bring an archived artifact back"),
+    (
+        "close <id>",
+        "run a pending close step now (a diff's temp worktree)",
     ),
     (
         "doctor [--repair]",
-        "check store invariants; --repair removes orphan rev files",
+        "check store invariants; --repair removes orphan rev files and runs close steps of ended views",
     ),
 ];
 
 fn help() -> String {
     let mut out = String::from("usage: txc artifact <subcommand> [args]\n\nsubcommands:\n");
     for (usage, summary) in HELP_ROWS {
-        out.push_str(&format!("  {usage:<40} {summary}\n"));
+        out.push_str(&format!("  {usage:<56} {summary}\n"));
     }
     out
 }
@@ -164,7 +181,7 @@ impl Verb for ArtifactVerb {
     }
 
     fn usage(&self) -> &'static str {
-        "artifact create|modify|group|ls|show|diff|open|doctor   durable versioned artifacts (txc artifact help)"
+        "artifact create|modify|group|ls|show|diff|open|path|archive|unarchive|close|doctor   durable versioned artifacts (txc artifact help)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -190,6 +207,10 @@ impl Verb for ArtifactVerb {
             "show" => ctx.show(rest)?,
             "diff" => ctx.diff(rest)?,
             "open" => ctx.open(rest)?,
+            "path" => ctx.path(rest)?,
+            "archive" => ctx.set_archived(rest, true)?,
+            "unarchive" => ctx.set_archived(rest, false)?,
+            "close" => ctx.close(rest)?,
             "doctor" => ctx.doctor(rest)?,
             other => Outcome::Usage(format!("unknown subcommand '{other}'\n{}", help())),
         };
@@ -246,32 +267,108 @@ impl Ctx<'_, '_> {
     }
 
     fn create(&mut self, argv: &[String]) -> Step {
-        let args = try_outcome!(parse(argv, &["title", "group"], &[]));
-        let [file] = try_outcome!(positionals(&args, 1, 0)) else {
-            unreachable!("one positional");
-        };
-        let path = Path::new(file);
-        if !path.is_file() {
-            return Ok(Outcome::Usage(format!("no such file: {file}")));
-        }
+        let args = try_outcome!(parse(argv, &["title", "group", "kind", "cwd", "base"], &[]));
         if args.option("group") == Some("") {
             return Ok(Outcome::Usage("a group cannot be empty".into()));
         }
-        let content = read_file(path)?;
-        let filename = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
+        let title = args.option("title").map(str::to_owned);
+        let group = args.option("group").map(str::to_owned);
         let actor = self.artifacts.actor().to_owned();
-        let artifact = try_outcome!(self.artifacts.create(
-            &actor,
-            &content,
-            args.option("title").map(str::to_owned),
-            filename,
-            args.option("group").map(str::to_owned),
-        ));
+        match args.option("kind").unwrap_or("document") {
+            "document" => {
+                let [file] = try_outcome!(positionals(&args, 1, 0)) else {
+                    unreachable!("one positional");
+                };
+                if args.option("cwd").is_some() || args.option("base").is_some() {
+                    return Ok(Outcome::Usage(
+                        "--cwd and --base belong to --kind diff".into(),
+                    ));
+                }
+                let path = Path::new(file);
+                if !path.is_file() {
+                    return Ok(Outcome::Usage(format!("no such file: {file}")));
+                }
+                let content = read_file(path)?;
+                let filename = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned());
+                let artifact = try_outcome!(
+                    self.artifacts
+                        .create(&actor, &content, title, filename, group)
+                );
+                self.print(&format!(
+                    "Created artifact {} ({})",
+                    artifact.id, artifact.filename
+                ))?;
+            }
+            "diff" => {
+                try_outcome!(positionals(&args, 0, 0));
+                let worktree = match args.option("cwd").filter(|cwd| !cwd.is_empty()) {
+                    Some(cwd) => PathBuf::from(cwd),
+                    None => std::env::current_dir().map_err(|error| {
+                        VerbError::Failed(format!("current directory: {error}"))
+                    })?,
+                };
+                let artifact = try_outcome!(self.artifacts.create_diff(
+                    &actor,
+                    worktree,
+                    args.option("base").unwrap_or(""),
+                    title,
+                    group,
+                ));
+                self.print(&format!(
+                    "Created diff artifact {} ({})",
+                    artifact.id,
+                    diff_facts(&artifact.kind)
+                ))?;
+            }
+            other => {
+                return Ok(Outcome::Usage(format!(
+                    "unknown kind '{other}' (document or diff; another kind is created by its own \
+                     plugin, `txc {other} create`)"
+                )));
+            }
+        }
+        Ok(Outcome::Code(0))
+    }
+
+    fn path(&mut self, argv: &[String]) -> Step {
+        let args = try_outcome!(parse(argv, &[], &[]));
+        let given = try_outcome!(positionals(&args, 1, 0));
+        let artifact_id = try_outcome!(self.artifacts.resolve_id(&given[0]));
+        let dir = try_outcome!(self.artifacts.dir(&artifact_id));
+        self.print(&dir.display().to_string())?;
+        Ok(Outcome::Code(0))
+    }
+
+    fn set_archived(&mut self, argv: &[String], archived: bool) -> Step {
+        let args = try_outcome!(parse(argv, &[], &[]));
+        let given = try_outcome!(positionals(&args, 1, 0));
+        let artifact_id = try_outcome!(self.artifacts.resolve_id(&given[0]));
+        let actor = self.artifacts.actor().to_owned();
+        let artifact = try_outcome!(self.artifacts.set_archived(&artifact_id, &actor, archived));
+        let line = if archived {
+            format!(
+                "Archived artifact {artifact_id} ({}); hidden from prefix+a and ls",
+                artifact.display_name()
+            )
+        } else {
+            format!(
+                "Unarchived artifact {artifact_id} ({})",
+                artifact.display_name()
+            )
+        };
+        self.print(&line)?;
+        Ok(Outcome::Code(0))
+    }
+
+    fn close(&mut self, argv: &[String]) -> Step {
+        let args = try_outcome!(parse(argv, &[], &[]));
+        let given = try_outcome!(positionals(&args, 1, 0));
+        let artifact_id = try_outcome!(self.artifacts.resolve_id(&given[0]));
+        let ran = try_outcome!(self.artifacts.close_all(&artifact_id));
         self.print(&format!(
-            "Created artifact {} ({})",
-            artifact.id, artifact.filename
+            "Closed artifact {artifact_id}: {ran} close step(s) run"
         ))?;
         Ok(Outcome::Code(0))
     }
@@ -310,8 +407,13 @@ impl Ctx<'_, '_> {
             return Ok(Outcome::Code(0));
         }
         if file.is_none() {
+            let what = if artifact.kind.is_diff() {
+                "the worktree's patch"
+            } else {
+                "the working copy"
+            };
             self.print(&format!(
-                "No change: the working copy is identical to rev {before}; nothing to snapshot."
+                "No change: {what} is identical to rev {before}; nothing to snapshot."
             ))?;
             return Ok(Outcome::Code(0));
         }
@@ -376,13 +478,19 @@ impl Ctx<'_, '_> {
     }
 
     fn ls(&mut self, argv: &[String]) -> Step {
-        let args = try_outcome!(parse(argv, &["session"], &[]));
+        let args = try_outcome!(parse(argv, &["session", "kind"], &["archived"]));
         try_outcome!(positionals(&args, 0, 0));
         let scan = self.artifacts.scan();
         for skipped in &scan.skipped {
             let _ = writeln!(self.io.stderr, "{}", skipped.warning());
         }
         let mut artifacts = scan.artifacts;
+        if !args.switch("archived") {
+            artifacts.retain(|artifact| !artifact.archived);
+        }
+        if let Some(kind) = args.option("kind") {
+            artifacts.retain(|artifact| artifact.kind.name() == kind);
+        }
         if let Some(token) = args.option("session") {
             let id = self
                 .core
@@ -416,8 +524,20 @@ impl Ctx<'_, '_> {
                 .map(|touch| touch.session_id.as_str()),
         );
         let resolved = self.resolved_group(&artifact);
-        let text =
-            render_artifact_show(&artifact, dirty, &names, tx_core::events::now(), &resolved);
+        let worktree_present = artifact.kind.worktree().map(Path::is_dir);
+        let pending: Vec<String> = try_outcome!(self.artifacts.pending_cleanups(&artifact))
+            .into_iter()
+            .map(|(view, cleanup)| format!("view {view}: {}", cleanup.describe()))
+            .collect();
+        let text = render_artifact_show(
+            &artifact,
+            dirty,
+            &names,
+            tx_core::events::now(),
+            &resolved,
+            worktree_present,
+            &pending,
+        );
         self.print(&text)?;
         Ok(Outcome::Code(0))
     }
@@ -455,11 +575,30 @@ impl Ctx<'_, '_> {
         self.core.get_session(&actor.parse().ok()?).ok()
     }
 
+    /// Open-by-convention: a kind the plugin does not handle itself is opened by the plugin that
+    /// registers the verb named after it, run in-process as `txc <kind> open <id>`.
+    fn open_by_convention(&mut self, kind: &str, artifact_id: &str) -> Step {
+        let Some(verb) = self.core.verb(kind) else {
+            let _ = writeln!(
+                self.io.stderr,
+                "txc artifact: no opener for kind `{kind}` (expected verb `txc {kind} open`)"
+            );
+            return Ok(Outcome::Code(1));
+        };
+        let argv = ["open".to_owned(), artifact_id.to_owned()];
+        let code = verb.run(self.core, self.io, &argv)?;
+        Ok(Outcome::Code(code))
+    }
+
     fn open(&mut self, argv: &[String]) -> Step {
         let args = try_outcome!(parse(argv, &["tag", "cwd"], &[]));
         let given = try_outcome!(positionals(&args, 1, 0));
         let artifact_id = try_outcome!(self.artifacts.resolve_id(&given[0]));
         let artifact = try_outcome!(self.artifacts.require(&artifact_id));
+        if let Kind::Other { kind, .. } = &artifact.kind {
+            let kind = kind.clone();
+            return self.open_by_convention(&kind, &artifact_id);
+        }
         let tags = match args.option("tag") {
             Some(raw) => {
                 let tags: Vec<String> = raw
@@ -477,10 +616,7 @@ impl Ctx<'_, '_> {
         let cwd = args
             .option("cwd")
             .filter(|cwd| !cwd.is_empty())
-            .map_or_else(
-                || self.artifacts.files().content_dir(&artifact),
-                PathBuf::from,
-            );
+            .map(PathBuf::from);
         let ui = Ui::from_core(self.core);
         if let Some(shown) = views::live_view(&ui, self.core, &artifact_id)? {
             let switched = ui.inside()
@@ -505,27 +641,40 @@ impl Ctx<'_, '_> {
             &artifact,
             &opener,
             tags,
-            &cwd,
+            cwd.as_deref(),
             self.editor,
         )?;
-        let path = self.artifacts.files().current_path(&artifact);
-        self.print(&format!(
-            "Opened artifact {artifact_id} in nvim view '{}' ({})",
-            view.name,
-            path.display()
-        ))?;
+        let line = match &artifact.kind {
+            Kind::Diff { base, .. } => format!(
+                "Opened diff artifact {artifact_id} in nvim view '{}' (diffview vs {} in {})",
+                view.name,
+                &base[..base.len().min(7)],
+                view.working_directory.display()
+            ),
+            _ => format!(
+                "Opened artifact {artifact_id} in nvim view '{}' ({})",
+                view.name,
+                self.artifacts.files().current_path(&artifact).display()
+            ),
+        };
+        self.print(&line)?;
         Ok(Outcome::Code(0))
     }
 
     fn doctor(&mut self, argv: &[String]) -> Step {
         let args = try_outcome!(parse(argv, &[], &["repair"]));
         try_outcome!(positionals(&args, 0, 0));
+        let ui = Ui::from_core(self.core);
+        let view_is_alive = |name: &str| ui.has_session(name);
         if args.switch("repair") {
             for line in try_outcome!(self.artifacts.repair_orphans()) {
                 self.print(&format!("  {line}"))?;
             }
+            for line in try_outcome!(self.artifacts.repair_cleanups(&view_is_alive)) {
+                self.print(&format!("  {line}"))?;
+            }
         }
-        let problems = try_outcome!(self.artifacts.doctor());
+        let problems = try_outcome!(self.artifacts.doctor(&view_is_alive));
         if problems.is_empty() {
             self.print("artifacts: clean")?;
             return Ok(Outcome::Code(0));
@@ -535,6 +684,16 @@ impl Ctx<'_, '_> {
         }
         self.print(&format!("artifacts: {} problem(s)", problems.len()))?;
         Ok(Outcome::Code(1))
+    }
+}
+
+/// `<worktree> vs <base7>`, a diff's facts for the create line.
+fn diff_facts(kind: &Kind) -> String {
+    match kind {
+        Kind::Diff { worktree, base, .. } => {
+            format!("{} vs {}", worktree.display(), &base[..base.len().min(7)])
+        }
+        _ => kind.name().to_owned(),
     }
 }
 
