@@ -13,7 +13,7 @@ pub const FG_ANSI: &str = "\x1b[38;2;192;202;245m";
 pub const BOLD: &str = "\x1b[1m";
 pub const RESET: &str = "\x1b[0m";
 
-// Inlined from main's `crates/tx/src/palette.rs` (tx-ui has no palette module).
+// Inlined from main's `crates/tx/src/palette.rs` (tx-client has no palette module).
 pub const DIM_FG_ANSI: &str = "\x1b[38;2;169;177;214m";
 pub const INFO_ANSI: &str = "\x1b[38;2;125;207;255m";
 pub const ITALIC: &str = "\x1b[3m";

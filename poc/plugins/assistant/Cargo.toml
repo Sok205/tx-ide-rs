@@ -8,7 +8,7 @@ description = "tx-core plugin: the tx-assistant agent session (`assistant warm`)
 
 [dependencies]
 tx-core.workspace = true
-tx-ui.workspace = true
+tx-client.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

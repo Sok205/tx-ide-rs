@@ -11,10 +11,10 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
+use tx_client::tmux::{Ui, shell_quote};
 use tx_core::{
     ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
 };
-use tx_ui::tmux::{Ui, shell_quote};
 
 pub mod bundle;
 pub mod checks;

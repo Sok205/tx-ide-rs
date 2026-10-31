@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["tx-core", "plugins/engine-claude", "plugins/engine-codex", "plugins/chat", "plugins/ide", "plugins/labels", "plugins/kill", "plugins/picker", "plugins/edit", "plugins/spawn", "plugins/assistant", "plugins/mockup", "plugins/tutor", "plugins/artifacts", "plugins/timeline", "plugins/menu", "tx-ui", "tx-core-cli"]
+members = ["tx-core", "plugins/engine-claude", "plugins/engine-codex", "plugins/chat", "plugins/ide", "plugins/labels", "plugins/kill", "plugins/picker", "plugins/edit", "plugins/spawn", "plugins/assistant", "plugins/mockup", "plugins/tutor", "plugins/artifacts", "plugins/timeline", "plugins/menu", "tx-client", "tx-core-cli"]
 
 [workspace.package]
 edition = "2024"
@@ -9,7 +9,7 @@ rust-version = "1.92"
 
 [workspace.dependencies]
 tx-core = { path = "tx-core" }
-tx-ui = { path = "tx-ui" }
+tx-client = { path = "tx-client" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 thiserror = "2"

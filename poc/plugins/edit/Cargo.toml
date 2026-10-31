@@ -8,7 +8,7 @@ description = "tx-core plugin: prefix+e, edit the name, tags and group of the se
 
 [dependencies]
 tx-core.workspace = true
-tx-ui.workspace = true
+tx-client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

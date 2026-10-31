@@ -1,7 +1,7 @@
 //! The prefix+a picker, ported from main's `artifact_picker.rs`: a list in a popup over the pane,
 //! drawn like the session picker's rows.
 //!
-//! Pure list logic ([`Picker`]), keys in and the chosen action out, around tx-ui's editor
+//! Pure list logic ([`Picker`]), keys in and the chosen action out, around tx-client's editor
 //! terminal layer. Enter attaches the cursor's row in the pane and a digit attaches that row;
 //! f (focus the pane already showing it) and p (open it in a popup) arm the operation instead,
 //! and the next digit or Enter applies it to that row — so `f 3` focuses the third row, as does
@@ -11,8 +11,8 @@
 
 use std::io;
 
-use tx_ui::editor::{Decoder, Key, Terminal, read_key, write_all};
-use tx_ui::render::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, RESET, SELECTION_BG, WARN_ANSI};
+use tx_client::editor::{Decoder, Key, Terminal, read_key, write_all};
+use tx_client::render::{ACCENT_ANSI, BOLD, DIM_FG_ANSI, RESET, SELECTION_BG, WARN_ANSI};
 
 pub const HINT: &str = "Enter/key attach here   f focus its pane   p popup   Esc close";
 

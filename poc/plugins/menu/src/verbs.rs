@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+use tx_client::tmux::{Ui, shell_quote};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
-use tx_ui::tmux::{Ui, shell_quote};
 
 use crate::data;
 use crate::model::{Action, Menu};

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use tx_ui::render::{chips, reltime};
+use tx_client::render::{chips, reltime};
 
 use crate::artifact::{Artifact, USER_ACTOR};
 

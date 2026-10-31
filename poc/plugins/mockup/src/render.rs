@@ -11,9 +11,9 @@ use ratatui::widgets::{Block, List, ListState, Paragraph, Row, StatefulWidget, T
 use crate::markup::lines;
 use crate::model::{Choice, Kind, Node, Screen, Size};
 
-/// `tx_ui::render::ACCENT_ANSI`.
+/// `tx_client::render::ACCENT_ANSI`.
 pub const ACCENT: Color = Color::Rgb(122, 162, 247);
-/// `tx_ui::render::WARN_ANSI`.
+/// `tx_client::render::WARN_ANSI`.
 pub const WARN: Color = Color::Rgb(224, 175, 104);
 
 pub const HINT: &str = "1-9 pick · ←/→ move · tab layout · enter confirm · esc back";

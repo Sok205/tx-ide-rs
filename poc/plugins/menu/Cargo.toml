@@ -8,7 +8,7 @@ description = "tx-core plugin: the tx-ide start menu (ratatui), prefix+m and the
 
 [dependencies]
 tx-core.workspace = true
-tx-ui.workspace = true
+tx-client.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 ratatui = "0.30"

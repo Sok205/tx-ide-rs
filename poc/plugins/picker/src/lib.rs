@@ -15,11 +15,11 @@ use tx_core::{
     Lifecycle, ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
 };
 
-use tx_ui::render::{
+use tx_client::render::{
     ACCENT_ANSI, BOLD, FG_ANSI, LOCATION_W, RESET, ROLE_W, Row, WARN_ANSI, picker_namew,
     picker_rows,
 };
-use tx_ui::tmux::Ui;
+use tx_client::tmux::Ui;
 
 pub const PLUGIN_ID: &str = "picker";
 

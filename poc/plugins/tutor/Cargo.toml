@@ -8,7 +8,7 @@ description = "tx-core plugin: the vimtutor-style walkthrough, `txc tutor`."
 
 [dependencies]
 tx-core.workspace = true
-tx-ui.workspace = true
+tx-client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

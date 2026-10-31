@@ -8,7 +8,7 @@ description = "tx-core plugin: ide, the nested-tmux workspace layer of tx-ide."
 
 [dependencies]
 tx-core.workspace = true
-tx-ui.workspace = true
+tx-client.workspace = true
 
 [lints]
 workspace = true

@@ -1,8 +1,8 @@
-//! The tmux calls prefix+a needs beyond `tx_ui::tmux::Ui` (popups, the outer-client walk,
+//! The tmux calls prefix+a needs beyond `tx_client::tmux::Ui` (popups, the outer-client walk,
 //! focusing a hosting pane), ported from main's `tmux.rs`. All go through `Ui::run` / `Ui::quiet`,
 //! so every call carries the core's `-S` and `-f`. Parsers are pure.
 
-use tx_ui::tmux::{Ui, UiError, shell_quote};
+use tx_client::tmux::{Ui, UiError, shell_quote};
 
 pub const ACCENT_HEX: &str = "#7aa2f7";
 pub const FG_HEX: &str = "#c0caf5";

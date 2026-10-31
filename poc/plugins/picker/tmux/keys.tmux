@@ -6,7 +6,7 @@
 #
 # The popup is `-w 118`: wide enough for NAME + the 25-col LOCATION + STARTED/IDLE/ROLE + tag
 # chips without wrapping, with ~5 cols of extra NAME headroom. Keep it in lockstep with
-# `LOCATION_W` and `picker_namew` in tx-ui's render.rs.
+# `LOCATION_W` and `picker_namew` in tx-client's render.rs.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the quoting.
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.

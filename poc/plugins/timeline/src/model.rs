@@ -284,11 +284,11 @@ fn round1(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
-/// The 256-colour cube value of a group key (the tag chip palette of `tx-ui`).
+/// The 256-colour cube value of a group key (the tag chip palette of `tx-client`).
 pub fn tag_cube(key: &str) -> u8 {
-    let palette = &tx_ui::render::TAG_CUBE;
+    let palette = &tx_client::render::TAG_CUBE;
     // Lossless: the remainder is below the palette size.
-    palette[(tx_ui::render::tag_hash(key) % palette.len() as u64) as usize]
+    palette[(tx_client::render::tag_hash(key) % palette.len() as u64) as usize]
 }
 
 /// The user-dragged group order (mirrors the HTML view's drag & drop).

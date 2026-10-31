@@ -8,8 +8,8 @@ use std::io::Write;
 use std::process::Stdio;
 use std::sync::Arc;
 
+use tx_client::tmux::{Ui, shell_quote};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
-use tx_ui::tmux::{Ui, shell_quote};
 
 use crate::app::DEFAULT_WINDOW_MIN;
 use crate::model::{Builder, DEFAULT_DAYS, chat_sources, is_agent, load_sessions};
