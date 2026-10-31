@@ -17,6 +17,8 @@ pub const TAG: &str = "tx-system";
 pub const ENGINE: &str = "claude";
 pub const MODEL: &str = "opus";
 pub const EFFORT: Effort = Effort::Medium;
+/// The first turn, typed by core at launch: an agent needs an initial prompt.
+pub const GREETING: &str = "You are starting up. Reply with the single word READY.";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AssistantPlugin;
@@ -35,13 +37,14 @@ impl Plugin for AssistantPlugin {
     }
 }
 
-/// The assistant session: COMMON + TX-ASSISTANT on claude, tagged `tx-system`, in the state
-/// dir (so the engine's skill links land there, not in `$HOME`).
+/// The assistant session: COMMON + TX-ASSISTANT on claude, greeted with `GREETING`, tagged
+/// `tx-system`, in the state dir (so the engine's skill links land there, not in `$HOME`).
 pub fn create_options(core: &TxCore) -> CreateOptions {
     let launch = LaunchOptions::agent(ENGINE)
         .profile([COMMON_ROLE, ROLE])
         .model(MODEL)
-        .effort(EFFORT);
+        .effort(EFFORT)
+        .initial_prompt(GREETING);
     CreateOptions::new(SESSION_NAME, core.config().directories.data.clone(), launch).tags([TAG])
 }
 

@@ -10,7 +10,7 @@ usage: txc [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DI
            [--plugins FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
 
 verbs:
-  create NAME --cwd DIR (--engine ID [--role R]... [--model M] [--effort E] [--prompt T] [--resume ID] | --exec PROG [ARG]...)
+  create NAME --cwd DIR (--engine ID [--role R]... [--model M] [--effort E] (--prompt T | --resume ID) | --exec PROG [ARG]...)
                 [--parent ID] [--tag T]... [--env KEY=VALUE]...     start a session; prints its id
   ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped]   id, name, lifecycle, cwd per line
   show TARGET                                                       the record as JSON
@@ -362,14 +362,20 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     }
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
     let launch = match (engine, exec) {
-        (Some(engine), None) => LaunchSpec::Agent {
-            engine,
-            roles,
-            model,
-            effort,
-            prompt,
-            resume,
-        },
+        (Some(engine), None) => {
+            // A resume carries its history instead; PR 6 removes resume-by-create.
+            if prompt.is_none() && resume.is_none() {
+                return Err(usage("--prompt is required with --engine"));
+            }
+            LaunchSpec::Agent {
+                engine,
+                roles,
+                model,
+                effort,
+                prompt,
+                resume,
+            }
+        }
         (None, Some((program, args))) => {
             if !roles.is_empty()
                 || model.is_some()
@@ -568,6 +574,10 @@ mod tests {
             (
                 "create n --cwd /w --engine e --resume",
                 "--resume needs a value",
+            ),
+            (
+                "create n --cwd /w --engine e --model m",
+                "--prompt is required with --engine",
             ),
             ("create n --cwd /w --bogus --exec sh", "--bogus"),
             ("create n extra --cwd /w --exec sh", "extra"),

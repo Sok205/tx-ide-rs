@@ -26,6 +26,8 @@ pub enum CoreError {
     NotRunning(SessionId),
     #[error("no engine registered as {0:?}")]
     UnknownEngine(String),
+    #[error("an agent needs an initial prompt")]
+    PromptRequired,
     #[error("an engine with id {0:?} is already registered")]
     EngineTaken(String),
     #[error("an engine owning the ext key {0:?} is already registered")]

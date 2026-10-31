@@ -433,6 +433,8 @@ fn operator(cli: &Cli) -> (String, String) {
             cwd.to_str().unwrap(),
             "--engine",
             "claude",
+            "--prompt",
+            "start",
         ],
         &[("PATH", &path)],
         "",

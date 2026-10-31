@@ -49,7 +49,7 @@ fn the_assistant_is_claude_with_common_and_its_role_in_the_data_dir() {
     assert_eq!(profile, ["COMMON", "TX-ASSISTANT"]);
     assert_eq!(model.as_deref(), Some("opus"));
     assert_eq!(effort, Some(tx_core::Effort::Medium));
-    assert_eq!(initial_prompt, None);
+    assert_eq!(initial_prompt.as_deref(), Some(tx_assistant::GREETING));
 }
 
 #[test]
