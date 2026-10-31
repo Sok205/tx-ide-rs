@@ -23,7 +23,6 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `tx-core` | the library: `TxCore` and the public operations | serde, serde_json, thiserror, uuid, tempfile |
 | `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `LlmEngine` for Claude Code | tx-core |
 | `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `LlmEngine` for Codex | tx-core |
-| `plugins/ide` (`tx-ide`) | plugin: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core, tx-client |
 | `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-client |
 | `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-client |
 | `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-client |
@@ -37,7 +36,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`), `txc group` (effort groups), prefix+a | tx-core, tx-client |
 | `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-client, tx-chat (message parser), ratatui |
 | `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `txc menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-client, ratatui, tempfile |
-| `tx-client` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins | tx-core |
+| `tx-client` | library: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins; also plugin `ide`: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core |
 | `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins. `txi`: the internal binary the engines' wired hooks run (`txi hook <Event>`) | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`

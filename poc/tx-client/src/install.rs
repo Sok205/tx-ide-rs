@@ -10,7 +10,7 @@ use std::process::Stdio;
 
 use tx_core::{Resource, TxCore, Verb, VerbError, VerbIo};
 
-use tx_client::tmux::Ui;
+use crate::tmux::Ui;
 
 const HOME_SESSION: &str = "home";
 const INSTALLED: &str = "keys/.installed";

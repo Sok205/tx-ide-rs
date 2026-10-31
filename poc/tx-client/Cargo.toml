@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Shared UI code for the tx-core key plugins: tmux helper, picker renderer, modal editor."
+description = "The tx client: shared UI code for the key plugins (tmux helper, picker renderer, modal editor) and the ide plugin (ui install|attach, the home session)."
 
 [dependencies]
 tx-core.workspace = true

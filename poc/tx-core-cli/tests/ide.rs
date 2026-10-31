@@ -490,7 +490,7 @@ fn resource_verb_prints_bytes_and_fails_on_unknown() {
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(
         output.stdout,
-        include_bytes!("../../plugins/ide/conf/tmux.conf")
+        include_bytes!("../../tx-client/conf/tmux.conf")
     );
     let output = cli.run(&["_resource", "bin/tmux-nav"], &[], "");
     assert!(output.stdout.starts_with(b"#!/usr/bin/env bash"));

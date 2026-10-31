@@ -1812,11 +1812,11 @@ dependencies = [
  "tx-artifacts",
  "tx-assistant",
  "tx-chat",
+ "tx-client",
  "tx-core",
  "tx-edit",
  "tx-engine-claude",
  "tx-engine-codex",
- "tx-ide",
  "tx-kill",
  "tx-labels",
  "tx-menu",
@@ -1853,14 +1853,6 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "tempfile",
- "tx-core",
-]
-
-[[package]]
-name = "tx-ide"
-version = "0.1.0"
-dependencies = [
- "tx-client",
  "tx-core",
 ]
 
