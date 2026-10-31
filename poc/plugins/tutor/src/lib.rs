@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tx_client::tmux::{Ui, shell_quote};
+use tx_client::views::{self, ViewKind, ViewRequest, default_shell};
 use tx_core::{
     ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
 };
@@ -34,14 +35,13 @@ pub const DEFAULT_LANG: &str = "python";
 /// Views are `tutor-<lang>`.
 pub const VIEW_PREFIX: &str = "tutor-";
 
-const VIEW_OPTION: &str = "@tx-view";
 const KEYS_FILE: &str = "keys.txt";
 const LESSON_LUA: &str = "lesson.lua";
 /// The height of the cheat-sheet pane under the lesson.
 const KEYS_LINES: u16 = 15;
 /// Always needed besides the pack's own `requires`.
 const BASE_REQUIRES: [&str; 2] = ["git", "nvim"];
-const NVIM_BASE_ARGS: &str = "+'set background=dark | colorscheme tokyonight-moon'";
+const NVIM_COLORS: &str = "+set background=dark | colorscheme tokyonight-moon";
 
 const USAGE: &str = "usage: txc tutor start [LANG] [--dir DIR] [--detach] | check | next | prev | goto N | status | hint | reset [--hard]   (all but start take --lang LANG)";
 
@@ -333,8 +333,8 @@ impl<'a> Tutor<'a> {
         if !self.ui.has_session(&view) {
             let current = pack.index_of(&progress.current).unwrap_or(0);
             if let Err(error) = self.build_view(pack, &view, &progress.dir, current) {
-                // Half-built view: kill it so a re-run of `start` rebuilds it cleanly.
-                self.ui.kill_session(&view);
+                // Half-built view: close it so a re-run of `start` rebuilds it cleanly.
+                let _ = views::close(&self.ui, &view);
                 return Err(error);
             }
             writeln!(io.stdout, "{view} view created.").map_err(failed)?;
@@ -367,7 +367,7 @@ impl<'a> Tutor<'a> {
     ) -> Result<(), VerbError> {
         let socket = socket_path(&self.data, &pack.lang);
         let _ = std::fs::remove_file(&socket);
-        let nvim = lesson_nvim_command(
+        let nvim = lesson_nvim_argv(
             &socket,
             &pack.dir.join("lessons"),
             &self.packs().join(LESSON_LUA),
@@ -375,15 +375,23 @@ impl<'a> Tutor<'a> {
             &self.ui.argv(&[]),
             &pack.lesson_path(lesson),
         );
+        views::open(
+            &self.ui,
+            &ViewRequest {
+                name: view,
+                kind: ViewKind::Tutor,
+                program: &nvim[0],
+                arguments: &nvim[1..],
+                working_directory: project,
+                tags: &[],
+                parent_id: None,
+                bound: None,
+            },
+        )
+        .map_err(failed)?;
         // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
         let cwd = project.to_string_lossy().replace('#', "##");
         let shell = default_shell();
-        self.ui
-            .run(&["new-session", "-d", "-s", view, "-c", &cwd, &nvim])
-            .map_err(failed)?;
-        self.ui
-            .set_session_option(view, VIEW_OPTION, "1")
-            .map_err(failed)?;
         let session = format!("={view}:");
         self.ui
             .run(&["split-window", "-h", "-t", &session, "-c", &cwd, &shell])
@@ -566,24 +574,17 @@ fn absolute_dir(dir: &str, home: Option<&Path>) -> Result<PathBuf, VerbError> {
     std::path::absolute(&expanded).map_err(|error| failed(format!("{dir}: {error}")))
 }
 
-fn default_shell() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .filter(|shell| !shell.is_empty())
-        .unwrap_or_else(|| "sh".to_owned())
-}
-
-/// The lesson pane: nvim listening on the tutor socket so `check` / `next` can switch lessons.
-/// `lesson.lua` makes lesson buffers diagnostics-free and lets Enter type a lesson command into
-/// the view's shell pane through `tmux_argv` (the core's server).
-fn lesson_nvim_command(
+/// The lesson pane, as argv: nvim listening on the tutor socket so `check` / `next` can switch
+/// lessons. `lesson.lua` makes lesson buffers diagnostics-free and lets Enter type a lesson
+/// command into the view's shell pane through `tmux_argv` (the core's server).
+fn lesson_nvim_argv(
     socket: &Path,
     lessons: &Path,
     lua: &Path,
     shell: &str,
     tmux_argv: &[std::ffi::OsString],
     lesson: &Path,
-) -> String {
+) -> Vec<String> {
     let tmux: Vec<String> = std::iter::once("tmux".to_owned())
         .chain(
             tmux_argv
@@ -599,13 +600,17 @@ fn lesson_nvim_command(
         tmux.join(", ")
     );
     let load = format!("luafile {}", lua.to_string_lossy().replace(' ', "\\ "));
-    format!(
-        "nvim --listen {} {NVIM_BASE_ARGS} --cmd {} --cmd {} {}",
-        shell_quote(&socket.to_string_lossy()),
-        shell_quote(&globals),
-        shell_quote(&load),
-        shell_quote(&lesson.to_string_lossy())
-    )
+    vec![
+        "nvim".to_owned(),
+        "--listen".to_owned(),
+        socket.to_string_lossy().into_owned(),
+        NVIM_COLORS.to_owned(),
+        "--cmd".to_owned(),
+        globals,
+        "--cmd".to_owned(),
+        load,
+        lesson.to_string_lossy().into_owned(),
+    ]
 }
 
 /// The cheat-sheet pane: redraws on every resize (the view is born detached at 80x24 and grows
@@ -726,7 +731,7 @@ mod tests {
     #[test]
     fn the_lesson_opens_in_nvim_listening_on_the_tutor_socket() {
         let tmux = ["-S", "/s/tmux.sock", "-f", "/s/tmux.conf"].map(std::ffi::OsString::from);
-        let command = lesson_nvim_command(
+        let argv = lesson_nvim_argv(
             Path::new("/d/python.sock"),
             Path::new("/r/my pack/lessons"),
             Path::new("/r/my pack/lesson.lua"),
@@ -735,14 +740,20 @@ mod tests {
             Path::new("/r/my pack/lessons/01.md"),
         );
         assert_eq!(
-            command,
-            "nvim --listen '/d/python.sock' \
-             +'set background=dark | colorscheme tokyonight-moon' \
-             --cmd 'lua vim.g.tx_tutor_lessons = [[/r/my pack/lessons/*]]; \
-             vim.g.tx_tutor_shell = [[=tutor-python:.{top-right}]]; \
-             vim.g.tx_tutor_tmux = { [[tmux]], [[-S]], [[/s/tmux.sock]], [[-f]], [[/s/tmux.conf]] }' \
-             --cmd 'luafile /r/my\\ pack/lesson.lua' \
-             '/r/my pack/lessons/01.md'"
+            argv,
+            [
+                "nvim",
+                "--listen",
+                "/d/python.sock",
+                "+set background=dark | colorscheme tokyonight-moon",
+                "--cmd",
+                "lua vim.g.tx_tutor_lessons = [[/r/my pack/lessons/*]]; \
+                 vim.g.tx_tutor_shell = [[=tutor-python:.{top-right}]]; \
+                 vim.g.tx_tutor_tmux = { [[tmux]], [[-S]], [[/s/tmux.sock]], [[-f]], [[/s/tmux.conf]] }",
+                "--cmd",
+                "luafile /r/my\\ pack/lesson.lua",
+                "/r/my pack/lessons/01.md",
+            ]
         );
     }
 

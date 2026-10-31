@@ -99,10 +99,32 @@ fn kill_view_home_reports_a_failed_kill() {
     let output = cli.run(&["kill", "Views"], &[("PATH", &path)], "");
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty(), "{:?}", output.stdout);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "session 'Views' not found\n"
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("kill-session"), "{stderr:?}");
+    assert!(cli.tmux(&["has-session", "-t", "=Views"]).status.success());
+}
+
+/// The guard: a session core marked `@tx-id` whose record is gone is still never killed here.
+#[test]
+fn kill_refuses_an_agent_session_without_a_record() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create("a");
+    assert!(
+        cli.tmux(&["new-session", "-d", "-s", "ghost", "sleep", "60"])
+            .status
+            .success()
     );
+    assert!(
+        cli.tmux(&["set-option", "-t", "=ghost:", "@tx-id", "0000-forgotten"])
+            .status
+            .success()
+    );
+    let output = cli.run(&["kill", "ghost"], &[], "");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("'ghost' is an agent's session"), "{stderr:?}");
+    assert!(cli.tmux(&["has-session", "-t", "=ghost"]).status.success());
 }
 
 #[test]

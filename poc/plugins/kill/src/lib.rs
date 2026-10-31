@@ -1,9 +1,12 @@
-//! tx-core plugin `kill`: prefix+X confirms, then stops the session in the active pane through
-//! `txc kill` so the record stays honest. Publishes `keys/kill.tmux` and its helper script.
+//! tx-core plugin `kill`: prefix+X confirms, then stops the session in the active pane: an
+//! agent through `txc kill` so the record stays honest, a view through `txc ui view close`.
+//! `txc kill <name>` also closes a view by name, under the views guard (never an agent's tmux
+//! session behind core's back). Publishes `keys/kill.tmux` and its helper script.
 
 use std::sync::Arc;
 
 use tx_client::tmux::Ui;
+use tx_client::views::{self, ViewError};
 use tx_core::{
     CoreError, Plugin, PluginError, Registry, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
@@ -51,7 +54,7 @@ impl Verb for Kill {
     }
 
     fn usage(&self) -> &'static str {
-        "kill <name>   stop a session (prefix+X)"
+        "kill <name>   stop a session, or close a view (prefix+X)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -62,13 +65,14 @@ impl Verb for Kill {
         let ui = Ui::from_core(core);
         let name = match resolve_or_not_found(core, token)? {
             Some(id) => core.stop_session(&id)?.name,
-            None if ui.has_session(token) && ui.is_view(token) && ui.kill_session(token) => {
-                token.clone()
-            }
-            None => {
-                let _ = writeln!(io.stderr, "session '{token}' not found");
-                return Ok(1);
-            }
+            None => match views::close(&ui, token) {
+                Ok(()) => token.clone(),
+                Err(ViewError::NotFound(_) | ViewError::NotAView(_)) => {
+                    let _ = writeln!(io.stderr, "session '{token}' not found");
+                    return Ok(1);
+                }
+                Err(error) => return Err(VerbError::Failed(error.to_string())),
+            },
         };
         write_out(io, &format!("Killed '{name}'\n"))?;
         Ok(0)

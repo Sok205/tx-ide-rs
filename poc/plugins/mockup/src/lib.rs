@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
-use tx_client::tmux::{Ui, UiError, shell_quote};
+use tx_client::tmux::{Ui, shell_quote};
+use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{
     CoreError, Plugin, PluginError, Registry, SendOptions, Session, SessionId, TxCore, Verb,
     VerbError, VerbIo,
@@ -27,7 +28,6 @@ pub const VIEW_PREFIX: &str = "mockup-";
 /// Session dirs are `<project>/.superpowers/mockup/<agent id>`.
 pub const SESSION_DIRS: &str = ".superpowers/mockup";
 
-const VIEW_OPTION: &str = "@tx-view";
 const DIR_OPTION: &str = "@tx-mockup-dir";
 const RETURN_OPTION: &str = "@tx-mockup-return";
 
@@ -111,7 +111,7 @@ fn agent_from_env(core: &TxCore) -> Option<SessionId> {
     std::env::var("TX_SESSION_ID").ok()?.parse().ok()
 }
 
-fn failed(error: UiError) -> VerbError {
+fn failed(error: impl std::fmt::Display) -> VerbError {
     VerbError::Failed(error.to_string())
 }
 
@@ -153,37 +153,44 @@ fn project_of(dir: &Path) -> Result<&Path, VerbError> {
     })
 }
 
-/// `<txc> <cli_arguments> _mockup-view <dir> <view>`, shell-quoted.
-fn viewer_command(core: &TxCore, dir: &Path, view: &str) -> Result<String, VerbError> {
+/// `<txc> <cli_arguments> _mockup-view <dir> <view>`, as argv.
+fn viewer_argv(core: &TxCore, dir: &Path, view: &str) -> Result<Vec<String>, VerbError> {
     let exe = std::env::current_exe()
         .map_err(|error| VerbError::Failed(format!("current exe: {error}")))?;
-    let mut words = vec![shell_quote(&exe.to_string_lossy())];
-    words.extend(
-        core.config()
-            .cli_arguments()
-            .iter()
-            .map(|word| shell_quote(word)),
-    );
+    let mut words = vec![exe.to_string_lossy().into_owned()];
+    words.extend(core.config().cli_arguments().iter().cloned());
     words.push(VIEW_VERB.to_owned());
-    words.push(shell_quote(&dir.to_string_lossy()));
-    words.push(shell_quote(view));
-    Ok(words.join(" "))
+    words.push(dir.to_string_lossy().into_owned());
+    words.push(view.to_owned());
+    Ok(words)
 }
 
-/// Creates the view running the viewer unless it is already there, then marks it.
+/// Creates the view running the viewer unless it is already there (a view of the agent the
+/// session dir belongs to, so it closes with it), then marks it.
 fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), VerbError> {
-    let command = viewer_command(core, dir, view)?;
+    let argv = viewer_argv(core, dir, view)?;
     if !ui.has_session(view) {
-        // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
-        let project = project_of(dir)?.to_string_lossy().replace('#', "##");
-        ui.run(&["new-session", "-d", "-s", view, "-c", &project, &command])
-            .map_err(failed)?;
+        views::open(
+            ui,
+            &ViewRequest {
+                name: view,
+                kind: ViewKind::Mockup,
+                program: &argv[0],
+                arguments: &argv[1..],
+                working_directory: project_of(dir)?,
+                tags: &[],
+                parent_id: agent_of(dir).as_ref(),
+                bound: None,
+            },
+        )
+        .map_err(failed)?;
     } else if ui
         .display_message("#{pane_dead}", Some(&format!("={view}:")))
         .as_deref()
         == Some("1")
     {
-        ui.respawn_pane(&format!("={view}:"), &command)
+        let command: Vec<String> = argv.iter().map(|word| shell_quote(word)).collect();
+        ui.respawn_pane(&format!("={view}:"), &command.join(" "))
             .map_err(failed)?;
     }
     ui.run(&[
@@ -195,11 +202,7 @@ fn ensure_view(core: &TxCore, ui: &Ui, view: &str, dir: &Path) -> Result<(), Ver
     ])
     .map_err(failed)?;
     let dir = dir.to_string_lossy();
-    for (option, value) in [
-        (VIEW_OPTION, "1"),
-        (DIR_OPTION, dir.as_ref()),
-        ("status", "off"),
-    ] {
+    for (option, value) in [(DIR_OPTION, dir.as_ref()), ("status", "off")] {
         ui.set_session_option(view, option, value).map_err(failed)?;
     }
     Ok(())
@@ -359,7 +362,9 @@ impl Verb for MockupVerb {
             Sub::Wait => wait(io, &session),
             Sub::Stop => {
                 switch_back(&ui, &view);
-                ui.kill_session(&view);
+                if ui.has_session(&view) {
+                    views::close(&ui, &view).map_err(failed)?;
+                }
                 Ok(0)
             }
         }
