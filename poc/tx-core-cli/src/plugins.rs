@@ -40,7 +40,7 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
 ];
 
 /// Ids of plugins this binary no longer links; `plugins.yaml` entries for them are ignored.
-/// `hooks`: agent state moved into core and the engine adapters (`txc chat hook`).
+/// `hooks`: agent state moved into core and the engine adapters (`txi hook`).
 pub const RETIRED: &[&str] = &["hooks"];
 
 /// The built-in verbs; a plugin may not register one of these.
