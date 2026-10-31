@@ -174,6 +174,7 @@ impl Lcg {
 fn token_pool() -> Vec<String> {
     let mut pool: Vec<String> = [
         "create",
+        "fork",
         "ls",
         "show",
         "rename",

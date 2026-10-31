@@ -80,6 +80,62 @@ impl CreateOptions {
     }
 }
 
+/// How `fork_session` names and starts the new agent. Everything else (engine, roles, model,
+/// effort, starting checkout) comes from the source record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ForkOptions {
+    /// The name asked for; `None` is `<source name>-fork`. Made unique the way `create` does.
+    pub name: Option<String>,
+    /// The fork's first message. Required: an engine never starts a fork silently.
+    pub prompt: String,
+    /// `None`: the source's tags.
+    pub tags: Option<Vec<String>>,
+    /// Engine options the fork changes, a JSON object as in `LaunchOptions::Agent`; the rest of
+    /// the engine's data starts as a copy of the source's (its model and effort included), so
+    /// `{}` is "like the source".
+    pub options: serde_json::Value,
+}
+
+impl ForkOptions {
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            name: None,
+            prompt: prompt.into(),
+            tags: None,
+            options: serde_json::Value::Object(serde_json::Map::new()),
+        }
+    }
+
+    /// Replaces the engine options with `options`, a JSON object.
+    pub fn options(mut self, options: serde_json::Value) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Sets one engine option (`option("model", "fable")`); a repeated key replaces.
+    pub fn option(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+        if let serde_json::Value::Object(options) = &mut self.options {
+            options.insert(key.into(), value.into());
+        }
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn tags<I, S>(mut self, tags: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.tags = Some(tags.into_iter().map(Into::into).collect());
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LaunchOptions {
@@ -490,12 +546,75 @@ impl TxCore {
     /// checkout `opts.cwd`, under the first free name (`opts.name`, else `opts.name-2` …); the
     /// record carries the name and the worktree. A process runs in `opts.cwd` as asked.
     pub fn create_session(&self, opts: CreateOptions) -> Result<SessionId, CoreError> {
-        let (id, events) = self.create_locked(opts)?;
+        let (id, events) = self.create_locked(opts, None)?;
         self.emit(events);
         Ok(id)
     }
 
-    fn create_locked(&self, opts: CreateOptions) -> Result<(SessionId, Vec<Event>), CoreError> {
+    /// A new agent continuing `source`'s conversation in a branch, in a new worktree made from
+    /// the source's working directory at its committed `HEAD` (uncommitted changes stay
+    /// behind). It runs the source's engine with its roles and a copy of its engine data (model
+    /// and effort included) under `options.options`, carries `parent = source`, and starts with
+    /// `options.prompt`. The source keeps running. `NotAnAgent` for a process session; whether
+    /// the source has a conversation to branch is the engine's answer, surfaced as its
+    /// `EngineError`.
+    pub fn fork_session(
+        &self,
+        source: &SessionId,
+        options: ForkOptions,
+    ) -> Result<SessionId, CoreError> {
+        let (id, events) = self.fork_locked(source, options)?;
+        self.emit(events);
+        Ok(id)
+    }
+
+    fn fork_locked(
+        &self,
+        source: &SessionId,
+        options: ForkOptions,
+    ) -> Result<(SessionId, Vec<Event>), CoreError> {
+        if options.prompt.trim().is_empty() {
+            return Err(CoreError::PromptRequired);
+        }
+        // A snapshot under the source's lock; the fork never holds the source afterwards.
+        let source = {
+            let _session = self.locks.session(source).map_err(CoreError::Lock)?;
+            self.get_session(source)?
+        };
+        let Launch::Agent {
+            engine, profile, ..
+        } = &source.launch
+        else {
+            return Err(CoreError::NotAnAgent(source.id.clone()));
+        };
+        let name = options
+            .name
+            .unwrap_or_else(|| format!("{}-fork", source.name));
+        let launch = LaunchOptions::Agent {
+            engine: engine.clone(),
+            profile: profile.clone(),
+            options: options.options,
+            initial_prompt: Some(options.prompt),
+            resume: None,
+        };
+        let opts = CreateOptions {
+            name,
+            cwd: source.cwd.clone(),
+            parent: Some(source.id.clone()),
+            tags: options.tags.unwrap_or_else(|| source.tags.clone()),
+            env: Vec::new(),
+            launch,
+        };
+        self.create_locked(opts, Some(&source))
+    }
+
+    /// `fork_of`: the record whose conversation the new agent branches; `None` for a plain
+    /// create.
+    fn create_locked(
+        &self,
+        opts: CreateOptions,
+        fork_of: Option<&Session>,
+    ) -> Result<(SessionId, Vec<Event>), CoreError> {
         validate_name(&opts.name)?;
         validate_env(&opts.env)?;
         if !opts.cwd.is_dir() {
@@ -547,7 +666,7 @@ impl TxCore {
             if self.name_in_use(&opts.name, None)? {
                 return Err(CoreError::NameTaken(opts.name));
             }
-            return self.launch_locked(opts, engine, roles);
+            return self.launch_locked(opts, engine, roles, fork_of);
         }
         // An agent gets its own detached worktree at the starting checkout's `HEAD`, under the
         // first name free among the running records and on disk (`name`, `name-2`, … `name-99`).
@@ -559,19 +678,23 @@ impl TxCore {
                 .create_unique(&opts.cwd, &opts.name, &unavailable_names)?;
         validate_name(&name)
             .and_then(|()| std::fs::canonicalize(&worktree).map_err(store_io(&worktree)))
-            .and_then(|cwd| self.launch_locked(CreateOptions { name, cwd, ..opts }, engine, roles))
+            .and_then(|cwd| {
+                self.launch_locked(CreateOptions { name, cwd, ..opts }, engine, roles, fork_of)
+            })
             .inspect_err(|_| {
                 let _ = self.worktrees.remove(&worktree);
             })
     }
 
     /// Under the create lock, with `opts.name` free and `opts.cwd` the directory the session
-    /// runs in: the profile, the engine's plan, the tmux session, then the record.
+    /// runs in: the profile, the engine's plan, the tmux session, then the record. A fork
+    /// (`fork_of`) is launched in `LaunchMode::Fork` and announced as `Forked`, not `Created`.
     fn launch_locked(
         &self,
         opts: CreateOptions,
         engine: Option<(&dyn LlmEngine, ResolvedProfile)>,
         roles: Vec<String>,
+        fork_of: Option<&Session>,
     ) -> Result<(SessionId, Vec<Event>), CoreError> {
         let id = SessionId::mint();
         let profile_file = self.profile_path(&id);
@@ -595,7 +718,10 @@ impl TxCore {
         merge_env(&mut env, &opts.env);
 
         // The record exists before the engine is asked: the engine reads its id, cwd and data
-        // from it. A resume names its conversation there, under the engine's `ext` key.
+        // from it. A resume names its conversation there, under the engine's `ext` key; a fork
+        // starts from a copy of the source's data (its options among it), which the engine's
+        // `configure` then adjusts and its fork plan replaces with the fork's own. Core copies
+        // the value whole; it never reads into it.
         let mut ext = std::collections::BTreeMap::new();
         let launch = match (&opts.launch, &engine) {
             (LaunchOptions::Agent { engine, resume, .. }, Some((adapter, _))) => {
@@ -604,6 +730,9 @@ impl TxCore {
                         adapter.ext_key().to_owned(),
                         serde_json::json!({ "conversation_id": resume }),
                     );
+                }
+                if let Some(data) = fork_of.and_then(|source| source.ext.get(adapter.ext_key())) {
+                    ext.insert(adapter.ext_key().to_owned(), data.clone());
                 }
                 Launch::Agent {
                     engine: engine.clone(),
@@ -650,10 +779,10 @@ impl TxCore {
                 Some((adapter, resolved)),
             ) => {
                 // A resume already named its conversation in the record.
-                let mode = if session.ext.contains_key(adapter.ext_key()) {
-                    LaunchMode::Resume
-                } else {
-                    LaunchMode::Start
+                let mode = match fork_of {
+                    Some(source) => LaunchMode::Fork { source },
+                    None if session.ext.contains_key(adapter.ext_key()) => LaunchMode::Resume,
+                    None => LaunchMode::Start,
                 };
                 // The engine validates the options and merges them into its data, which the
                 // launch then reads. A refusal here has written nothing yet.
@@ -724,7 +853,10 @@ impl TxCore {
         if let Err(error) = self.save(&mut session) {
             return Err(undo(CoreError::Store(error)));
         }
-        let mut events = vec![event(EventType::Created, &session, None, "")];
+        let mut events = vec![match fork_of {
+            Some(source) => event(EventType::Forked, &session, None, source.id.as_str()),
+            None => event(EventType::Created, &session, None, ""),
+        }];
         if exited_at_once {
             events.push(event(
                 EventType::Exited,

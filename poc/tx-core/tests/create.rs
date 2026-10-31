@@ -631,3 +631,148 @@ fn reopen_sees_the_same_sessions() {
     assert!(core.get_execution_location(&id).is_ok());
     assert_eq!(h.live_names(), ["keep"]);
 }
+
+#[test]
+fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let repository = h.repository("repo");
+    let mut opts = agent("src", &repository);
+    opts.launch = LaunchOptions::agent(STUB_ID)
+        .option("effort", "high")
+        .initial_prompt("start");
+    opts.tags = vec!["t1".into()];
+    let source_id = core.create_session(opts).unwrap();
+    let source = core.get_session(&source_id).unwrap();
+    let head = git_ok(&source.cwd, &["rev-parse", "HEAD"]);
+    // Uncommitted work in the source's worktree stays there.
+    std::fs::write(source.cwd.join("draft.txt"), "wip").unwrap();
+
+    let fork_id = core
+        .fork_session(&source_id, tx_core::ForkOptions::new("go on"))
+        .unwrap();
+    assert_ne!(fork_id, source_id);
+    let fork = core.get_session(&fork_id).unwrap();
+    assert_eq!(fork.name, "src-fork");
+    assert_eq!(fork.parent, Some(source_id.clone()));
+    assert_eq!(fork.tags, ["t1"]);
+    assert_eq!(fork.lifecycle, Lifecycle::Running);
+    assert_eq!(fork.state, Some(tx_core::LlmEngineState::Starting));
+    assert!(matches!(
+        fork.launch,
+        Launch::Agent { ref engine, ref resume, .. } if engine == STUB_ID && resume.is_none()
+    ));
+    assert_ne!(fork.cwd, source.cwd);
+    assert_eq!(git_ok(&fork.cwd, &["rev-parse", "HEAD"]), head);
+    assert!(!fork.cwd.join("draft.txt").exists());
+    assert!(
+        fork.cwd.join("stub-marker.txt").is_file(),
+        "workspace on the fork's worktree"
+    );
+    // The fork's engine data starts as a copy of the source's (the stub's plan adds nothing
+    // without model `data`), so the source's effort reached the fork's launch.
+    assert_eq!(
+        fork.ext.get(STUB_ID),
+        Some(&serde_json::json!({"effort": "high"}))
+    );
+    let env = env_of(&fork.cwd);
+    assert_eq!(get(&env, "STUB_MODE"), Some("fork"));
+    assert_eq!(get(&env, "STUB_RESUME"), Some(source_id.as_str()));
+    assert_eq!(get(&env, "STUB_SESSION_ID"), Some(fork_id.as_str()));
+    assert_eq!(
+        get(&env, "STUB_EFFORT"),
+        Some("high"),
+        "the source's effort"
+    );
+    assert!(wait_for(Duration::from_secs(5), || fork
+        .cwd
+        .join("prompt.txt")
+        .exists()));
+    assert_eq!(
+        std::fs::read_to_string(fork.cwd.join("prompt.txt")).unwrap(),
+        "go on\n"
+    );
+    // The source is untouched and both run.
+    assert_eq!(core.get_session(&source_id).unwrap(), source);
+    let mut names = h.live_names();
+    names.sort();
+    assert_eq!(names, ["src", "src-fork"]);
+    let types: Vec<String> = h
+        .log_lines()
+        .iter()
+        .map(|line| line["type"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(types, ["created", "forked"]);
+    let forked = &h.log_lines()[1];
+    assert_eq!(forked["id"], fork_id.as_str());
+    assert_eq!(forked["name"], "src-fork");
+    assert_eq!(forked["msg"], source_id.as_str());
+
+    // A chosen name, tags and an engine option; a taken name gets the next free one, like
+    // create. The option goes through the engine's `configure` over the copied data.
+    let second = core
+        .fork_session(
+            &source_id,
+            tx_core::ForkOptions::new("again")
+                .name("src-fork")
+                .tags(["t2"])
+                .option("effort", "low"),
+        )
+        .unwrap();
+    let second = core.get_session(&second).unwrap();
+    assert_eq!(second.name, "src-fork-2");
+    assert_eq!(second.tags, ["t2"]);
+    assert_eq!(second.parent, Some(source_id.clone()));
+    assert_eq!(get(&env_of(&second.cwd), "STUB_EFFORT"), Some("low"));
+    assert_eq!(h.worktree_count(), 3);
+    // An option the engine refuses: its answer, and nothing is left of the fork.
+    let error = core
+        .fork_session(
+            &source_id,
+            tx_core::ForkOptions::new("no").option("model", "refuse"),
+        )
+        .unwrap_err();
+    assert!(matches!(error, CoreError::Engine(_)), "{error:?}");
+    assert_eq!(h.worktree_count(), 3);
+}
+
+#[test]
+fn fork_refuses_a_process_a_missing_prompt_and_the_engines_no() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let process_id = core.create_session(process("p", &h.workdir("p"))).unwrap();
+    let error = core
+        .fork_session(&process_id, tx_core::ForkOptions::new("go"))
+        .unwrap_err();
+    assert!(
+        matches!(&error, CoreError::NotAnAgent(id) if *id == process_id),
+        "{error:?}"
+    );
+    let repository = h.repository("repo");
+    let source_id = core.create_session(agent("src", &repository)).unwrap();
+    let before = git_worktrees(&repository);
+    for prompt in ["", "  \n"] {
+        let error = core
+            .fork_session(&source_id, tx_core::ForkOptions::new(prompt))
+            .unwrap_err();
+        assert!(matches!(error, CoreError::PromptRequired), "{error:?}");
+    }
+    let ghost: SessionId = "no-such".parse().unwrap();
+    assert!(matches!(
+        core.fork_session(&ghost, tx_core::ForkOptions::new("go"))
+            .unwrap_err(),
+        CoreError::NotFound(_)
+    ));
+    assert_eq!(git_worktrees(&repository), before);
+    assert_eq!(h.worktree_count(), 1);
+    assert_eq!(core.list_sessions(&ListFilter::default()).unwrap().len(), 2);
+    assert_eq!(h.live_names().len(), 2);
+    let types: Vec<String> = h
+        .log_lines()
+        .iter()
+        .map(|line| line["type"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(types, ["created", "created"]);
+}

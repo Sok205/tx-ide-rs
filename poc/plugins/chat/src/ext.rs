@@ -115,13 +115,7 @@ pub fn agent_launch(s: &Session, ext: &ChatExt) -> Option<AgentLaunch> {
             engine, profile, ..
         } => {
             // Model and effort are engine data (PR 12a); the engine's `ext` key is its id.
-            let option = |key: &str| {
-                s.ext
-                    .get(engine)?
-                    .get(key)?
-                    .as_str()
-                    .map(str::to_owned)
-            };
+            let option = |key: &str| s.ext.get(engine)?.get(key)?.as_str().map(str::to_owned);
             Some(AgentLaunch {
                 engine: engine.clone(),
                 profile: profile.clone(),

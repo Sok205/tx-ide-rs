@@ -210,10 +210,7 @@ impl LlmEngine for CodexAdapter {
         if let Some(model) = option(MODEL_KEY) {
             args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
         }
-        args.extend([
-            "-c".to_owned(),
-            format!("{REASONING_EFFORT_KEY}={effort}"),
-        ]);
+        args.extend(["-c".to_owned(), format!("{REASONING_EFFORT_KEY}={effort}")]);
         if !req.profile.text().is_empty() {
             args.extend([
                 "-c".to_owned(),
@@ -725,7 +722,10 @@ mod tests {
         let session = record(json!({"conversation_id": "c", "effort": "high"}));
         assert_eq!(
             adapter()
-                .configure(&session, &json!({"model": "gpt-6.1-sol", "effort": "medium"}))
+                .configure(
+                    &session,
+                    &json!({"model": "gpt-6.1-sol", "effort": "medium"})
+                )
                 .unwrap(),
             json!({"conversation_id": "c", "model": "gpt-6.1-sol", "effort": "medium"})
         );

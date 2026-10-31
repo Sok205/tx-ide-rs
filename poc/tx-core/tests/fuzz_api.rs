@@ -475,9 +475,9 @@ fn engine_adapter_object_is_usable_from_another_thread() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn event_type_all_is_nine_unique_lowercase_kebab_names() {
+fn event_type_all_is_ten_unique_lowercase_kebab_names() {
     let all: &[EventType] = EventType::ALL;
-    assert_eq!(all.len(), 9);
+    assert_eq!(all.len(), 10);
     let variants: BTreeSet<&str> = all
         .iter()
         .map(|t| format!("{t:?}").leak() as &str)

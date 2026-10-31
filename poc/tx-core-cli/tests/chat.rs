@@ -1,5 +1,5 @@
-//! The chat plugin through the binary: capture (`_chat-hook`, `chat ls`, `chat hooks`) and the
-//! chat ops (`fork`, `resume`).
+//! The chat plugin through the binary: capture (`_chat-hook`, `chat ls`, `chat hooks`), the chat
+//! op `resume`, and prefix+f (`_fork-pane`) over core's built-in `fork`.
 
 mod common;
 
@@ -308,52 +308,44 @@ fn has_run(argv: &[String], run: &[&str]) -> bool {
 }
 
 #[test]
-fn fork_resumes_the_source_chat_with_fork_session() {
+fn fork_launches_the_source_conversation_forked_in_a_new_worktree() {
     require_tmux!();
     let cli = Cli::new();
     let id = cli.create_agent("a");
-    cli.capture(&id, "c1");
-    let out = cli.op_ok(&["fork", "a"], &[]);
+    let source = cli.show("a");
+    let fork_id = cli.op_ok(&["fork", "a", "--prompt", "go on"], &[]);
+    let fork_id = fork_id.trim();
     let fork = cli.show("a-fork");
-    let cwd = fork["cwd"].as_str().unwrap();
-    assert_eq!(
-        out,
-        format!("Forked 'a' → 'a-fork' (chat pending, cwd={cwd})\n")
-    );
+    assert_eq!(fork["id"], fork_id);
     assert_eq!(fork["parent"], id.as_str());
-    assert_eq!(fork["launch"]["kind"], "process");
-    assert_eq!(fork["launch"]["program"], "claude");
-    cli.wait_argv(|argv| has_run(argv, &["--resume", "c1", "--fork-session"]));
-    let chat = &fork["ext"]["chat"];
-    assert_eq!(chat["engine"], "claude");
-    assert_eq!(chat["launch"]["engine"], "claude");
-    assert_eq!(chat["chats"][0]["role"], "fork");
-    assert_eq!(chat["chats"][0]["how"], "fork");
-    assert_eq!(chat["chats"][0]["id"], Value::Null);
-    assert_eq!(chat["chats"][0]["origin"]["session"], id.as_str());
-    assert_eq!(chat["chats"][0]["origin"]["chat"], "c1");
-    assert!(cli.op_ok(&["fork", "a"], &[]).contains("'a' → 'a-fork-2'"));
-}
-
-#[test]
-fn the_forks_pending_ref_is_filled_by_the_next_chat_hook() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create_agent("a");
-    cli.capture(&id, "c1");
-    cli.op_ok(&["fork", "a"], &[]);
-    let fork = cli.show("a-fork")["id"].as_str().unwrap().to_owned();
-    cli.capture(&fork, "c1");
-    assert_eq!(
-        cli.show("a-fork")["ext"]["chat"]["chats"][0]["id"],
-        Value::Null,
-        "a lazy fork still reports its source chat"
-    );
-    let body = payload("c2", &cli.dir.path().join("c2.jsonl"));
-    assert!(cli.hook("prompt-submit", &fork, &body).status.success());
-    let chats = &cli.show("a-fork")["ext"]["chat"]["chats"];
-    assert_eq!(chats[0]["id"], "c2");
-    assert_eq!(chats.as_array().unwrap().len(), 1);
+    assert_eq!(fork["launch"]["kind"], "agent");
+    assert_eq!(fork["launch"]["engine"], "claude");
+    assert_eq!(fork["state"], "starting");
+    let cwd = Path::new(fork["cwd"].as_str().unwrap());
+    assert_ne!(cwd, Path::new(source["cwd"].as_str().unwrap()));
+    assert!(cwd.starts_with(cli.worktrees_dir().canonicalize().unwrap()));
+    assert!(cwd.join(".git").exists(), "{}", cwd.display());
+    assert_eq!(fork["ext"]["claude"]["conversation_id"], fork_id);
+    let argv = cli.wait_argv(|argv| {
+        has_run(
+            argv,
+            &["--resume", &id, "--fork-session", "--session-id", fork_id],
+        )
+    });
+    assert_eq!(argv.last().map(String::as_str), Some("go on"));
+    let second = cli.op_ok(&["fork", "a", "--prompt", "again"], &[]);
+    assert_eq!(cli.show("a-fork-2")["id"], second.trim());
+    let types: Vec<String> = std::fs::read_to_string(cli.state().join("log.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(types, ["created", "forked", "forked"]);
 }
 
 #[test]
@@ -415,21 +407,22 @@ fn resume_relaunches_the_active_chat_from_ext() {
 }
 
 #[test]
-fn fork_without_a_chat_exits_1() {
+fn fork_refusals() {
     require_tmux!();
     let cli = Cli::new();
-    cli.create_agent("a");
-    let output = cli.op(&["fork", "a"], &[]);
+    let process = cli.create("p");
+    let output = cli.op(&["fork", "p", "--prompt", "go"], &[]);
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "fork: 'a' has no chat to fork\n"
+        format!("txc: session {process} is not an agent\n")
     );
-    assert!(cli.records_named("a-fork").is_empty());
-    let missing = cli.op(&["fork", "nope"], &[]);
+    assert!(cli.records_named("p-fork").is_empty());
+    let missing = cli.op(&["fork", "nope", "--prompt", "go"], &[]);
     assert_eq!(missing.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&missing.stderr).contains("fork: session 'nope' not found"));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no session \"nope\""));
     assert_eq!(cli.op(&["fork"], &[]).status.code(), Some(2));
+    assert_eq!(cli.op(&["fork", "p"], &[]).status.code(), Some(2));
 }
 
 #[test]

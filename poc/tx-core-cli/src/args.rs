@@ -16,6 +16,12 @@ verbs:
                                                                     own worktree of the checkout DIR (name NAME, else NAME-2 …).
                                                                     --model M and --effort E are --option model=M / effort=E;
                                                                     the engine validates every option
+  fork SOURCE --prompt T [--name NAME] [--tag T]... [--option KEY=VALUE]... [--model M] [--effort E]
+                                                                    a new agent continuing SOURCE's conversation in a branch,
+                                                                    in its own worktree at SOURCE's committed HEAD (uncommitted
+                                                                    changes are not carried over); SOURCE's engine, roles and
+                                                                    engine options unless an option says otherwise; name NAME,
+                                                                    else SOURCE-fork; tags default to SOURCE's; prints its id
   ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped]   id, name, lifecycle, cwd per line
   show TARGET                                                       the record as JSON
   rename TARGET NAME
@@ -95,6 +101,14 @@ pub enum Verb {
         env: Vec<(String, String)>,
         launch: LaunchSpec,
     },
+    Fork {
+        source: String,
+        name: Option<String>,
+        prompt: String,
+        tags: Vec<String>,
+        /// Engine options in command-line order, as `Create` carries them.
+        options: Vec<(String, String)>,
+    },
     Ls {
         parent: Option<String>,
         tag: Option<String>,
@@ -167,8 +181,14 @@ fn option_pair(text: &str) -> Result<(String, String), UsageError> {
     let (key, value) = text
         .split_once('=')
         .ok_or_else(|| usage(format!("--option expects KEY=VALUE, got {text:?}")))?;
-    if key.is_empty() || !key.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-') {
-        return Err(usage(format!("--option key {key:?} is not a bare name ([A-Za-z0-9_-]+)")));
+    if key.is_empty()
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err(usage(format!(
+            "--option key {key:?} is not a bare name ([A-Za-z0-9_-]+)"
+        )));
     }
     if value.is_empty() {
         return Err(usage(format!("--option {key} needs a non-empty value")));
@@ -278,6 +298,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             Verb::Migrate { from }
         }
         Some("create") => parse_create(&mut cursor)?,
+        Some("fork") => parse_fork(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
         Some("show") => Verb::Show {
             target: target(&mut cursor, "show")?,
@@ -414,6 +435,37 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         tags,
         env,
         launch,
+    })
+}
+
+fn parse_fork(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
+    let source = cursor
+        .next()
+        .filter(|arg| !arg.starts_with("--"))
+        .ok_or_else(|| usage("fork needs a source session id or name"))?
+        .to_owned();
+    let mut name = None;
+    let mut prompt = None;
+    let mut tags = Vec::new();
+    let mut options = Vec::new();
+    while let Some(flag) = cursor.next() {
+        match flag {
+            "--name" => name = Some(cursor.value(flag)?.to_owned()),
+            "--prompt" => prompt = Some(cursor.value(flag)?.to_owned()),
+            "--tag" => tags.push(cursor.value(flag)?.to_owned()),
+            "--model" => options.push(option_value("model", flag, cursor.value(flag)?)?),
+            "--effort" => options.push(option_value("effort", flag, cursor.value(flag)?)?),
+            "--option" => options.push(option_pair(cursor.value(flag)?)?),
+            other => return Err(usage(format!("fork: unexpected argument {other:?}"))),
+        }
+    }
+    let prompt = prompt.ok_or_else(|| usage("fork needs --prompt T"))?;
+    Ok(Verb::Fork {
+        source,
+        name,
+        prompt,
+        tags,
+        options,
     })
 }
 
@@ -573,6 +625,52 @@ mod tests {
     }
 
     #[test]
+    fn fork() {
+        assert_eq!(
+            parse_str("fork src --prompt go").unwrap().verb,
+            Verb::Fork {
+                source: "src".into(),
+                name: None,
+                prompt: "go".into(),
+                tags: vec![],
+                options: vec![],
+            }
+        );
+        assert_eq!(
+            parse_str(
+                "fork src --name twig --tag a --prompt go --tag b --model m --option k=v --effort low"
+            )
+            .unwrap()
+            .verb,
+            Verb::Fork {
+                source: "src".into(),
+                name: Some("twig".into()),
+                prompt: "go".into(),
+                tags: vec!["a".into(), "b".into()],
+                options: vec![
+                    ("model".into(), "m".into()),
+                    ("k".into(), "v".into()),
+                    ("effort".into(), "low".into()),
+                ],
+            }
+        );
+        for (line, needle) in [
+            ("fork", "source"),
+            ("fork --prompt go", "source"),
+            ("fork src", "--prompt"),
+            ("fork src --name n", "--prompt"),
+            ("fork src --prompt", "--prompt needs a value"),
+            ("fork src --prompt go --cwd /w", "--cwd"),
+            ("fork src --prompt go --option novalue", "KEY=VALUE"),
+            ("fork src --prompt go --model", "--model needs a value"),
+            ("fork src extra --prompt go", "extra"),
+        ] {
+            let error = parse_str(line).unwrap_err();
+            assert!(error.0.contains(needle), "{line}: {error}");
+        }
+    }
+
+    #[test]
     fn create_process_takes_the_rest_verbatim() {
         let inv = parse_str("create sh1 --cwd /w --tag t --exec sh -c --flag --cwd x").unwrap();
         let Verb::Create { launch, tags, .. } = inv.verb else {
@@ -602,7 +700,10 @@ mod tests {
             ("create n --cwd /w --engine e --option model", "KEY=VALUE"),
             ("create n --cwd /w --engine e --option =x", "bare name"),
             ("create n --cwd /w --engine e --option a.b=x", "bare name"),
-            ("create n --cwd /w --engine e --option model=", "needs a non-empty value"),
+            (
+                "create n --cwd /w --engine e --option model=",
+                "needs a non-empty value",
+            ),
             ("create n --cwd /w --option k=v --exec sh", "--option"),
             (
                 "create n --cwd /w --engine e --role",

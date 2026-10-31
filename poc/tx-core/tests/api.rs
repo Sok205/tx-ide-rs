@@ -178,5 +178,5 @@ fn config_filter_and_send_builders() {
 #[test]
 fn event_types_are_a_slice() {
     let all: &[EventType] = EventType::ALL;
-    assert_eq!(all.len(), 9);
+    assert_eq!(all.len(), 10);
 }

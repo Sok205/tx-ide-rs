@@ -65,7 +65,10 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
     };
     assert_eq!(engine, "claude");
     assert_eq!(profile, ["COMMON", "TX-ASSISTANT"]);
-    assert_eq!(options, serde_json::json!({"model": "opus", "effort": "medium"}));
+    assert_eq!(
+        options,
+        serde_json::json!({"model": "opus", "effort": "medium"})
+    );
     assert_eq!(initial_prompt.as_deref(), Some(tx_assistant::GREETING));
 }
 

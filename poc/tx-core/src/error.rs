@@ -25,6 +25,8 @@ pub enum CoreError {
     NotADirectory(PathBuf),
     #[error("session {0} is not running")]
     NotRunning(SessionId),
+    #[error("session {0} is not an agent")]
+    NotAnAgent(SessionId),
     #[error("no engine registered as {0:?}")]
     UnknownEngine(String),
     #[error("an agent needs an initial prompt")]

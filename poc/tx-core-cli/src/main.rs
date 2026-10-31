@@ -7,8 +7,8 @@ use std::process::{Command, ExitCode};
 
 use std::path::PathBuf;
 use tx_core::{
-    CoreError, CreateOptions, LaunchOptions, ListFilter, RefreshResult, SendOptions, SessionId,
-    TxCore,
+    CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, RefreshResult, SendOptions,
+    SessionId, TxCore,
 };
 use tx_core_cli::args::{self, Invocation, LaunchSpec, Verb};
 
@@ -155,6 +155,26 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 opts = opts.env(key, value);
             }
             let id = core.create_session(opts)?;
+            writeln!(out, "{id}").ok();
+        }
+        Verb::Fork {
+            source,
+            name,
+            prompt,
+            tags,
+            options: engine_options,
+        } => {
+            let mut options = ForkOptions::new(prompt);
+            if let Some(name) = name {
+                options = options.name(name);
+            }
+            if !tags.is_empty() {
+                options = options.tags(tags);
+            }
+            for (key, value) in engine_options {
+                options = options.option(key, value);
+            }
+            let id = core.fork_session(&core.resolve(&source)?, options)?;
             writeln!(out, "{id}").ok();
         }
         Verb::Ls {
