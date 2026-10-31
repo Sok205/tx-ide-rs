@@ -10,7 +10,7 @@ use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
 use crate::profile::{Profile, Profiles, ResolvedProfile};
-use crate::session::{Effort, Launch, Lifecycle, Session, SessionId, validate_name};
+use crate::session::{Launch, Lifecycle, Session, SessionId, validate_name};
 use crate::state::{LlmEngineHook, LlmEngineState};
 use crate::store::{SessionStore, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
@@ -86,8 +86,10 @@ pub enum LaunchOptions {
     Agent {
         engine: String,
         profile: Vec<String>,
-        model: Option<String>,
-        effort: Option<Effort>,
+        /// Engine options as a JSON object (`{"model": "fable", "effort": "high"}`): the engine
+        /// validates them (`LlmEngine::configure`) and they land in `ext[ext_key]` before the
+        /// launch. Core never interprets a key.
+        options: serde_json::Value,
         initial_prompt: Option<String>,
         /// A conversation id the engine continues: stored as `{"conversation_id": id}` under its
         /// `ext` key, then launched with `LaunchMode::Resume`.
@@ -104,8 +106,7 @@ impl LaunchOptions {
         Self::Agent {
             engine: engine.into(),
             profile: Vec::new(),
-            model: None,
-            effort: None,
+            options: serde_json::Value::Object(serde_json::Map::new()),
             initial_prompt: None,
             resume: None,
         }
@@ -134,18 +135,24 @@ impl LaunchOptions {
         self
     }
 
-    /// No effect on a `Process` launch.
-    pub fn model(mut self, model: impl Into<String>) -> Self {
-        if let Self::Agent { model: slot, .. } = &mut self {
-            *slot = Some(model.into());
+    /// Replaces the engine options with `options`, a JSON object. No effect on a `Process`
+    /// launch.
+    pub fn options(mut self, options: serde_json::Value) -> Self {
+        if let Self::Agent { options: slot, .. } = &mut self {
+            *slot = options;
         }
         self
     }
 
-    /// No effect on a `Process` launch.
-    pub fn effort(mut self, effort: Effort) -> Self {
-        if let Self::Agent { effort: slot, .. } = &mut self {
-            *slot = Some(effort);
+    /// Sets one engine option (`option("model", "fable")`); a repeated key replaces. No effect
+    /// on a `Process` launch.
+    pub fn option(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+        if let Self::Agent {
+            options: serde_json::Value::Object(options),
+            ..
+        } = &mut self
+        {
+            options.insert(key.into(), value.into());
         }
         self
     }
@@ -591,16 +598,7 @@ impl TxCore {
         // from it. A resume names its conversation there, under the engine's `ext` key.
         let mut ext = std::collections::BTreeMap::new();
         let launch = match (&opts.launch, &engine) {
-            (
-                LaunchOptions::Agent {
-                    engine,
-                    model,
-                    effort,
-                    resume,
-                    ..
-                },
-                Some((adapter, _)),
-            ) => {
+            (LaunchOptions::Agent { engine, resume, .. }, Some((adapter, _))) => {
                 if let Some(resume) = resume.as_deref().filter(|resume| !resume.is_empty()) {
                     ext.insert(
                         adapter.ext_key().to_owned(),
@@ -610,8 +608,8 @@ impl TxCore {
                 Launch::Agent {
                     engine: engine.clone(),
                     profile: roles,
-                    model: model.clone(),
-                    effort: *effort,
+                    model: None,
+                    effort: None,
                     resume: resume.clone(),
                 }
             }
@@ -645,26 +643,30 @@ impl TxCore {
         let (program, args) = match (&opts.launch, engine) {
             (
                 LaunchOptions::Agent {
-                    model,
-                    effort,
+                    options,
                     initial_prompt,
                     ..
                 },
                 Some((adapter, resolved)),
             ) => {
-                let profile =
-                    Profile::write(resolved, &profile_file).map_err(store_io(&profile_file))?;
+                // A resume already named its conversation in the record.
                 let mode = if session.ext.contains_key(adapter.ext_key()) {
                     LaunchMode::Resume
                 } else {
                     LaunchMode::Start
                 };
+                // The engine validates the options and merges them into its data, which the
+                // launch then reads. A refusal here has written nothing yet.
+                let engine_data = adapter.configure(&session, options)?;
+                session
+                    .ext
+                    .insert(adapter.ext_key().to_owned(), engine_data);
+                let profile =
+                    Profile::write(resolved, &profile_file).map_err(store_io(&profile_file))?;
                 let request = LaunchRequest {
                     session: &session,
                     mode,
                     profile: &profile,
-                    model: model.as_deref(),
-                    effort: *effort,
                     initial_prompt: initial_prompt.as_deref(),
                     hook_command: &self.config.hook_command,
                 };
@@ -1176,6 +1178,15 @@ mod tests {
         fn ext_key(&self) -> &'static str {
             "stub"
         }
+
+        fn configure(
+            &self,
+            _: &Session,
+            options: &serde_json::Value,
+        ) -> Result<serde_json::Value, EngineError> {
+            Ok(options.clone())
+        }
+
         fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
             Ok(LaunchPlan::default())
         }

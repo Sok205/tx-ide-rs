@@ -12,8 +12,12 @@
 //! Engine data, under `ext.claude` of the record, is this adapter's alone to read:
 //!
 //! ```json
-//! {"conversation_id": "5f0c…", "transcript_path": "/Users/w/.claude/projects/-Users-w-…/5f0c….jsonl"}
+//! {"conversation_id": "5f0c…", "transcript_path": "/Users/w/.claude/projects/-Users-w-…/5f0c….jsonl",
+//!  "model": "sonnet", "effort": "max"}
 //! ```
+//!
+//! `model` and `effort` are launch options: `configure` validates them (`ClaudeOptions`, with
+//! this crate's own [`Effort`] vocabulary) and merges them in before a launch reads them.
 //!
 //! A start or a fork names its conversation after the tx session id, so the launch plan carries
 //! both up front. After that, `SessionStart` reports them on every start (`startup`, `resume`,
@@ -22,10 +26,13 @@
 
 use std::path::{Path, PathBuf};
 
+use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Effort, EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
-    LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
+    EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
+    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -64,6 +71,64 @@ pub const CONTINUING_END_REASONS: [&str; 2] = ["clear", "resume"];
 pub const EXT_KEY: &str = "claude";
 pub const CONVERSATION_ID_KEY: &str = "conversation_id";
 pub const TRANSCRIPT_PATH_KEY: &str = "transcript_path";
+pub const MODEL_KEY: &str = "model";
+pub const EFFORT_KEY: &str = "effort";
+
+/// A reasoning-effort tier, as `claude --effort` names them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl Effort {
+    pub const ALL: [Effort; 5] = [
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::XHigh,
+        Effort::Max,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::XHigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown effort {0:?} (claude expects low, medium, high, xhigh or max)")]
+pub struct InvalidEffort(pub String);
+
+impl FromStr for Effort {
+    type Err = InvalidEffort;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|effort| effort.as_str() == text)
+            .ok_or_else(|| InvalidEffort(text.to_owned()))
+    }
+}
+
+/// The launch options `configure` accepts. Every key is optional; an unknown key is refused.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaudeOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
+}
 
 /// Claude's own directory: `CLAUDE_CONFIG_DIR`, else `$HOME/.claude`. Transcripts live under
 /// `<claude home>/projects/<munge(realpath(cwd))>/<conversation id>.jsonl`.
@@ -87,13 +152,22 @@ impl ClaudeAdapter {
             .join(format!("{id}.jsonl"))
     }
 
-    /// The engine data of a conversation named after `session`: its id and transcript path.
+    /// The engine data of a conversation named after `session`: the current data (its options)
+    /// with the session's id and transcript path.
     fn named_after(&self, session: &Session) -> Value {
         let id = session.id.as_str();
-        serde_json::json!({
-            CONVERSATION_ID_KEY: id,
-            TRANSCRIPT_PATH_KEY: self.transcript_path(&session.cwd, id).to_string_lossy(),
-        })
+        let mut data = engine_data(self, session)
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        data.insert(CONVERSATION_ID_KEY.into(), id.into());
+        data.insert(
+            TRANSCRIPT_PATH_KEY.into(),
+            self.transcript_path(&session.cwd, id)
+                .to_string_lossy()
+                .into(),
+        );
+        Value::Object(data)
     }
 
     /// The conversation recorded for `session`, else the one named after it.
@@ -114,8 +188,36 @@ impl LlmEngine for ClaudeAdapter {
         EXT_KEY
     }
 
+    fn configure(&self, session: &Session, options: &Value) -> Result<Value, EngineError> {
+        if !options.is_object() {
+            return Err(EngineError::Refused(format!(
+                "claude options: expected a JSON object, got {options}"
+            )));
+        }
+        let options: ClaudeOptions = serde_json::from_value(options.clone())
+            .map_err(|error| EngineError::Refused(format!("claude options: {error}")))?;
+        if options.model.as_deref() == Some("") {
+            return Err(EngineError::Refused(
+                "claude options: model must not be empty".into(),
+            ));
+        }
+        let mut data = engine_data(self, session)
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        if let Some(model) = options.model {
+            data.insert(MODEL_KEY.into(), model.into());
+        }
+        if let Some(effort) = options.effort {
+            data.insert(EFFORT_KEY.into(), effort.as_str().into());
+        }
+        Ok(Value::Object(data))
+    }
+
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         let session_id = req.session.id.to_string();
+        let data = engine_data(self, req.session);
+        let option = |key: &str| data.get(key).and_then(Value::as_str);
         let (mut args, engine_data) = match req.mode {
             LaunchMode::Start => (
                 vec![SESSION_ID_FLAG.to_owned(), session_id],
@@ -139,12 +241,12 @@ impl LlmEngine for ClaudeAdapter {
                 Some(self.named_after(req.session)),
             ),
         };
-        if let Some(model) = req.model.filter(|model| !model.is_empty()) {
+        if let Some(model) = option(MODEL_KEY) {
             args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
         }
         args.extend([
             EFFORT_FLAG.to_owned(),
-            req.effort.unwrap_or(DEFAULT_EFFORT).as_str().to_owned(),
+            option(EFFORT_KEY).unwrap_or(DEFAULT_EFFORT.as_str()).to_owned(),
             NO_CHROME_FLAG.to_owned(),
         ]);
         if !req.profile.text().is_empty() {
@@ -755,14 +857,12 @@ mod tests {
     #[test]
     fn every_option() {
         let (dir, profile) = profile("# Role\nbe good", &["/skills/one", "/other/two"]);
-        let session = record(dir.path(), serde_json::Value::Null);
+        let session = record(
+            dir.path(),
+            serde_json::json!({"model": "opus", "effort": "medium"}),
+        );
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .model("opus")
-                    .effort(Effort::Medium)
-                    .initial_prompt("go"),
-            )
+            .launch(&LaunchRequest::new(&session, &profile).initial_prompt("go"))
             .unwrap();
         assert_eq!(
             plan.args,
@@ -780,6 +880,17 @@ mod tests {
                 "go",
             ])
         );
+        // The options survive in the data the start writes.
+        let id = session.id.to_string();
+        assert_eq!(
+            plan.engine_data,
+            Some(serde_json::json!({
+                "conversation_id": id,
+                "transcript_path": format!("/h/projects/{}/{id}.jsonl", munge(&realpath(dir.path()).to_string_lossy())),
+                "model": "opus",
+                "effort": "medium",
+            }))
+        );
         assert_eq!(
             plan.workspace,
             vec![
@@ -796,16 +907,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_model_and_prompt_are_absent() {
+    fn an_empty_prompt_is_absent_and_the_effort_comes_from_the_data() {
         let (dir, profile) = profile("", &[]);
-        let session = record(dir.path(), serde_json::Value::Null);
+        let session = record(dir.path(), serde_json::json!({"effort": "max"}));
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .model("")
-                    .effort(Effort::Max)
-                    .initial_prompt(""),
-            )
+            .launch(&LaunchRequest::new(&session, &profile).initial_prompt(""))
             .unwrap();
         assert_eq!(
             plan.args,
@@ -818,6 +924,68 @@ mod tests {
                 "--dangerously-skip-permissions"
             ])
         );
+    }
+
+    #[test]
+    fn configure_merges_valid_options_into_the_data() {
+        use serde_json::json;
+        let session = session(
+            LlmEngineState::Idle,
+            json!({"conversation_id": "c", "transcript_path": "/t", "effort": "low"}),
+        );
+        let merged = adapter()
+            .configure(&session, &json!({"model": "sonnet", "effort": "max"}))
+            .unwrap();
+        assert_eq!(
+            merged,
+            json!({"conversation_id": "c", "transcript_path": "/t", "model": "sonnet", "effort": "max"})
+        );
+        // Nothing to set: the data as it is (an object, even from nothing).
+        assert_eq!(
+            adapter().configure(&session, &json!({})).unwrap(),
+            json!({"conversation_id": "c", "transcript_path": "/t", "effort": "low"})
+        );
+        let empty = self::session(LlmEngineState::Starting, serde_json::Value::Null);
+        assert_eq!(adapter().configure(&empty, &json!({})).unwrap(), json!({}));
+        assert_eq!(
+            adapter()
+                .configure(&empty, &json!({"model": "opus"}))
+                .unwrap(),
+            json!({"model": "opus"})
+        );
+    }
+
+    #[test]
+    fn configure_refuses_unknown_keys_and_bad_values() {
+        use serde_json::json;
+        let session = session(LlmEngineState::Starting, serde_json::Value::Null);
+        for (options, needle) in [
+            (json!({"effort": "extreme"}), "unknown variant `extreme`"),
+            (json!({"effort": 3}), "invalid type: integer `3`"),
+            (json!({"model": ""}), "model must not be empty"),
+            (json!({"model": 7}), "invalid type: integer `7`, expected a string"),
+            (json!({"temperature": 1}), "unknown field `temperature`"),
+            (json!("sonnet"), "expected a JSON object, got \"sonnet\""),
+            (json!(null), "expected a JSON object, got null"),
+            (json!([]), "expected a JSON object, got []"),
+        ] {
+            let error = adapter().configure(&session, &options).unwrap_err();
+            assert!(
+                matches!(&error, EngineError::Refused(text) if text.contains(needle)),
+                "{options}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn effort_names() {
+        for effort in Effort::ALL {
+            assert_eq!(effort.as_str().parse::<Effort>().unwrap(), effort);
+            assert_eq!(serde_json::to_value(effort).unwrap(), effort.as_str());
+        }
+        assert_eq!(Effort::XHigh.as_str(), "xhigh");
+        assert!("ultra".parse::<Effort>().is_err());
+        assert!("HIGH".parse::<Effort>().is_err());
     }
 
     #[test]

@@ -246,14 +246,8 @@ pub fn agent_plan(
         .resolve(&launch.profile)
         .map_err(tx_core::CoreError::from)?;
     let profile = Profile::write(resolved, profile_file).map_err(io(profile_file))?;
-    let record = scratch_record(launch, cwd, adapter.ext_key(), resume);
+    let record = scratch_record(adapter.as_ref(), launch, cwd, resume)?;
     let mut request = LaunchRequest::new(&record, &profile);
-    if let Some(model) = launch.model.as_deref() {
-        request = request.model(model);
-    }
-    if let Some(effort) = launch.effort {
-        request = request.effort(effort);
-    }
     if resume.is_some() {
         request = request.mode(LaunchMode::Resume);
     }
@@ -264,21 +258,15 @@ pub fn agent_plan(
 }
 
 /// The record a chat launch hands the engine: the plan runs as a process session, created only
-/// afterwards, so the engine gets a fresh id, `cwd`, and `resume` as its conversation.
+/// afterwards, so the engine gets a fresh id, `cwd`, `resume` as its conversation, and the
+/// launch's model and effort as its data (`configure` validates them, as core does at create).
 fn scratch_record(
+    adapter: &dyn LlmEngine,
     launch: &AgentLaunch,
     cwd: &Path,
-    ext_key: &str,
     resume: Option<&str>,
-) -> Session {
-    let mut ext = std::collections::BTreeMap::new();
-    if let Some(resume) = resume {
-        ext.insert(
-            ext_key.to_owned(),
-            serde_json::json!({ "conversation_id": resume }),
-        );
-    }
-    Session {
+) -> Result<Session, ChatError> {
+    let mut record = Session {
         id: SessionId::mint(),
         name: String::new(),
         parent: None,
@@ -291,13 +279,29 @@ fn scratch_record(
         launch: Launch::Agent {
             engine: launch.engine.clone(),
             profile: launch.profile.clone(),
-            model: launch.model.clone(),
-            effort: launch.effort,
+            model: None,
+            effort: None,
             resume: resume.map(str::to_owned),
         },
         state: None,
-        ext,
+        ext: std::collections::BTreeMap::new(),
+    };
+    if let Some(resume) = resume {
+        record.ext.insert(
+            adapter.ext_key().to_owned(),
+            serde_json::json!({ "conversation_id": resume }),
+        );
     }
+    let mut options = serde_json::Map::new();
+    if let Some(model) = &launch.model {
+        options.insert("model".into(), model.clone().into());
+    }
+    if let Some(effort) = &launch.effort {
+        options.insert("effort".into(), effort.clone().into());
+    }
+    let data = adapter.configure(&record, &serde_json::Value::Object(options))?;
+    record.ext.insert(adapter.ext_key().to_owned(), data);
+    Ok(record)
 }
 
 /// Turns a resume argv into a fork argv. Claude: `--fork-session` right after `--resume <id>`.
@@ -633,7 +637,6 @@ pub mod rollout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tx_core::Effort;
 
     fn write(path: &Path, data: &str) -> PathBuf {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -871,7 +874,7 @@ mod tests {
             engine: "claude".into(),
             profile: vec![],
             model: Some("opus".into()),
-            effort: Some(Effort::Low),
+            effort: Some("low".into()),
             rest: serde_json::Map::new(),
         };
         let plan = agent_plan(

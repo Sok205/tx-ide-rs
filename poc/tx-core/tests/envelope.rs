@@ -29,6 +29,14 @@ impl LlmEngine for Shout {
         "shout"
     }
 
+    fn configure(
+        &self,
+        _: &tx_core::Session,
+        options: &serde_json::Value,
+    ) -> Result<serde_json::Value, EngineError> {
+        Ok(options.clone())
+    }
+
     fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         Ok(LaunchPlan::new("sh").args(["-c", "env > env.txt; cat > input.txt"]))
     }

@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, Effort, EventType, Launch, LaunchMode, LaunchOptions,
+    CoreConfig, CreateOptions, Directories, EventType, Launch, LaunchMode, LaunchOptions,
     LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, Profile, ResolvedProfile,
     SendOptions, Session, SessionId, TxCore, WorkspaceAction,
 };
@@ -48,24 +48,15 @@ fn launch_request_builder() {
     let session = record(dir.path());
     let source = record(dir.path());
     let request = LaunchRequest::new(&session, &profile)
-        .model("m")
-        .effort(Effort::Low)
         .initial_prompt("go")
         .mode(LaunchMode::Fork { source: &source });
     assert_eq!(request.session.id, session.id);
     assert_eq!(request.session.cwd, dir.path());
     assert_eq!(request.profile.text(), "t");
-    assert_eq!(request.model, Some("m"));
-    assert_eq!(request.effort, Some(Effort::Low));
     assert_eq!(request.initial_prompt, Some("go"));
     assert!(matches!(request.mode, LaunchMode::Fork { source: forked } if forked.id == source.id));
     let bare = LaunchRequest::new(&session, &profile);
-    assert!(
-        bare.model.is_none()
-            && bare.effort.is_none()
-            && bare.initial_prompt.is_none()
-            && matches!(bare.mode, LaunchMode::Start)
-    );
+    assert!(bare.initial_prompt.is_none() && matches!(bare.mode, LaunchMode::Start));
     assert!(matches!(
         bare.mode(LaunchMode::Resume).mode,
         LaunchMode::Resume
@@ -104,8 +95,9 @@ fn create_options_and_launch_options_builders() {
         "/w",
         LaunchOptions::agent("claude")
             .profile(["dev", "ops"])
-            .model("opus")
-            .effort(Effort::Max)
+            .option("model", "opus")
+            .option("effort", "max")
+            .option("model", "sonnet")
             .initial_prompt("start")
             .resume("chat-9"),
     )
@@ -121,16 +113,30 @@ fn create_options_and_launch_options_builders() {
         LaunchOptions::Agent {
             engine,
             profile,
-            model,
-            effort,
+            options,
             initial_prompt,
             resume,
             ..
         } => {
             assert_eq!(engine, "claude");
             assert_eq!(profile, &["dev", "ops"]);
-            assert_eq!(model.as_deref(), Some("opus"));
-            assert_eq!(*effort, Some(Effort::Max));
+            // A repeated key replaces; `options(..)` replaces the whole object.
+            assert_eq!(
+                *options,
+                serde_json::json!({"model": "sonnet", "effort": "max"})
+            );
+            let replaced = LaunchOptions::agent("claude")
+                .option("model", "opus")
+                .options(serde_json::json!({"effort": "low"}));
+            assert!(matches!(
+                &replaced,
+                LaunchOptions::Agent { options, .. } if *options == serde_json::json!({"effort": "low"})
+            ));
+            let bare = LaunchOptions::agent("claude");
+            assert!(matches!(
+                &bare,
+                LaunchOptions::Agent { options, .. } if *options == serde_json::json!({})
+            ));
             assert_eq!(initial_prompt.as_deref(), Some("start"));
             assert_eq!(resume.as_deref(), Some("chat-9"));
         }

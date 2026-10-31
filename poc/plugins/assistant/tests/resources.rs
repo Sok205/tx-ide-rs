@@ -56,8 +56,7 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
     let LaunchOptions::Agent {
         engine,
         profile,
-        model,
-        effort,
+        options,
         initial_prompt,
         ..
     } = options.launch
@@ -66,8 +65,7 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
     };
     assert_eq!(engine, "claude");
     assert_eq!(profile, ["COMMON", "TX-ASSISTANT"]);
-    assert_eq!(model.as_deref(), Some("opus"));
-    assert_eq!(effort, Some(tx_core::Effort::Medium));
+    assert_eq!(options, serde_json::json!({"model": "opus", "effort": "medium"}));
     assert_eq!(initial_prompt.as_deref(), Some(tx_assistant::GREETING));
 }
 

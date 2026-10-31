@@ -58,8 +58,11 @@ fn new_agent_creates_the_session_the_form_describes() {
         json["launch"]["profile"],
         serde_json::json!(["COMMON", "DEVELOPER"])
     );
-    assert_eq!(json["launch"]["model"], serde_json::Value::Null);
-    assert_eq!(json["launch"]["effort"], "low");
+    // Options are engine data: the default model passes nothing, the effort lands in `ext`.
+    assert_eq!(json["launch"].get("model"), None);
+    assert_eq!(json["launch"].get("effort"), None);
+    assert_eq!(json["ext"]["claude"]["effort"], "low");
+    assert_eq!(json["ext"]["claude"].get("model"), None);
     assert!(worktree.join(".claude/skills/tx-diff-review").exists());
     assert!(!cwd.join(".claude").exists());
 }

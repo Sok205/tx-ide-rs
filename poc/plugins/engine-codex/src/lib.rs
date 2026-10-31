@@ -1,12 +1,19 @@
-//! The Codex engine for tx-core: `codex [resume ID | fork ID] -m <model> -c model_reasoning_effort=<effort>
+//! The Codex engine for tx-core: `codex [resume ID | fork ID] [-m <model>] -c model_reasoning_effort=<effort>
 //! [-c developer_instructions=<profile text>] --dangerously-bypass-approvals-and-sandbox
 //! --dangerously-bypass-hook-trust [prompt]`, with granted skills linked under `.agents/skills`.
+//! Without a `model` option Codex runs the user's configured default (`model` in its
+//! `config.toml`): tx never overrides it.
 //!
 //! Engine data, under `ext.codex` of the record, is this adapter's alone to read:
 //!
 //! ```json
-//! {"conversation_id": "01a19173-…", "transcript_path": "/Users/w/.codex/sessions/2026/10/31/rollout-…-01a19173-….jsonl"}
+//! {"conversation_id": "01a19173-…", "transcript_path": "/Users/w/.codex/sessions/2026/10/31/rollout-…-01a19173-….jsonl",
+//!  "model": "gpt-6.1-sol", "effort": "medium"}
 //! ```
+//!
+//! `model` and `effort` are launch options: `configure` validates them (`CodexOptions`, with this
+//! crate's own [`Effort`] vocabulary: what `model_reasoning_effort` accepts) and merges them in
+//! before a launch reads them.
 //!
 //! A resume continues `conversation_id`; a fork branches the source's `conversation_id`; both are
 //! refused when there is none yet. Codex picks its own id, so a launch plan carries no engine
@@ -15,16 +22,18 @@
 //! the object survive. Paths Codex reports are resolved (`/private/tmp/…` for `/tmp/…`).
 
 use std::path::PathBuf;
+use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Effort, EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
-    LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
+    EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
+    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
 };
 
 pub const CODEX_BIN: &str = "codex";
 pub const SKILLS_DIR: &str = ".agents/skills";
-pub const CODEX_MODEL: &str = "gpt-5.6-sol";
+pub const MODEL_FLAG: &str = "-m";
 pub const RESUME_SUBCOMMAND: &str = "resume";
 pub const FORK_SUBCOMMAND: &str = "fork";
 pub const REASONING_EFFORT_KEY: &str = "model_reasoning_effort";
@@ -36,6 +45,72 @@ pub const DEFAULT_EFFORT: Effort = Effort::High;
 pub const EXT_KEY: &str = "codex";
 pub const CONVERSATION_ID_KEY: &str = "conversation_id";
 pub const TRANSCRIPT_PATH_KEY: &str = "transcript_path";
+pub const MODEL_KEY: &str = "model";
+pub const EFFORT_KEY: &str = "effort";
+
+/// A reasoning-effort tier, as `model_reasoning_effort` accepts them. The CLI passes the string
+/// through; the API refuses anything else (codex-cli 0.164.0: "Supported values are: 'none',
+/// 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'"), so tx checks up front.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl Effort {
+    pub const ALL: [Effort; 7] = [
+        Effort::None,
+        Effort::Minimal,
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::XHigh,
+        Effort::Max,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effort::None => "none",
+            Effort::Minimal => "minimal",
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::XHigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown effort {0:?} (codex expects none, minimal, low, medium, high, xhigh or max)")]
+pub struct InvalidEffort(pub String);
+
+impl FromStr for Effort {
+    type Err = InvalidEffort;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|effort| effort.as_str() == text)
+            .ok_or_else(|| InvalidEffort(text.to_owned()))
+    }
+}
+
+/// The launch options `configure` accepts. Every key is optional; an unknown key is refused.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodexOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
+}
 /// The hooks wired per launch, one `-c hooks.<Event>=…` each; each runs
 /// `<hook_command> <Event>`. Codex skips them without `--dangerously-bypass-hook-trust`.
 pub const HOOK_EVENTS: [&str; 7] = [
@@ -90,12 +165,36 @@ impl LlmEngine for CodexAdapter {
         EXT_KEY
     }
 
+    fn configure(&self, session: &Session, options: &Value) -> Result<Value, EngineError> {
+        if !options.is_object() {
+            return Err(EngineError::Refused(format!(
+                "codex options: expected a JSON object, got {options}"
+            )));
+        }
+        let options: CodexOptions = serde_json::from_value(options.clone())
+            .map_err(|error| EngineError::Refused(format!("codex options: {error}")))?;
+        if options.model.as_deref() == Some("") {
+            return Err(EngineError::Refused(
+                "codex options: model must not be empty".into(),
+            ));
+        }
+        let mut data = engine_data(self, session)
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        if let Some(model) = options.model {
+            data.insert(MODEL_KEY.into(), model.into());
+        }
+        if let Some(effort) = options.effort {
+            data.insert(EFFORT_KEY.into(), effort.as_str().into());
+        }
+        Ok(Value::Object(data))
+    }
+
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        let model = req
-            .model
-            .filter(|model| !model.is_empty())
-            .unwrap_or(CODEX_MODEL);
-        let effort = req.effort.unwrap_or(DEFAULT_EFFORT);
+        let data = engine_data(self, req.session);
+        let option = |key: &str| data.get(key).and_then(Value::as_str);
+        let effort = option(EFFORT_KEY).unwrap_or(DEFAULT_EFFORT.as_str());
         let mut args = Vec::new();
         match req.mode {
             LaunchMode::Start => {}
@@ -108,11 +207,12 @@ impl LlmEngine for CodexAdapter {
                 self.conversation_of(source, "fork")?.to_owned(),
             ]),
         }
+        if let Some(model) = option(MODEL_KEY) {
+            args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
+        }
         args.extend([
-            "-m".to_owned(),
-            model.to_owned(),
             "-c".to_owned(),
-            format!("{REASONING_EFFORT_KEY}={}", effort.as_str()),
+            format!("{REASONING_EFFORT_KEY}={effort}"),
         ]);
         if !req.profile.text().is_empty() {
             args.extend([
@@ -478,11 +578,10 @@ mod tests {
             .launch(&LaunchRequest::new(&session, &profile))
             .unwrap();
         assert_eq!(plan.program, "codex");
+        // No `-m`: Codex runs the model its own configuration names.
         assert_eq!(
             plan.args,
             argv(&[
-                "-m",
-                "gpt-5.6-sol",
                 "-c",
                 "model_reasoning_effort=high",
                 "--dangerously-bypass-approvals-and-sandbox",
@@ -495,14 +594,9 @@ mod tests {
     #[test]
     fn every_option() {
         let (_dir, profile) = profile("be good", &["/skills/one"]);
-        let session = record(serde_json::Value::Null);
+        let session = record(serde_json::json!({"model": "o3", "effort": "low"}));
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .model("o3")
-                    .effort(Effort::Low)
-                    .initial_prompt("go"),
-            )
+            .launch(&LaunchRequest::new(&session, &profile).initial_prompt("go"))
             .unwrap();
         assert_eq!(
             plan.args,
@@ -534,7 +628,7 @@ mod tests {
         let plan = adapter()
             .launch(&LaunchRequest::new(&session, &profile).initial_prompt("hi"))
             .unwrap();
-        assert_eq!(plan.args[0], "-m");
+        assert_eq!(plan.args[0], "-c");
         assert_eq!(plan.args.last().map(String::as_str), Some("hi"));
         assert_eq!(plan.engine_data, None, "Codex reports its id by hook");
     }
@@ -542,12 +636,11 @@ mod tests {
     #[test]
     fn resume_is_the_subcommand_on_the_recorded_conversation() {
         let (_dir, profile) = profile("", &[]);
-        let session = record(serde_json::json!({"conversation_id": "sess-7"}));
+        let session = record(serde_json::json!({"conversation_id": "sess-7", "model": "o3"}));
         let plan = adapter()
             .launch(
                 &LaunchRequest::new(&session, &profile)
                     .mode(LaunchMode::Resume)
-                    .model("o3")
                     .initial_prompt("more"),
             )
             .unwrap();
@@ -616,18 +709,70 @@ mod tests {
     }
 
     #[test]
-    fn empty_model_and_prompt_fall_back() {
+    fn an_empty_prompt_is_absent() {
         let (_dir, profile) = profile("", &[]);
         let session = record(serde_json::Value::Null);
         let plan = adapter()
-            .launch(
-                &LaunchRequest::new(&session, &profile)
-                    .model("")
-                    .initial_prompt(""),
-            )
+            .launch(&LaunchRequest::new(&session, &profile).initial_prompt(""))
             .unwrap();
-        assert_eq!(plan.args[1], "gpt-5.6-sol");
-        assert_eq!(plan.args.len(), 6);
+        assert_eq!(plan.args.len(), 4);
+        assert!(!plan.args.contains(&"-m".to_owned()));
+    }
+
+    #[test]
+    fn configure_merges_valid_options_into_the_data() {
+        use serde_json::json;
+        let session = record(json!({"conversation_id": "c", "effort": "high"}));
+        assert_eq!(
+            adapter()
+                .configure(&session, &json!({"model": "gpt-6.1-sol", "effort": "medium"}))
+                .unwrap(),
+            json!({"conversation_id": "c", "model": "gpt-6.1-sol", "effort": "medium"})
+        );
+        assert_eq!(
+            adapter().configure(&session, &json!({})).unwrap(),
+            json!({"conversation_id": "c", "effort": "high"})
+        );
+        let empty = record(serde_json::Value::Null);
+        assert_eq!(adapter().configure(&empty, &json!({})).unwrap(), json!({}));
+        assert_eq!(
+            adapter()
+                .configure(&empty, &json!({"effort": "none"}))
+                .unwrap(),
+            json!({"effort": "none"})
+        );
+    }
+
+    #[test]
+    fn configure_refuses_unknown_keys_and_bad_values() {
+        use serde_json::json;
+        let session = record(serde_json::Value::Null);
+        for (options, needle) in [
+            (json!({"effort": "extreme"}), "unknown variant `extreme`"),
+            (json!({"effort": true}), "invalid type: boolean `true`"),
+            (json!({"model": ""}), "model must not be empty"),
+            (json!({"model": ["a"]}), "invalid type: sequence"),
+            (json!({"sandbox": "none"}), "unknown field `sandbox`"),
+            (json!([]), "expected a JSON object, got []"),
+            (json!(null), "expected a JSON object, got null"),
+        ] {
+            let error = adapter().configure(&session, &options).unwrap_err();
+            assert!(
+                matches!(&error, EngineError::Refused(text) if text.contains(needle)),
+                "{options}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn effort_names() {
+        for effort in Effort::ALL {
+            assert_eq!(effort.as_str().parse::<Effort>().unwrap(), effort);
+            assert_eq!(serde_json::to_value(effort).unwrap(), effort.as_str());
+        }
+        assert_eq!(Effort::None.as_str(), "none");
+        assert_eq!(Effort::XHigh.as_str(), "xhigh");
+        assert!("ultra".parse::<Effort>().is_err());
     }
 
     #[test]

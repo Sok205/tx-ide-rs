@@ -260,10 +260,27 @@ impl LlmEngine for ShellStub {
         STUB_ID
     }
 
-    fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        if req.model == Some("refuse") {
+    /// Merges `options` into the data; model `refuse` is refused, as a real engine refuses a
+    /// bad option. The launch then reads `model` and `effort` from the data.
+    fn configure(
+        &self,
+        session: &tx_core::Session,
+        options: &serde_json::Value,
+    ) -> Result<serde_json::Value, EngineError> {
+        if options["model"] == "refuse" {
             return Err(EngineError::Refused("model refused".into()));
         }
+        let mut data = tx_core::engine_data(self, session)
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        data.extend(options.as_object().cloned().unwrap_or_default());
+        Ok(serde_json::Value::Object(data))
+    }
+
+    fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        let data = tx_core::engine_data(self, req.session);
+        let option = |key: &str| data.get(key).and_then(serde_json::Value::as_str);
         let script = format!(
             "env > env.txt; echo \"{}\" > prompt.txt; cat > input.txt",
             req.initial_prompt.unwrap_or("")
@@ -282,10 +299,7 @@ impl LlmEngine for ShellStub {
         let plan = LaunchPlan::new("sh")
             .args(["-c".to_owned(), script])
             .env("STUB_PROFILE", req.profile.file().display().to_string())
-            .env(
-                "STUB_EFFORT",
-                req.effort.map(|e| e.as_str()).unwrap_or("none"),
-            )
+            .env("STUB_EFFORT", option("effort").unwrap_or("none"))
             .env("FROM_PLAN", "plan")
             .env("STUB_MODE", mode)
             .env("STUB_RESUME", resume)
@@ -295,9 +309,10 @@ impl LlmEngine for ShellStub {
                 content: req.profile.text().to_owned(),
             });
         // Model `data`: the plan names the conversation up front, as Claude's does.
-        Ok(match req.model {
+        Ok(match option("model") {
             Some("data") => plan.engine_data(serde_json::json!({
                 "conversation_id": req.session.id.as_str(),
+                "model": "data",
             })),
             _ => plan,
         })

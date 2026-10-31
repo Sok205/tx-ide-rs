@@ -146,10 +146,10 @@ impl<'a> Ops<'a> {
     fn agent_options(launch: &AgentLaunch) -> LaunchOptions {
         let mut options = LaunchOptions::agent(&launch.engine).profile(launch.profile.clone());
         if let Some(model) = &launch.model {
-            options = options.model(model);
+            options = options.option("model", model.as_str());
         }
-        if let Some(effort) = launch.effort {
-            options = options.effort(effort);
+        if let Some(effort) = &launch.effort {
+            options = options.option("effort", effort.as_str());
         }
         options
     }
