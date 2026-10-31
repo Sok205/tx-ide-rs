@@ -48,6 +48,7 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/picker.tmux\"\n\
          run-shell \"{state}/keys/edit.tmux\"\n\
          run-shell \"{state}/keys/spawn.tmux\"\n\
+         run-shell \"{state}/keys/assistant.tmux\"\n\
          run-shell \"{state}/keys/artifacts.tmux\"\n\
          run-shell \"{state}/keys/timeline.tmux\"\n\
          run-shell \"{state}/keys/menu.tmux\"\n",

@@ -7,8 +7,9 @@
 #   C-h/j/k/l       seamless nav: nvim splits <-> panes <-> nested sessions (bin/tmux-nav)
 #   M-1..9          select-pane
 #   User0..8        select-window (the terminal must send ESC W <digit>)
-#   status-right    system resources and the clock
 #   pane borders    colours, heavy lines, both indicators; the border format is `labels`'
+#
+# The status bar, status-right included, is conf/tmux.conf's.
 #
 # It binds nothing in the prefix table except nav's prefix+C-h/j/k/l escapes, which are part of
 # the nav keys. Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles
@@ -28,7 +29,7 @@ NAV="$DIR/tmux-nav"
 CONF=$(mktemp -t tx-ide-bindings.XXXXXX)
 trap 'rm -f "$CONF"' EXIT
 
-# --- Status bar resources, pane border look, agent scroll intercept ---
+# --- Pane border look, agent scroll intercept ---
 # Pane borders: the look only; `labels` owns the format and the new-window hook. Hex literals
 # duplicate shared/palette.sh:
 #   ACCENT_HEX       #7aa2f7   (active border)
@@ -40,7 +41,6 @@ trap 'rm -f "$CONF"' EXIT
 # (spawn.infer_role / reconcile._is_agent_command) — same set of engine binaries, enforced by
 # review across the boundary.
 cat >>"$CONF" <<EOF2
-set -g status-right "#[fg=#a9b1d6,bg=#3b4261]#($DIR/tmux-system-resources)  %H:%M:%S  #S "
 set -g pane-border-style "fg=#3b4261"
 set -g pane-active-border-style "fg=#7aa2f7,bold"
 set -g pane-border-lines heavy

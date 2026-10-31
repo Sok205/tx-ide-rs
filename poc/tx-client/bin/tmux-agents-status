@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# The agents for tmux's status line: `txc ls --json` (the running agents) counted by state, as
+# `2 working 3 idle`, states with no agent left out, `no agents` when there are none, and
+# nothing when `txc` fails (the status line stays quiet rather than showing an error).
+#
+#   tmux-agents-status <txc> <txc arguments…>
+#
+# conf/tmux.conf passes `#{@tx-bin} #{@tx-arguments}`, the server options `txc ui install` wrote.
+set -u
+
+[ $# -ge 1 ] || exit 0
+listing=$("$@" ls --json 2>/dev/null) || exit 0
+
+summary=""
+for state in working idle starting; do
+  count=$(printf '%s' "$listing" | grep -o "\"state\":\"$state\"" | grep -c .)
+  [ "$count" -gt 0 ] || continue
+  summary="$summary $count $state"
+done
+if [ -z "$summary" ]; then
+  printf 'no agents\n'
+else
+  printf '%s\n' "${summary# }"
+fi

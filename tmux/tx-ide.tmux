@@ -67,10 +67,13 @@ trap 'rm -f "$CONF"' EXIT
 # chips without wrapping, with ~5 cols of extra NAME headroom. Keep it in lockstep with
 # `_NAMEW_OVERHEAD` (lib/tx/render.py): that budget assumes LOCATION is 25, and the popup funds those
 # columns plus the extra NAME room so the NAME column isn't squeezed.
+# `@tx-ide-bin` names the binary the popups run (default `tx`). poc/install's switch step sets it
+# to `tx-old` in ~/.tx-ide/tmux.conf, so the renamed old install keeps working beside the poc's `txc`.
+tx_bin=$(option @tx-ide-bin tx)
 if [ "$popups" = on ]; then
-  cat >>"$CONF" <<'EOF'
-bind t display-popup -E -w 118 -h 30 -x C -y 1 -T " tx " "tx attach"
-bind T display-popup -E -w 118 -h 30 -x C -y 1 -T " timeline " "tx _timeline-attach"
+  cat >>"$CONF" <<EOF
+bind t display-popup -E -w 118 -h 30 -x C -y 1 -T " tx " "$tx_bin attach"
+bind T display-popup -E -w 118 -h 30 -x C -y 1 -T " timeline " "$tx_bin _timeline-attach"
 bind '/' command-prompt -p "tx-assistant>" {
   set-buffer -b tx-assistant-input "%%"
   run-shell -b "tx-assistant --from-buffer"

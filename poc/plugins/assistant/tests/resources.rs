@@ -24,7 +24,13 @@ fn the_role_is_a_resource() {
     assert_eq!(agents[0].plugin, "assistant");
     assert_eq!(agents[0].name, "agents/TX-ASSISTANT.md");
     assert!(agents[0].bytes.starts_with(b"# TX-ASSISTANT role"));
-    assert!(core.resources("keys/").is_empty());
+    let keys = core.resources("keys/");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].name, "keys/assistant.tmux");
+    let fragment = String::from_utf8_lossy(keys[0].bytes);
+    assert!(fragment.contains("# keys: /\n"), "declares prefix+/");
+    assert!(fragment.contains("set-buffer -b tx-assistant-input \"%%\""));
+    assert!(fragment.contains("assistant ask --from-buffer"));
 }
 
 #[test]

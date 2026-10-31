@@ -34,6 +34,10 @@ impl Plugin for IdePlugin {
         r.resource("keys/ide.tmux", include_bytes!("../tmux/keys.tmux"))?;
         r.resource("bin/tmux-nav", include_bytes!("../bin/tmux-nav"))?;
         r.resource(
+            "bin/tmux-agents-status",
+            include_bytes!("../bin/tmux-agents-status"),
+        )?;
+        r.resource(
             "bin/tmux-system-resources",
             include_bytes!("../bin/tmux-system-resources"),
         )?;
