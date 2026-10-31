@@ -233,6 +233,43 @@ impl Cli {
     pub fn fake_claude_path(&self) -> String {
         self.shim_path(&[("claude", "exec sleep 60")])
     }
+    /// A git repository with one commit under `<dir>/<name>`: an agent's starting checkout,
+    /// isolated from the host's git config.
+    pub fn repository(&self, name: &str) -> PathBuf {
+        let repository = self.dir.path().join(name);
+        std::fs::create_dir_all(&repository).unwrap();
+        std::fs::write(repository.join("README.md"), "hello\n").unwrap();
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", "README.md"],
+            &["commit", "-q", "-m", "init"],
+        ] {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        repository
+    }
+    /// `<data>/worktrees`, canonical: where every agent's worktree lands.
+    pub fn worktrees_dir(&self) -> PathBuf {
+        let dir = self.state().join("worktrees");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
     pub fn create(&self, name: &str) -> String {
         let cwd = self.dir.path().join(name);
         std::fs::create_dir_all(&cwd).unwrap();
@@ -275,6 +312,12 @@ macro_rules! require_tmux {
 pub fn lifecycle_of(cli: &Cli, token: &str) -> String {
     let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", token])).unwrap();
     json["lifecycle"].as_str().unwrap().to_owned()
+}
+
+/// Where a session runs: its record's `cwd` (an agent's worktree, a process's directory).
+pub fn cwd_of(cli: &Cli, token: &str) -> PathBuf {
+    let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", token])).unwrap();
+    PathBuf::from(json["cwd"].as_str().unwrap())
 }
 
 pub fn pane_id_of(cli: &Cli, name: &str) -> String {

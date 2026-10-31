@@ -4,7 +4,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Harness, agent, process, typed, wait_for};
+use common::{Harness, agent, cwd_of, process, typed, wait_for};
 use tx_core::{CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TmuxError};
 
 #[test]
@@ -195,7 +195,7 @@ fn forget_drops_the_record_and_leaves_tmux_alone() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("f", &h.workdir("a"))).unwrap();
+    let id = core.create_session(agent("f", &h.repository("a"))).unwrap();
     let profile = h.state_dir().join(format!("profiles/{id}.md"));
     assert!(profile.exists());
     assert!(core.forget_session(&id).unwrap());
@@ -225,8 +225,10 @@ fn messages_arrive_whole_with_the_right_envelope() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let cwd_a = h.workdir("a");
-    let a = core.create_session(agent("alice", &cwd_a)).unwrap();
+    let a = core
+        .create_session(agent("alice", &h.repository("a")))
+        .unwrap();
+    let cwd_a = cwd_of(&core, &a);
     let b = core
         .create_session(process("bob", &h.workdir("b")))
         .unwrap();

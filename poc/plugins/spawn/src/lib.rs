@@ -313,10 +313,13 @@ impl Verb for NewAgent {
         let Some(reply) = reply? else {
             return Ok(0);
         };
-        let created = create_options(&reply).and_then(|options| Ok(core.create_session(options)?));
+        // The agent may get `<name>-2` when the name is taken: say what it is really called.
+        let created = create_options(&reply)
+            .and_then(|options| Ok(core.create_session(options)?))
+            .and_then(|id| Ok(core.get_session(&id)?));
         match created {
-            Ok(_) => {
-                ui.display_status(client, &format!("spawned {}", reply.name));
+            Ok(session) => {
+                ui.display_status(client, &format!("spawned {}", session.name));
                 Ok(0)
             }
             Err(error) => {

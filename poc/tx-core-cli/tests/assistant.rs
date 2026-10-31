@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{Cli, lifecycle_of};
+use common::{Cli, cwd_of, lifecycle_of};
 
 #[test]
 fn warm_creates_once_and_reuses() {
@@ -25,10 +25,16 @@ fn warm_creates_once_and_reuses() {
     let second = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(second.status.code(), Some(0));
     assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]), id);
+    let cwd = cwd_of(&cli, "tx-assistant");
+    assert!(cwd.starts_with(cli.worktrees_dir()), "{cwd:?}");
+    assert!(cwd.ends_with("home--tx-assistant"), "{cwd:?}");
     assert!(
-        cli.state().join(".claude/skills/tx-sessions").exists(),
-        "skills link under the state dir"
+        cwd.join(".claude/skills/tx-sessions").exists(),
+        "skills link in the assistant's worktree"
     );
+    let home = cli.state().join("plugins/assistant/home");
+    assert!(home.join(".git").is_dir(), "the assistant's own repository");
+    assert!(!home.join(".claude").exists());
 }
 
 #[test]
@@ -43,19 +49,41 @@ fn warm_restarts_a_vanished_assistant() {
         Some(0)
     );
     let first = cli.ok(&["ls", "--tag", "tx-system"]);
+    let first_cwd = cwd_of(&cli, "tx-assistant");
+    std::fs::write(first_cwd.join("note.txt"), "keep me\n").unwrap();
     assert!(
         cli.tmux(&["kill-session", "-t", "=tx-assistant"])
             .status
             .success()
     );
+    let restarted = cli.run(&["assistant", "warm"], &env, "");
+    assert_eq!(restarted.status.code(), Some(0));
+    // The ended assistant keeps its name and its worktree, untouched; the new one is the next
+    // free name, in a worktree of its own, and `warm` says which.
     assert_eq!(
-        cli.run(&["assistant", "warm"], &env, "").status.code(),
-        Some(0)
+        String::from_utf8_lossy(&restarted.stdout),
+        "tx-assistant-2\n"
     );
     let listed = cli.ok(&["ls", "--tag", "tx-system"]);
     assert_eq!(listed.lines().count(), 2, "{listed:?}");
     assert_ne!(listed, first);
-    assert_eq!(lifecycle_of(&cli, "tx-assistant"), "running");
+    assert_eq!(lifecycle_of(&cli, "tx-assistant"), "exited");
+    assert_eq!(cwd_of(&cli, "tx-assistant"), first_cwd);
+    assert_eq!(
+        std::fs::read_to_string(first_cwd.join("note.txt")).unwrap(),
+        "keep me\n"
+    );
+    assert_eq!(lifecycle_of(&cli, "tx-assistant-2"), "running");
+    let second_cwd = cwd_of(&cli, "tx-assistant-2");
+    assert_ne!(second_cwd, first_cwd);
+    assert!(
+        second_cwd.ends_with("home--tx-assistant-2"),
+        "{second_cwd:?}"
+    );
+    // Warm again: the running one is found by its role, not by the name `tx-assistant`.
+    let again = cli.run(&["assistant", "warm"], &env, "");
+    assert_eq!(String::from_utf8_lossy(&again.stdout), "tx-assistant-2\n");
+    assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]), listed);
 }
 
 #[test]

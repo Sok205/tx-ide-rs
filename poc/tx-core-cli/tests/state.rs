@@ -21,8 +21,7 @@ impl Cli {
     /// A Claude session whose `claude` writes its argv, NUL-separated, to `argv`, then stays
     /// alive.
     fn create_claude(&self, name: &str) -> String {
-        let cwd = self.dir.path().join(name);
-        std::fs::create_dir_all(&cwd).unwrap();
+        let cwd = self.repository(name);
         let argv = self.dir.path().join("argv");
         let path = self.shim_path(&[(
             "claude",

@@ -141,13 +141,18 @@ with a role already did, through `-c developer_instructions`; only role-less one
 
 1. Validate the name (`[A-Za-z0-9_-]{1,128}`), the env keys, and that `cwd` is a directory;
    canonicalize `cwd`.
-2. Pure checks before any lock: the engine must be registered, the profile must resolve.
-3. Take `create.lock`. Refuse the name if a `Running` record holds it.
+2. Pure checks before any lock: the engine must be registered, the prompt must be there, the
+   profile must resolve.
+3. Take `create.lock`. A process: refuse the name if a `Running` record holds it. An agent: make
+   its own detached worktree of the checkout `cwd` at `HEAD`, under
+   `<data>/worktrees/<repository-key>/<slug>--<name>`, with the first name free among `Running`
+   records and on disk (`name`, `name-2`, … `name-99`); that is the agent's name and `cwd` from
+   here on. A `cwd` that is not a git checkout fails with git's own words.
 4. Mint the id. For an agent: write `<state>/profiles/<id>.md`, call `engine.launch(&request)` (pure),
-   apply the plan's workspace actions under `cwd`, merge its env.
+   apply the plan's workspace actions under the worktree, merge its env.
 5. `tmux new-session -d -s <name> -c <cwd> -e K=V … -- program args`, then `set-option @tx-id`.
-6. Save the record, append `created` to the log. If anything after step 5 fails, the tmux session
-   is killed and the profile file removed: no orphans.
+6. Save the record, append `created` to the log. If anything after step 3 fails, the worktree is
+   removed; after step 5, the tmux session is killed and the profile file removed: no orphans.
 
 Env layering, later wins: `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the five `TX_*_DIR`, then
 `CoreConfig::env` (where `txc` puts `TX_APPNAME`),
@@ -422,7 +427,6 @@ add now and breaking to add later.
 | Lifecycle hooks | `trait EventSink: Send + Sync { fn on_event(&self, e: &Event); }` + `TxCore::subscribe(Box<dyn EventSink>)`; `Event` carries the session id | called after locks drop; no `Result` (hooks cannot veto); no `&TxCore` (re-entry would deadlock on flock) |
 | Engine envelope | default method `LlmEngine::envelope(&self, sender, text) -> String` | pure; core still types it |
 | Chat ops (resume, fork, transcripts) | separate crate with a second registry keyed by engine id, `trait EngineChatOps` | one future `resume` field on `LaunchRequest` |
-| Workspace preparers (worktrees) | a function run by the caller before `create_session`; cleanup via an `EventSink` on `Stopped`/`Exited` | not a core concern (spec non-goal) |
 | Declarative engines | one plugin `Declared { id, program, args }` with `{profile_file}`/`{model}`/`{prompt}` substitution, registered N times from `plugins.yaml` settings | ids validated by the registry |
 | Launch decorators | a fourth registry slot letting a plugin edit a `LaunchPlan` (per-session hook injection without touching `~/.claude`) | pure, ordered by manifest |
 

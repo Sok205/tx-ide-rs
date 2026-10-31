@@ -11,7 +11,8 @@ usage: txc [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DI
 
 verbs:
   create NAME --cwd DIR (--engine ID [--role R]... [--model M] [--effort E] (--prompt T | --resume ID) | --exec PROG [ARG]...)
-                [--parent ID] [--tag T]... [--env KEY=VALUE]...     start a session; prints its id
+                [--parent ID] [--tag T]... [--env KEY=VALUE]...     start a session; prints its id. An agent runs in its
+                                                                    own worktree of the checkout DIR (name NAME, else NAME-2 …)
   ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped]   id, name, lifecycle, cwd per line
   show TARGET                                                       the record as JSON
   rename TARGET NAME

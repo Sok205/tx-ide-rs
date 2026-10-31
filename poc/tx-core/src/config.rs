@@ -16,6 +16,8 @@ pub const CONF_FILE: &str = "tmux.conf";
 /// Under the data directory: one directory per agent, and one per plugin.
 pub const AGENTS_DIR: &str = "agents";
 pub const PLUGINS_DIR: &str = "plugins";
+/// Under the data directory: the detached worktrees agents run in, one tree per agent.
+pub const WORKTREES_DIR: &str = "worktrees";
 
 /// The five directories tx keeps its files in, resolved by the front end (XDG, `TX_APPNAME`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,6 +156,11 @@ impl CoreConfig {
         self.directories.data.join(PLUGINS_DIR).join(plugin)
     }
 
+    /// The root of the agents' worktrees: `<data>/worktrees/<repository-key>/<slug>--<name>`.
+    pub fn worktrees_dir(&self) -> PathBuf {
+        self.directories.data.join(WORKTREES_DIR)
+    }
+
     /// The flags a re-invocation of `txc` / `txi` needs to open this same core: the five
     /// directories, and the socket when it is overridden.
     pub fn cli_arguments(&self) -> Vec<String> {
@@ -203,6 +210,10 @@ mod tests {
         assert_eq!(
             config.plugin_data_dir("chat"),
             PathBuf::from("/tmp/txc/data/plugins/chat")
+        );
+        assert_eq!(
+            config.worktrees_dir(),
+            PathBuf::from("/tmp/txc/data/worktrees")
         );
         let id = SessionId::mint();
         assert_eq!(

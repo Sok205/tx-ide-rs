@@ -4,9 +4,11 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Harness, STUB_ID, agent, process, wait_for};
+use common::{Harness, STUB_ID, agent, cwd_of, git, git_ok, git_worktrees, process, wait_for};
+use tx_core::worktree::repository_key;
 use tx_core::{
     CoreError, CreateOptions, Launch, LaunchOptions, Lifecycle, ListFilter, Session, SessionId,
+    WorktreeError,
 };
 
 fn env_of(cwd: &std::path::Path) -> Vec<(String, String)> {
@@ -85,14 +87,13 @@ fn env_layers_later_wins() {
     ];
     let mut core = tx_core::TxCore::open(config).unwrap();
     core.register_engine(Box::new(common::ShellStub)).unwrap();
-    let cwd = h.workdir("a");
-    let mut opts = agent("agent-1", &cwd);
+    let mut opts = agent("agent-1", &h.repository("a"));
     opts.env = vec![
         ("B".into(), "opts".into()),
         ("TX_SESSION_ID".into(), "opts".into()),
     ];
     let id = core.create_session(opts).unwrap();
-    let env = env_of(&cwd);
+    let env = env_of(&cwd_of(&core, &id));
     assert_eq!(get(&env, "A"), Some("config"));
     assert_eq!(get(&env, "B"), Some("opts"));
     assert_eq!(get(&env, "FROM_PLAN"), Some("plan"));
@@ -116,12 +117,12 @@ fn agent_session_gets_profile_plan_and_workspace() {
     config.profile_dirs = vec![roles];
     let mut core = tx_core::TxCore::open(config).unwrap();
     core.register_engine(Box::new(common::ShellStub)).unwrap();
-    let cwd = h.workdir("a");
+    let repository = h.repository("a");
     let id = core
         .create_session(
             CreateOptions::new(
                 "agent-1",
-                cwd.clone(),
+                repository.clone(),
                 LaunchOptions::agent(STUB_ID)
                     .profile(["dev"])
                     .model("m")
@@ -131,6 +132,9 @@ fn agent_session_gets_profile_plan_and_workspace() {
             .tags(["t1"]),
         )
         .unwrap();
+    // The engine's workspace, the profile and the process all land in the agent's worktree.
+    let cwd = cwd_of(&core, &id);
+    assert_ne!(cwd, repository.canonicalize().unwrap());
     let env = env_of(&cwd);
     let profile_file = h.state_dir().join(format!("profiles/{id}.md"));
     assert_eq!(
@@ -153,6 +157,9 @@ fn agent_session_gets_profile_plan_and_workspace() {
         std::fs::read_to_string(cwd.join("prompt.txt")).unwrap(),
         "start\n"
     );
+    assert!(!repository.join("stub-marker.txt").exists());
+    assert!(!repository.join("env.txt").exists());
+    assert_eq!(git_ok(&repository, &["status", "--porcelain"]), "");
     let session = core.get_session(&id).unwrap();
     assert!(matches!(
         session.launch,
@@ -167,11 +174,10 @@ fn resume_reaches_the_engine_and_the_record() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let cwd = h.workdir("r");
-    let mut opts = agent("resumed", &cwd);
+    let mut opts = agent("resumed", &h.repository("r"));
     opts.launch = LaunchOptions::agent(STUB_ID).resume("chat-99");
     let id = core.create_session(opts).unwrap();
-    let env = env_of(&cwd);
+    let env = env_of(&cwd_of(&core, &id));
     assert_eq!(get(&env, "STUB_MODE"), Some("resume"));
     assert_eq!(get(&env, "STUB_RESUME"), Some("chat-99"));
     let session = core.get_session(&id).unwrap();
@@ -184,7 +190,7 @@ fn resume_reaches_the_engine_and_the_record() {
         "the resumed conversation is named in the engine's data"
     );
     let fresh = core
-        .create_session(agent("fresh", &h.workdir("f")))
+        .create_session(agent("fresh", &h.repository("f")))
         .unwrap();
     assert!(
         matches!(core.get_session(&fresh).unwrap().launch, Launch::Agent { ref resume, .. } if resume.is_none())
@@ -198,13 +204,12 @@ fn the_engine_sees_the_record_and_its_data_lands_in_ext() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let cwd = h.workdir("d");
-    let mut opts = agent("named", &cwd);
+    let mut opts = agent("named", &h.repository("d"));
     opts.launch = LaunchOptions::agent(STUB_ID)
         .model("data")
         .initial_prompt("start");
     let id = core.create_session(opts).unwrap();
-    let env = env_of(&cwd);
+    let env = env_of(&cwd_of(&core, &id));
     assert_eq!(get(&env, "STUB_MODE"), Some("start"));
     assert_eq!(get(&env, "STUB_SESSION_ID"), Some(id.as_str()));
     let session = core.get_session(&id).unwrap();
@@ -214,7 +219,7 @@ fn the_engine_sees_the_record_and_its_data_lands_in_ext() {
     );
     // No data in the plan: no entry.
     let plain = core
-        .create_session(agent("plain", &h.workdir("p")))
+        .create_session(agent("plain", &h.repository("p")))
         .unwrap();
     assert!(core.get_session(&plain).unwrap().ext.is_empty());
 }
@@ -224,7 +229,7 @@ fn failures_before_launch_leave_nothing_behind() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let cwd = h.workdir("a");
+    let cwd = h.repository("a");
 
     let mut opts = agent("x", &cwd);
     opts.launch = LaunchOptions::agent("ghost");
@@ -254,6 +259,7 @@ fn failures_before_launch_leave_nothing_behind() {
         ));
     }
 
+    // The engine refuses after the worktree was made: the worktree goes with the failure.
     let mut opts = agent("x", &cwd);
     opts.launch = LaunchOptions::agent(STUB_ID)
         .initial_prompt("start")
@@ -262,6 +268,14 @@ fn failures_before_launch_leave_nothing_behind() {
         core.create_session(opts).unwrap_err(),
         CoreError::Engine(_)
     ));
+
+    // Not a checkout: git's own words, and nothing made.
+    let plain = h.workdir("plain");
+    let error = core.create_session(agent("x", &plain)).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::Worktree(WorktreeError::Git(message)) if message.starts_with("fatal: not a git repository")),
+        "{error:?}"
+    );
 
     assert!(matches!(
         core.create_session(process("bad name", &cwd)).unwrap_err(),
@@ -304,6 +318,99 @@ fn failures_before_launch_leave_nothing_behind() {
     );
     assert!(h.log_lines().is_empty());
     assert!(!cwd.join("stub-marker.txt").exists());
+    assert_eq!(git_worktrees(&cwd), [cwd.canonicalize().unwrap()]);
+    assert_eq!(h.worktree_count(), 0);
+}
+
+#[test]
+fn every_agent_gets_its_own_detached_worktree_under_a_free_name() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let repository = h.repository("repo");
+    let head = git_ok(&repository, &["rev-parse", "HEAD"]);
+    let key = repository_key(
+        &repository.canonicalize().unwrap(),
+        &repository.canonicalize().unwrap().join(".git"),
+    );
+    let expected = |name: &str| {
+        h.worktrees_dir()
+            .join(&key)
+            .join(format!("repo--{name}"))
+            .canonicalize()
+            .unwrap()
+    };
+
+    let first = core.create_session(agent("w", &repository)).unwrap();
+    let session = core.get_session(&first).unwrap();
+    assert_eq!(session.name, "w");
+    assert_eq!(session.cwd, expected("w"));
+    assert_eq!(git_ok(&session.cwd, &["rev-parse", "HEAD"]), head);
+    assert!(
+        !git(&session.cwd, &["symbolic-ref", "-q", "HEAD"])
+            .status
+            .success(),
+        "detached"
+    );
+    assert!(session.cwd.join("README.md").is_file());
+    assert_eq!(h.live_names(), ["w"]);
+
+    // The same name while the first runs: the next free one, for the record and the tree.
+    let second = core.create_session(agent("w", &repository)).unwrap();
+    let session = core.get_session(&second).unwrap();
+    assert_eq!(session.name, "w-2");
+    assert_eq!(session.cwd, expected("w-2"));
+    assert_eq!(git_ok(&session.cwd, &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        git_worktrees(&repository),
+        [
+            repository.canonicalize().unwrap(),
+            expected("w"),
+            expected("w-2")
+        ]
+    );
+    let mut names = h.live_names();
+    names.sort();
+    assert_eq!(names, ["w", "w-2"]);
+    assert_eq!(core.resolve("w").unwrap(), first);
+    assert_eq!(core.resolve("w-2").unwrap(), second);
+
+    // Stopped: the name is free again, but its tree is still on disk, so the next is `w-3`.
+    core.stop_session(&first).unwrap();
+    let third = core.create_session(agent("w", &repository)).unwrap();
+    assert_eq!(core.get_session(&third).unwrap().name, "w-3");
+    assert!(expected("w").is_dir(), "stop never removes a worktree");
+
+    // A process keeps running where it is asked to.
+    let process_id = core.create_session(process("p", &h.workdir("p"))).unwrap();
+    assert_eq!(
+        core.get_session(&process_id).unwrap().cwd,
+        h.workdir("p").canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn a_launch_that_fails_after_the_worktree_removes_it() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let repository = h.repository("repo");
+    let before = git_worktrees(&repository);
+    // The name is free among records, so the worktree is made; then tmux refuses the duplicate.
+    h.tmux_ok(&["new-session", "-d", "-s", "w", "sleep", "30"]);
+    let error = core.create_session(agent("w", &repository)).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::NameTaken(name) if name == "w"),
+        "{error:?}"
+    );
+    assert_eq!(git_worktrees(&repository), before);
+    assert_eq!(h.worktree_count(), 0);
+    assert!(
+        core.list_sessions(&ListFilter::default())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(h.live_names(), ["w"], "the foreign session is left alone");
 }
 
 #[test]

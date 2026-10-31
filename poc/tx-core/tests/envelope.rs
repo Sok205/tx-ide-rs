@@ -5,7 +5,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Harness, STUB_ID, agent, process, typed, wait_for};
+use common::{Harness, STUB_ID, agent, cwd_of, process, typed, wait_for};
 use tx_core::{
     CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine, SendOptions,
 };
@@ -44,18 +44,20 @@ fn the_recipients_engine_frames_the_message() {
     let h = Harness::new();
     let mut core = h.open_with_engine();
     core.register_engine(Box::new(Shout)).unwrap();
-    let cwd = h.workdir("s");
     let shouter = core
         .create_session(CreateOptions::new(
             "shouter",
-            &cwd,
+            h.repository("s"),
             LaunchOptions::agent("shout").initial_prompt("start"),
         ))
         .unwrap();
+    let cwd = cwd_of(&core, &shouter);
     let plain_dir = h.workdir("p");
     let plain = core.create_session(process("plain", &plain_dir)).unwrap();
-    let stub_dir = h.workdir("a");
-    let stub = core.create_session(agent("stubbed", &stub_dir)).unwrap();
+    let stub = core
+        .create_session(agent("stubbed", &h.repository("a")))
+        .unwrap();
+    let stub_dir = cwd_of(&core, &stub);
     for dir in [&cwd, &plain_dir, &stub_dir] {
         assert!(wait_for(Duration::from_secs(5), || dir
             .join("env.txt")

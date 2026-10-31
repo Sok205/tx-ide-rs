@@ -23,6 +23,7 @@ pub mod store;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod tmux;
+pub mod worktree;
 
 pub use config::{CoreConfig, Directories, MAX_SOCKET_PATH_BYTES};
 pub use core::{
@@ -59,3 +60,5 @@ pub use store::{ReadError, StoreError};
 pub use tmux::TmuxError;
 #[doc(hidden)]
 pub use tmux::{Live, LiveTable, Tmux};
+/// Stable: `WorktreeError` is the payload of `CoreError::Worktree`.
+pub use worktree::{WorktreeError, WorktreeManager};

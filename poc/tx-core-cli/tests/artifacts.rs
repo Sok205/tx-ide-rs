@@ -423,8 +423,7 @@ fn operator(cli: &Cli) -> (String, String) {
     cli.write_yaml(&format!("{yaml}  menu: {{ enabled: false }}\n"));
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();
-    let cwd = cli.dir.path().join("a");
-    std::fs::create_dir_all(&cwd).unwrap();
+    let cwd = cli.repository("a");
     let output = cli.run(
         &[
             "create",
