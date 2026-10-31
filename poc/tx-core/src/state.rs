@@ -13,21 +13,19 @@ use serde_json::Value;
 pub enum LlmEngineState {
     /// Launched; the CLI has not reported yet.
     Starting,
-    /// The operator's turn.
+    /// The operator's move: a finished turn, or (with a note saying why) a turn stopped on an
+    /// approval or a question.
     Idle,
     Working,
-    /// Blocked on the operator mid-turn: an approval, a question.
-    Waiting,
     /// The CLI is exiting or the process is gone.
     Ended,
 }
 
 impl LlmEngineState {
-    pub const ALL: [LlmEngineState; 5] = [
+    pub const ALL: [LlmEngineState; 4] = [
         LlmEngineState::Starting,
         LlmEngineState::Idle,
         LlmEngineState::Working,
-        LlmEngineState::Waiting,
         LlmEngineState::Ended,
     ];
 
@@ -36,7 +34,6 @@ impl LlmEngineState {
             LlmEngineState::Starting => "starting",
             LlmEngineState::Idle => "idle",
             LlmEngineState::Working => "working",
-            LlmEngineState::Waiting => "waiting",
             LlmEngineState::Ended => "ended",
         }
     }
@@ -127,12 +124,12 @@ mod tests {
 
     #[test]
     fn same_state_replaces_only_the_note() {
-        let mut status = LlmEngineStatus::new(State::Waiting, 1.0);
+        let mut status = LlmEngineStatus::new(State::Idle, 1.0);
         assert_eq!(
-            status.apply(Transition::to(State::Waiting).note("approval: Bash"), 2.0),
+            status.apply(Transition::to(State::Idle).note("approval: Bash"), 2.0),
             None
         );
-        assert_eq!(status.state, State::Waiting);
+        assert_eq!(status.state, State::Idle);
         assert_eq!(status.since, 1.0);
         assert_eq!(status.note.as_deref(), Some("approval: Bash"));
     }

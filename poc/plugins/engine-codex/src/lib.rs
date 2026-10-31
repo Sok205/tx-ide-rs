@@ -80,7 +80,8 @@ impl LlmEngine for CodexAdapter {
         Ok(plan)
     }
 
-    /// Codex has no "waiting for input" hook, so it reaches `Waiting` only on an approval.
+    /// An approval stops the turn on the operator: `Idle` with the tool as the note; the next
+    /// `PostToolUse` means they answered.
     /// `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the process
     /// lives, and its payload cannot tell the two apart; core ends the session when the
     /// process is gone.
@@ -94,14 +95,14 @@ impl LlmEngine for CodexAdapter {
             "SessionStart" | "Stop" | "Interrupt" => to(LlmEngineState::Idle),
             "UserPromptSubmit" => to(LlmEngineState::Working),
             "PermissionRequest" => Some(LlmEngineStateTransition {
-                to: LlmEngineState::Waiting,
+                to: LlmEngineState::Idle,
                 note: hook
                     .payload
                     .get("tool_name")
                     .and_then(Value::as_str)
                     .map(|tool| format!("approval: {tool}")),
             }),
-            "PostToolUse" if current.state == LlmEngineState::Waiting => {
+            "PostToolUse" if current.state == LlmEngineState::Idle && current.note.is_some() => {
                 to(LlmEngineState::Working)
             }
             _ => None,
@@ -175,72 +176,71 @@ mod tests {
         }
     }
 
+    /// (current state, current note, hook name, payload) → the adapter's transition.
+    type Row = (
+        LlmEngineState,
+        Option<&'static str>,
+        &'static str,
+        serde_json::Value,
+        Option<LlmEngineStateTransition>,
+    );
+
+    fn check(adapter: &dyn LlmEngine, table: Vec<Row>) {
+        for (state, note, name, payload, expected) in table {
+            let current = LlmEngineStatus {
+                note: note.map(str::to_owned),
+                ..LlmEngineStatus::new(state, 1.0)
+            };
+            assert_eq!(
+                adapter.on_hook(&current, &hook(name, payload.clone())),
+                expected,
+                "{state:?} {note:?} {name} {payload}"
+            );
+        }
+    }
+
+    fn to(state: LlmEngineState) -> Option<LlmEngineStateTransition> {
+        Some(LlmEngineStateTransition::to(state))
+    }
+
+    fn to_noted(state: LlmEngineState, note: &str) -> Option<LlmEngineStateTransition> {
+        Some(LlmEngineStateTransition::to(state).note(note))
+    }
+
     #[test]
-    fn hooks_to_changes() {
+    fn hooks_to_transitions() {
         use LlmEngineState::*;
         use serde_json::json;
         let none = json!({});
-        let table: Vec<(
-            LlmEngineState,
-            &str,
-            serde_json::Value,
-            Option<LlmEngineStateTransition>,
-        )> = vec![
-            (
-                Starting,
-                "SessionStart",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Idle)),
-            ),
-            (
-                Idle,
-                "UserPromptSubmit",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Working)),
-            ),
-            (
-                Working,
-                "PermissionRequest",
-                json!({"tool_name": "shell"}),
-                Some(LlmEngineStateTransition::to(Waiting).note("approval: shell")),
-            ),
-            (
-                Working,
-                "PermissionRequest",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Waiting)),
-            ),
-            (
-                Waiting,
-                "PostToolUse",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Working)),
-            ),
-            (Working, "PostToolUse", none.clone(), None),
-            (
-                Working,
-                "Stop",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Idle)),
-            ),
-            (
-                Working,
-                "Interrupt",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Idle)),
-            ),
-            (Idle, "SessionEnd", json!({"reason": "other"}), None),
-            (Idle, "PreToolUse", none.clone(), None),
-            (Idle, "Notification", none.clone(), None),
-        ];
-        for (state, name, payload, expected) in table {
-            let current = LlmEngineStatus::new(state, 1.0);
-            assert_eq!(
-                CodexAdapter.on_hook(&current, &hook(name, payload.clone())),
-                expected,
-                "{state:?} {name} {payload}"
-            );
-        }
+        check(
+            &CodexAdapter,
+            vec![
+                (Starting, None, "SessionStart", none.clone(), to(Idle)),
+                (Idle, None, "UserPromptSubmit", none.clone(), to(Working)),
+                (
+                    Working,
+                    None,
+                    "PermissionRequest",
+                    json!({"tool_name": "shell"}),
+                    to_noted(Idle, "approval: shell"),
+                ),
+                (Working, None, "PermissionRequest", none.clone(), to(Idle)),
+                (
+                    Idle,
+                    Some("approval: shell"),
+                    "PostToolUse",
+                    none.clone(),
+                    to(Working),
+                ),
+                (Idle, None, "PostToolUse", none.clone(), None),
+                (Working, None, "PostToolUse", none.clone(), None),
+                (Working, None, "Stop", none.clone(), to(Idle)),
+                (Working, None, "Interrupt", none.clone(), to(Idle)),
+                (Idle, None, "SessionEnd", json!({"reason": "other"}), None),
+                (Idle, None, "PreToolUse", none.clone(), None),
+                (Idle, None, "Notification", none.clone(), None),
+            ],
+        );
     }
 
     #[test]

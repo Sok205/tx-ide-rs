@@ -133,7 +133,7 @@ fn the_wired_hooks_move_a_claude_session() {
         .success()
     );
     let status = cli.show("a")["status"].clone();
-    assert_eq!(status["state"], "waiting");
+    assert_eq!(status["state"], "idle");
     assert_eq!(status["note"], "needs Bash");
     assert!(cli.chat_hook("PostToolUse", &id, "{}").status.success());
     assert_eq!(cli.state_of("a"), "working");
@@ -147,8 +147,8 @@ fn the_wired_hooks_move_a_claude_session() {
         [
             "starting → idle",
             "idle → working",
-            "working → waiting: needs Bash",
-            "waiting → working",
+            "working → idle: needs Bash",
+            "idle → working",
             "working → idle"
         ]
     );

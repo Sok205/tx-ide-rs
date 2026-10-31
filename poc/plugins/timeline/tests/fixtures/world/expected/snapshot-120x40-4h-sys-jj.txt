@@ -36,5 +36,5 @@ ALPHA (2)                                                                       
                                                                                                                       ┃
                                                                                                                       ┃
                                                                                                                       ┃
-gpt-5 · effort high · ctx 20.0K/200.0K (10%) · worker · codex · waiting · 4 msgs · 2 messages
+gpt-5 · effort high · ctx 20.0K/200.0K (10%) · worker · codex · idle · 4 msgs · 2 messages
 h/l pan  [ ] zoom  j/k lane  enter go  tab/shift-tab message  / search  s sys  i idle  n now  q   2.6m/col sys follow

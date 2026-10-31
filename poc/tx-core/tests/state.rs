@@ -44,28 +44,23 @@ fn hooks_move_an_agent_and_core_ends_it() {
         .unwrap();
     assert_eq!((status.state, status.since), (LlmEngineState::Idle, 10.0));
 
+    core.hook(&id, hook("working", json!({}), 12.0)).unwrap();
     let status = core
-        .hook(
-            &id,
-            hook("waiting", json!({"note": "approval: Bash"}), 12.0),
-        )
+        .hook(&id, hook("idle", json!({"note": "approval: Bash"}), 13.0))
         .unwrap()
         .unwrap();
     assert_eq!(status.note.as_deref(), Some("approval: Bash"));
     // Same state: the note is replaced, `since` kept, no event.
     let status = core
-        .hook(
-            &id,
-            hook("waiting", json!({"note": "approval: Edit"}), 13.0),
-        )
+        .hook(&id, hook("idle", json!({"note": "approval: Edit"}), 14.0))
         .unwrap()
         .unwrap();
     assert_eq!(
-        (status.since, status.note.as_deref()),
-        (12.0, Some("approval: Edit"))
+        (status.state, status.since, status.note.as_deref()),
+        (LlmEngineState::Idle, 13.0, Some("approval: Edit"))
     );
     let status = core
-        .hook(&id, hook("working", json!({}), 14.0))
+        .hook(&id, hook("working", json!({}), 15.0))
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -78,8 +73,9 @@ fn hooks_move_an_agent_and_core_ends_it() {
         state_lines(&h),
         [
             "starting → idle",
-            "idle → waiting: approval: Bash",
-            "waiting → working"
+            "idle → working",
+            "working → idle: approval: Bash",
+            "idle → working"
         ]
     );
 
@@ -95,7 +91,7 @@ fn hooks_move_an_agent_and_core_ends_it() {
     );
     assert_eq!(
         state_lines(&h).len(),
-        3,
+        4,
         "stop logs `stopped`, not a state change"
     );
 }

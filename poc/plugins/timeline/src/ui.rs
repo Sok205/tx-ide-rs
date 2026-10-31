@@ -272,7 +272,7 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
         // An agent that reported its end reads as gone before refresh marks the process.
         (false, _) | (true, "ended") => "×",
         (true, "working") => "●",
-        (true, "starting" | "idle" | "waiting") => "○",
+        (true, "starting" | "idle") => "○",
         (true, _) => "·",
     };
     put(

@@ -34,9 +34,9 @@ pub const HOOK_EVENTS: [&str; 8] = [
 /// Seconds Claude waits for one hook before moving on.
 pub const HOOK_TIMEOUT_SECONDS: u64 = 10;
 pub const DEFAULT_EFFORT: Effort = Effort::High;
-/// `Notification` types that mean "blocked on the operator mid-turn". Not `idle_prompt`: Claude
-/// sends it about 60 s after every finished turn, which is already `Idle`.
-pub const WAITING_NOTIFICATIONS: [&str; 2] = ["permission_prompt", "elicitation_dialog"];
+/// `Notification` types that stop a turn on the operator: `Idle` with the message as the note.
+/// Not `idle_prompt`: Claude sends it about 60 s after every finished turn, already `Idle`.
+pub const MID_TURN_NOTIFICATIONS: [&str; 2] = ["permission_prompt", "elicitation_dialog"];
 /// `SessionEnd` reasons that replace the conversation inside a process that keeps running
 /// (`SessionStart` follows at once); they end nothing.
 pub const CONTINUING_END_REASONS: [&str; 2] = ["clear", "resume"];
@@ -92,16 +92,19 @@ impl LlmEngine for ClaudeAdapter {
         match hook.name.as_str() {
             "SessionStart" | "Stop" => to(LlmEngineState::Idle),
             "UserPromptSubmit" => to(LlmEngineState::Working),
-            // The operator answered the prompt that made it wait.
-            "PreToolUse" | "PostToolUse" if current.state == LlmEngineState::Waiting => {
+            // Idle with a note is a turn stopped on the operator; a tool running means they
+            // answered.
+            "PreToolUse" | "PostToolUse"
+                if current.state == LlmEngineState::Idle && current.note.is_some() =>
+            {
                 to(LlmEngineState::Working)
             }
             "Notification"
                 if field("notification_type")
-                    .is_some_and(|kind| WAITING_NOTIFICATIONS.contains(&kind)) =>
+                    .is_some_and(|kind| MID_TURN_NOTIFICATIONS.contains(&kind)) =>
             {
                 Some(LlmEngineStateTransition {
-                    to: LlmEngineState::Waiting,
+                    to: LlmEngineState::Idle,
                     note: field("message").map(str::to_owned),
                 })
             }
@@ -200,112 +203,107 @@ mod tests {
         }
     }
 
+    /// (current state, current note, hook name, payload) → the adapter's transition.
+    type Row = (
+        LlmEngineState,
+        Option<&'static str>,
+        &'static str,
+        serde_json::Value,
+        Option<LlmEngineStateTransition>,
+    );
+
+    fn check(adapter: &dyn LlmEngine, table: Vec<Row>) {
+        for (state, note, name, payload, expected) in table {
+            let current = LlmEngineStatus {
+                note: note.map(str::to_owned),
+                ..LlmEngineStatus::new(state, 1.0)
+            };
+            assert_eq!(
+                adapter.on_hook(&current, &hook(name, payload.clone())),
+                expected,
+                "{state:?} {note:?} {name} {payload}"
+            );
+        }
+    }
+
+    fn to(state: LlmEngineState) -> Option<LlmEngineStateTransition> {
+        Some(LlmEngineStateTransition::to(state))
+    }
+
+    fn to_noted(state: LlmEngineState, note: &str) -> Option<LlmEngineStateTransition> {
+        Some(LlmEngineStateTransition::to(state).note(note))
+    }
+
     #[test]
-    fn hooks_to_changes() {
+    fn hooks_to_transitions() {
         use LlmEngineState::*;
         use serde_json::json;
         let none = json!({});
-        let note = |state, note: &str| Some(LlmEngineStateTransition::to(state).note(note));
-        let table: Vec<(
-            LlmEngineState,
-            &str,
-            serde_json::Value,
-            Option<LlmEngineStateTransition>,
-        )> = vec![
-            (
-                Starting,
-                "SessionStart",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Idle)),
-            ),
-            (
-                Idle,
-                "UserPromptSubmit",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Working)),
-            ),
-            (Working, "PreToolUse", none.clone(), None),
-            (Working, "PostToolUse", none.clone(), None),
-            (
-                Waiting,
-                "PreToolUse",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Working)),
-            ),
-            (
-                Waiting,
-                "PostToolUse",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Working)),
-            ),
-            (
-                Working,
-                "Notification",
-                json!({"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"}),
-                note(Waiting, "Claude needs your permission to use Bash"),
-            ),
-            (
-                Working,
-                "Notification",
-                json!({"notification_type": "elicitation_dialog"}),
-                Some(LlmEngineStateTransition::to(Waiting)),
-            ),
-            (
-                Idle,
-                "Notification",
-                json!({"notification_type": "idle_prompt", "message": "waiting"}),
-                None,
-            ),
-            (Working, "Notification", none.clone(), None),
-            (
-                Working,
-                "Stop",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Idle)),
-            ),
-            (
-                Working,
-                "StopFailure",
-                json!({"error": "rate_limit"}),
-                note(Idle, "error: rate_limit"),
-            ),
-            (
-                Working,
-                "StopFailure",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Idle)),
-            ),
-            (
-                Idle,
-                "SessionEnd",
-                json!({"reason": "logout"}),
-                Some(LlmEngineStateTransition::to(Ended)),
-            ),
-            (
-                Idle,
-                "SessionEnd",
-                json!({"reason": "prompt_input_exit"}),
-                Some(LlmEngineStateTransition::to(Ended)),
-            ),
-            (
-                Idle,
-                "SessionEnd",
-                none.clone(),
-                Some(LlmEngineStateTransition::to(Ended)),
-            ),
-            (Idle, "SessionEnd", json!({"reason": "clear"}), None),
-            (Idle, "SessionEnd", json!({"reason": "resume"}), None),
-            (Idle, "PreCompact", none.clone(), None),
-            (Idle, "stop", none.clone(), None),
-        ];
-        for (state, name, payload, expected) in table {
-            let current = LlmEngineStatus::new(state, 1.0);
-            assert_eq!(
-                ClaudeAdapter.on_hook(&current, &hook(name, payload.clone())),
-                expected,
-                "{state:?} {name} {payload}"
-            );
-        }
+        let asked = "Claude needs your permission to use Bash";
+        check(
+            &ClaudeAdapter,
+            vec![
+                (Starting, None, "SessionStart", none.clone(), to(Idle)),
+                (Idle, None, "UserPromptSubmit", none.clone(), to(Working)),
+                (Working, None, "PreToolUse", none.clone(), None),
+                (Working, None, "PostToolUse", none.clone(), None),
+                (
+                    Working,
+                    None,
+                    "Notification",
+                    json!({"notification_type": "permission_prompt", "message": asked}),
+                    to_noted(Idle, asked),
+                ),
+                (
+                    Working,
+                    None,
+                    "Notification",
+                    json!({"notification_type": "elicitation_dialog"}),
+                    to(Idle),
+                ),
+                // The operator answered: a tool runs again.
+                (Idle, Some(asked), "PreToolUse", none.clone(), to(Working)),
+                (Idle, Some(asked), "PostToolUse", none.clone(), to(Working)),
+                // A plain finished turn has no note: a stray tool hook changes nothing.
+                (Idle, None, "PostToolUse", none.clone(), None),
+                (
+                    Idle,
+                    None,
+                    "Notification",
+                    json!({"notification_type": "idle_prompt", "message": "your turn"}),
+                    None,
+                ),
+                (Working, None, "Notification", none.clone(), None),
+                (Working, None, "Stop", none.clone(), to(Idle)),
+                (
+                    Working,
+                    None,
+                    "StopFailure",
+                    json!({"error": "rate_limit"}),
+                    to_noted(Idle, "error: rate_limit"),
+                ),
+                (Working, None, "StopFailure", none.clone(), to(Idle)),
+                (
+                    Idle,
+                    None,
+                    "SessionEnd",
+                    json!({"reason": "logout"}),
+                    to(Ended),
+                ),
+                (
+                    Idle,
+                    None,
+                    "SessionEnd",
+                    json!({"reason": "prompt_input_exit"}),
+                    to(Ended),
+                ),
+                (Idle, None, "SessionEnd", none.clone(), to(Ended)),
+                (Idle, None, "SessionEnd", json!({"reason": "clear"}), None),
+                (Idle, None, "SessionEnd", json!({"reason": "resume"}), None),
+                (Idle, None, "PreCompact", none.clone(), None),
+                (Idle, None, "stop", none.clone(), None),
+            ],
+        );
     }
 
     #[test]

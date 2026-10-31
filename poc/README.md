@@ -84,7 +84,9 @@ states are final: nothing in core moves a record out of them.
 ### Agent state: the engine adapter decides, core applies
 
 An agent record carries `status` (an `LlmEngineStatus`: `{state, since, note?}`), with `state` one of `starting`,
-`idle`, `working`, `waiting` (blocked on the operator mid-turn) and `ended`. The vocabulary is
+`idle`, `working` and `ended`. Idle means it is the operator's move; when a turn stopped on an
+approval or a question rather than finishing, the note says why ("approval: Bash"), and the next
+tool hook moves it back to `working`. The vocabulary is
 core's; when to move between states is the adapter's. At launch the adapter wires the hooks it
 needs into the CLI's own command line (Claude `--settings '{"hooks":…}'`, Codex
 `-c hooks.<Event>=…`), each running `CoreConfig::hook_command` plus the CLI's event name —

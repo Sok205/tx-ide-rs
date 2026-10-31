@@ -3,7 +3,7 @@
 //! Main's record fields map onto core's as follows. `role` is the launch kind: `llm` (or
 //! `agent`) for an engine launch, `shell` (or `process`) for a plain program. `state` is any of
 //! the names a record answers to: a running record is `alive` and `running`, plus its agent
-//! state (`starting` / `idle` / `working` / `waiting` / `ended`) when it has one; an ended
+//! state (`starting` / `idle` / `working` / `ended`) when it has one; an ended
 //! record is `archived` and its lifecycle (`exited` / `stopped`). `chat_origin` needs a
 //! chat plugin, which this port does not have yet, so it matches nothing.
 
