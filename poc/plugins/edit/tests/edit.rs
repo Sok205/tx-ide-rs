@@ -29,8 +29,21 @@ impl LlmEngine for SleepStub {
         Ok(options.clone())
     }
 
-    fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+    fn start(&self, _: &LaunchRequest<'_>, _: &str) -> Result<LaunchPlan, EngineError> {
         Ok(LaunchPlan::new("sleep").args(["60".to_owned()]))
+    }
+
+    fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        self.start(request, "")
+    }
+
+    fn fork(
+        &self,
+        request: &LaunchRequest<'_>,
+        _: &Session,
+        _: &str,
+    ) -> Result<LaunchPlan, EngineError> {
+        self.start(request, "")
     }
 
     fn on_hook(&self, _: &Session, _: &LlmEngineHook) -> LlmEngineChange {

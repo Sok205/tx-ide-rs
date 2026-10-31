@@ -345,7 +345,12 @@ impl Tmux {
     }
 
     pub fn send_enter(&self, pane: &str) -> Result<(), TmuxError> {
-        self.run(&["send-keys".into(), "-t".into(), pane.into(), "Enter".into()])
+        self.send_key(pane, "Enter")
+    }
+
+    /// Presses one key, by tmux's name for it (`Enter`, `Escape`, `C-c`).
+    pub fn send_key(&self, pane: &str, key: &str) -> Result<(), TmuxError> {
+        self.run(&["send-keys".into(), "-t".into(), pane.into(), key.into()])
             .map(drop)
     }
 

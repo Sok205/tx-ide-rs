@@ -148,7 +148,7 @@ with a role already did, through `-c developer_instructions`; only role-less one
    `<data>/worktrees/<repository-key>/<slug>--<name>`, with the first name free among `Running`
    records and on disk (`name`, `name-2`, … `name-99`); that is the agent's name and `cwd` from
    here on. A `cwd` that is not a git checkout fails with git's own words.
-4. Mint the id. For an agent: write `<state>/profiles/<id>.md`, call `engine.launch(&request)` (pure),
+4. Mint the id. For an agent: write `<state>/profiles/<id>.md`, call the engine's `start` (a fork: `fork`; a respawn: `resume`) with the request (pure),
    apply the plan's workspace actions under the worktree, merge its env.
 5. `tmux new-session -d -s <name> -c <cwd> -e K=V … -- program args`, then `set-option @tx-id`.
 6. Save the record, append `created` to the log. If anything after step 3 fails, the worktree is
@@ -211,10 +211,8 @@ impl LlmEngine for Aider {
     // No hooks wired: the session stays `starting`. See the bundled adapters for real rules.
     fn on_hook(&self, _: LlmEngineState, _: &LlmEngineHook) -> Option<LlmEngineState> { None }
 
-    fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        let mut args = vec!["--read".into(), r.profile.file().display().to_string()];
-        if let Some(model) = r.model { args.extend(["--model".into(), model.into()]); }
-        if let Some(prompt) = r.initial_prompt { args.extend(["--message".into(), prompt.into()]); }
+    fn start(&self, r: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {
+        let args = vec!["--read".into(), r.profile.file().display().to_string(), "--message".into(), prompt.into()];
         let mut plan = LaunchPlan::new("aider").args(args);
         for dir in r.profile.skill_dirs() {
             plan = plan.workspace(WorkspaceAction::Symlink {
@@ -224,13 +222,22 @@ impl LlmEngine for Aider {
         }
         Ok(plan)
     }
+
+    // Aider keeps no conversation to come back to: a resume starts afresh, a fork likewise.
+    fn resume(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> { self.start(r, "") }
+    fn fork(&self, r: &LaunchRequest<'_>, _: &Session, prompt: &str) -> Result<LaunchPlan, EngineError> { self.start(r, prompt) }
+
+    // Optional: how to leave and how to abort a turn (`None`, the default, means core kills /
+    // cannot interrupt); `receive_message` defaults to the `<from-…>` envelope, submitted.
+    fn stop(&self, _: &Session) -> Option<Input> { Some(Input::line("/exit")) }
+    fn interrupt(&self, _: &Session) -> Option<Input> { Some(Input::Key(Key::ControlC)) }
 }
 
 // in your binary:
 core.register_engine(Box::new(Aider))?;
 ```
 
-`launch` and `on_hook` are pure: no I/O. Core writes the profile file, applies the workspace actions (relative
+`start` / `resume` / `fork`, `on_hook` and the input methods (`receive_message`, `stop`, `interrupt`) are pure: no I/O. Core writes the profile file, applies the workspace actions (relative
 to `cwd`, refusing paths that escape it), starts the process. That makes an adapter testable
 with a `Profile` and nothing else, as the two bundled engines show. Put each engine in its own
 crate depending only on `tx-core`; the CLI registers the bundled ones in `main`.
@@ -454,7 +461,7 @@ add now and breaking to add later.
 | point | shape | guardrail |
 |---|---|---|
 | Lifecycle hooks | `trait EventSink: Send + Sync { fn on_event(&self, e: &Event); }` + `TxCore::subscribe(Box<dyn EventSink>)`; `Event` carries the session id | called after locks drop; no `Result` (hooks cannot veto); no `&TxCore` (re-entry would deadlock on flock) |
-| Engine envelope | default method `LlmEngine::envelope(&self, sender, text) -> String` | pure; core still types it |
+| Engine input | built: `receive_message` / `stop` / `interrupt` return an `Input` (a line, submitted or not, or one key) | pure; core still types it |
 | Chat ops (resume, fork, transcripts) | separate crate with a second registry keyed by engine id, `trait EngineChatOps` | one future `resume` field on `LaunchRequest` |
 | Declarative engines | one plugin `Declared { id, program, args }` with `{profile_file}`/`{model}`/`{prompt}` substitution, registered N times from `plugins.yaml` settings | ids validated by the registry |
 | Launch decorators | a fourth registry slot letting a plugin edit a `LaunchPlan` (per-session hook injection without touching `~/.claude`) | pure, ordered by manifest |

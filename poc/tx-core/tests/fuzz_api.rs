@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Directories, EventType, Launch, LaunchMode,
-    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState,
+    CoreConfig, CoreError, CreateOptions, Directories, EventType, Launch, LaunchOptions,
+    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState,
     MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId,
     TxCore, WorkspaceAction,
 };
@@ -179,34 +179,29 @@ proptest! {
         prop_assert!(fresh.args.is_empty() && fresh.env.is_empty() && fresh.workspace.is_empty());
     }
 
-    /// `LaunchRequest` setters: last call wins, nothing else moves, chaining order is irrelevant.
+    /// `LaunchRequest`: `hook_command` is the one setter; last call wins, nothing else moves.
     #[test]
-    fn launch_request_builder_sets_named_field_only(p1 in text(), p in text()) {
+    fn launch_request_builder_sets_named_field_only(w1 in text(), w in text()) {
         let dir = short_tempdir();
         let profile = Profile::write(
             ResolvedProfile { text: "t".into(), skill_dirs: vec![] },
             &dir.path().join("p.md"),
         ).unwrap();
         let session = session_with(None, vec![], Lifecycle::Running);
-        let source = session_with(None, vec![], Lifecycle::Running);
-        let fork = LaunchMode::Fork { source: &source };
+        let first = [w1.clone()];
+        let last = [w.clone()];
 
-        let a = LaunchRequest::new(&session, &profile).initial_prompt(&p1).initial_prompt(&p).mode(LaunchMode::Resume).mode(fork);
-        let b = LaunchRequest::new(&session, &profile).mode(fork).initial_prompt(&p);
+        let a = LaunchRequest::new(&session, &profile).hook_command(&first).hook_command(&last);
+        let b = LaunchRequest::new(&session, &profile).hook_command(&last);
         for req in [a, b] {
             prop_assert_eq!(&req.session.id, &session.id);
             prop_assert_eq!(req.profile.text(), "t");
-            prop_assert_eq!(req.initial_prompt, Some(p.as_str()));
-            let forked = matches!(req.mode, LaunchMode::Fork { source: forked } if forked.id == source.id);
-            prop_assert!(forked);
+            prop_assert_eq!(req.hook_command, &last[..]);
         }
-        // Single setter leaves the others untouched.
-        let only_prompt = LaunchRequest::new(&session, &profile).initial_prompt(&p1);
-        prop_assert_eq!(only_prompt.initial_prompt, Some(p1.as_str()));
-        let starts = matches!(only_prompt.mode, LaunchMode::Start);
-        prop_assert!(starts);
+        let bare = LaunchRequest::new(&session, &profile);
+        prop_assert!(bare.hook_command.is_empty());
         // `Copy`: `a` is still usable after being moved into the loop above.
-        prop_assert_eq!(a.initial_prompt, Some(p.as_str()));
+        prop_assert_eq!(a.hook_command, &last[..]);
     }
 
     /// `CreateOptions`: `parent` replaces, `tags` and `env` append, order of setters is irrelevant.
@@ -377,7 +372,24 @@ fn engine_adapter_object_is_usable_from_another_thread() {
             Ok(options.clone())
         }
 
-        fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, tx_core::EngineError> {
+        fn start(
+            &self,
+            _: &LaunchRequest<'_>,
+            _: &str,
+        ) -> Result<LaunchPlan, tx_core::EngineError> {
+            Ok(LaunchPlan::new("true"))
+        }
+
+        fn resume(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, tx_core::EngineError> {
+            Ok(LaunchPlan::new("true"))
+        }
+
+        fn fork(
+            &self,
+            _: &LaunchRequest<'_>,
+            _: &tx_core::Session,
+            _: &str,
+        ) -> Result<LaunchPlan, tx_core::EngineError> {
             Ok(LaunchPlan::new("true"))
         }
     }

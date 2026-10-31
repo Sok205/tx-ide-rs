@@ -1,5 +1,6 @@
-//! Seam 4: an engine may frame incoming messages its own way. Agents whose engine frames
-//! nothing, or whose engine is not registered in this core, get the default envelope.
+//! Seam 4: an engine may frame incoming messages its own way (`receive_message`). Agents whose
+//! engine frames nothing, or whose engine is not registered in this core, get the default
+//! envelope, submitted.
 
 mod common;
 
@@ -7,7 +8,7 @@ use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, typed, wait_for};
 use tx_core::{
-    CreateOptions, EngineError, EnvelopeSender, LaunchOptions, LaunchPlan, LaunchRequest,
+    CreateOptions, EngineError, EnvelopeSender, Input, LaunchOptions, LaunchPlan, LaunchRequest,
     LlmEngine, SendOptions, Sender,
 };
 
@@ -38,16 +39,29 @@ impl LlmEngine for Shout {
         Ok(options.clone())
     }
 
-    fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+    fn start(&self, _: &LaunchRequest<'_>, _: &str) -> Result<LaunchPlan, EngineError> {
         Ok(LaunchPlan::new("sh").args(["-c", "env > env.txt; cat > input.txt"]))
     }
 
-    fn envelope(&self, sender: &EnvelopeSender<'_>, text: &str) -> String {
+    fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        self.start(request, "")
+    }
+
+    fn fork(
+        &self,
+        request: &LaunchRequest<'_>,
+        _: &tx_core::Session,
+        _: &str,
+    ) -> Result<LaunchPlan, EngineError> {
+        self.start(request, "")
+    }
+
+    fn receive_message(&self, sender: &EnvelopeSender<'_>, text: &str) -> Input {
         let from = match sender {
             EnvelopeSender::User { via } => via.unwrap_or("USER"),
             EnvelopeSender::Agent { name } => name,
         };
-        format!("[{from}] {}", text.to_uppercase())
+        Input::line(format!("[{from}] {}", text.to_uppercase()))
     }
 }
 

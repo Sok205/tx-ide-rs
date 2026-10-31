@@ -44,7 +44,15 @@ impl LlmEngine for Stub {
         Ok(options.clone())
     }
 
-    fn launch(&self, _req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+    fn start(&self, _: &LaunchRequest<'_>, _: &str) -> Result<LaunchPlan, EngineError> {
+        Ok(LaunchPlan::default())
+    }
+
+    fn resume(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        Ok(LaunchPlan::default())
+    }
+
+    fn fork(&self, _: &LaunchRequest<'_>, _: &Session, _: &str) -> Result<LaunchPlan, EngineError> {
         Ok(LaunchPlan::default())
     }
 }
@@ -915,10 +923,10 @@ fn core_accepts_a_plan_with_empty_program() {
         state: LlmEngineState::Starting,
         ext: Default::default(),
     };
-    let request = LaunchRequest::new(&session, &profile).initial_prompt("");
+    let request = LaunchRequest::new(&session, &profile);
     let mut registry = EngineRegistry::new();
     registry.register(stub("empty")).unwrap();
-    let plan = registry.get("empty").unwrap().launch(&request).unwrap();
+    let plan = registry.get("empty").unwrap().start(&request, "").unwrap();
     assert_eq!(plan.program, "");
     assert_eq!(plan, LaunchPlan::default());
     apply_workspace(dir.path(), &plan.workspace).unwrap();

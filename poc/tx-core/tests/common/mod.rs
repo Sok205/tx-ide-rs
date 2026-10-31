@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, EngineError, LaunchMode, LaunchOptions, LaunchPlan,
+    CoreConfig, CreateOptions, Directories, EngineError, Input, Key, LaunchOptions, LaunchPlan,
     LaunchRequest, LlmEngine, SessionId, TxCore, WorkspaceAction,
 };
 
@@ -282,55 +282,36 @@ impl LlmEngine for ShellStub {
         Ok(serde_json::Value::Object(data))
     }
 
-    fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        let data = tx_core::engine_data(self, req.session);
-        let option = |key: &str| data.get(key).and_then(serde_json::Value::as_str);
-        let script = format!(
-            "env > env.txt; echo \"{}\" > prompt.txt; cat > input.txt",
-            req.initial_prompt.unwrap_or("")
-        );
-        // A resume reads its conversation from the record, as a real engine does.
-        let (mode, resume) = match req.mode {
-            LaunchMode::Start => ("start", ""),
-            LaunchMode::Resume => (
-                "resume",
-                req.session.ext[STUB_ID]["conversation_id"]
-                    .as_str()
-                    .unwrap(),
-            ),
-            LaunchMode::Fork { source } => ("fork", source.id.as_str()),
-        };
-        let (program, args) = match option("model") {
-            Some("exit") => ("true", Vec::new()),
-            Some("tough") => (
-                "sh",
-                vec![
-                    "-c".to_owned(),
-                    "trap '' HUP TERM; env > env.txt; sleep 120".to_owned(),
-                ],
-            ),
-            _ => ("sh", vec!["-c".to_owned(), script]),
-        };
-        let plan = LaunchPlan::new(program)
-            .args(args)
-            .env("STUB_PROFILE", req.profile.file().display().to_string())
-            .env("STUB_EFFORT", option("effort").unwrap_or("none"))
-            .env("FROM_PLAN", "plan")
-            .env("STUB_MODE", mode)
-            .env("STUB_RESUME", resume)
-            .env("STUB_SESSION_ID", req.session.id.as_str())
-            .workspace(WorkspaceAction::Write {
-                path: "stub-marker.txt".into(),
-                content: req.profile.text().to_owned(),
-            });
-        // Model `data`: the plan names the conversation up front, as Claude's does.
-        Ok(match option("model") {
-            Some("data") => plan.engine_data(serde_json::json!({
-                "conversation_id": req.session.id.as_str(),
-                "model": "data",
-            })),
-            _ => plan,
-        })
+    fn start(&self, request: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {
+        Ok(self.plan(request, prompt, "start", ""))
+    }
+
+    /// A resume reads its conversation from the record, as a real engine does.
+    fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        let conversation = request.session.ext[STUB_ID]["conversation_id"]
+            .as_str()
+            .unwrap();
+        Ok(self.plan(request, "", "resume", conversation))
+    }
+
+    fn fork(
+        &self,
+        request: &LaunchRequest<'_>,
+        source: &tx_core::Session,
+        prompt: &str,
+    ) -> Result<LaunchPlan, EngineError> {
+        Ok(self.plan(request, prompt, "fork", source.id.as_str()))
+    }
+
+    /// End of input: `cat` returns and the shell exits, as a CLI's own exit command would.
+    /// The `tough` model ignores it, so core's kill fallback is what ends that one.
+    fn stop(&self, _: &tx_core::Session) -> Option<Input> {
+        Some(Input::Key(Key::ControlD))
+    }
+
+    /// The stub has no turns; what core types is visible in `input.txt`.
+    fn interrupt(&self, _: &tx_core::Session) -> Option<Input> {
+        Some(Input::line("INTERRUPT"))
     }
 
     /// The data's `transcript_path` mirrored to `<archive>/<conversation_id>.jsonl`, as Claude
@@ -374,6 +355,53 @@ impl LlmEngine for ShellStub {
         }
         tx_core::mirror_file(&archived, &transcript)?;
         Ok(true)
+    }
+}
+
+impl ShellStub {
+    /// The plan every launch shares: the shell script with `prompt`, and `mode` / `resume` in
+    /// the environment so a test can read how it was opened.
+    fn plan(
+        &self,
+        request: &LaunchRequest<'_>,
+        prompt: &str,
+        mode: &str,
+        resume: &str,
+    ) -> LaunchPlan {
+        let data = tx_core::engine_data(self, request.session);
+        let option = |key: &str| data.get(key).and_then(serde_json::Value::as_str);
+        let script = format!("env > env.txt; echo \"{prompt}\" > prompt.txt; cat > input.txt");
+        let (program, args) = match option("model") {
+            Some("exit") => ("true", Vec::new()),
+            Some("tough") => (
+                "sh",
+                vec![
+                    "-c".to_owned(),
+                    "trap '' HUP TERM; env > env.txt; sleep 120".to_owned(),
+                ],
+            ),
+            _ => ("sh", vec!["-c".to_owned(), script]),
+        };
+        let plan = LaunchPlan::new(program)
+            .args(args)
+            .env("STUB_PROFILE", request.profile.file().display().to_string())
+            .env("STUB_EFFORT", option("effort").unwrap_or("none"))
+            .env("FROM_PLAN", "plan")
+            .env("STUB_MODE", mode)
+            .env("STUB_RESUME", resume)
+            .env("STUB_SESSION_ID", request.session.id.as_str())
+            .workspace(WorkspaceAction::Write {
+                path: "stub-marker.txt".into(),
+                content: request.profile.text().to_owned(),
+            });
+        // Model `data`: the plan names the conversation up front, as Claude's does.
+        match option("model") {
+            Some("data") => plan.engine_data(serde_json::json!({
+                "conversation_id": request.session.id.as_str(),
+                "model": "data",
+            })),
+            _ => plan,
+        }
     }
 }
 

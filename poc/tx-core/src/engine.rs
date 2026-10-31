@@ -29,59 +29,75 @@ pub enum EngineError {
     },
 }
 
-/// Which conversation a launch opens.
-#[derive(Clone, Copy, Debug)]
-pub enum LaunchMode<'a> {
-    /// A new conversation, beginning with the request's `initial_prompt`.
-    Start,
-    /// Continue the conversation the engine recorded in `session.ext[ext_key]`.
-    Resume,
-    /// Branch the conversation of `source` (the engine reads `source.ext[ext_key]`) into the
-    /// launched session.
-    Fork { source: &'a Session },
-}
-
-/// What core asks an engine to turn into a command line. Borrowed: `launch` is pure.
+/// What core asks an engine to turn into a command line, the same for a start, a resume and
+/// a fork; which one is the method called, and a prompt is its argument. Borrowed: the launch
+/// methods are pure.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct LaunchRequest<'a> {
     /// The record being launched: the engine reads its id, `cwd` and its own `ext[ext_key]`.
     pub session: &'a Session,
-    pub mode: LaunchMode<'a>,
     /// Combined role text, the file holding it, and the granted skill dirs.
     pub profile: &'a Profile,
-    pub initial_prompt: Option<&'a str>,
     /// The argv prefix every hook the adapter wires runs, with the CLI's event name appended:
     /// `["/abs/txc", "chat", "hook"]`. Empty: wire no hooks.
     pub hook_command: &'a [String],
 }
 
 impl<'a> LaunchRequest<'a> {
-    /// A `Start` of `session`. Options such as a model or an effort are not here: they are
+    /// A launch of `session`. Options such as a model or an effort are not here: they are
     /// engine data, merged into `session.ext[ext_key]` by `LlmEngine::configure` beforehand.
     pub fn new(session: &'a Session, profile: &'a Profile) -> Self {
         Self {
             session,
-            mode: LaunchMode::Start,
             profile,
-            initial_prompt: None,
             hook_command: &[],
         }
-    }
-
-    pub fn mode(mut self, mode: LaunchMode<'a>) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    pub fn initial_prompt(mut self, prompt: &'a str) -> Self {
-        self.initial_prompt = Some(prompt);
-        self
     }
 
     pub fn hook_command(mut self, hook_command: &'a [String]) -> Self {
         self.hook_command = hook_command;
         self
+    }
+}
+
+/// One thing core types into an engine's pane: a line of text, submitted with `Enter` when
+/// `submit` says so, or a single key. What an engine answers for a message, a stop and an
+/// interrupt; core only knows how to type it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Input {
+    Text { text: String, submit: bool },
+    Key(Key),
+}
+
+impl Input {
+    /// `text`, submitted.
+    pub fn line(text: impl Into<String>) -> Self {
+        Self::Text {
+            text: text.into(),
+            submit: true,
+        }
+    }
+}
+
+/// A key core can press in a pane, by tmux's name for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Escape,
+    Enter,
+    ControlC,
+    ControlD,
+}
+
+impl Key {
+    /// The name `tmux send-keys` takes.
+    pub fn tmux_name(self) -> &'static str {
+        match self {
+            Key::Escape => "Escape",
+            Key::Enter => "Enter",
+            Key::ControlC => "C-c",
+            Key::ControlD => "C-d",
+        }
     }
 }
 
@@ -178,9 +194,9 @@ pub struct Conversation {
     pub transcript_path: PathBuf,
 }
 
-/// One coding-agent engine. Five required methods; no I/O in `configure`, `launch` or `on_hook`.
-/// `archive` and `restore` are the two methods that touch the filesystem. `Send + Sync` so a
-/// core can be shared across threads.
+/// One coding-agent engine. Seven required methods; no I/O in `configure`, the three launch
+/// methods, `on_hook` or the three input methods. `archive` and `restore` are the two methods
+/// that touch the filesystem. `Send + Sync` so a core can be shared across threads.
 pub trait LlmEngine: Send + Sync {
     /// A bare name (`[A-Za-z0-9_-]+`); stored in every record this engine launches.
     fn id(&self) -> &str;
@@ -200,14 +216,44 @@ pub trait LlmEngine: Send + Sync {
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, EngineError>;
 
-    fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError>;
+    /// A new conversation for `request.session`, opened with `prompt` (never empty: core
+    /// requires one). Pure.
+    fn start(&self, request: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError>;
 
-    /// How a message is framed before it is typed into one of this engine's sessions.
-    /// `sender` is the operator (with where they typed, if known) or the sending agent's name.
-    /// Pure; the default is the `<from-user>` / `<from-user session="…">` /
-    /// `<from-agent session="…">` envelope.
-    fn envelope(&self, sender: &crate::messaging::EnvelopeSender<'_>, text: &str) -> String {
-        crate::messaging::build_envelope(sender, text)
+    /// Continue the conversation this engine recorded in `request.session.ext[ext_key]`. Pure.
+    fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError>;
+
+    /// Branch the conversation of `source` (the engine reads `source.ext[ext_key]`) into
+    /// `request.session`, whose data starts as a copy of the source's, and open it with
+    /// `prompt`. Pure.
+    fn fork(
+        &self,
+        request: &LaunchRequest<'_>,
+        source: &Session,
+        prompt: &str,
+    ) -> Result<LaunchPlan, EngineError>;
+
+    /// What to type to deliver a message to one of this engine's sessions: the framed text
+    /// and whether to submit it. `sender` is the operator (with where they typed, if known) or
+    /// the sending agent's name. Pure; the default is the `<from-user>` /
+    /// `<from-user session="…">` / `<from-agent session="…">` envelope, submitted.
+    fn receive_message(&self, sender: &crate::messaging::EnvelopeSender<'_>, text: &str) -> Input {
+        Input::line(crate::messaging::build_envelope(sender, text))
+    }
+
+    /// What to type so the CLI exits cleanly, closing its transcript; `None`: it has no such
+    /// input, core kills the process. Core waits for the exit either way and kills what is
+    /// still there after its grace period. Pure. The default knows none.
+    fn stop(&self, session: &Session) -> Option<Input> {
+        let _ = session;
+        None
+    }
+
+    /// What to type to abort the running turn and leave the CLI at its prompt; `None`: not
+    /// supported. Pure. The default knows none.
+    fn interrupt(&self, session: &Session) -> Option<Input> {
+        let _ = session;
+        None
     }
 
     /// A hook this adapter wired fired inside the session. Given the record (its current state is
@@ -432,12 +478,33 @@ mod tests {
             Ok(serde_json::Value::Object(data))
         }
 
-        fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        fn start(
+            &self,
+            request: &LaunchRequest<'_>,
+            prompt: &str,
+        ) -> Result<LaunchPlan, EngineError> {
             Ok(LaunchPlan {
                 program: self.0.to_owned(),
-                args: vec![req.profile.file().display().to_string()],
+                args: vec![
+                    request.profile.file().display().to_string(),
+                    prompt.to_owned(),
+                ],
                 ..Default::default()
             })
+        }
+
+        fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+            self.start(request, "")
+        }
+
+        fn fork(
+            &self,
+            request: &LaunchRequest<'_>,
+            source: &Session,
+            prompt: &str,
+        ) -> Result<LaunchPlan, EngineError> {
+            self.start(request, prompt)
+                .map(|plan| plan.arg(source.id.as_str()))
         }
     }
 
@@ -480,7 +547,20 @@ mod tests {
             Ok(options.clone())
         }
 
-        fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+        fn start(&self, _: &LaunchRequest<'_>, _: &str) -> Result<LaunchPlan, EngineError> {
+            Ok(LaunchPlan::default())
+        }
+
+        fn resume(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
+            Ok(LaunchPlan::default())
+        }
+
+        fn fork(
+            &self,
+            _: &LaunchRequest<'_>,
+            _: &Session,
+            _: &str,
+        ) -> Result<LaunchPlan, EngineError> {
             Ok(LaunchPlan::default())
         }
     }
@@ -585,20 +665,48 @@ mod tests {
         .unwrap();
         let session = record(dir.path());
         let source = record(dir.path());
-        let request = LaunchRequest::new(&session, &profile).initial_prompt("go");
-        assert!(matches!(request.mode, LaunchMode::Start));
-        assert_eq!(request.initial_prompt, Some("go"));
-        let request = request.mode(LaunchMode::Fork { source: &source });
-        assert!(
-            matches!(request.mode, LaunchMode::Fork { source: forked } if forked.id == source.id)
-        );
+        let hooks = ["txi".to_owned(), "hook".to_owned()];
+        let request = LaunchRequest::new(&session, &profile).hook_command(&hooks);
         assert_eq!(request.session.id, session.id);
-        let plan = Stub("x").launch(&request).unwrap();
+        assert_eq!(request.hook_command, &hooks);
+        let profile_file = dir.path().join("p.md").display().to_string();
+        let plan = Stub("x").start(&request, "go").unwrap();
         assert_eq!(plan.program, "x");
-        assert_eq!(plan.args, [dir.path().join("p.md").display().to_string()]);
+        assert_eq!(plan.args, [profile_file.clone(), "go".to_owned()]);
         assert!(plan.env.is_empty() && plan.workspace.is_empty() && plan.engine_data.is_none());
+        let plan = Stub("x").resume(&request).unwrap();
+        assert_eq!(plan.args, [profile_file.clone(), String::new()]);
+        let plan = Stub("x").fork(&request, &source, "branch").unwrap();
+        assert_eq!(
+            plan.args,
+            [profile_file, "branch".to_owned(), source.id.to_string()]
+        );
         let plan = LaunchPlan::new("y").engine_data(serde_json::json!({"k": 1}));
         assert_eq!(plan.engine_data, Some(serde_json::json!({"k": 1})));
+    }
+
+    #[test]
+    fn input_defaults_are_the_envelope_submitted_and_no_stop_or_interrupt() {
+        use crate::messaging::EnvelopeSender;
+        let engine = Stub("x");
+        let session = record(Path::new("/tmp"));
+        assert_eq!(
+            engine.receive_message(&EnvelopeSender::User { via: None }, "hi"),
+            Input::Text {
+                text: "<from-user>hi</from-user>".into(),
+                submit: true
+            }
+        );
+        assert_eq!(
+            engine.receive_message(&EnvelopeSender::Agent { name: "a" }, "hi"),
+            Input::line("<from-agent session=\"a\">hi</from-agent>")
+        );
+        assert_eq!(engine.stop(&session), None);
+        assert_eq!(engine.interrupt(&session), None);
+        assert_eq!(Key::Escape.tmux_name(), "Escape");
+        assert_eq!(Key::Enter.tmux_name(), "Enter");
+        assert_eq!(Key::ControlC.tmux_name(), "C-c");
+        assert_eq!(Key::ControlD.tmux_name(), "C-d");
     }
 
     #[test]

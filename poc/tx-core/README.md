@@ -67,18 +67,21 @@ impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
     // Wires no hooks, so its sessions stay `starting`; see tx-engine-claude for real rules.
     fn on_hook(&self, _: LlmEngineState, _: &LlmEngineHook) -> Option<LlmEngineState> { None }
-    fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        let mut args = vec!["--read".into(), r.profile.file().display().to_string()];
-        if let Some(model) = r.model { args.extend(["--model".into(), model.into()]); }
-        if let Some(prompt) = r.initial_prompt { args.extend(["--message".into(), prompt.into()]); }
+    fn start(&self, r: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {
+        let args = vec!["--read".into(), r.profile.file().display().to_string(), "--message".into(), prompt.into()];
         Ok(LaunchPlan::new("aider").args(args))
     }
+    // Aider keeps no conversation to come back to: a resume starts afresh, a fork likewise.
+    fn resume(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> { self.start(r, "") }
+    fn fork(&self, r: &LaunchRequest<'_>, _: &Session, prompt: &str) -> Result<LaunchPlan, EngineError> { self.start(r, prompt) }
+    // Optional: `stop` / `interrupt` (default `None`: core kills / cannot interrupt) and
+    // `receive_message` (default: the `<from-…>` envelope, submitted).
 }
 
 core.register_engine(Box::new(Aider))?;
 ```
 
-`launch` and `on_hook` are pure. Core writes the profile file, applies the plan's `workspace` actions (relative
+`start` / `resume` / `fork`, `on_hook` and the input methods are pure. Core writes the profile file, applies the plan's `workspace` actions (relative
 to `cwd`, refusing anything that escapes it), then starts `program args…` with
 `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the config env, the per-session env and the plan env.
 
