@@ -1,10 +1,10 @@
 //! Picker row rendering: port of main's `render.rs` picker feed and `palette.rs` tag colours.
 //! Pure formatting; every function takes the records and `now`, nothing reads the clock.
 
-use serde::Deserialize;
-use tx_core::{Launch, Session};
+use tx_core::Session;
 
 use crate::tmux::Location;
+use crate::views::View;
 
 pub const WARN_ANSI: &str = "\x1b[38;2;224;175;104m";
 pub const RESET_FG: &str = "\x1b[39m";
@@ -21,10 +21,10 @@ pub const SELECTION_BG: &str = "236";
 
 /// LOCATION column width, shared with the picker header.
 pub const LOCATION_W: usize = 25;
-/// ROLE column width (the longest role, `shell`).
-pub const ROLE_W: usize = 5;
+/// ROLE column width (the longest role, the view kind `timeline`).
+pub const ROLE_W: usize = 8;
 
-const NAMEW_OVERHEAD: i64 = 65;
+const NAMEW_OVERHEAD: i64 = 68;
 const NAMEW_FLOOR: i64 = 12;
 const NAMEW_CEILING: i64 = 60;
 const HASH_MODULUS: u64 = 2_147_483_647;
@@ -119,27 +119,42 @@ pub fn chips(tags: &[String]) -> String {
     tags.iter().map(|tag| format!(" [{tag}]")).collect()
 }
 
-#[derive(Deserialize)]
-struct Kind {
-    kind: Option<String>,
+/// One picker row's subject: an agent (a core record) or a view (a tx-client tmux session).
+#[derive(Clone, Copy, Debug)]
+pub enum PickerEntry<'a> {
+    Agent(&'a Session),
+    View(&'a View),
 }
 
-fn spawn_kind(session: &Session) -> Option<String> {
-    session
-        .ext::<Kind>("spawn")
-        .ok()
-        .flatten()
-        .and_then(|spawn| spawn.kind)
+impl<'a> PickerEntry<'a> {
+    /// The tmux session name, for both kinds.
+    pub fn name(self) -> &'a str {
+        match self {
+            PickerEntry::Agent(session) => &session.name,
+            PickerEntry::View(view) => &view.name,
+        }
+    }
+
+    pub fn tags(self) -> &'a [String] {
+        match self {
+            PickerEntry::Agent(session) => &session.tags,
+            PickerEntry::View(view) => &view.tags,
+        }
+    }
+
+    pub fn created_at(self) -> f64 {
+        match self {
+            PickerEntry::Agent(session) => session.created_at,
+            PickerEntry::View(view) => view.created_at,
+        }
+    }
 }
 
-pub fn role_of(session: &Session) -> &'static str {
-    match session.launch {
-        Launch::Agent { .. } => "llm",
-        Launch::Process { .. } => match spawn_kind(session).as_deref() {
-            Some("nvim") => "nvim",
-            Some("view") => "view",
-            _ => "shell",
-        },
+/// ROLE: `llm` for an agent, the kind for a view.
+pub fn role_of(entry: PickerEntry<'_>) -> &'static str {
+    match entry {
+        PickerEntry::Agent(_) => "llm",
+        PickerEntry::View(view) => view.kind.as_str(),
     }
 }
 
@@ -148,20 +163,23 @@ pub fn activity_at(session: &Session) -> f64 {
     session.last_modified_at
 }
 
-/// IDLE: the last-turn age for an agent session, `—` for a process (no activity signal).
-pub fn idle_cell(session: &Session, now: f64) -> String {
-    match session.launch {
-        Launch::Agent { .. } => reltime(Some(session.last_modified_at), now),
-        Launch::Process { .. } => "—".into(),
+/// IDLE: the last-turn age for an agent, `—` for a view (no activity signal).
+pub fn idle_cell(entry: PickerEntry<'_>, now: f64) -> String {
+    match entry {
+        PickerEntry::Agent(session) => reltime(Some(activity_at(session)), now),
+        PickerEntry::View(_) => "—".into(),
     }
 }
 
 pub struct Row<'a> {
-    pub session: &'a Session,
+    pub entry: PickerEntry<'a>,
     /// The tmux `$N` session id, rendered verbatim as field 4.
     pub target: &'a str,
     pub attached: &'a [Location],
 }
+
+/// What a view nested under its agent shows ahead of its name.
+pub const NESTED_MARK: &str = "  └ ";
 
 /// Truncate to `width` code points with a trailing `…`.
 fn trunc(text: &str, width: i64) -> String {
@@ -172,53 +190,75 @@ fn trunc(text: &str, width: i64) -> String {
     }
 }
 
-/// One fzf row: `name \t plain_chips \t L \t target \t visual`.
-fn picker_row(row: &Row<'_>, namew: i64, now: f64) -> String {
-    let session = row.session;
-    let role = role_of(session);
-    let name_disp = trunc(&session.name, namew);
+/// One fzf row: `name \t plain_chips \t L \t target \t visual`. `nested`: a view shown under
+/// its agent, marked in the visual column only, so fields 1 to 4 stay what the binds read.
+fn picker_row(row: &Row<'_>, nested: bool, namew: i64, now: f64) -> String {
+    let entry = row.entry;
+    let role = role_of(entry);
+    let shown_name = if nested {
+        format!("{NESTED_MARK}{}", entry.name())
+    } else {
+        entry.name().to_owned()
+    };
+    let name_disp = trunc(&shown_name, namew);
     let pad = " ".repeat((namew - name_disp.chars().count() as i64).max(0) as usize);
-    let colored_chips: String = session
-        .tags
+    let colored_chips: String = entry
+        .tags()
         .iter()
         .map(|tag| format!(" {}[{tag}]{RESET_FG}", tag_ansi(tag)))
         .collect();
-    let started = reltime(Some(session.created_at), now);
-    let idle = idle_cell(session, now);
+    let started = reltime(Some(entry.created_at()), now);
+    let idle = idle_cell(entry, now);
     let role_cell = format!("{}{role:<ROLE_W$}{RESET_FG}", tag_ansi(role));
     let location = location_text(row.attached);
     let visual = format!(
         "{name_disp}{pad}   {location:<LOCATION_W$} {started:<7} {WARN_ANSI}{idle:<6}{RESET_FG} {role_cell}{colored_chips}"
     );
-    [
-        session.name.as_str(),
-        &chips(&session.tags),
-        "L",
-        row.target,
-        &visual,
-    ]
-    .join("\t")
+    [entry.name(), &chips(entry.tags()), "L", row.target, &visual].join("\t")
 }
 
-/// The fzf picker feed, newest activity first (stable for ties).
+/// The fzf picker feed: agents newest activity first (stable for ties), each followed by its
+/// views, oldest first; then every view without a listed agent, newest first.
 pub fn picker_rows(rows: &[Row<'_>], namew: i64, now: f64) -> String {
-    let mut ordered: Vec<&Row<'_>> = rows.iter().collect();
-    ordered.sort_by(|a, b| activity_at(b.session).total_cmp(&activity_at(a.session)));
-    ordered
-        .into_iter()
-        .map(|row| picker_row(row, namew, now))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut agents: Vec<(&Row<'_>, &Session)> = Vec::new();
+    let mut views: Vec<(&Row<'_>, &View)> = Vec::new();
+    for row in rows {
+        match row.entry {
+            PickerEntry::Agent(session) => agents.push((row, session)),
+            PickerEntry::View(view) => views.push((row, view)),
+        }
+    }
+    agents.sort_by(|(_, a), (_, b)| activity_at(b).total_cmp(&activity_at(a)));
+    views.sort_by(|(_, a), (_, b)| a.created_at.total_cmp(&b.created_at));
+    let mut lines = Vec::with_capacity(rows.len());
+    for (row, session) in &agents {
+        lines.push(picker_row(row, false, namew, now));
+        for (view_row, _) in views
+            .iter()
+            .filter(|(_, view)| view.parent_id.as_ref() == Some(&session.id))
+        {
+            lines.push(picker_row(view_row, true, namew, now));
+        }
+    }
+    let parented = |view: &View| {
+        agents
+            .iter()
+            .any(|(_, session)| view.parent_id.as_ref() == Some(&session.id))
+    };
+    for (row, _) in views.iter().rev().filter(|(_, view)| !parented(view)) {
+        lines.push(picker_row(row, false, namew, now));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use serde_json::json;
-    use tx_core::{Lifecycle, SessionId};
+    use tx_core::{Launch, Lifecycle, SessionId};
 
     use super::*;
+    use crate::views::ViewKind;
 
     const NOW: f64 = 1_000_000.0;
 
@@ -234,7 +274,7 @@ mod tests {
 
     fn agent(name: &str, created_at: f64) -> Session {
         Session {
-            id: "s1".parse::<SessionId>().unwrap(),
+            id: format!("id-{name}").parse::<SessionId>().unwrap(),
             name: name.into(),
             parent: None,
             tags: vec![],
@@ -256,13 +296,15 @@ mod tests {
         }
     }
 
-    fn process(name: &str, created_at: f64) -> Session {
-        Session {
-            launch: Launch::Process {
-                program: "nvim".into(),
-                args: vec![],
-            },
-            ..agent(name, created_at)
+    fn view(name: &str, kind: ViewKind, parent: Option<&Session>, created_at: f64) -> View {
+        View {
+            name: name.into(),
+            kind,
+            working_directory: PathBuf::from("/r"),
+            tags: vec![],
+            parent_id: parent.map(|session| session.id.clone()),
+            bound: None,
+            created_at,
         }
     }
 
@@ -344,24 +386,24 @@ mod tests {
             (118, -1, 12),
             (118, 5, 12),
             (118, 12, 12),
-            (118, 53, 53),
-            (118, 59, 53),
-            (118, 60, 53),
-            (118, 80, 53),
+            (118, 53, 50),
+            (118, 59, 50),
+            (118, 60, 50),
+            (118, 80, 50),
             (125, -1, 12),
             (125, 5, 12),
             (125, 12, 12),
             (125, 53, 53),
-            (125, 59, 59),
-            (125, 60, 60),
-            (125, 80, 60),
+            (125, 59, 57),
+            (125, 60, 57),
+            (125, 80, 57),
             (126, -1, 12),
             (126, 5, 12),
             (126, 12, 12),
             (126, 53, 53),
-            (126, 59, 59),
-            (126, 60, 60),
-            (126, 80, 60),
+            (126, 59, 58),
+            (126, 60, 58),
+            (126, 80, 58),
             (200, -1, 12),
             (200, 5, 12),
             (200, 12, 12),
@@ -393,7 +435,7 @@ mod tests {
         session.last_modified_at = NOW - 5.0;
         let attached = [location("main", "1")];
         let rows = [Row {
-            session: &session,
+            entry: PickerEntry::Agent(&session),
             target: "$3",
             attached: &attached,
         }];
@@ -414,7 +456,7 @@ mod tests {
             "\x1b[39m",
             " ",
             "\x1b[38;5;167m",
-            "llm  ",
+            "llm     ",
             "\x1b[39m",
             " ",
             "\x1b[38;5;167m",
@@ -424,59 +466,132 @@ mod tests {
         assert_eq!(picker_rows(&rows, 12, NOW), want);
     }
 
+    fn names(feed: &str) -> Vec<&str> {
+        feed.lines()
+            .map(|line| line.split('\t').next().unwrap())
+            .collect()
+    }
+
+    fn visual<'a>(feed: &'a str, name: &str) -> &'a str {
+        feed.lines()
+            .find(|line| line.split('\t').next() == Some(name))
+            .unwrap()
+            .split('\t')
+            .nth(4)
+            .unwrap()
+    }
+
     #[test]
-    fn long_names_truncate_and_rows_sort_by_activity() {
+    fn long_names_truncate_and_agents_sort_by_activity() {
         let old = agent("o", NOW - 500.0);
-        let long = process("a-very-long-session-name", NOW - 100.0);
+        let long = agent("a-very-long-session-name", NOW - 100.0);
         let mut fresh = agent("f", NOW - 900.0);
         fresh.last_modified_at = NOW - 10.0;
         let rows = [&old, &long, &fresh].map(|session| Row {
-            session,
+            entry: PickerEntry::Agent(session),
             target: "$1",
             attached: &[],
         });
         let out = picker_rows(&rows, 12, NOW);
-        let names: Vec<&str> = out
-            .lines()
-            .map(|line| line.split('\t').next().unwrap())
+        assert_eq!(names(&out), ["f", "a-very-long-session-name", "o"]);
+        let shown = visual(&out, "a-very-long-session-name");
+        assert!(shown.starts_with("a-very-long…   —"), "{shown:?}");
+    }
+
+    #[test]
+    fn views_sit_under_their_agent_and_orphans_come_last() {
+        let first = agent("first", NOW - 900.0);
+        let mut second = agent("second", NOW - 800.0);
+        second.last_modified_at = NOW - 5.0;
+        let gone = agent("gone", NOW - 700.0);
+        let editor = view("plan-editor", ViewKind::Editor, Some(&first), NOW - 60.0);
+        let diff = view("plan-diff", ViewKind::Diff, Some(&first), NOW - 120.0);
+        let shell = view("sh", ViewKind::Shell, Some(&second), NOW - 30.0);
+        let home = view("home", ViewKind::Home, None, NOW - 1000.0);
+        let orphan = view("orphan", ViewKind::Shell, Some(&gone), NOW - 10.0);
+        let targets = ["$1", "$2", "$3", "$4", "$5", "$6", "$7"];
+        let entries = [
+            PickerEntry::View(&editor),
+            PickerEntry::View(&home),
+            PickerEntry::Agent(&first),
+            PickerEntry::View(&orphan),
+            PickerEntry::View(&shell),
+            PickerEntry::Agent(&second),
+            PickerEntry::View(&diff),
+        ];
+        let rows: Vec<Row<'_>> = entries
+            .iter()
+            .zip(targets)
+            .map(|(entry, target)| Row {
+                entry: *entry,
+                target,
+                attached: &[],
+            })
             .collect();
-        assert_eq!(names, ["f", "a-very-long-session-name", "o"]);
-        let visual = out.lines().nth(1).unwrap().split('\t').nth(4).unwrap();
-        assert!(visual.starts_with("a-very-long…   —"), "{visual:?}");
-        assert!(visual.contains(" —      "), "{visual:?}");
+        let out = picker_rows(&rows, 16, NOW);
+        assert_eq!(
+            names(&out),
+            [
+                "second",
+                "sh",
+                "first",
+                "plan-diff",
+                "plan-editor",
+                "orphan",
+                "home"
+            ]
+        );
+        // Fields 1 to 4 stay plain: the binds read the name and the tmux target by position.
+        let editor_line = out
+            .lines()
+            .find(|line| line.starts_with("plan-editor\t"))
+            .unwrap();
+        let fields: Vec<&str> = editor_line.split('\t').collect();
+        assert_eq!(fields[..4], ["plan-editor", "", "L", "$1"]);
+        assert!(
+            fields[4].starts_with("  └ plan-editor    —"),
+            "{:?}",
+            fields[4]
+        );
+        assert!(visual(&out, "sh").starts_with("  └ sh "));
+        assert!(visual(&out, "orphan").starts_with("orphan "));
+        assert!(visual(&out, "home").starts_with("home "));
+        assert!(visual(&out, "first").starts_with("first "));
     }
 
     #[test]
     fn roles_and_idle_cells() {
-        let mut view = process("v", NOW - 100.0);
-        assert_eq!(role_of(&view), "shell");
-        view.ext.insert("spawn".into(), json!({"kind": "nvim"}));
-        assert_eq!(role_of(&view), "nvim");
-        view.ext.insert("spawn".into(), json!({"kind": "view"}));
-        assert_eq!(role_of(&view), "view");
-        view.ext.insert("spawn".into(), json!({"kind": "other"}));
-        assert_eq!(role_of(&view), "shell");
-        assert_eq!(role_of(&agent("a", 1.0)), "llm");
-        assert_eq!(idle_cell(&view, NOW), "—");
-        assert_eq!(idle_cell(&agent("a", NOW - 30.0), NOW), "30s");
+        let parent = agent("a", NOW - 30.0);
+        assert_eq!(role_of(PickerEntry::Agent(&parent)), "llm");
+        assert_eq!(idle_cell(PickerEntry::Agent(&parent), NOW), "30s");
+        for kind in ViewKind::ALL {
+            let shown = view("v", kind, Some(&parent), NOW - 100.0);
+            assert_eq!(role_of(PickerEntry::View(&shown)), kind.as_str());
+            assert!(kind.as_str().len() <= ROLE_W, "{kind}");
+            assert_eq!(idle_cell(PickerEntry::View(&shown), NOW), "—");
+        }
     }
 
     #[test]
-    fn an_untouched_agent_reads_its_creation_and_a_malformed_spawn_ext_is_tolerated() {
-        let mut session = agent("w", NOW - 90.0);
-        session.ext.insert("spawn".into(), json!("junk"));
-        assert_eq!(activity_at(&session), NOW - 90.0);
-        assert_eq!(idle_cell(&session, NOW), "1m");
-        assert_eq!(role_of(&session), "llm");
+    fn a_view_row_shows_its_kind_age_and_tags() {
+        let mut shown = view("notes", ViewKind::Timeline, None, NOW - 120.0);
+        shown.tags = vec!["qa".into()];
         let rows = [Row {
-            session: &session,
-            target: "$1",
+            entry: PickerEntry::View(&shown),
+            target: "$9",
             attached: &[],
         }];
         let out = picker_rows(&rows, 12, NOW);
-        assert!(out.contains("1m"), "{out:?}");
-        let mut process = process("p", 5.0);
-        process.ext.insert("spawn".into(), json!(42));
-        assert_eq!(role_of(&process), "shell");
+        let fields: Vec<&str> = out.split('\t').collect();
+        assert_eq!(fields[..4], ["notes", " [qa]", "L", "$9"]);
+        assert!(fields[4].contains("2m     "), "{:?}", fields[4]);
+        assert!(fields[4].contains("timeline"), "{:?}", fields[4]);
+    }
+
+    #[test]
+    fn an_untouched_agent_reads_its_creation() {
+        let session = agent("w", NOW - 90.0);
+        assert_eq!(activity_at(&session), NOW - 90.0);
+        assert_eq!(idle_cell(PickerEntry::Agent(&session), NOW), "1m");
     }
 }
