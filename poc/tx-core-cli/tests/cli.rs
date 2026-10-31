@@ -226,9 +226,7 @@ fn process_session_round_trip() {
     };
     assert_eq!(
         typed,
-        format!(
-            "<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"sh-2\">from me</from-agent>\n<from-user>not me</from-user>\n"
-        )
+        "<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"sh-2\">from me</from-agent>\n<from-user>not me</from-user>\n"
     );
 
     assert_eq!(cli.ok(&["refresh"]), "");
