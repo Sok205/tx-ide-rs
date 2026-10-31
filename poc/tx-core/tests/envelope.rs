@@ -7,13 +7,20 @@ use std::time::Duration;
 
 use common::{Harness, STUB_ID, agent, process, typed, wait_for};
 use tx_core::{
-    CreateOptions, EngineAdapter, EngineError, LaunchOptions, LaunchPlan, LaunchRequest,
-    SendOptions,
+    CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine, SendOptions,
 };
 
 struct Shout;
 
-impl EngineAdapter for Shout {
+impl LlmEngine for Shout {
+    fn on_hook(
+        &self,
+        _: tx_core::LlmEngineState,
+        _: &tx_core::LlmEngineHook,
+    ) -> Option<tx_core::LlmEngineState> {
+        None
+    }
+
     fn id(&self) -> &str {
         "shout"
     }

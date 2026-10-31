@@ -172,7 +172,7 @@ mod tests {
     fn session(id: &str, name: &str, ext: Value) -> Session {
         serde_json::from_value(json!({
             "id": id, "name": name, "parent": null, "tags": [], "cwd": "/tmp",
-            "created_at": 1.0, "ended_at": null, "lifecycle": "running",
+            "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": "running",
             "launch": {"kind": "process", "program": "sh", "args": []},
             "ext": ext,
         }))

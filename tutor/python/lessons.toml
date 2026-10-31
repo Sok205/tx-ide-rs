@@ -101,6 +101,7 @@ checks = [
 id = "13-cleanup"
 file = "lessons/13-cleanup.md"
 checks = [
+  # "waiting" stays: this list also serves crates/tx, whose running agents read waiting after Stop.
   { kind = "tx", label = "no tutor workers are still running", absent = true, session = { tag = "tutor", role = "llm", state = ["alive", "working", "waiting", "idle"] } },
   { kind = "tx", label = "at least one tutor worker is archived", session = { tag = "tutor", state = ["archived"] } },
 ]

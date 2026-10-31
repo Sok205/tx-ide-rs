@@ -1,10 +1,10 @@
 //! Engine-specific layouts: where each engine keeps a chat's transcript, which sidecar files
 //! travel with it, the Codex rollout reader, and the argv rewrites a fork needs. Launch argv
-//! comes from the engine crates' pure `EngineAdapter::launch`, used as library code.
+//! comes from the engine crates' pure `LlmEngine::launch`, used as library code.
 
 use std::path::{Path, PathBuf};
 
-use tx_core::{EngineAdapter, LaunchPlan, LaunchRequest, Profile, Profiles, TxCore};
+use tx_core::{LaunchPlan, LaunchRequest, LlmEngine, Profile, Profiles, TxCore};
 
 use crate::ChatError;
 use crate::ext::AgentLaunch;
@@ -236,16 +236,17 @@ fn copytree(source: &Path, target: &Path) -> Result<(), ChatError> {
 }
 
 /// The engine crates' adapters, used as library code.
-pub fn adapter(engine: &str) -> Option<&'static dyn EngineAdapter> {
+pub fn adapter(engine: &str) -> Option<&'static dyn LlmEngine> {
     match engine {
-        "claude" => Some(&tx_engine_claude::Claude),
-        "codex" => Some(&tx_engine_codex::Codex),
+        "claude" => Some(&tx_engine_claude::ClaudeAdapter),
+        "codex" => Some(&tx_engine_codex::CodexAdapter),
         _ => None,
     }
 }
 
 /// The argv `launch` would run for a new, resumed or primed chat: the profile is resolved and
-/// written to `profile_file`, then the adapter turns the request into a plan.
+/// written to `profile_file`, then the adapter turns the request into a plan. No state hooks
+/// are wired: the plan runs as a process session, which has no engine to read them.
 pub fn agent_plan(
     core: &TxCore,
     launch: &AgentLaunch,

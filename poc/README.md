@@ -21,9 +21,8 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | crate | role | depends on |
 |---|---|---|
 | `tx-core` | the library: `TxCore` and the public operations | serde, serde_json, thiserror, uuid, tempfile |
-| `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `EngineAdapter` for Claude Code | tx-core |
-| `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `EngineAdapter` for Codex | tx-core |
-| `plugins/hooks` (`tx-hooks`) | plugin: `txc hook …`, the agent's hooks → a per-session working / waiting / idle state | tx-core |
+| `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `LlmEngine` for Claude Code | tx-core |
+| `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `LlmEngine` for Codex | tx-core |
 | `plugins/ide` (`tx-ide`) | plugin: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core, tx-ui |
 | `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-ui |
 | `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-ui |
@@ -39,7 +38,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-ui, tx-chat (message parser), ratatui |
 | `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `txc menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-ui, ratatui, tempfile |
 | `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins | tx-core |
-| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins | tx-core and every plugin above |
+| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins. `txi`: the internal binary the engines' wired hooks run (`txi hook <Event>`) | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
 carries everything; only `txc` touches `std::env`. Without `--profile-dir` / `--skill-dir`,
@@ -58,7 +57,7 @@ and `<state_dir>/user-agents` (yours, never pruned), with skills under each one'
           |  store    SessionStore   <state_dir>/sessions/<id>.json
           |  tmux     Tmux           tmux -S <state_dir>/tmux.sock -f <state_dir>/tmux.conf
           |  events   EventLog       <state_dir>/log.jsonl
-          |  engines  EngineRegistry id -> Box<dyn EngineAdapter>
+          |  engines  EngineRegistry id -> Box<dyn LlmEngine>
           |  profiles Profiles       role + skill search dirs
           |  locks    Locks          <state_dir>/locks/{create,<id>}.lock
           +---------------------------------+
@@ -75,12 +74,34 @@ and `<state_dir>/user-agents` (yours, never pruned), with skills under each one'
 
 | home | what |
 |---|---|
-| disk (`sessions/<id>.json`) | the record: id, name, parent, tags, cwd, timestamps, lifecycle, launch. The snapshot every read returns. |
+| disk (`sessions/<id>.json`) | the record: id, name, parent, tags, cwd, timestamps (`last_modified_at` is stamped on every write), lifecycle, launch, and an agent's `state`. The snapshot every read returns. |
 | tmux | the link only: session option `@tx-id` = record id |
 | looked up on demand | `#{session_id}` (`$N`) and `#{pane_id}` (`%N`) found by `@tx-id`, so a rename in tmux cannot break them |
 
 `Lifecycle` is `Running`, `Exited` (vanished) or `Stopped` (`stop_session`). The two terminal
 states are final: nothing in core moves a record out of them.
+
+### Agent state: the engine adapter decides, core applies
+
+An agent record carries `state` (an `LlmEngineState`): `starting`, `idle`, `working` or
+`ended`. Idle means it is the operator's move, whether the turn finished or stopped on an approval
+or a question; the next tool hook moves it back to `working`. The vocabulary is core's; when to
+move between states is the adapter's. How long ago anything happened is the record-wide
+`last_modified_at`.
+
+At launch the adapter wires the hooks it needs into the CLI's own command line (Claude
+`--settings '{"hooks":…}'`, Codex `-c hooks.<Event>=…`), each running `CoreConfig::hook_command`
+plus the CLI's event name. For `txc` that is `txi hook <Event>`: `txi` is a second binary of
+`tx-core-cli`, installed next to `txc`, the internal entry point machines run (nothing in it is
+listed in `txc help`). It hands the payload to `TxCore::hook`, which asks
+`LlmEngine::on_hook(state, &hook)` for the new state (`None`: nothing changes) and writes it
+under the session lock, logging `state-changed` (`from → to`) when the state moved.
+Core owns what the adapter cannot see: a new agent starts `starting`, and an exited or stopped one
+reads `ended`. Process sessions have no state.
+
+Because the hooks are `-c` overrides, every Codex session runs without Codex's shared background
+server (Codex warns: "command-line configuration overrides … requires embedded mode"). Sessions
+with a role already did, through `-c developer_instructions`; only role-less ones change.
 
 ### One operation, end to end: `create_session`
 
@@ -137,12 +158,18 @@ Lock order is always `create.lock` before `<id>.lock`. Locks are `std::fs::File:
 ### An engine today (20 lines, no change to core)
 
 ```rust
-use tx_core::{EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+use tx_core::{
+    EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
+    WorkspaceAction,
+};
 
 pub struct Aider;
 
-impl EngineAdapter for Aider {
+impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
+
+    // No hooks wired: the session stays `starting`. See the bundled adapters for real rules.
+    fn on_hook(&self, _: LlmEngineState, _: &LlmEngineHook) -> Option<LlmEngineState> { None }
 
     fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         let mut args = vec!["--read".into(), r.profile.file().display().to_string()];
@@ -163,7 +190,7 @@ impl EngineAdapter for Aider {
 core.register_engine(Box::new(Aider))?;
 ```
 
-`launch` is pure: no I/O. Core writes the profile file, applies the workspace actions (relative
+`launch` and `on_hook` are pure: no I/O. Core writes the profile file, applies the workspace actions (relative
 to `cwd`, refusing paths that escape it), starts the process. That makes an adapter testable
 with a `Profile` and nothing else, as the two bundled engines show. Put each engine in its own
 crate depending only on `tx-core`; the CLI registers the bundled ones in `main`.
@@ -171,7 +198,7 @@ crate depending only on `tx-core`; the CLI registers the bundled ones in `main`.
 ### Reading the operation log from outside
 
 `log.jsonl` is `{"ts","actor","type","msg"}` per line; types are `created`, `renamed`, `tagged`,
-`message-sent`, `exited`, `stopped`, `forgotten`. It is a notification trail, not the record:
+`message-sent`, `state-changed`, `exited`, `stopped`, `forgotten`. It is a notification trail, not the record:
 on an event, re-read the session with `get_session`. Lines are never torn, so `tail -f` works.
 
 ### From inside an agent
@@ -190,11 +217,12 @@ links them through `tx-core-cli/src/plugins.rs::MANIFEST` and switches them in
 ```yaml
 plugins:
   engine-codex: { enabled: false }
-  hooks:
-    settings: { stuck_after_seconds: 600 }
+  artifacts:
+    settings: { editor: nvim }
 ```
 
-Missing file = everything on; an unknown id or a malformed file is a usage error. `txc plugins`
+Missing file = everything on; an unknown id or a malformed file is a usage error. The id of a
+retired plugin (`hooks`) is skipped, so an older file keeps loading. `txc plugins`
 lists ids and status; `txc help` lists plugin verbs. Plugins keep per-session data in the
 record's `ext.<id>` object via `TxCore::update_ext`. Design:
 `../docs/superpowers/specs/2026-10-16-poc-plugins-design.md`.
@@ -207,7 +235,6 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | plugin | contributes |
 |---|---|
 | `engine-claude`, `engine-codex` | one engine each |
-| `hooks` | `txc hook <event>` (run by the agent's own hooks; `txc hook install` registers them in `~/.claude/settings.json` / `~/.codex/hooks.json` behind a sidecar, `uninstall` reverses it), `txc hook status`, an `idle` seed on create |
 | `ide` | `txc ui install\|attach` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, status line, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
 | `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label, the after-new-window hook) |
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
@@ -218,10 +245,10 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `history` | `history` (the mirrored chats), `history-hooks install\|uninstall`, the internal `_history-ingest`; owns `ext.history` and `<state_dir>/plugins/history/` |
 | `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name); resource `agents/TX-ASSISTANT.md` |
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
-| `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<state_dir>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<state_dir>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read `ext.hooks.state`; `chat_origin` matches nothing until a chat plugin exists |
+| `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<state_dir>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<state_dir>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
 
 | `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"bound": artifact id, "group": …}`) and the store `<state_dir>/plugins/artifacts/` (`<id>.json`, `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl` and `.locks/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
-| `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads `ext.chat` / `ext.history` (transcripts), `ext.hooks` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
+| `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads `ext.chat` / `ext.history` (transcripts), `status` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
 | `menu` | `menu` and the internal `_menu-open <pane> <client>` (the menu in an 80% popup; after it closes, runs the choice through `txc` / tmux: `_new-agent`, `pick`, `_fork-pane`, `_timeline-attach`, `_artifact-menu`, `tutor start`, `assistant warm` + `switch-client`, `resume`), `_menu-first` (the client-attached hook: test-and-sets the server option `@tx-menu-shown`, skips clients nested in the server's own panes) and `_menu-tui`; items of disabled plugins are hidden; reads `ext.chat` (chat counts) and the other plugins' `keys/*.tmux` (the cheat sheet); resource `keys/menu.tmux` (prefix+m, hook `client-attached`) |
 
 The picker's role column reads `ext.spawn.kind`, which a later plugin writes; until then every
@@ -240,8 +267,9 @@ refreshed to `Exited` and the assistant started again.
 
 ### Chat and history
 
-Both plugins install their own agent hooks, next to the `hooks` plugin's and in their own
-sidecars; none of them needs another. Run each once per machine:
+Both plugins install their own agent hooks, each in its own sidecar; neither needs the other.
+(Agent state needs no install: the engine adapters wire their hooks per launch.) Run each once
+per machine:
 
 ```
 txc chat hooks install      # captures the agent's chat id into ext.chat (fork, resume)
@@ -356,13 +384,13 @@ add now and breaking to add later.
 | point | shape | guardrail |
 |---|---|---|
 | Lifecycle hooks | `trait EventSink: Send + Sync { fn on_event(&self, e: &Event); }` + `TxCore::subscribe(Box<dyn EventSink>)`; `Event` carries the session id | called after locks drop; no `Result` (hooks cannot veto); no `&TxCore` (re-entry would deadlock on flock) |
-| Engine envelope | default method `EngineAdapter::envelope(&self, sender, text) -> String` | pure; core still types it |
+| Engine envelope | default method `LlmEngine::envelope(&self, sender, text) -> String` | pure; core still types it |
 | Chat ops (resume, fork, transcripts) | separate crate with a second registry keyed by engine id, `trait EngineChatOps` | one future `resume` field on `LaunchRequest` |
 | Workspace preparers (worktrees) | a function run by the caller before `create_session`; cleanup via an `EventSink` on `Stopped`/`Exited` | not a core concern (spec non-goal) |
 | Declarative engines | one plugin `Declared { id, program, args }` with `{profile_file}`/`{model}`/`{prompt}` substitution, registered N times from `plugins.yaml` settings | ids validated by the registry |
 | Launch decorators | a fourth registry slot letting a plugin edit a `LaunchPlan` (per-session hook injection without touching `~/.claude`) | pure, ordered by manifest |
 
-Before freezing the API: add `Send + Sync` to `EngineAdapter`, put a session id in every log
+Before freezing the API: add `Send + Sync` to `LlmEngine`, put a session id in every log
 line, mark `CoreError`, `EventType`, `WorkspaceAction`, `LaunchRequest`, `LaunchPlan`,
 `CreateOptions`, `Session` and `CoreConfig` `#[non_exhaustive]` with builder constructors, and
 re-export only the types a plugin author needs.

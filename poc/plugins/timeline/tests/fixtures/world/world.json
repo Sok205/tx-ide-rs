@@ -6,7 +6,7 @@
     {"id": "a0000000-0000-4000-8000-00000000000a", "name": "lead", "engine": "claude", "state": "working",
      "tags": ["alpha"], "created_at": 1791712800.0, "activity": 1791719700.0, "model": "opus", "effort": "high",
      "transcripts": [{"chat": "c-lead", "file": "lead.jsonl"}]},
-    {"id": "b0000000-0000-4000-8000-00000000000b", "name": "worker", "engine": "codex", "state": "waiting",
+    {"id": "b0000000-0000-4000-8000-00000000000b", "name": "worker", "engine": "codex", "state": "idle",
      "tags": ["alpha"], "parent": "a0000000-0000-4000-8000-00000000000a", "created_at": 1791713400.0,
      "activity": 1791717000.0, "model": "gpt-5",
      "transcripts": [{"chat": "c-worker", "file": "worker.jsonl"}]},

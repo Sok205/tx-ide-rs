@@ -4,7 +4,11 @@
 
 use std::path::PathBuf;
 
-use tx_core::{Effort, EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+use serde_json::Value;
+use tx_core::{
+    Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
+    WorkspaceAction, hook_shell_command,
+};
 
 pub const CODEX_BIN: &str = "codex";
 pub const SKILLS_DIR: &str = ".agents/skills";
@@ -15,11 +19,22 @@ pub const DEVELOPER_INSTRUCTIONS_KEY: &str = "developer_instructions";
 pub const BYPASS_APPROVALS_FLAG: &str = "--dangerously-bypass-approvals-and-sandbox";
 pub const BYPASS_HOOK_TRUST_FLAG: &str = "--dangerously-bypass-hook-trust";
 pub const DEFAULT_EFFORT: Effort = Effort::High;
+/// The hooks wired per launch, one `-c hooks.<Event>=…` each; each runs
+/// `<hook_command> <Event>`. Codex skips them without `--dangerously-bypass-hook-trust`.
+pub const HOOK_EVENTS: [&str; 7] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PermissionRequest",
+    "PostToolUse",
+    "Stop",
+    "Interrupt",
+    "SessionEnd",
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Codex;
+pub struct CodexAdapter;
 
-impl EngineAdapter for Codex {
+impl LlmEngine for CodexAdapter {
     fn id(&self) -> &str {
         "codex"
     }
@@ -46,6 +61,11 @@ impl EngineAdapter for Codex {
                 format!("{DEVELOPER_INSTRUCTIONS_KEY}={}", req.profile.text()),
             ]);
         }
+        if !req.hook_command.is_empty() {
+            for event in HOOK_EVENTS {
+                args.extend(["-c".to_owned(), hook_override(req.hook_command, event)]);
+            }
+        }
         args.extend([
             BYPASS_APPROVALS_FLAG.to_owned(),
             BYPASS_HOOK_TRUST_FLAG.to_owned(),
@@ -59,6 +79,27 @@ impl EngineAdapter for Codex {
         }
         Ok(plan)
     }
+
+    /// An approval stops the turn on the operator (`Idle`); the next `PostToolUse` means they
+    /// answered. `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the
+    /// process lives, and its payload cannot tell the two apart; core ends the session when the
+    /// process is gone.
+    fn on_hook(&self, _current: LlmEngineState, hook: &LlmEngineHook) -> Option<LlmEngineState> {
+        match hook.name.as_str() {
+            "SessionStart" | "Stop" | "Interrupt" | "PermissionRequest" => {
+                Some(LlmEngineState::Idle)
+            }
+            "UserPromptSubmit" | "PostToolUse" => Some(LlmEngineState::Working),
+            _ => None,
+        }
+    }
+}
+
+/// `hooks.<event>=[{matcher="",hooks=[{type="command",command="…"}]}]`, TOML inline. The
+/// command is a TOML basic string; JSON string escapes are valid TOML escapes.
+pub fn hook_override(hook_command: &[String], event: &str) -> String {
+    let command = Value::from(hook_shell_command(hook_command, event)).to_string();
+    format!("hooks.{event}=[{{matcher=\"\",hooks=[{{type=\"command\",command={command}}}]}}]")
 }
 
 /// One symlink per granted skill dir: `<engine dir>/<skill name>` → the skill dir.
@@ -75,7 +116,7 @@ pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAct
         .collect()
 }
 
-/// The plugin wrapper: registers [`Codex`] under the plugin id `engine-codex`.
+/// The plugin wrapper: registers [`CodexAdapter`] under the plugin id `engine-codex`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CodexPlugin;
 
@@ -85,7 +126,7 @@ impl tx_core::Plugin for CodexPlugin {
     }
 
     fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
-        r.engine(Box::new(Codex));
+        r.engine(Box::new(CodexAdapter));
         Ok(())
     }
 }
@@ -112,15 +153,69 @@ mod tests {
         args.iter().map(|a| (*a).to_owned()).collect()
     }
 
+    fn hook(name: &str, payload: serde_json::Value) -> LlmEngineHook {
+        LlmEngineHook {
+            name: name.into(),
+            payload,
+            at: 2.0,
+        }
+    }
+
+    /// (current state, hook name, payload) → the state the adapter moves to.
+    type Row = (
+        LlmEngineState,
+        &'static str,
+        serde_json::Value,
+        Option<LlmEngineState>,
+    );
+
+    fn check(adapter: &dyn LlmEngine, table: Vec<Row>) {
+        for (current, name, payload, expected) in table {
+            assert_eq!(
+                adapter.on_hook(current, &hook(name, payload.clone())),
+                expected,
+                "{current:?} {name} {payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn hooks_to_states() {
+        use LlmEngineState::*;
+        use serde_json::json;
+        let none = json!({});
+        check(
+            &CodexAdapter,
+            vec![
+                (Starting, "SessionStart", none.clone(), Some(Idle)),
+                (Idle, "UserPromptSubmit", none.clone(), Some(Working)),
+                (
+                    Working,
+                    "PermissionRequest",
+                    json!({"tool_name": "shell"}),
+                    Some(Idle),
+                ),
+                // The operator answered: a tool ran.
+                (Idle, "PostToolUse", none.clone(), Some(Working)),
+                (Working, "PostToolUse", none.clone(), Some(Working)),
+                (Working, "Stop", none.clone(), Some(Idle)),
+                (Working, "Interrupt", none.clone(), Some(Idle)),
+                (Idle, "SessionEnd", json!({"reason": "other"}), None),
+                (Idle, "PreToolUse", none.clone(), None),
+                (Idle, "Notification", none.clone(), None),
+            ],
+        );
+    }
+
     #[test]
     fn id_is_codex() {
-        assert_eq!(Codex.id(), "codex");
+        assert_eq!(CodexAdapter.id(), "codex");
     }
 
     #[test]
     fn defaults() {
         let (dir, profile) = profile("", &[]);
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(&LaunchRequest::new(dir.path(), &profile))
             .unwrap();
         assert_eq!(plan.program, "codex");
@@ -141,7 +236,7 @@ mod tests {
     #[test]
     fn every_option() {
         let (dir, profile) = profile("be good", &["/skills/one"]);
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .model("o3")
@@ -175,7 +270,7 @@ mod tests {
     #[test]
     fn resume_is_the_subcommand() {
         let (dir, profile) = profile("", &[]);
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .resume("sess-7")
@@ -195,7 +290,7 @@ mod tests {
                 "--dangerously-bypass-hook-trust",
             ])
         );
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(&LaunchRequest::new(dir.path(), &profile).resume(""))
             .unwrap();
         assert_eq!(plan.args[0], "-m", "empty resume is absent");
@@ -204,7 +299,7 @@ mod tests {
     #[test]
     fn empty_model_and_prompt_fall_back() {
         let (dir, profile) = profile("", &[]);
-        let plan = Codex
+        let plan = CodexAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .model("")
@@ -213,6 +308,30 @@ mod tests {
             .unwrap();
         assert_eq!(plan.args[1], "gpt-5.6-sol");
         assert_eq!(plan.args.len(), 6);
+    }
+
+    #[test]
+    fn hook_command_wires_every_event_as_a_config_override() {
+        let (dir, profile) = profile("", &[]);
+        let hook_command = ["/x\"y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
+        let plan = CodexAdapter
+            .launch(&LaunchRequest::new(dir.path(), &profile).hook_command(&hook_command))
+            .unwrap();
+        let overrides: Vec<&str> = plan
+            .args
+            .windows(2)
+            .filter(|pair| pair[0] == "-c" && pair[1].starts_with("hooks."))
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(overrides.len(), HOOK_EVENTS.len());
+        assert_eq!(
+            overrides[4],
+            r#"hooks.Stop=[{matcher="",hooks=[{type="command",command="'/x\"y/txc' 'chat' 'hook' 'Stop' || exit 1"}]}]"#
+        );
+        assert_eq!(
+            &plan.args[plan.args.len() - 2..],
+            [BYPASS_APPROVALS_FLAG, BYPASS_HOOK_TRUST_FLAG]
+        );
     }
 
     #[test]

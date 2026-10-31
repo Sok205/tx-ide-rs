@@ -5,16 +5,21 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "txc: a thin command-line surface over tx-core."
+default-run = "txc"
 
 [[bin]]
 name = "txc"
 path = "src/main.rs"
 
+# Internal entry point run by machines (the hooks an engine wires), never listed in `txc help`.
+[[bin]]
+name = "txi"
+path = "src/txi.rs"
+
 [dependencies]
 tx-core.workspace = true
 tx-engine-claude = { path = "../plugins/engine-claude" }
 tx-engine-codex = { path = "../plugins/engine-codex" }
-tx-hooks = { path = "../plugins/hooks" }
 tx-chat = { path = "../plugins/chat" }
 tx-ide = { path = "../plugins/ide" }
 tx-labels = { path = "../plugins/labels" }

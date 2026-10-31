@@ -12,7 +12,7 @@ Plan and the decisions the spec left open: `../../docs/superpowers/plans/2026-10
 | crate | what |
 |---|---|
 | `tx-core` | the library: `TxCore` and the public operations |
-| `tx-engine-claude`, `tx-engine-codex` | one `EngineAdapter` each, depending only on `tx-core` |
+| `tx-engine-claude`, `tx-engine-codex` | one `LlmEngine` each, depending only on `tx-core` |
 | `tx-core-cli` | `txc`, a thin CLI that registers the bundled engines |
 
 ## Layout of `state_dir` (default `~/.tx-core`)
@@ -50,8 +50,10 @@ let at = core.get_execution_location(&id)?;   // tmux -S <socket> attach -t <ses
 ```rust
 struct Aider;
 
-impl EngineAdapter for Aider {
+impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
+    // Wires no hooks, so its sessions stay `starting`; see tx-engine-claude for real rules.
+    fn on_hook(&self, _: LlmEngineState, _: &LlmEngineHook) -> Option<LlmEngineState> { None }
     fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         let mut args = vec!["--read".into(), r.profile.file().display().to_string()];
         if let Some(model) = r.model { args.extend(["--model".into(), model.into()]); }
@@ -63,7 +65,7 @@ impl EngineAdapter for Aider {
 core.register_engine(Box::new(Aider))?;
 ```
 
-`launch` is pure. Core writes the profile file, applies the plan's `workspace` actions (relative
+`launch` and `on_hook` are pure. Core writes the profile file, applies the plan's `workspace` actions (relative
 to `cwd`, refusing anything that escapes it), then starts `program args…` with
 `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the config env, the per-session env and the plan env.
 

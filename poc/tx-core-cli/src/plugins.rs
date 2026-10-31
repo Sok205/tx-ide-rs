@@ -3,10 +3,11 @@
 //! ```yaml
 //! plugins:
 //!   engine-codex: { enabled: false }
-//!   hooks:
-//!     settings: { stuck_after_seconds: 600 }
+//!   labels:
+//!     settings: { ... }
 //! ```
-//! A missing file enables everything; a malformed file or an unknown id is a usage error.
+//! A missing file enables everything; a malformed file or an unknown id is a usage error. A
+//! retired id is skipped, so a file written for an older txc keeps loading.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -22,7 +23,6 @@ pub const FILE_NAME: &str = "plugins.yaml";
 pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_engine_claude::ClaudePlugin),
     || Box::new(tx_engine_codex::CodexPlugin),
-    || Box::new(tx_hooks::HooksPlugin),
     || Box::new(tx_chat::HistoryPlugin),
     || Box::new(tx_chat::ChatPlugin),
     || Box::new(tx_ide::IdePlugin),
@@ -38,6 +38,10 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_timeline::TimelinePlugin),
     || Box::new(tx_menu::MenuPlugin),
 ];
+
+/// Ids of plugins this binary no longer links; `plugins.yaml` entries for them are ignored.
+/// `hooks`: agent state moved into core and the engine adapters (`txi hook`).
+pub const RETIRED: &[&str] = &["hooks"];
 
 /// The built-in verbs; a plugin may not register one of these.
 pub const RESERVED: &[&str] = &[
@@ -86,6 +90,9 @@ pub fn parse(text: &str, known: &[&str], reserved: &[&str]) -> Result<PluginConf
         ..Default::default()
     };
     for (id, entry) in file.plugins.unwrap_or_default() {
+        if RETIRED.contains(&id.as_str()) {
+            continue;
+        }
         if !known.contains(&id.as_str()) {
             return Err(UsageError(format!(
                 "{FILE_NAME}: no plugin named {id:?} (known: {})",
@@ -117,7 +124,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     fn parse_text(text: &str) -> Result<PluginConfig, UsageError> {
-        parse(text, &["engine-codex", "hooks"], &["ls"])
+        parse(text, &["engine-codex", "labels"], &["ls"])
     }
 
     #[test]
@@ -128,6 +135,16 @@ mod tests {
             error.0.contains("engine-codex"),
             "names the known ids: {error}"
         );
+    }
+
+    #[test]
+    fn a_retired_id_is_skipped_with_its_settings() {
+        let cfg = parse_text(
+            "plugins:\n  hooks:\n    enabled: false\n    settings: { stuck_after_seconds: 600 }\n",
+        )
+        .unwrap();
+        assert!(cfg.disabled.is_empty());
+        assert!(cfg.settings.is_empty());
     }
 
     #[test]
@@ -143,14 +160,14 @@ mod tests {
     #[test]
     fn enabled_false_disables_and_settings_pass_through() {
         let cfg = parse_text(
-            "plugins:\n  engine-codex: { enabled: false }\n  hooks:\n    enabled: true\n    settings: { stuck_after_seconds: 5 }\n",
+            "plugins:\n  engine-codex: { enabled: false }\n  labels:\n    enabled: true\n    settings: { stuck_after_seconds: 5 }\n",
         )
         .unwrap();
         assert_eq!(cfg.disabled, BTreeSet::from(["engine-codex".to_owned()]));
         assert_eq!(
             cfg.settings,
             BTreeMap::from([(
-                "hooks".to_owned(),
+                "labels".to_owned(),
                 serde_json::json!({"stuck_after_seconds": 5})
             )])
         );
@@ -158,7 +175,7 @@ mod tests {
 
     #[test]
     fn enabled_defaults_to_true() {
-        let cfg = parse_text("plugins:\n  hooks: {}\n").unwrap();
+        let cfg = parse_text("plugins:\n  labels: {}\n").unwrap();
         assert!(cfg.disabled.is_empty());
     }
 
@@ -170,7 +187,7 @@ mod tests {
 
     #[test]
     fn unknown_keys_on_an_entry_are_refused() {
-        let error = parse_text("plugins:\n  hooks: { enabledd: true }\n").unwrap_err();
+        let error = parse_text("plugins:\n  labels: { enabledd: true }\n").unwrap_err();
         assert!(error.0.contains("enabledd"), "{error}");
     }
 }

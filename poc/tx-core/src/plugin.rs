@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::config::CoreConfig;
 use crate::core::TxCore;
-use crate::engine::EngineAdapter;
+use crate::engine::LlmEngine;
 use crate::error::CoreError;
 use crate::events::EventSink;
 
@@ -24,7 +24,7 @@ pub trait Plugin: Send + Sync {
 
 /// What one plugin contributes. Built per plugin by [`TxCore::plug`].
 pub struct Registry {
-    engines: Vec<Box<dyn EngineAdapter>>,
+    engines: Vec<Box<dyn LlmEngine>>,
     sinks: Vec<Box<dyn EventSink>>,
     verbs: Vec<Arc<dyn Verb>>,
     resources: BTreeMap<&'static str, &'static [u8]>,
@@ -33,7 +33,7 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn engine(&mut self, adapter: Box<dyn EngineAdapter>) {
+    pub fn engine(&mut self, adapter: Box<dyn LlmEngine>) {
         self.engines.push(adapter);
     }
 

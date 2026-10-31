@@ -153,11 +153,13 @@ mod tests {
             cwd: "/w".into(),
             created_at: 1.0,
             ended_at: Some(2.0),
+            last_modified_at: 1.0,
             lifecycle: Lifecycle::Exited,
             launch,
             ext: ext
                 .map(|chat| [("chat".to_owned(), chat)].into())
                 .unwrap_or_default(),
+            state: None,
         }
     }
 

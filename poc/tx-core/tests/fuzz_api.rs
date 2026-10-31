@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Effort, EngineAdapter, EventType, Launch, LaunchOptions,
-    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, MAX_SOCKET_PATH_BYTES, Profile,
+    CoreConfig, CoreError, CreateOptions, Effort, EventType, Launch, LaunchOptions, LaunchPlan,
+    LaunchRequest, Lifecycle, ListFilter, LlmEngine, MAX_SOCKET_PATH_BYTES, Profile,
     ResolvedProfile, SendOptions, Session, SessionId, TxCore, WorkspaceAction,
 };
 
@@ -120,12 +120,14 @@ fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecyc
         cwd: "/w".into(),
         created_at: 1.0,
         ended_at: None,
+        last_modified_at: 1.0,
         lifecycle,
         launch: Launch::Process {
             program: "sh".into(),
             args: vec![],
         },
         ext: std::collections::BTreeMap::new(),
+        state: None,
     }
 }
 
@@ -396,7 +398,7 @@ fn snapshot(state: &Path) -> Vec<(PathBuf, u64)> {
 #[test]
 fn public_types_have_the_promised_auto_traits() {
     assert_send_sync::<TxCore>();
-    assert_send_sync::<Box<dyn EngineAdapter>>();
+    assert_send_sync::<Box<dyn LlmEngine>>();
     assert_send_sync::<CoreConfig>();
     assert_send_sync::<CreateOptions>();
     assert_send_sync::<LaunchOptions>();
@@ -412,7 +414,7 @@ fn public_types_have_the_promised_auto_traits() {
     assert_copy::<Effort>();
     assert_copy::<Lifecycle>();
 
-    // Value types are unwind-safe; a `TxCore` is not (it owns `Box<dyn EngineAdapter>`), see report.
+    // Value types are unwind-safe; a `TxCore` is not (it owns `Box<dyn LlmEngine>`), see report.
     assert_unwind_safe::<CoreConfig>();
     assert_unwind_safe::<CreateOptions>();
     assert_unwind_safe::<LaunchPlan>();
@@ -436,7 +438,15 @@ fn core_error_boxes_into_a_threadsafe_error_and_crosses_threads() {
 #[test]
 fn engine_adapter_object_is_usable_from_another_thread() {
     struct Stub;
-    impl EngineAdapter for Stub {
+    impl LlmEngine for Stub {
+        fn on_hook(
+            &self,
+            _: tx_core::LlmEngineState,
+            _: &tx_core::LlmEngineHook,
+        ) -> Option<tx_core::LlmEngineState> {
+            None
+        }
+
         fn id(&self) -> &str {
             "stub"
         }
@@ -444,7 +454,7 @@ fn engine_adapter_object_is_usable_from_another_thread() {
             Ok(LaunchPlan::new("true"))
         }
     }
-    let adapter: Box<dyn EngineAdapter> = Box::new(Stub);
+    let adapter: Box<dyn LlmEngine> = Box::new(Stub);
     let id = std::thread::spawn(move || adapter.id().to_owned())
         .join()
         .unwrap();

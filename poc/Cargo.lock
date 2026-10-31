@@ -1804,7 +1804,6 @@ dependencies = [
  "tx-edit",
  "tx-engine-claude",
  "tx-engine-codex",
- "tx-hooks",
  "tx-ide",
  "tx-kill",
  "tx-labels",
@@ -1831,6 +1830,7 @@ dependencies = [
 name = "tx-engine-claude"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tempfile",
  "tx-core",
 ]
@@ -1839,17 +1839,8 @@ dependencies = [
 name = "tx-engine-codex"
 version = "0.1.0"
 dependencies = [
- "tempfile",
- "tx-core",
-]
-
-[[package]]
-name = "tx-hooks"
-version = "0.1.0"
-dependencies = [
  "serde_json",
  "tempfile",
- "thiserror 2.0.21",
  "tx-core",
 ]
 

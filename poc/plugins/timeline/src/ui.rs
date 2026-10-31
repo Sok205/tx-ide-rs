@@ -269,9 +269,10 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     // State marker replaces the group stripe; group headings and bars carry the group color.
     let label_width = usize::from(app.geometry.label_width);
     let indicator = match (lane.live, lane.state.as_str()) {
-        (false, _) => "×",
+        // An agent that reported its end reads as gone before refresh marks the process.
+        (false, _) | (true, "ended") => "×",
         (true, "working") => "●",
-        (true, "idle" | "waiting") => "○",
+        (true, "starting" | "idle") => "○",
         (true, _) => "·",
     };
     put(

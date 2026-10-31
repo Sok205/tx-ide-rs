@@ -2,7 +2,6 @@
 //! Pure formatting; every function takes the records and `now`, nothing reads the clock.
 
 use serde::Deserialize;
-use serde_json::{Map, Value};
 use tx_core::{Launch, Session};
 
 use crate::tmux::Location;
@@ -120,15 +119,6 @@ pub fn chips(tags: &[String]) -> String {
     tags.iter().map(|tag| format!(" [{tag}]")).collect()
 }
 
-/// `ext["hooks"].since`; a missing or malformed record (anything but an object) reads as absent.
-fn hooks_since(session: &Session) -> Option<f64> {
-    session
-        .ext::<Map<String, Value>>("hooks")
-        .ok()
-        .flatten()
-        .and_then(|hooks| hooks.get("since")?.as_f64())
-}
-
 #[derive(Deserialize)]
 struct Kind {
     kind: Option<String>,
@@ -153,14 +143,15 @@ pub fn role_of(session: &Session) -> &'static str {
     }
 }
 
+/// When the record was last written: a state change, mostly, but also a rename or a tag.
 pub fn activity_at(session: &Session) -> f64 {
-    hooks_since(session).unwrap_or(session.created_at)
+    session.last_modified_at
 }
 
 /// IDLE: the last-turn age for an agent session, `—` for a process (no activity signal).
 pub fn idle_cell(session: &Session, now: f64) -> String {
     match session.launch {
-        Launch::Agent { .. } => reltime(hooks_since(session), now),
+        Launch::Agent { .. } => reltime(Some(session.last_modified_at), now),
         Launch::Process { .. } => "—".into(),
     }
 }
@@ -250,6 +241,7 @@ mod tests {
             cwd: PathBuf::from("/r"),
             created_at,
             ended_at: None,
+            last_modified_at: created_at,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
                 engine: "claude".into(),
@@ -259,6 +251,7 @@ mod tests {
                 resume: None,
             },
             ext: Default::default(),
+            state: None,
         }
     }
 
@@ -396,10 +389,7 @@ mod tests {
     fn row_layout_is_byte_exact() {
         let mut session = agent("worker-1", NOW - 90.0);
         session.tags = vec!["a".into()];
-        session.ext.insert(
-            "hooks".into(),
-            json!({"state": "working", "since": NOW - 5.0}),
-        );
+        session.last_modified_at = NOW - 5.0;
         let attached = [location("main", "1")];
         let rows = [Row {
             session: &session,
@@ -438,10 +428,7 @@ mod tests {
         let old = agent("o", NOW - 500.0);
         let long = process("a-very-long-session-name", NOW - 100.0);
         let mut fresh = agent("f", NOW - 900.0);
-        fresh.ext.insert(
-            "hooks".into(),
-            json!({"state": "idle", "since": NOW - 10.0}),
-        );
+        fresh.last_modified_at = NOW - 10.0;
         let rows = [&old, &long, &fresh].map(|session| Row {
             session,
             target: "$1",
@@ -470,26 +457,23 @@ mod tests {
         assert_eq!(role_of(&view), "shell");
         assert_eq!(role_of(&agent("a", 1.0)), "llm");
         assert_eq!(idle_cell(&view, NOW), "—");
-        assert_eq!(idle_cell(&agent("a", 1.0), NOW), "-");
+        assert_eq!(idle_cell(&agent("a", NOW - 30.0), NOW), "30s");
     }
 
     #[test]
-    fn malformed_hooks_ext_is_tolerated() {
-        for bad in [json!("oops"), json!(7), json!([1]), json!({"since": "x"})] {
-            let mut session = agent("w", NOW - 90.0);
-            session.ext.insert("hooks".into(), bad);
-            session.ext.insert("spawn".into(), json!("junk"));
-            assert_eq!(activity_at(&session), NOW - 90.0);
-            assert_eq!(idle_cell(&session, NOW), "-");
-            assert_eq!(role_of(&session), "llm");
-            let rows = [Row {
-                session: &session,
-                target: "$1",
-                attached: &[],
-            }];
-            let out = picker_rows(&rows, 12, NOW);
-            assert!(out.contains("1m"), "{out:?}");
-        }
+    fn an_untouched_agent_reads_its_creation_and_a_malformed_spawn_ext_is_tolerated() {
+        let mut session = agent("w", NOW - 90.0);
+        session.ext.insert("spawn".into(), json!("junk"));
+        assert_eq!(activity_at(&session), NOW - 90.0);
+        assert_eq!(idle_cell(&session, NOW), "1m");
+        assert_eq!(role_of(&session), "llm");
+        let rows = [Row {
+            session: &session,
+            target: "$1",
+            attached: &[],
+        }];
+        let out = picker_rows(&rows, 12, NOW);
+        assert!(out.contains("1m"), "{out:?}");
         let mut process = process("p", 5.0);
         process.ext.insert("spawn".into(), json!(42));
         assert_eq!(role_of(&process), "shell");

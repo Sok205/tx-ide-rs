@@ -3,13 +3,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::CoreConfig;
-use crate::engine::{EngineAdapter, EngineRegistry, LaunchRequest, apply_workspace};
+use crate::engine::{EngineRegistry, LaunchRequest, LlmEngine, apply_workspace};
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
 use crate::profile::{Profile, Profiles};
 use crate::session::{Effort, Launch, Lifecycle, Session, SessionId, validate_name};
+use crate::state::{LlmEngineHook, LlmEngineState};
 use crate::store::{SessionStore, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 
@@ -315,6 +316,17 @@ fn event(
     )
 }
 
+/// The process is gone, whatever the adapter last said: `ended_at` is set and an agent's state
+/// becomes `Ended`. No `StateChanged`: `Exited` / `Stopped` already say so.
+fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
+    let ended_at = now();
+    session.lifecycle = lifecycle;
+    session.ended_at = Some(ended_at);
+    if session.state.is_some() {
+        session.state = Some(LlmEngineState::Ended);
+    }
+}
+
 fn store_io(path: &Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {
     move |source| {
         CoreError::Store(StoreError::Io {
@@ -369,7 +381,7 @@ impl TxCore {
         self.tmux.socket()
     }
 
-    pub fn register_engine(&mut self, adapter: Box<dyn EngineAdapter>) -> Result<(), CoreError> {
+    pub fn register_engine(&mut self, adapter: Box<dyn LlmEngine>) -> Result<(), CoreError> {
         self.engines.register(adapter)
     }
 
@@ -531,6 +543,7 @@ impl TxCore {
                     effort: *effort,
                     initial_prompt: initial_prompt.as_deref(),
                     resume: resume.as_deref(),
+                    hook_command: &self.config.hook_command,
                 };
                 let plan = adapter
                     .launch(&request)
@@ -591,7 +604,7 @@ impl TxCore {
             Err(error) => return Err(undo(CoreError::Tmux(error))),
         };
         let created_at = now();
-        let session = Session {
+        let mut session = Session {
             id: id.clone(),
             name: opts.name.clone(),
             parent: opts.parent,
@@ -599,15 +612,23 @@ impl TxCore {
             cwd: opts.cwd,
             created_at,
             ended_at: exited_at_once.then_some(created_at),
+            last_modified_at: created_at,
             lifecycle: if exited_at_once {
                 Lifecycle::Exited
             } else {
                 Lifecycle::Running
             },
+            // An agent starts in `Starting` until its adapter's first change; a process has
+            // no engine and so no state.
+            state: match &launch {
+                Launch::Agent { .. } if exited_at_once => Some(LlmEngineState::Ended),
+                Launch::Agent { .. } => Some(LlmEngineState::Starting),
+                Launch::Process { .. } => None,
+            },
             launch,
             ext: std::collections::BTreeMap::new(),
         };
-        if let Err(error) = self.store.save(&session) {
+        if let Err(error) = self.save(&mut session) {
             return Err(undo(CoreError::Store(error)));
         }
         let mut events = vec![event(EventType::Created, &session, None, "")];
@@ -620,6 +641,12 @@ impl TxCore {
             ));
         }
         Ok((id, events))
+    }
+
+    /// Every record write goes through here: stamps `last_modified_at`, then saves.
+    fn save(&self, session: &mut Session) -> Result<(), StoreError> {
+        session.last_modified_at = now();
+        self.store.save(session)
     }
 
     /// Whether a `Running` record other than `except` carries `name`.
@@ -668,7 +695,7 @@ impl TxCore {
             }
         }
         let old = std::mem::replace(&mut session.name, name.to_owned());
-        self.store.save(&session)?;
+        self.save(&mut session)?;
         let renamed = event(
             EventType::Renamed,
             &session,
@@ -704,8 +731,48 @@ impl TxCore {
         } else {
             session.ext.insert(plugin.to_owned(), value);
         }
-        self.store.save(&session)?;
+        self.save(&mut session)?;
         Ok(true)
+    }
+
+    /// A hook the session's engine wired fired inside it: the engine decides the new state, core
+    /// writes it under the session lock and emits `StateChanged` (`from → to`) when it moved.
+    /// Returns the state after the hook; `None` when the hook is not for a live agent this core
+    /// can read: the session is no longer `Running` (a stale hook), is a process session, or its
+    /// engine is not registered here.
+    pub fn hook(
+        &self,
+        id: &SessionId,
+        hook: LlmEngineHook,
+    ) -> Result<Option<LlmEngineState>, CoreError> {
+        let (state, changed) = {
+            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+            let mut session = self.get_session(id)?;
+            if session.lifecycle != Lifecycle::Running {
+                return Ok(None);
+            }
+            let Launch::Agent { engine, .. } = &session.launch else {
+                return Ok(None);
+            };
+            let Some(adapter) = self.engines.get(engine) else {
+                return Ok(None);
+            };
+            let current = session.state.expect("agent sessions carry a state");
+            match adapter.on_hook(current, &hook) {
+                Some(to) if to != current => {
+                    session.state = Some(to);
+                    self.save(&mut session)?;
+                    let detail = format!("{} → {}", current.as_str(), to.as_str());
+                    (
+                        to,
+                        vec![event(EventType::StateChanged, &session, None, detail)],
+                    )
+                }
+                _ => (current, Vec::new()),
+            }
+        };
+        self.emit(changed);
+        Ok(Some(state))
     }
 
     pub fn set_session_tags(
@@ -717,7 +784,7 @@ impl TxCore {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
             session.tags = tags;
-            self.store.save(&session)?;
+            self.save(&mut session)?;
             let tagged = event(EventType::Tagged, &session, None, session.tags.join(", "));
             (session, tagged)
         };
@@ -775,9 +842,8 @@ impl TxCore {
 
     /// Saves the record as `Exited`; the caller emits the returned event once its lock is gone.
     fn mark_exited(&self, mut session: Session) -> Result<(Session, Event), CoreError> {
-        session.lifecycle = Lifecycle::Exited;
-        session.ended_at = Some(now());
-        self.store.save(&session)?;
+        mark_ended(&mut session, Lifecycle::Exited);
+        self.save(&mut session)?;
         let exited = event(EventType::Exited, &session, None, "");
         Ok((session, exited))
     }
@@ -826,9 +892,8 @@ impl TxCore {
                 None => self.mark_exited(session)?,
                 Some(live) => {
                     self.tmux.kill_session(&live.session_target)?;
-                    session.lifecycle = Lifecycle::Stopped;
-                    session.ended_at = Some(now());
-                    self.store.save(&session)?;
+                    mark_ended(&mut session, Lifecycle::Stopped);
+                    self.save(&mut session)?;
                     let stopped = event(EventType::Stopped, &session, None, "");
                     (session, stopped)
                 }
@@ -981,7 +1046,15 @@ mod tests {
     }
 
     struct Stub;
-    impl EngineAdapter for Stub {
+    impl LlmEngine for Stub {
+        fn on_hook(
+            &self,
+            _: crate::LlmEngineState,
+            _: &crate::LlmEngineHook,
+        ) -> Option<crate::LlmEngineState> {
+            None
+        }
+
         fn id(&self) -> &str {
             "stub"
         }
@@ -1121,12 +1194,14 @@ mod tests {
             cwd: "/".into(),
             created_at: 1.0,
             ended_at: None,
+            last_modified_at: 1.0,
             lifecycle,
             launch: Launch::Process {
                 program: "x".into(),
                 args: vec![],
             },
             ext: std::collections::BTreeMap::new(),
+            state: None,
         };
         let filter = ListFilter::new()
             .parent("p".parse().unwrap())

@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use tx_core::{
-    CoreConfig, CreateOptions, EngineAdapter, EngineError, LaunchOptions, LaunchPlan,
-    LaunchRequest, SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine,
+    SessionId, TxCore, WorkspaceAction,
 };
 
 /// `None` when tmux is not installed; callers skip.
@@ -144,7 +144,18 @@ pub struct ShellStub;
 
 pub const STUB_ID: &str = "stub";
 
-impl EngineAdapter for ShellStub {
+impl LlmEngine for ShellStub {
+    /// A hook named after a state moves to it; any other name changes nothing.
+    fn on_hook(
+        &self,
+        _: tx_core::LlmEngineState,
+        hook: &tx_core::LlmEngineHook,
+    ) -> Option<tx_core::LlmEngineState> {
+        tx_core::LlmEngineState::ALL
+            .into_iter()
+            .find(|state| state.as_str() == hook.name)
+    }
+
     fn id(&self) -> &str {
         STUB_ID
     }

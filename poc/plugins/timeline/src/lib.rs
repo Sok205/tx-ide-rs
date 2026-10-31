@@ -4,7 +4,7 @@
 //! [`app`]; drawing: [`ui`]; the terminal and the event loop: [`run`]; the verbs: [`verbs`].
 //!
 //! Working / idle spans come from the transcripts' own turn markers ([`turns`]), as in main;
-//! the live state of a lane is the `hooks` plugin's `ext.hooks.state`. Nothing here needs a
+//! the live state of a lane is the record's `status.state`. Nothing here needs a
 //! core event: the view re-reads records and transcripts every tick.
 
 pub mod app;

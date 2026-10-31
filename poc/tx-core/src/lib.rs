@@ -15,6 +15,7 @@ pub mod messaging;
 pub mod plugin;
 pub mod profile;
 pub mod session;
+pub mod state;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod store;
@@ -29,7 +30,9 @@ pub use core::{
 };
 #[doc(hidden)]
 pub use engine::EngineRegistry;
-pub use engine::{EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+pub use engine::{
+    EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction, hook_shell_command,
+};
 pub use error::CoreError;
 #[doc(hidden)]
 pub use events::EventLog;
@@ -38,13 +41,14 @@ pub use events::{Event, EventSink, EventType};
 pub use locks::{LockGuard, Locks};
 #[doc(hidden)]
 pub use messaging::DELIVERY_PAUSE;
-/// The default envelope; an `EngineAdapter::envelope` override may wrap it.
+/// The default envelope; an `LlmEngine::envelope` override may wrap it.
 pub use messaging::build_envelope;
 pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
 pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
+pub use state::{LlmEngineHook, LlmEngineState};
 #[doc(hidden)]
 pub use store::SessionStore;
 /// Stable: they are the payload of `CoreError::Store`.

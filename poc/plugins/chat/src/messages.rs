@@ -493,18 +493,10 @@ fn read_dir_paths(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The latest sign of life of a record: creation, end, or its last hook state change.
+/// The latest sign of life: the record's last write (creation, a state change, the end, a
+/// rename or a tag).
 fn activity_at(session: &Session) -> f64 {
-    let since = session
-        .ext
-        .get("hooks")
-        .and_then(|hooks| hooks.get("since"))
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-    session
-        .created_at
-        .max(session.ended_at.unwrap_or(0.0))
-        .max(since)
+    session.last_modified_at
 }
 
 /// name → role of the most recently active record of that name (names are reusable).
@@ -859,10 +851,10 @@ fn sha1_hex(data: &[u8]) -> String {
         message.push(0);
     }
     message.extend_from_slice(&(data.len() as u64 * 8).to_be_bytes());
-    for block in message.chunks_exact(64) {
+    for block in message.as_chunks::<64>().0 {
         let mut w = [0u32; 80];
-        for (slot, word) in w.iter_mut().zip(block.chunks_exact(4)) {
-            *slot = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+        for (slot, word) in w.iter_mut().zip(block.as_chunks::<4>().0) {
+            *slot = u32::from_be_bytes(*word);
         }
         for i in 16..80 {
             w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);

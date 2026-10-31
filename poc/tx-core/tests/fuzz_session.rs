@@ -113,9 +113,11 @@ fn arb_session_with(
                 cwd,
                 created_at,
                 ended_at,
+                last_modified_at: created_at,
                 lifecycle,
                 launch,
                 ext,
+                state: None,
             },
         )
 }
@@ -273,12 +275,14 @@ fn sample() -> Session {
         cwd: PathBuf::from("/"),
         created_at: 1.0,
         ended_at: Some(2.0),
+        last_modified_at: 1.0,
         lifecycle: Lifecycle::Stopped,
         launch: Launch::Process {
             program: "sh".into(),
             args: vec![],
         },
         ext: std::collections::BTreeMap::new(),
+        state: None,
     }
 }
 

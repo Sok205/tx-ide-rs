@@ -2,22 +2,14 @@
 //!
 //! Main's record fields map onto core's as follows. `role` is the launch kind: `llm` (or
 //! `agent`) for an engine launch, `shell` (or `process`) for a plain program. `state` is any of
-//! the names a record answers to: a running record is `alive` and `running`, plus the hooks
-//! plugin's `ext.hooks.state` (`working` / `waiting` / `idle`) when it holds a valid one; an
-//! ended record is `archived` and its lifecycle (`exited` / `stopped`). `chat_origin` needs a
+//! the names a record answers to: a running record is `alive` and `running`, plus its agent
+//! state (`starting` / `idle` / `working` / `ended`) when it has one; an ended
+//! record is `archived` and its lifecycle (`exited` / `stopped`). `chat_origin` needs a
 //! chat plugin, which this port does not have yet, so it matches nothing.
 
-use serde::Deserialize;
 use tx_core::{Launch, Lifecycle, Session};
 
 use crate::pack::{SessionFilter, TxCheck};
-
-const HOOKS_PLUGIN: &str = "hooks";
-
-#[derive(Deserialize)]
-struct HookState {
-    state: String,
-}
 
 fn role_matches(session: &Session, role: &str) -> bool {
     match &session.launch {
@@ -33,13 +25,13 @@ fn engine_of(session: &Session) -> Option<&str> {
     }
 }
 
-/// Every state name the record answers to. A malformed `ext.hooks` is ignored, never an error.
+/// Every state name the record answers to.
 pub fn states(session: &Session) -> Vec<String> {
     match session.lifecycle {
         Lifecycle::Running => {
             let mut names = vec!["alive".to_owned(), "running".to_owned()];
-            if let Ok(Some(hook)) = session.ext::<HookState>(HOOKS_PLUGIN) {
-                names.push(hook.state);
+            if let Some(state) = session.state {
+                names.push(state.as_str().to_owned());
             }
             names
         }
@@ -196,14 +188,11 @@ mod tests {
     }
 
     #[test]
-    fn hook_state_adds_a_state_name_and_a_malformed_one_is_ignored() {
+    fn the_agent_state_adds_a_state_name() {
         let mut worker = agent("w", "running", &[], None);
-        worker
-            .ext
-            .insert("hooks".into(), json!({"state": "working", "since": 1.0}));
-        assert_eq!(states(&worker), ["alive", "running", "working"]);
-        worker.ext.insert("hooks".into(), json!("garbage"));
         assert_eq!(states(&worker), ["alive", "running"]);
+        worker.state = Some(tx_core::LlmEngineState::Working);
+        assert_eq!(states(&worker), ["alive", "running", "working"]);
         assert_eq!(
             states(&agent("x", "stopped", &[], None)),
             ["archived", "stopped"]

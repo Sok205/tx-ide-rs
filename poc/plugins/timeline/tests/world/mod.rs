@@ -41,8 +41,7 @@ pub fn set_utc() {
     });
 }
 
-/// One world session as a tx-core record (`version: 1`): lifecycle from `state`, the hooks
-/// plugin's `{state, since}`, the chat plugin's chat refs, the edit plugin's group.
+/// One world session as a tx-core record (`version: 1`): lifecycle and `status` from `state`, the chat plugin's chat refs, the edit plugin's group.
 pub fn record(session: &Value, transcripts: &Path) -> Value {
     let engine = session["engine"].as_str();
     let state = session["state"].as_str().unwrap();
@@ -54,10 +53,6 @@ pub fn record(session: &Value, transcripts: &Path) -> Value {
         None => json!({"kind": "process", "program": "sh", "args": []}),
     };
     let mut ext = Map::new();
-    ext.insert(
-        "hooks".into(),
-        json!({"state": if state == "exited" { "idle" } else { state }, "since": session["activity"]}),
-    );
     let chats: Vec<Value> = session["transcripts"]
         .as_array()
         .unwrap()
@@ -76,13 +71,20 @@ pub fn record(session: &Value, transcripts: &Path) -> Value {
     if let Some(group) = session.get("group") {
         ext.insert("edit".into(), json!({ "group": group }));
     }
+    // The record's last write: whichever of creation, end and the last state change came last.
+    let last_modified_at = ["created_at", "ended_at", "activity"]
+        .iter()
+        .filter_map(|key| session.get(*key).and_then(Value::as_f64))
+        .fold(f64::MIN, f64::max);
     json!({
         "version": 1,
         "id": session["id"], "name": session["name"],
         "parent": session.get("parent"), "tags": session["tags"], "cwd": "/tmp",
         "created_at": session["created_at"], "ended_at": session.get("ended_at"),
+        "last_modified_at": last_modified_at,
         "lifecycle": if state == "exited" { "exited" } else { "running" },
         "launch": launch, "ext": ext,
+        "state": if state == "exited" { "ended" } else { state },
     })
 }
 

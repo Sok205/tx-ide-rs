@@ -68,6 +68,31 @@ impl Cli {
             .unwrap();
         child.wait_with_output().unwrap()
     }
+    /// `txi` (the internal binary the wired hooks run) against this state dir, the way a hook
+    /// inside a session runs it: `$TX_CORE_HOME`, no flags.
+    pub fn txi(&self, args: &[&str], env: &[(&str, &str)], stdin: &str) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_txi"));
+        command
+            .args(args)
+            .env("TX_CORE_HOME", self.state())
+            .env_remove("TX_TMUX_SOCKET")
+            .env_remove("TMUX")
+            .env_remove("TX_SESSION_ID")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    }
     pub fn ok(&self, args: &[&str]) -> String {
         let output = self.run(args, &[], "");
         assert!(

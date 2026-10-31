@@ -26,6 +26,8 @@ pub enum EventType {
     Renamed,
     Tagged,
     MessageSent,
+    /// The agent's `state` moved; detail is "<from> → <to>".
+    StateChanged,
     Exited,
     Stopped,
     Forgotten,
@@ -37,6 +39,7 @@ impl EventType {
         EventType::Renamed,
         EventType::Tagged,
         EventType::MessageSent,
+        EventType::StateChanged,
         EventType::Exited,
         EventType::Stopped,
         EventType::Forgotten,
@@ -48,6 +51,7 @@ impl EventType {
             EventType::Renamed => "renamed",
             EventType::Tagged => "tagged",
             EventType::MessageSent => "message-sent",
+            EventType::StateChanged => "state-changed",
             EventType::Exited => "exited",
             EventType::Stopped => "stopped",
             EventType::Forgotten => "forgotten",
@@ -380,6 +384,7 @@ mod tests {
                 "renamed",
                 "tagged",
                 "message-sent",
+                "state-changed",
                 "exited",
                 "stopped",
                 "forgotten"

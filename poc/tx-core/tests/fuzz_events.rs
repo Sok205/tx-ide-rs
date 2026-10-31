@@ -372,6 +372,7 @@ fn event_type_names_unique_and_stable() {
             "renamed",
             "tagged",
             "message-sent",
+            "state-changed",
             "exited",
             "stopped",
             "forgotten"

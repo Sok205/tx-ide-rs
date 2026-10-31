@@ -4,7 +4,11 @@
 
 use std::path::PathBuf;
 
-use tx_core::{Effort, EngineAdapter, EngineError, LaunchPlan, LaunchRequest, WorkspaceAction};
+use serde_json::Value;
+use tx_core::{
+    Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
+    WorkspaceAction, hook_shell_command,
+};
 
 pub const CLAUDE_BIN: &str = "claude";
 pub const SKILLS_DIR: &str = ".claude/skills";
@@ -14,12 +18,33 @@ pub const EFFORT_FLAG: &str = "--effort";
 pub const NO_CHROME_FLAG: &str = "--no-chrome";
 pub const APPEND_SYSTEM_PROMPT_FLAG: &str = "--append-system-prompt";
 pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
+pub const SETTINGS_FLAG: &str = "--settings";
+/// The hooks wired per launch; each runs `<hook_command> <Event>`, so `on_hook` sees Claude's
+/// own event names.
+pub const HOOK_EVENTS: [&str; 8] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Notification",
+    "Stop",
+    "StopFailure",
+    "SessionEnd",
+];
+/// Seconds Claude waits for one hook before moving on.
+pub const HOOK_TIMEOUT_SECONDS: u64 = 10;
 pub const DEFAULT_EFFORT: Effort = Effort::High;
+/// `Notification` types that stop a turn on the operator: `Idle`. Not `idle_prompt`: Claude
+/// sends it about 60 s after every finished turn, which is already `Idle`.
+pub const MID_TURN_NOTIFICATIONS: [&str; 2] = ["permission_prompt", "elicitation_dialog"];
+/// `SessionEnd` reasons that replace the conversation inside a process that keeps running
+/// (`SessionStart` follows at once); they end nothing.
+pub const CONTINUING_END_REASONS: [&str; 2] = ["clear", "resume"];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Claude;
+pub struct ClaudeAdapter;
 
-impl EngineAdapter for Claude {
+impl LlmEngine for ClaudeAdapter {
     fn id(&self) -> &str {
         "claude"
     }
@@ -43,6 +68,9 @@ impl EngineAdapter for Claude {
                 req.profile.text().to_owned(),
             ]);
         }
+        if !req.hook_command.is_empty() {
+            args.extend([SETTINGS_FLAG.to_owned(), hook_settings(req.hook_command)]);
+        }
         args.push(SKIP_PERMISSIONS_FLAG.to_owned());
         if let Some(prompt) = req.initial_prompt.filter(|prompt| !prompt.is_empty()) {
             args.push(prompt.to_owned());
@@ -53,6 +81,49 @@ impl EngineAdapter for Claude {
         }
         Ok(plan)
     }
+
+    fn on_hook(&self, _current: LlmEngineState, hook: &LlmEngineHook) -> Option<LlmEngineState> {
+        let field = |key: &str| hook.payload.get(key).and_then(Value::as_str);
+        match hook.name.as_str() {
+            "SessionStart" | "Stop" | "StopFailure" => Some(LlmEngineState::Idle),
+            // Tool hooks fire only inside a turn: after a stop on the operator they mean the
+            // operator answered.
+            "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => Some(LlmEngineState::Working),
+            "Notification"
+                if field("notification_type")
+                    .is_some_and(|kind| MID_TURN_NOTIFICATIONS.contains(&kind)) =>
+            {
+                Some(LlmEngineState::Idle)
+            }
+            "SessionEnd"
+                if !field("reason")
+                    .is_some_and(|reason| CONTINUING_END_REASONS.contains(&reason)) =>
+            {
+                Some(LlmEngineState::Ended)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// `--settings` JSON wiring every [`HOOK_EVENTS`] entry to `hook_command`. Inline settings
+/// add to the user's own hooks rather than replacing them.
+pub fn hook_settings(hook_command: &[String]) -> String {
+    let hooks: serde_json::Map<String, Value> = HOOK_EVENTS
+        .iter()
+        .map(|event| {
+            let entry = serde_json::json!([{
+                "matcher": "",
+                "hooks": [{
+                    "type": "command",
+                    "command": hook_shell_command(hook_command, event),
+                    "timeout": HOOK_TIMEOUT_SECONDS,
+                }],
+            }]);
+            ((*event).to_owned(), entry)
+        })
+        .collect();
+    serde_json::json!({ "hooks": hooks }).to_string()
 }
 
 /// One symlink per granted skill dir: `<engine dir>/<skill name>` → the skill dir.
@@ -69,7 +140,7 @@ pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAct
         .collect()
 }
 
-/// The plugin wrapper: registers [`Claude`] under the plugin id `engine-claude`.
+/// The plugin wrapper: registers [`ClaudeAdapter`] under the plugin id `engine-claude`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ClaudePlugin;
 
@@ -79,7 +150,7 @@ impl tx_core::Plugin for ClaudePlugin {
     }
 
     fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
-        r.engine(Box::new(Claude));
+        r.engine(Box::new(ClaudeAdapter));
         Ok(())
     }
 }
@@ -107,15 +178,97 @@ mod tests {
         args.iter().map(|a| (*a).to_owned()).collect()
     }
 
+    fn hook(name: &str, payload: serde_json::Value) -> LlmEngineHook {
+        LlmEngineHook {
+            name: name.into(),
+            payload,
+            at: 2.0,
+        }
+    }
+
+    /// (current state, hook name, payload) → the state the adapter moves to.
+    type Row = (
+        LlmEngineState,
+        &'static str,
+        serde_json::Value,
+        Option<LlmEngineState>,
+    );
+
+    fn check(adapter: &dyn LlmEngine, table: Vec<Row>) {
+        for (current, name, payload, expected) in table {
+            assert_eq!(
+                adapter.on_hook(current, &hook(name, payload.clone())),
+                expected,
+                "{current:?} {name} {payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn hooks_to_states() {
+        use LlmEngineState::*;
+        use serde_json::json;
+        let none = json!({});
+        check(
+            &ClaudeAdapter,
+            vec![
+                (Starting, "SessionStart", none.clone(), Some(Idle)),
+                (Idle, "UserPromptSubmit", none.clone(), Some(Working)),
+                // Tool hooks fire only inside a turn: Working, whatever came before.
+                (Working, "PreToolUse", none.clone(), Some(Working)),
+                (Idle, "PreToolUse", none.clone(), Some(Working)),
+                (Idle, "PostToolUse", none.clone(), Some(Working)),
+                (
+                    Working,
+                    "Notification",
+                    json!({"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"}),
+                    Some(Idle),
+                ),
+                (
+                    Working,
+                    "Notification",
+                    json!({"notification_type": "elicitation_dialog"}),
+                    Some(Idle),
+                ),
+                (
+                    Idle,
+                    "Notification",
+                    json!({"notification_type": "idle_prompt", "message": "your turn"}),
+                    None,
+                ),
+                (Working, "Notification", none.clone(), None),
+                (Working, "Stop", none.clone(), Some(Idle)),
+                (
+                    Working,
+                    "StopFailure",
+                    json!({"error": "rate_limit"}),
+                    Some(Idle),
+                ),
+                (Idle, "SessionEnd", json!({"reason": "logout"}), Some(Ended)),
+                (
+                    Idle,
+                    "SessionEnd",
+                    json!({"reason": "prompt_input_exit"}),
+                    Some(Ended),
+                ),
+                (Idle, "SessionEnd", none.clone(), Some(Ended)),
+                (Idle, "SessionEnd", json!({"reason": "clear"}), None),
+                (Idle, "SessionEnd", json!({"reason": "resume"}), None),
+                (Idle, "PreCompact", none.clone(), None),
+                (Idle, "stop", none.clone(), None),
+            ],
+        );
+    }
+
     #[test]
     fn id_is_claude() {
-        assert_eq!(Claude.id(), "claude");
+        assert_eq!(ClaudeAdapter.id(), "claude");
     }
 
     #[test]
     fn defaults() {
         let (dir, profile) = profile("", &[]);
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(&LaunchRequest::new(dir.path(), &profile))
             .unwrap();
         assert_eq!(plan.program, "claude");
@@ -135,7 +288,7 @@ mod tests {
     #[test]
     fn every_option() {
         let (dir, profile) = profile("# Role\nbe good", &["/skills/one", "/other/two"]);
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .model("opus")
@@ -175,7 +328,7 @@ mod tests {
     #[test]
     fn empty_model_and_prompt_are_absent() {
         let (dir, profile) = profile("", &[]);
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .model("")
@@ -197,7 +350,7 @@ mod tests {
     #[test]
     fn resume_continues_a_conversation() {
         let (dir, profile) = profile("role", &[]);
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(
                 &LaunchRequest::new(dir.path(), &profile)
                     .resume("chat-42")
@@ -218,12 +371,41 @@ mod tests {
                 "more",
             ])
         );
-        let plan = Claude
+        let plan = ClaudeAdapter
             .launch(&LaunchRequest::new(dir.path(), &profile).resume(""))
             .unwrap();
         assert!(
             !plan.args.iter().any(|a| a == "--resume"),
             "empty resume is absent"
+        );
+    }
+
+    #[test]
+    fn hook_command_wires_every_event_through_settings() {
+        let (dir, profile) = profile("", &[]);
+        let hook_command = ["/x y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
+        let plan = ClaudeAdapter
+            .launch(&LaunchRequest::new(dir.path(), &profile).hook_command(&hook_command))
+            .unwrap();
+        let at = plan
+            .args
+            .iter()
+            .position(|arg| arg == "--settings")
+            .unwrap();
+        assert_eq!(plan.args[at + 2], "--dangerously-skip-permissions");
+        let settings: Value = serde_json::from_str(&plan.args[at + 1]).unwrap();
+        let hooks = settings["hooks"].as_object().unwrap();
+        assert_eq!(
+            hooks.keys().map(String::as_str).collect::<Vec<_>>(),
+            HOOK_EVENTS
+        );
+        assert_eq!(
+            settings["hooks"]["Stop"],
+            serde_json::json!([{"matcher": "", "hooks": [{
+                "type": "command",
+                "command": "'/x y/txc' 'chat' 'hook' 'Stop' || exit 1",
+                "timeout": 10,
+            }]}])
         );
     }
 

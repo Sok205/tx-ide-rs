@@ -1,4 +1,4 @@
-//! Engines as plugins: one `EngineAdapter` per coding-agent CLI, each a pure function from a
+//! Engines as plugins: one `LlmEngine` per coding-agent CLI, each a pure function from a
 //! `LaunchRequest` to a `LaunchPlan`. Core applies the plan's workspace actions and starts the
 //! process, so an adapter is unit-testable without a filesystem or tmux.
 
@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::CoreError;
 use crate::profile::Profile;
 use crate::session::{Effort, validate_name};
+use crate::state::{LlmEngineHook, LlmEngineState};
 
 /// An adapter could not honor a request, or a workspace action could not be applied.
 #[derive(Debug, thiserror::Error)]
@@ -34,6 +35,9 @@ pub struct LaunchRequest<'a> {
     /// An engine-specific conversation id to continue instead of starting fresh. Core never
     /// interprets it.
     pub resume: Option<&'a str>,
+    /// The argv prefix every hook the adapter wires runs, with the CLI's event name appended:
+    /// `["/abs/txc", "chat", "hook"]`. Empty: wire no hooks.
+    pub hook_command: &'a [String],
 }
 
 impl<'a> LaunchRequest<'a> {
@@ -45,6 +49,7 @@ impl<'a> LaunchRequest<'a> {
             effort: None,
             initial_prompt: None,
             resume: None,
+            hook_command: &[],
         }
     }
 
@@ -67,6 +72,28 @@ impl<'a> LaunchRequest<'a> {
         self.resume = Some(resume);
         self
     }
+
+    pub fn hook_command(mut self, hook_command: &'a [String]) -> Self {
+        self.hook_command = hook_command;
+        self
+    }
+}
+
+/// The shell command a wired hook runs: every word of `hook_command` single-quoted, then
+/// `event`, then `|| exit 1`. Claude reads exit 2 as "block the agent", so a `txc` that fails
+/// to even start must never block a prompt or a stop.
+pub fn hook_shell_command(hook_command: &[String], event: &str) -> String {
+    let words: Vec<String> = hook_command
+        .iter()
+        .map(|word| shell_quote(word))
+        .chain(std::iter::once(shell_quote(event)))
+        .collect();
+    format!("{} || exit 1", words.join(" "))
+}
+
+/// POSIX single-quoting: safe for any word (spaces, `$`, embedded `'`).
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 /// Filesystem preparation core performs before starting the process. Relative paths resolve
@@ -126,9 +153,9 @@ impl LaunchPlan {
     }
 }
 
-/// One coding-agent engine. Two required methods; no I/O in `launch`. `Send + Sync` so a core
+/// One coding-agent engine. Three required methods; no I/O in `launch` or `on_hook`. `Send + Sync` so a core
 /// can be shared across threads.
-pub trait EngineAdapter: Send + Sync {
+pub trait LlmEngine: Send + Sync {
     /// A bare name (`[A-Za-z0-9_-]+`); stored in every record this engine launches.
     fn id(&self) -> &str;
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError>;
@@ -139,12 +166,18 @@ pub trait EngineAdapter: Send + Sync {
     fn envelope(&self, sender: Option<&str>, text: &str) -> String {
         crate::messaging::build_envelope(sender, text)
     }
+
+    /// A hook this adapter wired fired inside the session. Given the current state, say which
+    /// state the agent moves to; `None` when the hook changes nothing. Pure: core applies the
+    /// result under the session's lock. Required, because an engine that wires no hooks never
+    /// leaves `Starting`; returning `None` says so.
+    fn on_hook(&self, current: LlmEngineState, hook: &LlmEngineHook) -> Option<LlmEngineState>;
 }
 
 /// id → adapter. Ids are unique; registration order does not matter.
 #[derive(Default)]
 pub struct EngineRegistry {
-    adapters: BTreeMap<String, Box<dyn EngineAdapter>>,
+    adapters: BTreeMap<String, Box<dyn LlmEngine>>,
 }
 
 impl EngineRegistry {
@@ -153,7 +186,7 @@ impl EngineRegistry {
     }
 
     /// `EngineTaken` on a duplicate id; `InvalidName` when the id is not a bare name.
-    pub fn register(&mut self, adapter: Box<dyn EngineAdapter>) -> Result<(), CoreError> {
+    pub fn register(&mut self, adapter: Box<dyn LlmEngine>) -> Result<(), CoreError> {
         let id = adapter.id().to_owned();
         validate_name(&id)?;
         if self.adapters.contains_key(&id) {
@@ -163,7 +196,7 @@ impl EngineRegistry {
         Ok(())
     }
 
-    pub fn get(&self, id: &str) -> Option<&dyn EngineAdapter> {
+    pub fn get(&self, id: &str) -> Option<&dyn LlmEngine> {
         self.adapters.get(id).map(Box::as_ref)
     }
 
@@ -266,7 +299,15 @@ mod tests {
 
     struct Stub(&'static str);
 
-    impl EngineAdapter for Stub {
+    impl LlmEngine for Stub {
+        fn on_hook(
+            &self,
+            _: crate::LlmEngineState,
+            _: &crate::LlmEngineHook,
+        ) -> Option<crate::LlmEngineState> {
+            None
+        }
+
         fn id(&self) -> &str {
             self.0
         }
@@ -488,6 +529,19 @@ mod tests {
             "{error:?}"
         );
         assert!(error.to_string().contains("inner.txt"), "{error}");
+    }
+
+    #[test]
+    fn hook_shell_command_quotes_every_word_and_never_exits_2() {
+        let prefix = [
+            "/a b/it's/txc".to_owned(),
+            "chat".to_owned(),
+            "hook".to_owned(),
+        ];
+        assert_eq!(
+            hook_shell_command(&prefix, "Stop"),
+            "'/a b/it'\\''s/txc' 'chat' 'hook' 'Stop' || exit 1"
+        );
     }
 
     #[test]

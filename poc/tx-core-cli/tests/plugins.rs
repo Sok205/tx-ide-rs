@@ -88,7 +88,6 @@ fn without_a_yaml_every_plugin_is_active() {
     for row in [
         "engine-claude\tactive",
         "engine-codex\tactive",
-        "hooks\tactive",
         "ide\tactive",
         "labels\tactive",
         "kill\tactive",
@@ -171,4 +170,13 @@ fn disabled_ide_hides_verbs() {
     position(&rows, "ide\tdisabled");
     position(&rows, "kill\tactive");
     assert_ide_precedes_the_key_plugins(&rows, "disabled");
+}
+
+#[test]
+fn a_yaml_naming_the_retired_hooks_plugin_still_loads() {
+    let cli = Cli::new();
+    cli.write_yaml("plugins:\n  hooks:\n    settings: { stuck_after_seconds: 600 }\n");
+    let listing = cli.ok(&["plugins"]);
+    assert!(!listing.contains("hooks"), "{listing}");
+    cli.ok(&["ls"]);
 }
