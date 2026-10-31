@@ -98,8 +98,7 @@ fn create_options_and_launch_options_builders() {
             .option("model", "opus")
             .option("effort", "max")
             .option("model", "sonnet")
-            .initial_prompt("start")
-            .resume("chat-9"),
+            .initial_prompt("start"),
     )
     .parent(parent.clone())
     .tags(["a", "b"])
@@ -115,7 +114,6 @@ fn create_options_and_launch_options_builders() {
             profile,
             options,
             initial_prompt,
-            resume,
             ..
         } => {
             assert_eq!(engine, "claude");
@@ -137,8 +135,7 @@ fn create_options_and_launch_options_builders() {
                 &bare,
                 LaunchOptions::Agent { options, .. } if *options == serde_json::json!({})
             ));
-            assert_eq!(initial_prompt.as_deref(), Some("start"));
-            assert_eq!(resume.as_deref(), Some("chat-9"));
+            assert_eq!(initial_prompt, "start");
         }
         other => panic!("{other:?}"),
     }
@@ -190,5 +187,5 @@ fn config_filter_and_send_builders() {
 #[test]
 fn event_types_are_a_slice() {
     let all: &[EventType] = EventType::ALL;
-    assert_eq!(all.len(), 10);
+    assert_eq!(all.len(), 11);
 }

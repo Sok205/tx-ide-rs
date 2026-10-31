@@ -288,6 +288,33 @@ impl Tmux {
         }
     }
 
+    /// The pid of the process `pane` runs (`#{pane_pid}`); `None` when the pane is already
+    /// gone.
+    pub fn pane_pid(&self, pane: &str) -> Result<Option<u32>, TmuxError> {
+        let args: [OsString; 5] = [
+            "display-message".into(),
+            "-p".into(),
+            "-t".into(),
+            pane.into(),
+            "#{pane_pid}".into(),
+        ];
+        match self.run(&args) {
+            Ok(out) => out
+                .trim()
+                .parse()
+                .map(Some)
+                .map_err(|_| TmuxError::InspectionFailed {
+                    stderr: format!("unexpected pane_pid: {out:?}"),
+                }),
+            Err(TmuxError::Failed { stderr, .. })
+                if stderr.starts_with("can't find pane") || is_no_server(&stderr) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn rename_session(&self, target: &str, new_name: &str) -> Result<(), TmuxError> {
         self.run(&[
             "rename-session".into(),

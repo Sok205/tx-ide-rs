@@ -2,6 +2,7 @@
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::config::CoreConfig;
 use crate::engine::{EngineRegistry, LaunchMode, LaunchRequest, LlmEngine, apply_workspace};
@@ -146,10 +147,8 @@ pub enum LaunchOptions {
         /// validates them (`LlmEngine::configure`) and they land in `ext[ext_key]` before the
         /// launch. Core never interprets a key.
         options: serde_json::Value,
-        initial_prompt: Option<String>,
-        /// A conversation id the engine continues: stored as `{"conversation_id": id}` under its
-        /// `ext` key, then launched with `LaunchMode::Resume`.
-        resume: Option<String>,
+        /// The agent's first message. Required: an engine never starts silently.
+        initial_prompt: String,
     },
     Process {
         program: String,
@@ -163,8 +162,7 @@ impl LaunchOptions {
             engine: engine.into(),
             profile: Vec::new(),
             options: serde_json::Value::Object(serde_json::Map::new()),
-            initial_prompt: None,
-            resume: None,
+            initial_prompt: String::new(),
         }
     }
 
@@ -216,15 +214,7 @@ impl LaunchOptions {
     /// No effect on a `Process` launch.
     pub fn initial_prompt(mut self, prompt: impl Into<String>) -> Self {
         if let Self::Agent { initial_prompt, .. } = &mut self {
-            *initial_prompt = Some(prompt.into());
-        }
-        self
-    }
-
-    /// No effect on a `Process` launch.
-    pub fn resume(mut self, resume: impl Into<String>) -> Self {
-        if let Self::Agent { resume: slot, .. } = &mut self {
-            *slot = Some(resume.into());
+            *initial_prompt = prompt.into();
         }
         self
     }
@@ -407,6 +397,15 @@ fn event(
     )
 }
 
+fn exited_before_registration(session: &Session) -> Event {
+    event(
+        EventType::Exited,
+        session,
+        None,
+        "exited before registration",
+    )
+}
+
 /// The process is gone, whatever the adapter last said: `ended_at` is set and an agent's state
 /// becomes `Ended`. No `StateChanged`: `Exited` / `Stopped` already say so.
 fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
@@ -416,6 +415,52 @@ fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
     if session.state.is_some() {
         session.state = Some(LlmEngineState::Ended);
     }
+}
+
+/// How long `stop` waits for the pane's process after `kill-session` before killing it outright.
+const STOP_WAIT: Duration = Duration::from_secs(10);
+/// How long `stop` waits after `SIGKILL`.
+const KILL_WAIT: Duration = Duration::from_secs(2);
+const EXIT_POLL: Duration = Duration::from_millis(50);
+
+/// Whether a process with `pid` still exists (`kill(pid, 0)`). One we may not signal exists.
+fn process_exists(pid: u32) -> bool {
+    // SAFETY: signal 0 delivers nothing; the call only checks the pid.
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Polls until the process is gone or `timeout` has passed; whether it is gone.
+fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while process_exists(pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(EXIT_POLL);
+    }
+    true
+}
+
+/// `kill-session` closed the pane, but the CLI may still be wrapping up (its exit hooks fire
+/// through `txi hook`). Waits for it, then kills it outright and waits once more, so no late
+/// hook of this run can reach a respawn. Whether it is gone.
+fn wait_or_kill(pid: u32) -> bool {
+    if wait_for_exit(pid, STOP_WAIT) {
+        return true;
+    }
+    // SAFETY: a plain signal to a pid read from the pane moments ago.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    wait_for_exit(pid, KILL_WAIT)
+}
+
+/// The engine side of a launch: the adapter, the roles composed for it, and how it opens the
+/// conversation.
+struct EngineLaunch<'a> {
+    adapter: &'a dyn LlmEngine,
+    resolved: ResolvedProfile,
+    mode: LaunchMode<'a>,
+    initial_prompt: Option<String>,
 }
 
 fn store_io(path: &Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {
@@ -615,8 +660,7 @@ impl TxCore {
             engine: engine.clone(),
             profile: profile.clone(),
             options: options.options,
-            initial_prompt: Some(options.prompt),
-            resume: None,
+            initial_prompt: options.prompt,
         };
         let opts = CreateOptions {
             name,
@@ -652,18 +696,13 @@ impl TxCore {
                 engine,
                 profile,
                 initial_prompt,
-                resume,
                 ..
             } => {
                 let adapter = self
                     .engines
                     .get(engine)
                     .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
-                // A resume carries its history instead; PR 6 removes resume-by-create.
-                let has_prompt = initial_prompt
-                    .as_deref()
-                    .is_some_and(|prompt| !prompt.trim().is_empty());
-                if !has_prompt && resume.is_none() {
+                if initial_prompt.trim().is_empty() {
                     return Err(CoreError::PromptRequired);
                 }
                 (
@@ -708,7 +747,7 @@ impl TxCore {
     }
 
     /// Under the create lock, with `opts.name` free and `opts.cwd` the directory the session
-    /// runs in: the profile, the engine's plan, the tmux session, then the record. A fork
+    /// runs in: a fresh record, its engine data, then the shared launch path. A fork
     /// (`fork_of`) is launched in `LaunchMode::Fork` and announced as `Forked`, not `Created`.
     fn launch_locked(
         &self,
@@ -718,13 +757,107 @@ impl TxCore {
         fork_of: Option<&Session>,
     ) -> Result<(SessionId, Vec<Event>), CoreError> {
         let id = SessionId::mint();
-        let profile_file = self.profile_path(&id);
+        // The record exists before the engine is asked: the engine reads its id, cwd and data
+        // from it. A fork starts from a copy of the source's data (its options among it), which
+        // the engine's `configure` then adjusts and its fork plan replaces with the fork's own.
+        // Core copies the value whole; it never reads into it.
+        let mut ext = std::collections::BTreeMap::new();
+        let (launch, agent) = match (opts.launch, engine) {
+            (
+                LaunchOptions::Agent {
+                    engine,
+                    options,
+                    initial_prompt,
+                    ..
+                },
+                Some((adapter, resolved)),
+            ) => {
+                if let Some(data) = fork_of.and_then(|source| source.ext.get(adapter.ext_key())) {
+                    ext.insert(adapter.ext_key().to_owned(), data.clone());
+                }
+                let launch = Launch::Agent {
+                    engine,
+                    profile: roles,
+                    model: None,
+                    effort: None,
+                    resume: None,
+                };
+                (launch, Some((adapter, resolved, options, initial_prompt)))
+            }
+            (LaunchOptions::Process { program, args, .. }, _) => {
+                (Launch::Process { program, args }, None)
+            }
+            (LaunchOptions::Agent { .. }, None) => unreachable!("engine resolved above"),
+        };
+        let created_at = now();
+        let mut session = Session {
+            id: id.clone(),
+            name: opts.name,
+            parent: opts.parent,
+            tags: opts.tags,
+            cwd: opts.cwd,
+            created_at,
+            ended_at: None,
+            last_modified_at: created_at,
+            lifecycle: Lifecycle::Running,
+            // An agent starts in `Starting` until its adapter's first change; a process has
+            // no engine and so no state.
+            state: agent.is_some().then_some(LlmEngineState::Starting),
+            launch,
+            ext,
+        };
+        let engine = match agent {
+            Some((adapter, resolved, options, initial_prompt)) => {
+                // The engine validates the options and merges them into its data, which the
+                // launch then reads. A refusal here has written nothing yet.
+                let engine_data = adapter.configure(&session, &options)?;
+                session
+                    .ext
+                    .insert(adapter.ext_key().to_owned(), engine_data);
+                Some(EngineLaunch {
+                    adapter,
+                    resolved,
+                    mode: match fork_of {
+                        Some(source) => LaunchMode::Fork { source },
+                        None => LaunchMode::Start,
+                    },
+                    initial_prompt: Some(initial_prompt),
+                })
+            }
+            None => None,
+        };
+        let exited_at_once = self.start_locked(&mut session, engine, &opts.env)?;
+        let mut events = vec![match fork_of {
+            Some(source) => event(EventType::Forked, &session, None, source.id.as_str()),
+            None => event(EventType::Created, &session, None, ""),
+        }];
+        if exited_at_once {
+            events.push(exited_before_registration(&session));
+        }
+        Ok((id, events))
+    }
+
+    /// The shared launch path, under the create lock: `session` is the record to run, already
+    /// `Running` (and `Starting`), under a free name, in its `cwd`. For an agent the profile is
+    /// written, the engine's plan taken and its workspace applied; then tmux starts the
+    /// program with `extra_env` on top of core's environment, `@tx-id` links the session, and
+    /// the record is saved. A program that exits at once takes its session (and, if it was the
+    /// last one, the server) with it before `@tx-id` can be set: that is a session that ran and
+    /// exited, not a failure to start one; the record says so and `true` comes back. A failure
+    /// leaves no tmux session and no profile behind.
+    fn start_locked(
+        &self,
+        session: &mut Session,
+        engine: Option<EngineLaunch<'_>>,
+        extra_env: &[(String, String)],
+    ) -> Result<bool, CoreError> {
+        let profile_file = self.profile_path(&session.id);
         let cleanup_profile = || {
             let _ = std::fs::remove_file(&profile_file);
         };
 
         let mut env = vec![
-            (SESSION_ID_ENV.to_owned(), id.to_string()),
+            (SESSION_ID_ENV.to_owned(), session.id.to_string()),
             (
                 TMUX_SOCKET_ENV.to_owned(),
                 self.tmux.socket().to_string_lossy().into_owned(),
@@ -736,94 +869,25 @@ impl TxCore {
             env.push((key.to_owned(), directory.to_string_lossy().into_owned()));
         }
         merge_env(&mut env, &self.config.env);
-        merge_env(&mut env, &opts.env);
+        merge_env(&mut env, extra_env);
 
-        // The record exists before the engine is asked: the engine reads its id, cwd and data
-        // from it. A resume names its conversation there, under the engine's `ext` key; a fork
-        // starts from a copy of the source's data (its options among it), which the engine's
-        // `configure` then adjusts and its fork plan replaces with the fork's own. Core copies
-        // the value whole; it never reads into it.
-        let mut ext = std::collections::BTreeMap::new();
-        let launch = match (&opts.launch, &engine) {
-            (LaunchOptions::Agent { engine, resume, .. }, Some((adapter, _))) => {
-                if let Some(resume) = resume.as_deref().filter(|resume| !resume.is_empty()) {
-                    ext.insert(
-                        adapter.ext_key().to_owned(),
-                        serde_json::json!({ "conversation_id": resume }),
-                    );
-                }
-                if let Some(data) = fork_of.and_then(|source| source.ext.get(adapter.ext_key())) {
-                    ext.insert(adapter.ext_key().to_owned(), data.clone());
-                }
-                Launch::Agent {
-                    engine: engine.clone(),
-                    profile: roles,
-                    model: None,
-                    effort: None,
-                    resume: resume.clone(),
-                }
-            }
-            (LaunchOptions::Process { program, args, .. }, _) => Launch::Process {
-                program: program.clone(),
-                args: args.clone(),
-            },
-            (LaunchOptions::Agent { .. }, None) => unreachable!("engine resolved above"),
-        };
-        let created_at = now();
-        let mut session = Session {
-            id: id.clone(),
-            name: opts.name.clone(),
-            parent: opts.parent,
-            tags: opts.tags,
-            cwd: opts.cwd.clone(),
-            created_at,
-            ended_at: None,
-            last_modified_at: created_at,
-            lifecycle: Lifecycle::Running,
-            // An agent starts in `Starting` until its adapter's first change; a process has
-            // no engine and so no state.
-            state: match &launch {
-                Launch::Agent { .. } => Some(LlmEngineState::Starting),
-                Launch::Process { .. } => None,
-            },
-            launch,
-            ext,
-        };
-
-        let (program, args) = match (&opts.launch, engine) {
-            (
-                LaunchOptions::Agent {
-                    options,
-                    initial_prompt,
-                    ..
-                },
-                Some((adapter, resolved)),
-            ) => {
-                // A resume already named its conversation in the record.
-                let mode = match fork_of {
-                    Some(source) => LaunchMode::Fork { source },
-                    None if session.ext.contains_key(adapter.ext_key()) => LaunchMode::Resume,
-                    None => LaunchMode::Start,
-                };
-                // The engine validates the options and merges them into its data, which the
-                // launch then reads. A refusal here has written nothing yet.
-                let engine_data = adapter.configure(&session, options)?;
-                session
-                    .ext
-                    .insert(adapter.ext_key().to_owned(), engine_data);
-                let profile =
-                    Profile::write(resolved, &profile_file).map_err(store_io(&profile_file))?;
+        let (program, args) = match engine {
+            Some(engine) => {
+                let profile = Profile::write(engine.resolved, &profile_file)
+                    .map_err(store_io(&profile_file))?;
                 let request = LaunchRequest {
-                    session: &session,
-                    mode,
+                    session,
+                    mode: engine.mode,
                     profile: &profile,
-                    initial_prompt: initial_prompt.as_deref(),
+                    initial_prompt: engine.initial_prompt.as_deref(),
                     hook_command: &self.config.hook_command,
                 };
-                let plan = adapter
+                let plan = engine
+                    .adapter
                     .launch(&request)
                     .inspect_err(|_| cleanup_profile())?;
-                apply_workspace(&opts.cwd, &plan.workspace).inspect_err(|_| cleanup_profile())?;
+                apply_workspace(&session.cwd, &plan.workspace)
+                    .inspect_err(|_| cleanup_profile())?;
                 validate_env(&plan.env).inspect_err(|_| cleanup_profile())?;
                 merge_env(&mut env, &plan.env);
                 if plan.program.is_empty() {
@@ -833,60 +897,107 @@ impl TxCore {
                 if let Some(engine_data) = plan.engine_data {
                     session
                         .ext
-                        .insert(adapter.ext_key().to_owned(), engine_data);
+                        .insert(engine.adapter.ext_key().to_owned(), engine_data);
                 }
                 (plan.program, plan.args)
             }
-            (LaunchOptions::Process { program, args, .. }, _) => (program.clone(), args.clone()),
-            (LaunchOptions::Agent { .. }, None) => unreachable!("engine resolved above"),
+            None => match &session.launch {
+                Launch::Process { program, args } => (program.clone(), args.clone()),
+                Launch::Agent { .. } => unreachable!("an agent launch carries its engine"),
+            },
         };
 
-        if let Err(error) = self
-            .tmux
-            .new_session(&opts.name, &opts.cwd, &program, &args, &env)
+        if let Err(error) =
+            self.tmux
+                .new_session(&session.name, &session.cwd, &program, &args, &env)
         {
             cleanup_profile();
             return Err(match error {
                 TmuxError::Failed { stderr, .. } if stderr.starts_with("duplicate session") => {
-                    CoreError::NameTaken(opts.name)
+                    CoreError::NameTaken(session.name.clone())
                 }
                 other => CoreError::Tmux(other),
             });
         }
+        let target = exact(&session.name);
         let undo = |error: CoreError| {
-            let _ = self.tmux.kill_session(&exact(&opts.name));
+            let _ = self.tmux.kill_session(&target);
             cleanup_profile();
             error
         };
-        // A program that exits at once takes its session (and, if it was the last one, the
-        // server) with it before `@tx-id` can be set. That is a session that ran and exited,
-        // not a failure to create one: the record says so.
-        let exited_at_once = match self.tmux.set_tx_id(&opts.name, &id) {
+        let exited_at_once = match self.tmux.set_tx_id(&session.name, &session.id) {
             Ok(()) => false,
             Err(TmuxError::Failed { stderr, .. }) if session_vanished(&stderr) => true,
             Err(error) => return Err(undo(CoreError::Tmux(error))),
         };
         if exited_at_once {
-            session.ended_at = Some(session.created_at);
-            session.lifecycle = Lifecycle::Exited;
-            session.state = session.state.map(|_| LlmEngineState::Ended);
+            mark_ended(session, Lifecycle::Exited);
         }
-        if let Err(error) = self.save(&mut session) {
+        if let Err(error) = self.save(session) {
             return Err(undo(CoreError::Store(error)));
         }
-        let mut events = vec![match fork_of {
-            Some(source) => event(EventType::Forked, &session, None, source.id.as_str()),
-            None => event(EventType::Created, &session, None, ""),
-        }];
-        if exited_at_once {
-            events.push(event(
-                EventType::Exited,
-                &session,
-                None,
-                "exited before registration",
-            ));
+        Ok(exited_at_once)
+    }
+
+    /// Starts a new process for an ended agent in its own record: the same id, worktree and
+    /// conversation (the engine continues the one it recorded under its `ext` key, in
+    /// `LaunchMode::Resume`). `StillRunning` while the record is `Running` or tmux still has the
+    /// session; `WorktreeMissing` when `cwd` is gone, since a respawn never recreates one;
+    /// `NameTaken` when another running record holds the name; `NotAnAgent` for a process.
+    /// Comes back `Running` and `Starting`, with `ended_at` cleared, and announced as
+    /// `Respawned`.
+    pub fn respawn_session(&self, id: &SessionId) -> Result<Session, CoreError> {
+        let (session, events) = self.respawn_locked(id)?;
+        self.emit(events);
+        Ok(session)
+    }
+
+    fn respawn_locked(&self, id: &SessionId) -> Result<(Session, Vec<Event>), CoreError> {
+        let _create = self.locks.create().map_err(CoreError::Lock)?;
+        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+        let mut session = self.get_session(id)?;
+        let Launch::Agent {
+            engine, profile, ..
+        } = &session.launch
+        else {
+            return Err(CoreError::NotAnAgent(id.clone()));
+        };
+        let adapter = self
+            .engines
+            .get(engine)
+            .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+        let resolved = self.profiles.resolve(profile)?;
+        if session.lifecycle == Lifecycle::Running || self.tmux.is_live(id)?.is_some() {
+            return Err(CoreError::StillRunning(id.clone()));
         }
-        Ok((id, events))
+        if !session.cwd.is_dir() {
+            return Err(CoreError::WorktreeMissing(session.cwd.clone()));
+        }
+        if self.name_in_use(&session.name, Some(id))? {
+            return Err(CoreError::NameTaken(session.name.clone()));
+        }
+        let previous = session.lifecycle;
+        session.lifecycle = Lifecycle::Running;
+        session.ended_at = None;
+        session.state = Some(LlmEngineState::Starting);
+        // Engine PR 8a: the transcript restore goes here, right before the resume launch.
+        let engine = EngineLaunch {
+            adapter,
+            resolved,
+            mode: LaunchMode::Resume,
+            initial_prompt: None,
+        };
+        let exited_at_once = self.start_locked(&mut session, Some(engine), &[])?;
+        let mut events = vec![event(
+            EventType::Respawned,
+            &session,
+            None,
+            format!("after {}", previous.as_str()),
+        )];
+        if exited_at_once {
+            events.push(exited_before_registration(&session));
+        }
+        Ok((session, events))
     }
 
     /// Every record write goes through here: stamps `last_modified_at`, then saves.
@@ -1148,26 +1259,40 @@ impl TxCore {
             .ok_or_else(|| CoreError::NotRunning(id.clone()))
     }
 
-    /// `kill-session`, then `Stopped`. A record whose session had already vanished becomes
-    /// `Exited` instead (what happened, not what was asked).
+    /// `kill-session`, `Stopped`, then a wait until the pane's process has really exited
+    /// (killed outright after `STOP_WAIT`), so a late hook from the old process can never
+    /// reach a respawn. The record is saved and the session lock released before the wait: the
+    /// process's own exit hooks need that lock, and they find the record `Stopped` and are
+    /// ignored. The create lock is held across the wait instead, which is the lock a respawn
+    /// takes first. A record whose session had already vanished becomes `Exited` instead (what
+    /// happened, not what was asked).
     pub fn stop_session(&self, id: &SessionId) -> Result<Session, CoreError> {
-        let (session, ended) = {
+        let _create = self.locks.create().map_err(CoreError::Lock)?;
+        let (session, ended, pid) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
             if session.lifecycle.is_terminal() {
                 return Err(CoreError::NotRunning(id.clone()));
             }
             match self.tmux.is_live(id)? {
-                None => self.mark_exited(session)?,
+                None => {
+                    let (session, exited) = self.mark_exited(session)?;
+                    (session, exited, None)
+                }
                 Some(live) => {
+                    let pid = self.tmux.pane_pid(&live.pane_target)?;
                     self.tmux.kill_session(&live.session_target)?;
                     mark_ended(&mut session, Lifecycle::Stopped);
                     self.save(&mut session)?;
                     let stopped = event(EventType::Stopped, &session, None, "");
-                    (session, stopped)
+                    (session, stopped, pid)
                 }
             }
         };
+        if let Some(pid) = pid {
+            wait_or_kill(pid);
+        }
+        drop(_create);
         self.emit(vec![ended]);
         Ok(session)
     }

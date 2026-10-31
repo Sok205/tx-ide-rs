@@ -384,15 +384,15 @@ fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
             Ok(name) => switch(ui, client, name.trim()),
             Err(error) => status(ui, client, &format!("assistant: {error}")),
         },
-        Action::Resume(id) => match output(txc.command(&["resume", id])) {
-            Ok(out) => {
-                let said = out.lines().next().unwrap_or("resumed");
-                status(ui, client, said);
-                if let Some(name) = resumed_name(&out) {
+        Action::Resume(id) => match output(txc.command(&["respawn", id])) {
+            Ok(out) => match respawned_name(&out) {
+                Some(name) => {
+                    status(ui, client, &format!("respawned '{name}'"));
                     show(ui, pane, client, name);
                 }
-            }
-            Err(error) => status(ui, client, &format!("resume: {error}")),
+                None => status(ui, client, "respawned"),
+            },
+            Err(error) => status(ui, client, &format!("respawn: {error}")),
         },
     }
 }
@@ -403,14 +403,10 @@ fn switch(ui: &Ui, client: &str, session: &str) {
     }
 }
 
-/// `resume` says `Resumed '<old>' as '<new>' (chat …)`.
-fn resumed_name(stdout: &str) -> Option<&str> {
-    stdout.lines().find_map(|line| {
-        let rest = line.strip_prefix("Resumed '")?;
-        let (_, rest) = rest.split_once("' as '")?;
-        let (name, _) = rest.split_once('\'')?;
-        (!name.is_empty()).then_some(name)
-    })
+/// `respawn` prints `<id>\t<name>`: the agent comes back in place, under its own name.
+fn respawned_name(stdout: &str) -> Option<&str> {
+    let (_, name) = stdout.lines().next()?.split_once('\t')?;
+    (!name.is_empty()).then_some(name)
 }
 
 /// Foreground commands of a pane the picker's Enter would replace by a nested attach.
@@ -487,11 +483,10 @@ mod tests {
     }
 
     #[test]
-    fn the_resumed_name_is_read_from_resumes_line() {
-        let out = "Resumed 'fixer' as 'fixer-2' (chat 0f3a, cwd=/w)\n";
-        assert_eq!(resumed_name(out), Some("fixer-2"));
-        assert_eq!(resumed_name("Resumed 'a' as '' (chat x)\n"), None);
-        assert_eq!(resumed_name("something else\n"), None);
+    fn the_respawned_name_is_read_from_respawns_line() {
+        assert_eq!(respawned_name("0f3a-id\tfixer\n"), Some("fixer"));
+        assert_eq!(respawned_name("0f3a-id\t\n"), None);
+        assert_eq!(respawned_name("something else\n"), None);
     }
 
     #[test]

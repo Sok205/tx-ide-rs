@@ -247,12 +247,12 @@ proptest! {
     fn launch_options_agent_builder_sets_named_field_only(
         engine in text(),
         roles1 in texts(), roles2 in texts(),
-        m1 in text(), m2 in text(), e in text(), p in text(), r in text(),
+        m1 in text(), m2 in text(), e in text(), p in text(),
     ) {
-        let a = LaunchOptions::agent(&engine).profile(roles1.clone()).option("model", m1.as_str()).option("model", m2.as_str()).option("effort", e.as_str()).initial_prompt(&p).resume(&r).profile(roles2.clone());
-        let b = LaunchOptions::agent(&engine).resume(&r).initial_prompt(&p).option("effort", e.as_str()).option("model", m2.as_str()).profile(roles1.clone()).profile(roles2.clone());
+        let a = LaunchOptions::agent(&engine).profile(roles1.clone()).option("model", m1.as_str()).option("model", m2.as_str()).option("effort", e.as_str()).initial_prompt(&p).profile(roles2.clone());
+        let b = LaunchOptions::agent(&engine).initial_prompt(&p).option("effort", e.as_str()).option("model", m2.as_str()).profile(roles1.clone()).profile(roles2.clone());
         prop_assert_eq!(&a, &b);
-        let LaunchOptions::Agent { engine: eng, profile, options, initial_prompt, resume, .. } = &a else {
+        let LaunchOptions::Agent { engine: eng, profile, options, initial_prompt, .. } = &a else {
             prop_assert!(false, "agent() did not build an Agent");
             unreachable!()
         };
@@ -260,15 +260,14 @@ proptest! {
         prop_assert_eq!(eng, &engine);
         prop_assert_eq!(profile, &roles);
         prop_assert_eq!(options, &serde_json::json!({"model": m2, "effort": e}));
-        prop_assert_eq!(initial_prompt.as_deref(), Some(p.as_str()));
-        prop_assert_eq!(resume.as_deref(), Some(r.as_str()));
+        prop_assert_eq!(initial_prompt, &p);
 
         let bare = LaunchOptions::agent(&engine);
-        let LaunchOptions::Agent { profile, options, initial_prompt, resume, .. } = &bare else {
+        let LaunchOptions::Agent { profile, options, initial_prompt, .. } = &bare else {
             prop_assert!(false, "agent() did not build an Agent");
             unreachable!()
         };
-        prop_assert!(profile.is_empty() && options.as_object().is_some_and(|o| o.is_empty()) && initial_prompt.is_none() && resume.is_none());
+        prop_assert!(profile.is_empty() && options.as_object().is_some_and(|o| o.is_empty()) && initial_prompt.is_empty());
     }
 
     /// Sharp edge (documented, not a failure): every agent-only setter on a `Process` launch is a
@@ -277,10 +276,10 @@ proptest! {
     #[test]
     fn launch_options_process_silently_ignores_agent_setters(
         program in text(), args in texts(),
-        roles in texts(), m in text(), e in text(), p in text(), r in text(),
+        roles in texts(), m in text(), e in text(), p in text(),
     ) {
         let plain = LaunchOptions::process(&program, args.clone());
-        let decorated = LaunchOptions::process(&program, args.clone()).profile(roles).option("model", m.as_str()).options(serde_json::json!({"effort": e})).initial_prompt(&p).resume(&r);
+        let decorated = LaunchOptions::process(&program, args.clone()).profile(roles).option("model", m.as_str()).options(serde_json::json!({"effort": e})).initial_prompt(&p);
         prop_assert_eq!(&decorated, &plain);
         let is_process = matches!(&decorated, LaunchOptions::Process { program: pr, args: ar, .. } if *pr == program && *ar == args);
         prop_assert!(is_process, "Process payload drifted");
@@ -475,16 +474,16 @@ fn engine_adapter_object_is_usable_from_another_thread() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn event_type_all_is_ten_unique_lowercase_kebab_names() {
+fn event_type_all_is_eleven_unique_lowercase_kebab_names() {
     let all: &[EventType] = EventType::ALL;
-    assert_eq!(all.len(), 10);
+    assert_eq!(all.len(), 11);
     let variants: BTreeSet<&str> = all
         .iter()
         .map(|t| format!("{t:?}").leak() as &str)
         .collect();
-    assert_eq!(variants.len(), 9, "duplicate variant in ALL");
+    assert_eq!(variants.len(), 11, "duplicate variant in ALL");
     let names: BTreeSet<&'static str> = all.iter().map(|t| t.as_str()).collect();
-    assert_eq!(names.len(), 9, "duplicate as_str in ALL");
+    assert_eq!(names.len(), 11, "duplicate as_str in ALL");
     for name in names {
         assert!(!name.is_empty());
         assert!(

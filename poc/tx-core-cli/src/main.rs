@@ -145,17 +145,12 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                     roles,
                     options,
                     prompt,
-                    resume,
                 } => {
-                    let mut launch = LaunchOptions::agent(engine).profile(roles);
-                    if let Some(resume) = resume {
-                        launch = launch.resume(resume);
-                    }
+                    let mut launch = LaunchOptions::agent(engine)
+                        .profile(roles)
+                        .initial_prompt(prompt);
                     for (key, value) in options {
                         launch = launch.option(key, value);
-                    }
-                    if let Some(prompt) = prompt {
-                        launch = launch.initial_prompt(prompt);
                     }
                     launch
                 }
@@ -295,6 +290,10 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         Verb::Stop { target } => {
             let session = core.stop_session(&core.resolve(&target)?)?;
             writeln!(out, "{}\t{}", session.id, session.lifecycle.as_str()).ok();
+        }
+        Verb::Respawn { target } => {
+            let session = core.respawn_session(&core.resolve(&target)?)?;
+            writeln!(out, "{}\t{}", session.id, session.name).ok();
         }
         Verb::Forget { target } => {
             let id = core.resolve(&target)?;

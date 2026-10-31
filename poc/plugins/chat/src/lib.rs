@@ -1,5 +1,5 @@
 //! tx-core plugins `history` (transcript mirror, `history` listing) and `chat` (chat-id
-//! capture, chat ops, prefix+f). Neither uses a core slot beyond verbs and resources; each
+//! capture, prefix+f). Fork and respawn are core's built-in verbs. Neither uses a core slot beyond verbs and resources; each
 //! keeps bulk state under `<data>/plugins/<id>/` (`CoreConfig::plugin_data_dir`).
 
 pub mod capture;
@@ -11,7 +11,6 @@ pub mod history_verbs;
 pub mod install;
 pub mod messages;
 pub mod mirror;
-pub mod ops;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -77,10 +76,6 @@ pub enum ChatError {
         name: String,
         reason: String,
     },
-    #[error("resume: a live session named '{0}' already exists — pass --as <new-name>")]
-    LiveName(String),
-    #[error("resume: cwd '{cwd}' does not exist — {remedy} (C8)")]
-    CwdMissing { cwd: String, remedy: String },
     #[error(transparent)]
     Ui(#[from] UiError),
 }
@@ -119,11 +114,7 @@ impl Plugin for ChatPlugin {
     }
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
-        for verb in capture::verbs()
-            .into_iter()
-            .chain(ops::verbs())
-            .chain(fork_pane::verbs())
-        {
+        for verb in capture::verbs().into_iter().chain(fork_pane::verbs()) {
             r.verb(verb);
         }
         r.resource("keys/chat.tmux", include_bytes!("../tmux/keys.tmux"))?;
@@ -152,7 +143,7 @@ mod tests {
 
     #[test]
     fn chat_error_maps_to_verb_error() {
-        let failed: VerbError = ChatError::LiveName("x".into()).into();
+        let failed: VerbError = ChatError::NotAnAgent("x".into()).into();
         assert!(matches!(failed, VerbError::Failed(_)));
         let core: VerbError = ChatError::Core(CoreError::NotFound("x".into())).into();
         assert!(matches!(core, VerbError::Core(CoreError::NotFound(_))));
