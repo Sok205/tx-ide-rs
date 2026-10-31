@@ -52,6 +52,8 @@ struct Aider;
 
 impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
+    // Wires no hooks, so its sessions stay `starting`; see tx-engine-claude for real rules.
+    fn on_hook(&self, _: &Status, _: &Hook) -> Change { Change::default() }
     fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         let mut args = vec!["--read".into(), r.profile.file().display().to_string()];
         if let Some(model) = r.model { args.extend(["--model".into(), model.into()]); }
@@ -63,7 +65,7 @@ impl LlmEngine for Aider {
 core.register_engine(Box::new(Aider))?;
 ```
 
-`launch` is pure. Core writes the profile file, applies the plan's `workspace` actions (relative
+`launch` and `on_hook` are pure. Core writes the profile file, applies the plan's `workspace` actions (relative
 to `cwd`, refusing anything that escapes it), then starts `program args…` with
 `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the config env, the per-session env and the plan env.
 

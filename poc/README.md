@@ -92,6 +92,9 @@ needs into the CLI's own command line (Claude `--settings '{"hooks":…}'`, Code
 `LlmEngine::on_hook(&status, &hook)` for a `Change` and applies it under the session lock,
 logging `state-changed` when the state moved. Core owns what the adapter cannot see: a new agent
 starts `starting`, and an exited or stopped one reads `ended`. Process sessions have no status.
+Because the hooks are `-c` overrides, every Codex session runs without Codex's shared background
+server (Codex warns: "command-line configuration overrides … requires embedded mode"). Sessions
+with a role already did, through `-c developer_instructions`; only role-less ones change.
 
 ### One operation, end to end: `create_session`
 
