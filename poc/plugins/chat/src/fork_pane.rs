@@ -10,7 +10,7 @@ use tx_ui::prompt::prompt_with_default;
 use tx_ui::render::{ACCENT_ANSI, BOLD, RESET};
 use tx_ui::tmux::{Ui, shell_quote};
 
-use crate::ops::ops;
+use crate::ops::Ops;
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![Arc::new(ForkPane)]
@@ -80,7 +80,7 @@ fn fork(core: &TxCore, pane: &str, client: &str, name: &str) -> Result<i32, Verb
     let Some(source) = source_in_pane(core, &ui, pane, client)? else {
         return Ok(1);
     };
-    let forked = ops(core)?.fork(source.id.as_str(), Some(name));
+    let forked = Ops::new(core).fork(source.id.as_str(), Some(name));
     match forked {
         Ok(forked) => {
             ui.display_status(client, &format!("forked {} → {}", source.name, forked.name));

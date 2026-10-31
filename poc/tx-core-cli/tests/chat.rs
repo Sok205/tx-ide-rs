@@ -1,5 +1,5 @@
 //! The chat plugin through the binary: capture (`_chat-hook`, `chat ls`, `chat hooks`) and the
-//! chat ops (`fork`, `handover`, `rollover`, `resume`, `_chat-op-finish`, `_chat-op-watch`).
+//! chat ops (`fork`, `resume`).
 
 mod common;
 
@@ -111,9 +111,6 @@ impl Cli {
     fn capture(&self, id: &str, chat: &str) {
         let body = payload(chat, &self.dir.path().join(format!("{chat}.jsonl")));
         assert!(self.hook("session-start", id, &body).status.success());
-    }
-    fn ops_dir(&self) -> std::path::PathBuf {
-        self.state().join("plugins/chat/ops")
     }
     fn hook(&self, event: &str, id: &str, payload: &str) -> std::process::Output {
         self.run(&["_chat-hook", event], &[("TX_SESSION_ID", id)], payload)
@@ -410,236 +407,6 @@ fn resume_relaunches_the_active_chat_from_ext() {
 }
 
 #[test]
-fn handover_self_catch_up_spawns_the_worker() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create_agent("a");
-    cli.capture(&id, "c1");
-    let out = cli.op_ok(&["handover", "a", "task", "--self-catch-up"], &[]);
-    assert_eq!(
-        out,
-        "Handover 'a' → worker 'a-handover' (self-catch-up; launches when ready)\n"
-    );
-    let worker = cli.show("a-handover");
-    assert_eq!(worker["parent"], id.as_str());
-    assert_eq!(worker["launch"]["kind"], "agent");
-    let pending = &worker["ext"]["chat"]["chats"][0];
-    assert_eq!(pending["role"], "handover");
-    assert_eq!(pending["how"], "handover");
-    assert_eq!(pending["id"], Value::Null);
-    assert_eq!(pending["origin"]["chat"], "c1");
-    cli.wait_argv(|argv| {
-        argv.last()
-            .is_some_and(|last| last.starts_with("You are taking over work via tx handover."))
-    });
-    assert_eq!(std::fs::read_dir(cli.ops_dir()).unwrap().count(), 0);
-}
-
-#[test]
-fn handover_distiller_then_watchdog_finishes() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create_agent("a");
-    cli.capture(&id, "c1");
-    let timings = [
-        ("TX_CHAT_OP_TIMEOUT_S", "0"),
-        ("TX_CHAT_OP_GRACE_S", "0"),
-        ("TX_CHAT_OP_POLL_S", "0.1"),
-    ];
-    let out = cli.op_ok(&["handover", "a", "fix it"], &timings);
-    assert_eq!(
-        out,
-        "Handover 'a' → worker 'a-handover' (distilling brief; launches when ready)\n"
-    );
-    let distiller = cli.show("a-handover-distill");
-    assert_eq!(distiller["tags"], json!(["temporary", "handover"]));
-    assert!(cli.wait_for(10, || {
-        !cli.records_named("a-handover").is_empty()
-            && cli.show("a-handover-distill")["lifecycle"] == "stopped"
-    }));
-    let seed = cli.wait_argv(|argv| {
-        argv.last()
-            .is_some_and(|l| l.starts_with("You are a tx-ide handover distiller"))
-    });
-    let seed = seed.last().unwrap();
-    assert!(seed.contains("/handover-fix-it.md"), "{seed}");
-    let op = seed
-        .rsplit("_chat-op-finish '")
-        .next()
-        .unwrap()
-        .trim_end_matches('\'');
-    for _ in 0..2 {
-        cli.op(&["_chat-op-finish", op], &timings);
-    }
-    assert_eq!(cli.records_named("a-handover").len(), 1);
-    assert_eq!(cli.show("a-handover")["parent"], id.as_str());
-    assert!(!cli.ops_dir().join(op).exists());
-}
-
-#[test]
-fn rollover_respawns_the_same_pane_with_a_seed() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create_agent("a");
-    cli.capture(&id, "c1");
-    let pane = common::pane_id_of(&cli, "a").trim().to_owned();
-    let out = cli.op_ok(&["rollover", "a", "--self-catch-up"], &[]);
-    assert_eq!(
-        out,
-        "Rollover scheduled (self-catch-up); the same session rotates onto a fresh chat when \
-         ready\n"
-    );
-    cli.wait_argv(|argv| {
-        argv.last().is_some_and(|last| {
-            last.starts_with("Continuing prior work in a fresh chat (rollover).")
-        })
-    });
-    assert!(cli.wait_for(10, || {
-        cli.show("a")["ext"]["chat"]["chats"]
-            .as_array()
-            .is_some_and(|chats| chats.len() == 2)
-    }));
-    let record = cli.show("a");
-    assert_eq!(record["id"], id.as_str());
-    assert_eq!(record["lifecycle"], "running");
-    assert_eq!(common::pane_id_of(&cli, "a"), pane);
-    let chats = &record["ext"]["chat"]["chats"];
-    assert_eq!(chats[0]["id"], "c1");
-    assert!(chats[0]["ended_at"].is_number());
-    assert_eq!(chats[1]["id"], Value::Null);
-    assert_eq!(chats[1]["role"], "rollover");
-    assert_eq!(chats[1]["how"], "rollover");
-    assert_eq!(chats[1]["origin"]["session"], id.as_str());
-    assert_eq!(chats[1]["origin"]["chat"], "c1");
-    let tx_id = cli.tmux_out(&["show-options", "-t", "=a:", "-v", "@tx-id"]);
-    assert_eq!(tx_id, id);
-}
-
-fn write_stale_spec(cli: &Cli, op: &str, source: &str, cwd: &str, worker: &str) {
-    let dir = cli.ops_dir().join(op);
-    std::fs::create_dir_all(&dir).unwrap();
-    let spec = dir.join("spec.json");
-    let body = json!({
-        "op_id": op, "kind": "handover", "source": source, "source_chat": "c1",
-        "cwd": cwd, "artifact_path": "", "self_catch_up": false,
-        "worker_name": worker, "pane": "", "distiller_name": "",
-    });
-    std::fs::write(&spec, body.to_string()).unwrap();
-    let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-    std::fs::File::options()
-        .write(true)
-        .open(&spec)
-        .unwrap()
-        .set_modified(hour_ago)
-        .unwrap();
-}
-
-#[test]
-fn an_abandoned_op_is_finished_once_by_the_next_chat_verb() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create_agent("a");
-    cli.capture(&id, "c1");
-    let cwd = cli.show("a")["cwd"].as_str().unwrap().to_owned();
-    write_stale_spec(&cli, "dead", &id, &cwd, "a-worker");
-    write_stale_spec(&cli, "live", &id, &cwd, "b-worker");
-    let lock = std::fs::File::create(cli.ops_dir().join("live/watch.lock")).unwrap();
-    lock.lock().unwrap();
-
-    let output = cli.op(&["chat", "ls", "a"], &[]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let worker = cli.records_named("a-worker");
-    assert_eq!(worker.len(), 1);
-    assert_eq!(worker[0]["parent"], id.as_str());
-    assert!(!cli.ops_dir().join("dead").exists());
-    assert!(cli.ops_dir().join("live/spec.json").exists());
-    assert!(cli.records_named("b-worker").is_empty());
-
-    cli.op_ok(&["chat", "ls", "a"], &[]);
-    assert_eq!(cli.records_named("a-worker").len(), 1);
-    assert!(cli.records_named("b-worker").is_empty());
-
-    drop(lock);
-    write_stale_spec(&cli, "broken", "not-a-session", &cwd, "c-worker");
-    let output = cli.op(&["chat", "ls", "a"], &[]);
-    assert!(
-        output.status.success(),
-        "a sweep failure keeps the exit code"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("chat: abandoned op broken: "), "{stderr}");
-    assert_eq!(
-        cli.records_named("b-worker").len(),
-        1,
-        "the lock was released"
-    );
-}
-
-#[test]
-fn the_watcher_waits_for_a_finisher_holding_the_claim() {
-    let cli = Cli::new();
-    let cwd = cli.dir.path().to_str().unwrap().to_owned();
-    write_stale_spec(&cli, "held", "not-a-session", &cwd, "w");
-    let op = cli.ops_dir().join("held");
-    std::fs::create_dir(op.join("claim")).unwrap();
-    let timings = [
-        ("TX_CHAT_OP_TIMEOUT_S", "20"),
-        ("TX_CHAT_OP_GRACE_S", "0"),
-        ("TX_CHAT_OP_POLL_S", "0.1"),
-    ];
-    std::thread::scope(|scope| {
-        let watcher = scope.spawn(|| cli.op(&["_chat-op-watch", "held"], &timings));
-        std::thread::sleep(std::time::Duration::from_millis(1500));
-        assert!(
-            op.join("spec.json").exists(),
-            "the op was torn down under a live finisher"
-        );
-        std::fs::write(op.join("done"), "").unwrap();
-        let output = watcher.join().unwrap();
-        assert!(output.status.success(), "{output:?}");
-    });
-    assert!(!op.exists());
-}
-
-#[test]
-fn a_foreground_rollover_finish_detaches_itself() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create_agent("a");
-    cli.capture(&id, "c1");
-    let path = cli.record_path(&id);
-    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    record["ext"]["hooks"] = json!({"state": "working"});
-    std::fs::write(&path, record.to_string()).unwrap();
-    let cwd = record["cwd"].as_str().unwrap().to_owned();
-    let dir = cli.ops_dir().join("roll");
-    std::fs::create_dir_all(&dir).unwrap();
-    let spec = json!({
-        "op_id": "roll", "kind": "rollover", "source": id, "source_chat": "c1",
-        "cwd": cwd, "artifact_path": "", "self_catch_up": false,
-        "worker_name": "", "pane": "%999", "distiller_name": "a-rollover-distill",
-    });
-    std::fs::write(dir.join("spec.json"), spec.to_string()).unwrap();
-    let timings = [("TX_CHAT_OP_TIMEOUT_S", "6"), ("TX_CHAT_OP_POLL_S", "0.1")];
-    let started = std::time::Instant::now();
-    let output = cli.op(&["_chat-op-finish", "roll"], &timings);
-    assert!(output.status.success(), "{output:?}");
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(3),
-        "the finisher blocked its caller for {:?}",
-        started.elapsed()
-    );
-    assert!(
-        cli.wait_for(5, || dir.join("claim").exists()),
-        "the detached finisher took the claim"
-    );
-}
-
-#[test]
 fn fork_without_a_chat_exits_1() {
     require_tmux!();
     let cli = Cli::new();
@@ -655,12 +422,6 @@ fn fork_without_a_chat_exits_1() {
     assert_eq!(missing.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&missing.stderr).contains("fork: session 'nope' not found"));
     assert_eq!(cli.op(&["fork"], &[]).status.code(), Some(2));
-    let rollover = cli.op(&["rollover", "a"], &[]);
-    assert_eq!(rollover.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&rollover.stderr)
-            .contains("rollover: 'a' has no active chat to roll over")
-    );
 }
 
 #[test]
