@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, Effort, EventType, LaunchOptions, LaunchPlan,
-    LaunchRequest, Lifecycle, ListFilter, LlmEngine, Profile, ResolvedProfile, SendOptions,
-    SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CreateOptions, Directories, Effort, EventType, Launch, LaunchMode, LaunchOptions,
+    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, Profile, ResolvedProfile,
+    SendOptions, Session, SessionId, TxCore, WorkspaceAction,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -45,24 +45,55 @@ fn launch_request_builder() {
         &dir.path().join("p.md"),
     )
     .unwrap();
-    let request = LaunchRequest::new(dir.path(), &profile)
+    let session = record(dir.path());
+    let source = record(dir.path());
+    let request = LaunchRequest::new(&session, &profile)
         .model("m")
         .effort(Effort::Low)
         .initial_prompt("go")
-        .resume("chat-1");
-    assert_eq!(request.cwd, dir.path());
+        .mode(LaunchMode::Fork { source: &source });
+    assert_eq!(request.session.id, session.id);
+    assert_eq!(request.session.cwd, dir.path());
     assert_eq!(request.profile.text(), "t");
     assert_eq!(request.model, Some("m"));
     assert_eq!(request.effort, Some(Effort::Low));
     assert_eq!(request.initial_prompt, Some("go"));
-    assert_eq!(request.resume, Some("chat-1"));
-    let bare = LaunchRequest::new(dir.path(), &profile);
+    assert!(matches!(request.mode, LaunchMode::Fork { source: forked } if forked.id == source.id));
+    let bare = LaunchRequest::new(&session, &profile);
     assert!(
         bare.model.is_none()
             && bare.effort.is_none()
             && bare.initial_prompt.is_none()
-            && bare.resume.is_none()
+            && matches!(bare.mode, LaunchMode::Start)
     );
+    assert!(matches!(
+        bare.mode(LaunchMode::Resume).mode,
+        LaunchMode::Resume
+    ));
+}
+
+/// A minimal agent record in `cwd`.
+fn record(cwd: &Path) -> Session {
+    Session {
+        id: SessionId::mint(),
+        name: "s".into(),
+        parent: None,
+        tags: Vec::new(),
+        cwd: cwd.to_owned(),
+        created_at: 0.0,
+        ended_at: None,
+        last_modified_at: 0.0,
+        lifecycle: Lifecycle::Running,
+        launch: Launch::Agent {
+            engine: "e".into(),
+            profile: Vec::new(),
+            model: None,
+            effort: None,
+            resume: None,
+        },
+        state: None,
+        ext: Default::default(),
+    }
 }
 
 #[test]

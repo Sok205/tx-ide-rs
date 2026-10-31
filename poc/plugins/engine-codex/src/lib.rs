@@ -1,4 +1,4 @@
-//! The Codex engine for tx-core: `codex [resume ID] -m <model> -c model_reasoning_effort=<effort>
+//! The Codex engine for tx-core: `codex [resume ID | fork ID] -m <model> -c model_reasoning_effort=<effort>
 //! [-c developer_instructions=<profile text>] --dangerously-bypass-approvals-and-sandbox
 //! --dangerously-bypass-hook-trust [prompt]`, with granted skills linked under `.agents/skills`.
 //!
@@ -8,22 +8,25 @@
 //! {"conversation_id": "01a19173-…", "transcript_path": "/Users/w/.codex/sessions/2026/10/31/rollout-…-01a19173-….jsonl"}
 //! ```
 //!
-//! Codex picks its own id; both come from the `SessionStart` payload, which Codex fires once
-//! the first prompt is submitted. The data is rewritten only when the id differs; other keys of
+//! A resume continues `conversation_id`; a fork branches the source's `conversation_id`; both are
+//! refused when there is none yet. Codex picks its own id, so a launch plan carries no engine
+//! data: both keys come from the `SessionStart` payload, which Codex fires once the first prompt
+//! is submitted. The data is rewritten only when the id differs; other keys of
 //! the object survive. Paths Codex reports are resolved (`/private/tmp/…` for `/tmp/…`).
 
 use std::path::PathBuf;
 
 use serde_json::Value;
 use tx_core::{
-    Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
-    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
+    Effort, EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
+    LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
 };
 
 pub const CODEX_BIN: &str = "codex";
 pub const SKILLS_DIR: &str = ".agents/skills";
 pub const CODEX_MODEL: &str = "gpt-5.6-sol";
 pub const RESUME_SUBCOMMAND: &str = "resume";
+pub const FORK_SUBCOMMAND: &str = "fork";
 pub const REASONING_EFFORT_KEY: &str = "model_reasoning_effort";
 pub const DEVELOPER_INSTRUCTIONS_KEY: &str = "developer_instructions";
 pub const BYPASS_APPROVALS_FLAG: &str = "--dangerously-bypass-approvals-and-sandbox";
@@ -45,8 +48,38 @@ pub const HOOK_EVENTS: [&str; 7] = [
     "SessionEnd",
 ];
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CodexAdapter;
+/// Codex's own directory: `CODEX_HOME`, else `$HOME/.codex`. Rollouts live under
+/// `<codex home>/sessions/`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodexAdapter {
+    pub codex_home: PathBuf,
+}
+
+impl CodexAdapter {
+    pub fn new(codex_home: impl Into<PathBuf>) -> Self {
+        Self {
+            codex_home: codex_home.into(),
+        }
+    }
+
+    /// The conversation recorded for `session`; refused when there is none yet (Codex reports
+    /// its id only once a first prompt was submitted).
+    fn conversation_of<'a>(
+        &self,
+        session: &'a Session,
+        verb: &str,
+    ) -> Result<&'a str, EngineError> {
+        engine_data(self, session)
+            .get(CONVERSATION_ID_KEY)
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                EngineError::Refused(format!(
+                    "codex cannot {verb} {}: no conversation recorded yet (ext.{EXT_KEY}.{CONVERSATION_ID_KEY})",
+                    session.name
+                ))
+            })
+    }
+}
 
 impl LlmEngine for CodexAdapter {
     fn id(&self) -> &str {
@@ -64,8 +97,16 @@ impl LlmEngine for CodexAdapter {
             .unwrap_or(CODEX_MODEL);
         let effort = req.effort.unwrap_or(DEFAULT_EFFORT);
         let mut args = Vec::new();
-        if let Some(resume) = req.resume.filter(|resume| !resume.is_empty()) {
-            args.extend([RESUME_SUBCOMMAND.to_owned(), resume.to_owned()]);
+        match req.mode {
+            LaunchMode::Start => {}
+            LaunchMode::Resume => args.extend([
+                RESUME_SUBCOMMAND.to_owned(),
+                self.conversation_of(req.session, "resume")?.to_owned(),
+            ]),
+            LaunchMode::Fork { source } => args.extend([
+                FORK_SUBCOMMAND.to_owned(),
+                self.conversation_of(source, "fork")?.to_owned(),
+            ]),
         }
         args.extend([
             "-m".to_owned(),
@@ -120,11 +161,14 @@ impl LlmEngine for CodexAdapter {
 
 /// The engine data after a `SessionStart`: `current` with the payload's `session_id` as
 /// `conversation_id` and its `transcript_path`. `None` when the payload lacks either string or
-/// the id is already the current one.
+/// both are already the current ones (a resume launched with only the id gains its path).
 pub fn conversation_started(current: &Value, payload: &Value) -> Option<Value> {
     let conversation_id = payload.get("session_id")?.as_str()?;
     let transcript_path = payload.get(TRANSCRIPT_PATH_KEY)?.as_str()?;
-    if current.get(CONVERSATION_ID_KEY).and_then(Value::as_str) == Some(conversation_id) {
+    let recorded = |key: &str| current.get(key).and_then(Value::as_str);
+    if recorded(CONVERSATION_ID_KEY) == Some(conversation_id)
+        && recorded(TRANSCRIPT_PATH_KEY) == Some(transcript_path)
+    {
         return None;
     }
     let mut data = current.as_object().cloned().unwrap_or_default();
@@ -154,9 +198,21 @@ pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAct
         .collect()
 }
 
-/// The plugin wrapper: registers [`CodexAdapter`] under the plugin id `engine-codex`.
+/// The plugin wrapper: registers [`CodexAdapter`] under the plugin id `engine-codex`, with the
+/// Codex home resolved once from the environment.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CodexPlugin;
+
+/// `CODEX_HOME`, else `$HOME/.codex`.
+pub fn codex_home_from_env() -> PathBuf {
+    match std::env::var_os("CODEX_HOME") {
+        Some(directory) if !directory.is_empty() => PathBuf::from(directory),
+        _ => std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+            .join(".codex"),
+    }
+}
 
 impl tx_core::Plugin for CodexPlugin {
     fn id(&self) -> &'static str {
@@ -164,7 +220,7 @@ impl tx_core::Plugin for CodexPlugin {
     }
 
     fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
-        r.engine(Box::new(CodexAdapter));
+        r.engine(Box::new(CodexAdapter::new(codex_home_from_env())));
         Ok(())
     }
 }
@@ -199,6 +255,16 @@ mod tests {
         }
     }
 
+    /// The adapter under test, with a fixed Codex home.
+    fn adapter() -> CodexAdapter {
+        CodexAdapter::new("/h")
+    }
+
+    /// A starting agent record with this engine's data `data` (absent when `Null`).
+    fn record(data: serde_json::Value) -> Session {
+        session(LlmEngineState::Starting, data)
+    }
+
     /// An agent record in `state` whose `ext.CodexAdapter` is `data` (absent when `Null`).
     fn session(state: LlmEngineState, data: serde_json::Value) -> Session {
         use tx_core::{Launch, Lifecycle, SessionId};
@@ -217,7 +283,7 @@ mod tests {
             last_modified_at: 1.0,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
-                engine: CodexAdapter.id().to_owned(),
+                engine: adapter().id().to_owned(),
                 profile: Vec::new(),
                 model: None,
                 effort: None,
@@ -240,7 +306,7 @@ mod tests {
     fn check(table: Vec<Row>) {
         for (current, data, name, payload, expected) in table {
             assert_eq!(
-                CodexAdapter.on_hook(
+                adapter().on_hook(
                     &session(current, data.clone()),
                     &hook(name, payload.clone())
                 ),
@@ -344,6 +410,14 @@ mod tests {
                 started("id-1"),
                 to(Idle),
             ),
+            // A resume launched with only the id gains the transcript path.
+            (
+                Starting,
+                json!({"conversation_id": "id-1"}),
+                "SessionStart",
+                started("id-1"),
+                to(Idle).engine_data(first.clone()),
+            ),
             // A payload without both strings changes no data.
             (Starting, null.clone(), "SessionStart", json!({}), to(Idle)),
             (
@@ -387,20 +461,21 @@ mod tests {
 
     #[test]
     fn ext_key_is_codex() {
-        assert_eq!(CodexAdapter.ext_key(), "codex");
-        assert_eq!(CodexAdapter.ext_key(), EXT_KEY);
+        assert_eq!(adapter().ext_key(), "codex");
+        assert_eq!(adapter().ext_key(), EXT_KEY);
     }
 
     #[test]
     fn id_is_codex() {
-        assert_eq!(CodexAdapter.id(), "codex");
+        assert_eq!(adapter().id(), "codex");
     }
 
     #[test]
     fn defaults() {
-        let (dir, profile) = profile("", &[]);
-        let plan = CodexAdapter
-            .launch(&LaunchRequest::new(dir.path(), &profile))
+        let (_dir, profile) = profile("", &[]);
+        let session = record(serde_json::Value::Null);
+        let plan = adapter()
+            .launch(&LaunchRequest::new(&session, &profile))
             .unwrap();
         assert_eq!(plan.program, "codex");
         assert_eq!(
@@ -419,10 +494,11 @@ mod tests {
 
     #[test]
     fn every_option() {
-        let (dir, profile) = profile("be good", &["/skills/one"]);
-        let plan = CodexAdapter
+        let (_dir, profile) = profile("be good", &["/skills/one"]);
+        let session = record(serde_json::Value::Null);
+        let plan = adapter()
             .launch(
-                &LaunchRequest::new(dir.path(), &profile)
+                &LaunchRequest::new(&session, &profile)
                     .model("o3")
                     .effort(Effort::Low)
                     .initial_prompt("go"),
@@ -452,13 +528,27 @@ mod tests {
     }
 
     #[test]
-    fn resume_is_the_subcommand() {
-        let (dir, profile) = profile("", &[]);
-        let plan = CodexAdapter
+    fn start_carries_no_engine_data() {
+        let (_dir, profile) = profile("", &[]);
+        let session = record(serde_json::Value::Null);
+        let plan = adapter()
+            .launch(&LaunchRequest::new(&session, &profile).initial_prompt("hi"))
+            .unwrap();
+        assert_eq!(plan.args[0], "-m");
+        assert_eq!(plan.args.last().map(String::as_str), Some("hi"));
+        assert_eq!(plan.engine_data, None, "Codex reports its id by hook");
+    }
+
+    #[test]
+    fn resume_is_the_subcommand_on_the_recorded_conversation() {
+        let (_dir, profile) = profile("", &[]);
+        let session = record(serde_json::json!({"conversation_id": "sess-7"}));
+        let plan = adapter()
             .launch(
-                &LaunchRequest::new(dir.path(), &profile)
-                    .resume("sess-7")
-                    .model("o3"),
+                &LaunchRequest::new(&session, &profile)
+                    .mode(LaunchMode::Resume)
+                    .model("o3")
+                    .initial_prompt("more"),
             )
             .unwrap();
         assert_eq!(
@@ -472,20 +562,66 @@ mod tests {
                 "model_reasoning_effort=high",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
+                "more",
             ])
         );
-        let plan = CodexAdapter
-            .launch(&LaunchRequest::new(dir.path(), &profile).resume(""))
+        assert_eq!(plan.engine_data, None);
+    }
+
+    #[test]
+    fn fork_is_the_subcommand_on_the_source_conversation() {
+        let (_dir, profile) = profile("", &[]);
+        let source = record(serde_json::json!({"conversation_id": "sess-7"}));
+        let session = record(serde_json::Value::Null);
+        let plan = adapter()
+            .launch(
+                &LaunchRequest::new(&session, &profile)
+                    .mode(LaunchMode::Fork { source: &source })
+                    .initial_prompt("go"),
+            )
             .unwrap();
-        assert_eq!(plan.args[0], "-m", "empty resume is absent");
+        assert_eq!(plan.args[..2], argv(&["fork", "sess-7"]));
+        assert_eq!(plan.args.last().map(String::as_str), Some("go"));
+        assert_eq!(plan.engine_data, None);
+    }
+
+    #[test]
+    fn resume_and_fork_without_a_conversation_are_refused() {
+        let (_dir, profile) = profile("", &[]);
+        for data in [
+            serde_json::Value::Null,
+            serde_json::json!({"model": "o3"}),
+            serde_json::json!("junk"),
+        ] {
+            let session = record(data);
+            let error = adapter()
+                .launch(&LaunchRequest::new(&session, &profile).mode(LaunchMode::Resume))
+                .unwrap_err();
+            assert!(
+                matches!(&error, EngineError::Refused(text) if text.contains("cannot resume agent")),
+                "{error:?}"
+            );
+            let target = record(serde_json::Value::Null);
+            let error = adapter()
+                .launch(
+                    &LaunchRequest::new(&target, &profile)
+                        .mode(LaunchMode::Fork { source: &session }),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(&error, EngineError::Refused(text) if text.contains("cannot fork agent")),
+                "{error:?}"
+            );
+        }
     }
 
     #[test]
     fn empty_model_and_prompt_fall_back() {
-        let (dir, profile) = profile("", &[]);
-        let plan = CodexAdapter
+        let (_dir, profile) = profile("", &[]);
+        let session = record(serde_json::Value::Null);
+        let plan = adapter()
             .launch(
-                &LaunchRequest::new(dir.path(), &profile)
+                &LaunchRequest::new(&session, &profile)
                     .model("")
                     .initial_prompt(""),
             )
@@ -496,10 +632,11 @@ mod tests {
 
     #[test]
     fn hook_command_wires_every_event_as_a_config_override() {
-        let (dir, profile) = profile("", &[]);
+        let (_dir, profile) = profile("", &[]);
         let hook_command = ["/x\"y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
-        let plan = CodexAdapter
-            .launch(&LaunchRequest::new(dir.path(), &profile).hook_command(&hook_command))
+        let session = record(serde_json::Value::Null);
+        let plan = adapter()
+            .launch(&LaunchRequest::new(&session, &profile).hook_command(&hook_command))
             .unwrap();
         let overrides: Vec<&str> = plan
             .args

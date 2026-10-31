@@ -4,7 +4,11 @@
 
 use std::path::{Path, PathBuf};
 
-use tx_core::{LaunchPlan, LaunchRequest, LlmEngine, Profile, Profiles, TxCore};
+use tx_core::{
+    Launch, LaunchMode, LaunchPlan, LaunchRequest, Lifecycle, LlmEngine, Profile, Profiles,
+    Session, SessionId, TxCore,
+};
+pub use tx_engine_claude::{munge, realpath};
 
 use crate::ChatError;
 use crate::ext::AgentLaunch;
@@ -120,29 +124,6 @@ fn collect_rollouts(directory: &Path, suffix: &str, matches: &mut Vec<PathBuf>) 
     }
 }
 
-/// Claude's project-dir name for an absolute path: every `/` and `.` becomes `-`.
-pub fn munge(cwd: &str) -> String {
-    cwd.replace(['/', '.'], "-")
-}
-
-/// Symlinks resolved along the existing prefix, the missing tail kept.
-fn realpath(path: &Path) -> PathBuf {
-    let mut tail = Vec::new();
-    let mut head = path;
-    loop {
-        if let Ok(real) = std::fs::canonicalize(head) {
-            return tail.iter().rev().fold(real, |acc, part| acc.join(part));
-        }
-        match (head.parent(), head.file_name()) {
-            (Some(parent), Some(name)) => {
-                tail.push(name);
-                head = parent;
-            }
-            _ => return path.to_owned(),
-        }
-    }
-}
-
 /// Files that travel with a transcript into a bundle: Claude's sibling `<chat-id>/` dir
 /// (subagents, tool results), relative to the resolved transcript. Codex inlines everything.
 pub fn bundle_sidecars(engine: &str, src_transcript: &Path, chat_id: &str) -> Vec<PathBuf> {
@@ -235,11 +216,14 @@ fn copytree(source: &Path, target: &Path) -> Result<(), ChatError> {
     copy_times(source, target)
 }
 
-/// The engine crates' adapters, used as library code.
-pub fn adapter(engine: &str) -> Option<&'static dyn LlmEngine> {
+/// The engine crates' adapters, used as library code. Their homes are left empty: chat only
+/// launches through them to resume a chat id it already has, which reads no home.
+pub fn adapter(engine: &str) -> Option<Box<dyn LlmEngine>> {
     match engine {
-        "claude" => Some(&tx_engine_claude::ClaudeAdapter),
-        "codex" => Some(&tx_engine_codex::CodexAdapter),
+        "claude" => Some(Box::new(tx_engine_claude::ClaudeAdapter::new(
+            PathBuf::new(),
+        ))),
+        "codex" => Some(Box::new(tx_engine_codex::CodexAdapter::new(PathBuf::new()))),
         _ => None,
     }
 }
@@ -262,20 +246,58 @@ pub fn agent_plan(
         .resolve(&launch.profile)
         .map_err(tx_core::CoreError::from)?;
     let profile = Profile::write(resolved, profile_file).map_err(io(profile_file))?;
-    let mut request = LaunchRequest::new(cwd, &profile);
+    let record = scratch_record(launch, cwd, adapter.ext_key(), resume);
+    let mut request = LaunchRequest::new(&record, &profile);
     if let Some(model) = launch.model.as_deref() {
         request = request.model(model);
     }
     if let Some(effort) = launch.effort {
         request = request.effort(effort);
     }
-    if let Some(resume) = resume {
-        request = request.resume(resume);
+    if resume.is_some() {
+        request = request.mode(LaunchMode::Resume);
     }
     if let Some(prompt) = prompt {
         request = request.initial_prompt(prompt);
     }
     Ok(adapter.launch(&request)?)
+}
+
+/// The record a chat launch hands the engine: the plan runs as a process session, created only
+/// afterwards, so the engine gets a fresh id, `cwd`, and `resume` as its conversation.
+fn scratch_record(
+    launch: &AgentLaunch,
+    cwd: &Path,
+    ext_key: &str,
+    resume: Option<&str>,
+) -> Session {
+    let mut ext = std::collections::BTreeMap::new();
+    if let Some(resume) = resume {
+        ext.insert(
+            ext_key.to_owned(),
+            serde_json::json!({ "conversation_id": resume }),
+        );
+    }
+    Session {
+        id: SessionId::mint(),
+        name: String::new(),
+        parent: None,
+        tags: Vec::new(),
+        cwd: cwd.to_owned(),
+        created_at: 0.0,
+        ended_at: None,
+        last_modified_at: 0.0,
+        lifecycle: Lifecycle::Running,
+        launch: Launch::Agent {
+            engine: launch.engine.clone(),
+            profile: launch.profile.clone(),
+            model: launch.model.clone(),
+            effort: launch.effort,
+            resume: resume.map(str::to_owned),
+        },
+        state: None,
+        ext,
+    }
 }
 
 /// Turns a resume argv into a fork argv. Claude: `--fork-session` right after `--resume <id>`.
@@ -628,12 +650,6 @@ mod tests {
             claude_home: base.join("claude"),
             codex_home: base.join("codex"),
         }
-    }
-
-    #[test]
-    fn munge_paths() {
-        assert_eq!(munge("/a/b.c/.d"), "-a-b-c--d");
-        assert_eq!(munge("/nope"), "-nope");
     }
 
     #[test]

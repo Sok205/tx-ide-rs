@@ -172,10 +172,16 @@ fn resume_reaches_the_engine_and_the_record() {
     opts.launch = LaunchOptions::agent(STUB_ID).resume("chat-99");
     let id = core.create_session(opts).unwrap();
     let env = env_of(&cwd);
+    assert_eq!(get(&env, "STUB_MODE"), Some("resume"));
     assert_eq!(get(&env, "STUB_RESUME"), Some("chat-99"));
     let session = core.get_session(&id).unwrap();
     assert!(
         matches!(session.launch, Launch::Agent { ref resume, .. } if resume.as_deref() == Some("chat-99"))
+    );
+    assert_eq!(
+        session.ext.get(STUB_ID),
+        Some(&serde_json::json!({"conversation_id": "chat-99"})),
+        "the resumed conversation is named in the engine's data"
     );
     let fresh = core
         .create_session(agent("fresh", &h.workdir("f")))
@@ -183,6 +189,34 @@ fn resume_reaches_the_engine_and_the_record() {
     assert!(
         matches!(core.get_session(&fresh).unwrap().launch, Launch::Agent { ref resume, .. } if resume.is_none())
     );
+}
+
+/// The engine is handed the record being created (its id), and the engine data its plan carries
+/// is in the record from the first save.
+#[test]
+fn the_engine_sees_the_record_and_its_data_lands_in_ext() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let cwd = h.workdir("d");
+    let mut opts = agent("named", &cwd);
+    opts.launch = LaunchOptions::agent(STUB_ID)
+        .model("data")
+        .initial_prompt("start");
+    let id = core.create_session(opts).unwrap();
+    let env = env_of(&cwd);
+    assert_eq!(get(&env, "STUB_MODE"), Some("start"));
+    assert_eq!(get(&env, "STUB_SESSION_ID"), Some(id.as_str()));
+    let session = core.get_session(&id).unwrap();
+    assert_eq!(
+        session.ext.get(STUB_ID),
+        Some(&serde_json::json!({"conversation_id": id.as_str()}))
+    );
+    // No data in the plan: no entry.
+    let plain = core
+        .create_session(agent("plain", &h.workdir("p")))
+        .unwrap();
+    assert!(core.get_session(&plain).unwrap().ext.is_empty());
 }
 
 #[test]

@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Directories, Effort, EventType, Launch, LaunchOptions,
-    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, MAX_SOCKET_PATH_BYTES, Profile,
-    ResolvedProfile, SendOptions, Session, SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CoreError, CreateOptions, Directories, Effort, EventType, Launch, LaunchMode,
+    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine,
+    MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Session, SessionId, TxCore,
+    WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -182,29 +183,33 @@ proptest! {
     /// `LaunchRequest` setters: last call wins, nothing else moves, chaining order is irrelevant.
     #[test]
     fn launch_request_builder_sets_named_field_only(
-        m1 in text(), m2 in text(), e1 in effort(), e2 in effort(), p in text(), r in text(),
+        m1 in text(), m2 in text(), e1 in effort(), e2 in effort(), p in text(),
     ) {
         let dir = short_tempdir();
         let profile = Profile::write(
             ResolvedProfile { text: "t".into(), skill_dirs: vec![] },
             &dir.path().join("p.md"),
         ).unwrap();
-        let cwd = dir.path();
+        let session = session_with(None, vec![], Lifecycle::Running);
+        let source = session_with(None, vec![], Lifecycle::Running);
+        let fork = LaunchMode::Fork { source: &source };
 
-        let a = LaunchRequest::new(cwd, &profile).model(&m1).model(&m2).effort(e1).effort(e2).initial_prompt(&p).resume(&r);
-        let b = LaunchRequest::new(cwd, &profile).resume(&r).initial_prompt(&p).effort(e2).model(&m2);
+        let a = LaunchRequest::new(&session, &profile).model(&m1).model(&m2).effort(e1).effort(e2).initial_prompt(&p).mode(LaunchMode::Resume).mode(fork);
+        let b = LaunchRequest::new(&session, &profile).mode(fork).initial_prompt(&p).effort(e2).model(&m2);
         for req in [a, b] {
-            prop_assert_eq!(req.cwd, cwd);
+            prop_assert_eq!(&req.session.id, &session.id);
             prop_assert_eq!(req.profile.text(), "t");
             prop_assert_eq!(req.model, Some(m2.as_str()));
             prop_assert_eq!(req.effort, Some(e2));
             prop_assert_eq!(req.initial_prompt, Some(p.as_str()));
-            prop_assert_eq!(req.resume, Some(r.as_str()));
+            let forked = matches!(req.mode, LaunchMode::Fork { source: forked } if forked.id == source.id);
+            prop_assert!(forked);
         }
-        // Single setter leaves the other three untouched.
-        let only_model = LaunchRequest::new(cwd, &profile).model(&m1);
+        // Single setter leaves the others untouched.
+        let only_model = LaunchRequest::new(&session, &profile).model(&m1);
         prop_assert_eq!(only_model.model, Some(m1.as_str()));
-        prop_assert!(only_model.effort.is_none() && only_model.initial_prompt.is_none() && only_model.resume.is_none());
+        let starts = matches!(only_model.mode, LaunchMode::Start);
+        prop_assert!(only_model.effort.is_none() && only_model.initial_prompt.is_none() && starts);
         // `Copy`: `a` is still usable after being moved into the loop above.
         prop_assert_eq!(a.model, Some(m2.as_str()));
     }

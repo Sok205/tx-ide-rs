@@ -1,6 +1,13 @@
-//! The Claude Code engine for tx-core: `claude [--resume ID] [--model M] --effort E --no-chrome
+//! The Claude Code engine for tx-core: `claude <conversation> [--model M] --effort E --no-chrome
 //! --append-system-prompt <profile text> --dangerously-skip-permissions [prompt]`, with every
-//! granted skill linked under `.claude/skills/<name>` in the working directory.
+//! granted skill linked under `.claude/skills/<name>` in the working directory. The conversation
+//! flags depend on the launch mode:
+//!
+//! | mode   | flags                                                                   |
+//! |--------|-------------------------------------------------------------------------|
+//! | Start  | `--session-id <session id>`                                             |
+//! | Resume | `--resume <conversation_id, else session id>`                           |
+//! | Fork   | `--resume <source's conversation_id, else its id> --fork-session --session-id <session id>` |
 //!
 //! Engine data, under `ext.claude` of the record, is this adapter's alone to read:
 //!
@@ -8,22 +15,25 @@
 //! {"conversation_id": "5f0c…", "transcript_path": "/Users/w/.claude/projects/-Users-w-…/5f0c….jsonl"}
 //! ```
 //!
-//! Both come from the `SessionStart` payload. Claude reports them on every start (`startup`,
-//! `resume`, `clear`); the data is rewritten only when the id differs, so a `/clear` (a new
-//! conversation inside the same process) is what changes it. Other keys of the object survive.
+//! A start or a fork names its conversation after the tx session id, so the launch plan carries
+//! both up front. After that, `SessionStart` reports them on every start (`startup`, `resume`,
+//! `clear`); the data is rewritten only when they differ, so a `/clear` (a new conversation
+//! inside the same process) is what changes it. Other keys of the object survive.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use tx_core::{
-    Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
-    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
+    Effort, EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
+    LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
 pub const SKILLS_DIR: &str = ".claude/skills";
 pub const MODEL_FLAG: &str = "--model";
 pub const RESUME_FLAG: &str = "--resume";
+pub const SESSION_ID_FLAG: &str = "--session-id";
+pub const FORK_SESSION_FLAG: &str = "--fork-session";
 pub const EFFORT_FLAG: &str = "--effort";
 pub const NO_CHROME_FLAG: &str = "--no-chrome";
 pub const APPEND_SYSTEM_PROMPT_FLAG: &str = "--append-system-prompt";
@@ -55,8 +65,45 @@ pub const EXT_KEY: &str = "claude";
 pub const CONVERSATION_ID_KEY: &str = "conversation_id";
 pub const TRANSCRIPT_PATH_KEY: &str = "transcript_path";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ClaudeAdapter;
+/// Claude's own directory: `CLAUDE_CONFIG_DIR`, else `$HOME/.claude`. Transcripts live under
+/// `<claude home>/projects/<munge(realpath(cwd))>/<conversation id>.jsonl`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClaudeAdapter {
+    pub claude_home: PathBuf,
+}
+
+impl ClaudeAdapter {
+    pub fn new(claude_home: impl Into<PathBuf>) -> Self {
+        Self {
+            claude_home: claude_home.into(),
+        }
+    }
+
+    /// Where Claude writes conversation `id` of a process started in `cwd`.
+    pub fn transcript_path(&self, cwd: &Path, id: &str) -> PathBuf {
+        self.claude_home
+            .join("projects")
+            .join(munge(&realpath(cwd).to_string_lossy()))
+            .join(format!("{id}.jsonl"))
+    }
+
+    /// The engine data of a conversation named after `session`: its id and transcript path.
+    fn named_after(&self, session: &Session) -> Value {
+        let id = session.id.as_str();
+        serde_json::json!({
+            CONVERSATION_ID_KEY: id,
+            TRANSCRIPT_PATH_KEY: self.transcript_path(&session.cwd, id).to_string_lossy(),
+        })
+    }
+
+    /// The conversation recorded for `session`, else the one named after it.
+    fn conversation_of<'a>(&self, session: &'a Session) -> &'a str {
+        engine_data(self, session)
+            .get(CONVERSATION_ID_KEY)
+            .and_then(Value::as_str)
+            .unwrap_or(session.id.as_str())
+    }
+}
 
 impl LlmEngine for ClaudeAdapter {
     fn id(&self) -> &str {
@@ -68,10 +115,30 @@ impl LlmEngine for ClaudeAdapter {
     }
 
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
-        let mut args = Vec::new();
-        if let Some(resume) = req.resume.filter(|resume| !resume.is_empty()) {
-            args.extend([RESUME_FLAG.to_owned(), resume.to_owned()]);
-        }
+        let session_id = req.session.id.to_string();
+        let (mut args, engine_data) = match req.mode {
+            LaunchMode::Start => (
+                vec![SESSION_ID_FLAG.to_owned(), session_id],
+                Some(self.named_after(req.session)),
+            ),
+            LaunchMode::Resume => (
+                vec![
+                    RESUME_FLAG.to_owned(),
+                    self.conversation_of(req.session).to_owned(),
+                ],
+                None,
+            ),
+            LaunchMode::Fork { source } => (
+                vec![
+                    RESUME_FLAG.to_owned(),
+                    self.conversation_of(source).to_owned(),
+                    FORK_SESSION_FLAG.to_owned(),
+                    SESSION_ID_FLAG.to_owned(),
+                    session_id,
+                ],
+                Some(self.named_after(req.session)),
+            ),
+        };
         if let Some(model) = req.model.filter(|model| !model.is_empty()) {
             args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
         }
@@ -94,6 +161,7 @@ impl LlmEngine for ClaudeAdapter {
             args.push(prompt.to_owned());
         }
         let mut plan = LaunchPlan::new(CLAUDE_BIN).args(args);
+        plan.engine_data = engine_data;
         for link in skill_links(SKILLS_DIR, req.profile.skill_dirs()) {
             plan = plan.workspace(link);
         }
@@ -131,11 +199,14 @@ impl LlmEngine for ClaudeAdapter {
 
 /// The engine data after a `SessionStart`: `current` with the payload's `session_id` as
 /// `conversation_id` and its `transcript_path`. `None` when the payload lacks either string or
-/// the id is already the current one.
+/// both are already the current ones (a resume launched with only the id gains its path).
 pub fn conversation_started(current: &Value, payload: &Value) -> Option<Value> {
     let conversation_id = payload.get("session_id")?.as_str()?;
     let transcript_path = payload.get(TRANSCRIPT_PATH_KEY)?.as_str()?;
-    if current.get(CONVERSATION_ID_KEY).and_then(Value::as_str) == Some(conversation_id) {
+    let recorded = |key: &str| current.get(key).and_then(Value::as_str);
+    if recorded(CONVERSATION_ID_KEY) == Some(conversation_id)
+        && recorded(TRANSCRIPT_PATH_KEY) == Some(transcript_path)
+    {
         return None;
     }
     let mut data = current.as_object().cloned().unwrap_or_default();
@@ -164,6 +235,29 @@ pub fn hook_settings(hook_command: &[String]) -> String {
     serde_json::json!({ "hooks": hooks }).to_string()
 }
 
+/// Claude's project-dir name for an absolute path: every `/` and `.` becomes `-`.
+pub fn munge(cwd: &str) -> String {
+    cwd.replace(['/', '.'], "-")
+}
+
+/// Symlinks resolved along the existing prefix, the missing tail kept.
+pub fn realpath(path: &Path) -> PathBuf {
+    let mut tail = Vec::new();
+    let mut head = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(head) {
+            return tail.iter().rev().fold(real, |acc, part| acc.join(part));
+        }
+        match (head.parent(), head.file_name()) {
+            (Some(parent), Some(name)) => {
+                tail.push(name);
+                head = parent;
+            }
+            _ => return path.to_owned(),
+        }
+    }
+}
+
 /// One symlink per granted skill dir: `<engine dir>/<skill name>` → the skill dir.
 pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAction> {
     skill_dirs
@@ -178,9 +272,21 @@ pub fn skill_links(engine_dir: &str, skill_dirs: &[PathBuf]) -> Vec<WorkspaceAct
         .collect()
 }
 
-/// The plugin wrapper: registers [`ClaudeAdapter`] under the plugin id `engine-claude`.
+/// The plugin wrapper: registers [`ClaudeAdapter`] under the plugin id `engine-claude`, with the
+/// Claude home resolved once from the environment.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ClaudePlugin;
+
+/// `CLAUDE_CONFIG_DIR`, else `$HOME/.claude`.
+pub fn claude_home_from_env() -> PathBuf {
+    match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(directory) if !directory.is_empty() => PathBuf::from(directory),
+        _ => std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+            .join(".claude"),
+    }
+}
 
 impl tx_core::Plugin for ClaudePlugin {
     fn id(&self) -> &'static str {
@@ -188,7 +294,7 @@ impl tx_core::Plugin for ClaudePlugin {
     }
 
     fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
-        r.engine(Box::new(ClaudeAdapter));
+        r.engine(Box::new(ClaudeAdapter::new(claude_home_from_env())));
         Ok(())
     }
 }
@@ -242,7 +348,7 @@ mod tests {
             last_modified_at: 1.0,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
-                engine: ClaudeAdapter.id().to_owned(),
+                engine: adapter().id().to_owned(),
                 profile: Vec::new(),
                 model: None,
                 effort: None,
@@ -265,7 +371,7 @@ mod tests {
     fn check(table: Vec<Row>) {
         for (current, data, name, payload, expected) in table {
             assert_eq!(
-                ClaudeAdapter.on_hook(
+                adapter().on_hook(
                     &session(current, data.clone()),
                     &hook(name, payload.clone())
                 ),
@@ -418,6 +524,14 @@ mod tests {
                 started("id-1", "resume"),
                 to(Idle),
             ),
+            // A resume launched with only the id gains the transcript path.
+            (
+                Starting,
+                serde_json::json!({"conversation_id": "id-1"}),
+                "SessionStart",
+                started("id-1", "resume"),
+                to(Idle).engine_data(first.clone()),
+            ),
             // A payload without the strings changes no data.
             (Starting, null.clone(), "SessionStart", json!({}), to(Idle)),
             (
@@ -465,10 +579,10 @@ mod tests {
         let data = json!({"conversation_id": "id-1", "transcript_path": "/h/id-1.jsonl"});
         let session = session(LlmEngineState::Idle, data.clone());
         assert_eq!(
-            ClaudeAdapter.on_hook(&session, &hook("SessionEnd", json!({"reason": "clear"}))),
+            adapter().on_hook(&session, &hook("SessionEnd", json!({"reason": "clear"}))),
             LlmEngineChange::NONE
         );
-        let change = ClaudeAdapter.on_hook(
+        let change = adapter().on_hook(
             &session,
             &hook(
                 "SessionStart",
@@ -485,41 +599,166 @@ mod tests {
 
     #[test]
     fn ext_key_is_claude() {
-        assert_eq!(ClaudeAdapter.ext_key(), "claude");
-        assert_eq!(ClaudeAdapter.ext_key(), EXT_KEY);
+        assert_eq!(adapter().ext_key(), "claude");
+        assert_eq!(adapter().ext_key(), EXT_KEY);
     }
 
     #[test]
     fn id_is_claude() {
-        assert_eq!(ClaudeAdapter.id(), "claude");
+        assert_eq!(adapter().id(), "claude");
+    }
+
+    /// The adapter under test, with a fixed Claude home.
+    fn adapter() -> ClaudeAdapter {
+        ClaudeAdapter::new("/h")
+    }
+
+    /// An agent record in `cwd` with this engine's data `data` (absent when `Null`).
+    fn record(cwd: &Path, data: serde_json::Value) -> Session {
+        Session {
+            cwd: cwd.to_owned(),
+            ..session(LlmEngineState::Starting, data)
+        }
+    }
+
+    /// What every launch ends with when no option is set.
+    const TAIL: [&str; 4] = [
+        "--effort",
+        "high",
+        "--no-chrome",
+        "--dangerously-skip-permissions",
+    ];
+
+    fn with_tail(head: &[&str]) -> Vec<String> {
+        argv(&[head, &TAIL[..]].concat())
     }
 
     #[test]
-    fn defaults() {
+    fn start_names_the_conversation_after_the_session() {
         let (dir, profile) = profile("", &[]);
-        let plan = ClaudeAdapter
-            .launch(&LaunchRequest::new(dir.path(), &profile))
+        let cwd = std::fs::canonicalize(dir.path()).unwrap();
+        let session = record(&cwd, serde_json::Value::Null);
+        let id = session.id.to_string();
+        let plan = adapter()
+            .launch(&LaunchRequest::new(&session, &profile))
             .unwrap();
         assert_eq!(plan.program, "claude");
+        assert_eq!(plan.args, with_tail(&["--session-id", &id]));
+        assert!(plan.env.is_empty());
+        assert!(plan.workspace.is_empty());
+        let transcript = format!("/h/projects/{}/{id}.jsonl", munge(&cwd.to_string_lossy()));
+        assert_eq!(
+            plan.engine_data,
+            Some(serde_json::json!({"conversation_id": id, "transcript_path": transcript}))
+        );
+    }
+
+    #[test]
+    fn transcript_path_uses_the_resolved_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(dir.path()).unwrap();
+        std::os::unix::fs::symlink(&real, real.join("link")).unwrap();
+        assert_eq!(
+            adapter().transcript_path(&real.join("link"), "abc"),
+            PathBuf::from(format!(
+                "/h/projects/{}/abc.jsonl",
+                munge(&real.to_string_lossy())
+            ))
+        );
+        // A missing tail is kept as it is.
+        assert_eq!(
+            adapter().transcript_path(Path::new("/nonexistent/a.b"), "abc"),
+            PathBuf::from("/h/projects/-nonexistent-a-b/abc.jsonl")
+        );
+    }
+
+    #[test]
+    fn resume_continues_the_recorded_conversation_else_the_session_id() {
+        let (dir, profile) = profile("role", &[]);
+        let session = record(
+            dir.path(),
+            serde_json::json!({"conversation_id": "chat-42", "transcript_path": "/x"}),
+        );
+        let plan = adapter()
+            .launch(
+                &LaunchRequest::new(&session, &profile)
+                    .mode(LaunchMode::Resume)
+                    .initial_prompt("more"),
+            )
+            .unwrap();
         assert_eq!(
             plan.args,
             argv(&[
+                "--resume",
+                "chat-42",
                 "--effort",
                 "high",
                 "--no-chrome",
-                "--dangerously-skip-permissions"
+                "--append-system-prompt",
+                "role",
+                "--dangerously-skip-permissions",
+                "more",
             ])
         );
-        assert!(plan.env.is_empty());
-        assert!(plan.workspace.is_empty());
+        assert_eq!(plan.engine_data, None, "a resume keeps the data as it is");
+        // No data yet (or hand-edited junk): the conversation is the one named after the session.
+        for data in [serde_json::Value::Null, serde_json::json!("junk")] {
+            let session = record(dir.path(), data);
+            let plan = adapter()
+                .launch(&LaunchRequest::new(&session, &profile).mode(LaunchMode::Resume))
+                .unwrap();
+            assert_eq!(plan.args[..2], argv(&["--resume", session.id.as_str()]));
+            assert_eq!(plan.engine_data, None);
+        }
+    }
+
+    #[test]
+    fn fork_branches_the_source_into_the_session_id() {
+        let (dir, profile) = profile("", &[]);
+        let cwd = std::fs::canonicalize(dir.path()).unwrap();
+        let source = record(&cwd, serde_json::json!({"conversation_id": "after-clear"}));
+        let session = record(&cwd, serde_json::Value::Null);
+        let id = session.id.to_string();
+        let plan = adapter()
+            .launch(
+                &LaunchRequest::new(&session, &profile)
+                    .mode(LaunchMode::Fork { source: &source })
+                    .initial_prompt("go"),
+            )
+            .unwrap();
+        let mut expected = with_tail(&[
+            "--resume",
+            "after-clear",
+            "--fork-session",
+            "--session-id",
+            &id,
+        ]);
+        expected.push("go".into());
+        assert_eq!(plan.args, expected);
+        assert_eq!(
+            plan.engine_data,
+            Some(serde_json::json!({
+                "conversation_id": id,
+                "transcript_path": format!("/h/projects/{}/{id}.jsonl", munge(&cwd.to_string_lossy())),
+            }))
+        );
+        // A source without data: its conversation is the one named after it.
+        let source = record(&cwd, serde_json::Value::Null);
+        let plan = adapter()
+            .launch(
+                &LaunchRequest::new(&session, &profile).mode(LaunchMode::Fork { source: &source }),
+            )
+            .unwrap();
+        assert_eq!(plan.args[..2], argv(&["--resume", source.id.as_str()]));
     }
 
     #[test]
     fn every_option() {
         let (dir, profile) = profile("# Role\nbe good", &["/skills/one", "/other/two"]);
-        let plan = ClaudeAdapter
+        let session = record(dir.path(), serde_json::Value::Null);
+        let plan = adapter()
             .launch(
-                &LaunchRequest::new(dir.path(), &profile)
+                &LaunchRequest::new(&session, &profile)
                     .model("opus")
                     .effort(Effort::Medium)
                     .initial_prompt("go"),
@@ -528,6 +767,8 @@ mod tests {
         assert_eq!(
             plan.args,
             argv(&[
+                "--session-id",
+                session.id.as_str(),
                 "--model",
                 "opus",
                 "--effort",
@@ -557,9 +798,10 @@ mod tests {
     #[test]
     fn empty_model_and_prompt_are_absent() {
         let (dir, profile) = profile("", &[]);
-        let plan = ClaudeAdapter
+        let session = record(dir.path(), serde_json::Value::Null);
+        let plan = adapter()
             .launch(
-                &LaunchRequest::new(dir.path(), &profile)
+                &LaunchRequest::new(&session, &profile)
                     .model("")
                     .effort(Effort::Max)
                     .initial_prompt(""),
@@ -568,6 +810,8 @@ mod tests {
         assert_eq!(
             plan.args,
             argv(&[
+                "--session-id",
+                session.id.as_str(),
                 "--effort",
                 "max",
                 "--no-chrome",
@@ -577,44 +821,12 @@ mod tests {
     }
 
     #[test]
-    fn resume_continues_a_conversation() {
-        let (dir, profile) = profile("role", &[]);
-        let plan = ClaudeAdapter
-            .launch(
-                &LaunchRequest::new(dir.path(), &profile)
-                    .resume("chat-42")
-                    .initial_prompt("more"),
-            )
-            .unwrap();
-        assert_eq!(
-            plan.args,
-            argv(&[
-                "--resume",
-                "chat-42",
-                "--effort",
-                "high",
-                "--no-chrome",
-                "--append-system-prompt",
-                "role",
-                "--dangerously-skip-permissions",
-                "more",
-            ])
-        );
-        let plan = ClaudeAdapter
-            .launch(&LaunchRequest::new(dir.path(), &profile).resume(""))
-            .unwrap();
-        assert!(
-            !plan.args.iter().any(|a| a == "--resume"),
-            "empty resume is absent"
-        );
-    }
-
-    #[test]
     fn hook_command_wires_every_event_through_settings() {
         let (dir, profile) = profile("", &[]);
+        let session = record(dir.path(), serde_json::Value::Null);
         let hook_command = ["/x y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
-        let plan = ClaudeAdapter
-            .launch(&LaunchRequest::new(dir.path(), &profile).hook_command(&hook_command))
+        let plan = adapter()
+            .launch(&LaunchRequest::new(&session, &profile).hook_command(&hook_command))
             .unwrap();
         let at = plan
             .args
@@ -636,6 +848,12 @@ mod tests {
                 "timeout": 10,
             }]}])
         );
+    }
+
+    #[test]
+    fn munge_paths() {
+        assert_eq!(munge("/a/b.c/.d"), "-a-b-c--d");
+        assert_eq!(munge("/nope"), "-nope");
     }
 
     #[test]
