@@ -7,14 +7,14 @@ use std::process::Command;
 use std::time::Duration;
 
 use common::{Harness, agent, process, typed, wait_for};
-use tx_core::{CoreConfig, Lifecycle, ListFilter, SendOptions, TxCore};
+use tx_core::{CoreConfig, Directories, Lifecycle, ListFilter, SendOptions, TxCore};
 
 #[test]
 fn child_lists_running_sessions() {
-    let Ok(state) = std::env::var("TX_CORE_SWARM_CHILD") else {
+    let Ok(home) = std::env::var("TX_CORE_SWARM_CHILD") else {
         return;
     };
-    let core = TxCore::open(CoreConfig::new(state)).unwrap();
+    let core = TxCore::open(CoreConfig::new(Directories::under(home))).unwrap();
     let mut names: Vec<String> = core
         .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))
         .unwrap()
@@ -69,7 +69,7 @@ fn swarm_outlives_its_core_and_targets_reach_the_right_pane() {
             "--nocapture",
             "--test-threads=1",
         ])
-        .env("TX_CORE_SWARM_CHILD", h.state_dir())
+        .env("TX_CORE_SWARM_CHILD", h.home())
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);

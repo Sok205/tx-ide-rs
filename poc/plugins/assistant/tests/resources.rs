@@ -8,7 +8,10 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
         .prefix("txc")
         .tempdir_in("/tmp")
         .unwrap();
-    let mut core = TxCore::open(CoreConfig::new(dir.path().join("state"))).unwrap();
+    let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
+        dir.path().join("state"),
+    )))
+    .unwrap();
     core.plug(vec![Box::new(AssistantPlugin)], config).unwrap();
     (dir, core)
 }
@@ -25,11 +28,11 @@ fn the_role_is_a_resource() {
 }
 
 #[test]
-fn the_assistant_is_claude_with_common_and_its_role_in_the_state_dir() {
+fn the_assistant_is_claude_with_common_and_its_role_in_the_data_dir() {
     let (_dir, core) = core(&PluginConfig::default());
     let options = create_options(&core);
     assert_eq!(options.name, "tx-assistant");
-    assert_eq!(options.cwd, core.config().state_dir);
+    assert_eq!(options.cwd, core.config().directories.data);
     assert_eq!(options.tags, ["tx-system"]);
     let LaunchOptions::Agent {
         engine,

@@ -42,7 +42,7 @@ pub fn create_options(core: &TxCore) -> CreateOptions {
         .profile([COMMON_ROLE, ROLE])
         .model(MODEL)
         .effort(EFFORT);
-    CreateOptions::new(SESSION_NAME, core.config().state_dir.clone(), launch).tags([TAG])
+    CreateOptions::new(SESSION_NAME, core.config().directories.data.clone(), launch).tags([TAG])
 }
 
 /// The running assistant's id, after a liveness check; `None` when there is none.

@@ -16,26 +16,35 @@ const HOME_SESSION: &str = "home";
 const INSTALLED: &str = "keys/.installed";
 const IDE_FRAGMENT: &str = "ide";
 const LEGACY_HINT: &str = "legacy bindings may remain; restart the server to drop them";
-/// The resource kinds `ui install` materialises under the state dir.
-const KINDS: [&str; 4] = ["bin", "keys", "conf", "agents"];
+/// The resource kinds `ui install` materialises under the data dir.
+const KINDS: [&str; 4] = ["bin", "keys", "conf", ROLES_RESOURCE];
+/// Plugins ship roles as `agents/…` resources; they are installed under `<data>/roles/`, since
+/// `<data>/agents/` holds agent records.
+const ROLES_RESOURCE: &str = "agents";
+const ROLES_DIR: &str = "roles";
 /// The verb that starts the assistant session; `home` nests into it when the plugin is active.
 const ASSISTANT_VERB: &str = "assistant";
 
-fn conf_text(exe: &Path, state: &Path, others: &[&str]) -> String {
-    let state = state.display();
+/// `@tx-data` locates `bin/` and `keys/`; `@tx-arguments` is what every `txc` a key fragment
+/// runs carries (the core's `cli_arguments()`, words split by spaces: `install` refuses unsafe
+/// paths).
+fn conf_text(exe: &Path, data: &Path, arguments: &[String], others: &[&str]) -> String {
+    let data = data.display();
+    let arguments = arguments.join(" ");
     let mut text = format!(
         "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
          set -g detach-on-destroy off\n\
          set -g @tx-bin \"{}\"\n\
-         set -g @tx-state \"{state}\"\n\
-         source-file \"{state}/conf/tmux.conf\"\n\
-         run-shell \"{state}/keys/{IDE_FRAGMENT}.tmux\"\n",
+         set -g @tx-data \"{data}\"\n\
+         set -g @tx-arguments \"{arguments}\"\n\
+         source-file \"{data}/conf/tmux.conf\"\n\
+         run-shell \"{data}/keys/{IDE_FRAGMENT}.tmux\"\n",
         exe.display(),
     );
     for id in others {
-        text.push_str(&format!("run-shell \"{state}/keys/{id}.tmux\"\n"));
+        text.push_str(&format!("run-shell \"{data}/keys/{id}.tmux\"\n"));
     }
     text
 }
@@ -71,7 +80,7 @@ fn parse_declarations(text: &str) -> Declared {
     declared
 }
 
-/// `<state>/keys/.installed`: one line per key fragment, tab-separated fields
+/// `<data>/keys/.installed`: one line per key fragment, tab-separated fields
 /// `<id>\tkeys=<k k…>\tunset=<o o…>\tunhook=<h h…>`; a group may be empty.
 fn render_installed(entries: &[(String, Declared)]) -> String {
     entries
@@ -195,13 +204,31 @@ fn io_failed(path: &Path) -> impl FnOnce(io::Error) -> VerbError {
     move |e| VerbError::Failed(format!("{}: {e}", path.display()))
 }
 
-/// Writes every `bin/`, `keys/`, `conf/` and `agents/` resource under `state` and deletes files
+/// Where a resource is installed: `<data>/<name>`, but `agents/…` under `<data>/roles/`.
+fn install_path(data: &Path, name: &str) -> PathBuf {
+    match name.strip_prefix(&format!("{ROLES_RESOURCE}/")) {
+        Some(role) => data.join(ROLES_DIR).join(role),
+        None => data.join(name),
+    }
+}
+
+/// The directory a resource kind installs into; never with a trailing slash, so a symlink there
+/// is seen as one.
+fn kind_dir(data: &Path, kind: &str) -> PathBuf {
+    if kind == ROLES_RESOURCE {
+        data.join(ROLES_DIR)
+    } else {
+        data.join(kind)
+    }
+}
+
+/// Writes every `bin/`, `keys/`, `conf/` and `agents/` resource under `data` and deletes files
 /// in those directories that no resource accounts for. `bin/` and `keys/` files are executable:
 /// scripts, and fragments that `run-shell` executes.
-fn materialise(state: &Path, resources: &[Resource]) -> Result<(), VerbError> {
-    let mut keep: HashSet<PathBuf> = HashSet::from([state.join(INSTALLED)]);
+fn materialise(data: &Path, resources: &[Resource]) -> Result<(), VerbError> {
+    let mut keep: HashSet<PathBuf> = HashSet::from([data.join(INSTALLED)]);
     for resource in resources {
-        let path = state.join(&resource.name);
+        let path = install_path(data, &resource.name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(io_failed(parent))?;
         }
@@ -216,7 +243,8 @@ fn materialise(state: &Path, resources: &[Resource]) -> Result<(), VerbError> {
         keep.insert(path);
     }
     for kind in KINDS {
-        prune(&state.join(kind), &keep).map_err(io_failed(&state.join(kind)))?;
+        let dir = kind_dir(data, kind);
+        prune(&dir, &keep).map_err(io_failed(&dir))?;
     }
     Ok(())
 }
@@ -244,9 +272,11 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let exe = std::env::current_exe()
         .and_then(|exe| exe.canonicalize())
         .map_err(|e| VerbError::Failed(format!("cannot resolve the txc binary: {e}")))?;
-    let state = &core.config().state_dir;
-    if let Some(path) = [exe.as_path(), state.as_path()]
-        .into_iter()
+    let config = core.config();
+    let data = &config.directories.data;
+    let arguments = config.cli_arguments();
+    if let Some(path) = std::iter::once(exe.as_path())
+        .chain(arguments.iter().map(Path::new))
         .find(|path| is_unsafe_path(path))
     {
         return fail(
@@ -258,7 +288,7 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
         );
     }
     for kind in KINDS {
-        let dir = state.join(kind);
+        let dir = kind_dir(data, kind);
         if dir.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
             return fail(
                 io,
@@ -269,14 +299,14 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
             );
         }
     }
-    let previous = std::fs::read_to_string(state.join(INSTALLED))
+    let previous = std::fs::read_to_string(data.join(INSTALLED))
         .ok()
         .map(|text| parse_installed(&text));
     let resources: Vec<Resource> = KINDS
         .into_iter()
         .flat_map(|kind| core.resources(&format!("{kind}/")))
         .collect();
-    materialise(state, &resources)?;
+    materialise(data, &resources)?;
 
     let fragments: Vec<(String, Declared)> = resources
         .iter()
@@ -292,8 +322,8 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
         .filter(|id| *id != IDE_FRAGMENT)
         .collect();
     let conf = core.config().tmux_conf_path();
-    std::fs::write(&conf, conf_text(&exe, state, &others)).map_err(io_failed(&conf))?;
-    let installed = state.join(INSTALLED);
+    std::fs::write(&conf, conf_text(&exe, data, &arguments, &others)).map_err(io_failed(&conf))?;
+    let installed = data.join(INSTALLED);
     let write_installed =
         || std::fs::write(&installed, render_installed(&fragments)).map_err(io_failed(&installed));
 
@@ -434,7 +464,8 @@ mod tests {
         assert_eq!(
             conf_text(
                 Path::new("/opt/txc"),
-                Path::new("/s/state"),
+                Path::new("/s/data"),
+                &words(&["--data-dir", "/s/data", "--run-dir", "/r"]),
                 &["kill", "labels"]
             ),
             "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
@@ -442,11 +473,27 @@ mod tests {
              set -g history-limit 50000\n\
              set -g detach-on-destroy off\n\
              set -g @tx-bin \"/opt/txc\"\n\
-             set -g @tx-state \"/s/state\"\n\
-             source-file \"/s/state/conf/tmux.conf\"\n\
-             run-shell \"/s/state/keys/ide.tmux\"\n\
-             run-shell \"/s/state/keys/kill.tmux\"\n\
-             run-shell \"/s/state/keys/labels.tmux\"\n"
+             set -g @tx-data \"/s/data\"\n\
+             set -g @tx-arguments \"--data-dir /s/data --run-dir /r\"\n\
+             source-file \"/s/data/conf/tmux.conf\"\n\
+             run-shell \"/s/data/keys/ide.tmux\"\n\
+             run-shell \"/s/data/keys/kill.tmux\"\n\
+             run-shell \"/s/data/keys/labels.tmux\"\n"
+        );
+    }
+
+    #[test]
+    fn shipped_roles_install_under_roles() {
+        let data = Path::new("/d");
+        assert_eq!(
+            install_path(data, "agents/skills/x/SKILL.md"),
+            Path::new("/d/roles/skills/x/SKILL.md")
+        );
+        assert_eq!(kind_dir(data, "agents"), Path::new("/d/roles"));
+        assert_eq!(kind_dir(data, "keys"), Path::new("/d/keys"));
+        assert_eq!(
+            install_path(data, "bin/tmux-nav"),
+            Path::new("/d/bin/tmux-nav")
         );
     }
 

@@ -5,12 +5,17 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
 
+use std::path::PathBuf;
 use tx_core::{
     CoreError, CreateOptions, LaunchOptions, ListFilter, RefreshResult, SendOptions, SessionId,
     TxCore,
 };
 use tx_core_cli::args::{self, Invocation, LaunchSpec, Verb};
-use tx_core_cli::setup::{Failure, open, preview_verbs};
+
+use tx_core_cli::setup::{
+    Failure, VERSION_ONE_HOME, VERSION_ONE_HOME_ENV, absolute, core_config, open, open_with,
+    preview_verbs, process_environment,
+};
 
 fn main() -> ExitCode {
     let args: Result<Vec<String>, args::UsageError> = std::env::args_os()
@@ -66,6 +71,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         }
         return Ok(ExitCode::SUCCESS);
     }
+    if let Verb::Migrate { from } = &invocation.verb {
+        return migrate(&invocation.global, from.clone());
+    }
     if let Verb::Plugin { name, .. } = &invocation.verb
         && !preview_verbs(&invocation.global)?
             .iter()
@@ -78,7 +86,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     let core = open(&invocation.global)?;
     let mut out = std::io::stdout().lock();
     match invocation.verb {
-        Verb::Help => unreachable!(),
+        Verb::Help | Verb::Migrate { .. } => unreachable!(),
         Verb::Engines => {
             for id in core.engine_ids() {
                 writeln!(out, "{id}").ok();
@@ -272,4 +280,59 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Moves a version-1 home into the five directories, then regenerates the server config with
+/// `ui install`: the moved one embeds the old paths.
+fn migrate(global: &args::Global, from: Option<PathBuf>) -> Result<ExitCode, Failure> {
+    let from = absolute(from.unwrap_or_else(|| {
+        process_environment(VERSION_ONE_HOME_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                process_environment("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(VERSION_ONE_HOME)
+            })
+    }));
+    let config = core_config(global)?;
+    let report =
+        tx_core::migrate::migrate_home(&from, &config.directories).map_err(Failure::Migration)?;
+    let mut out = std::io::stdout().lock();
+    for (moved_from, moved_to) in &report.moved {
+        writeln!(
+            out,
+            "moved\t{}\t{}",
+            moved_from.display(),
+            moved_to.display()
+        )
+        .ok();
+    }
+    for left in &report.left {
+        writeln!(out, "left\t{}", left.display()).ok();
+    }
+    let core = open_with(global, config)?;
+    let Some(install) = core.verb("ui") else {
+        writeln!(
+            out,
+            "the ide plugin is disabled; run `txc ui install` once it is enabled"
+        )
+        .ok();
+        return Ok(ExitCode::SUCCESS);
+    };
+    drop(out);
+    let (mut stdin, mut stdout, mut stderr) = (
+        std::io::stdin().lock(),
+        std::io::stdout().lock(),
+        std::io::stderr().lock(),
+    );
+    let mut io = tx_core::VerbIo {
+        stdin: &mut stdin,
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
+    let code = install
+        .run(&core, &mut io, &["install".to_owned()])
+        .map_err(Failure::Verb)?;
+    Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }

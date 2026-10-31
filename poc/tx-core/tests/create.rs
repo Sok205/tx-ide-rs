@@ -50,10 +50,17 @@ fn process_session_runs_detached_with_the_tx_environment() {
         get(&env, "TX_TMUX_SOCKET"),
         Some(h.socket().to_str().unwrap())
     );
-    assert_eq!(
-        get(&env, "TX_CORE_HOME"),
-        Some(h.state_dir().to_str().unwrap())
-    );
+    let directories = h.directories();
+    for (key, directory) in [
+        ("TX_CONFIG_DIR", &directories.config),
+        ("TX_DATA_DIR", &directories.data),
+        ("TX_STATE_DIR", &directories.state),
+        ("TX_CACHE_DIR", &directories.cache),
+        ("TX_RUN_DIR", &directories.run),
+    ] {
+        assert_eq!(get(&env, key), Some(directory.to_str().unwrap()), "{key}");
+    }
+    assert_eq!(get(&env, "TX_CORE_HOME"), None);
     let location = core.get_execution_location(&id).unwrap();
     assert_eq!(location.socket, h.socket());
     assert!(location.session_target.starts_with('$'));

@@ -94,11 +94,12 @@ impl Binds {
 }
 
 /// The fzf argv. `{1}`, `{2}`, `$TX_ARM_FILE` and `$FZF_PORT` stay literal for fzf and the
-/// shells it spawns; the arm file reaches them through the child's environment.
+/// shells it spawns; the arm file reaches them through the child's environment. `arguments`
+/// are the core's `cli_arguments()`, which every re-invocation of `bin` carries.
 pub fn fzf_args(
     bin: &Path,
     socket: &Path,
-    state_dir: &Path,
+    arguments: &[String],
     namew: i64,
     query: &str,
     _arm_file: &Path,
@@ -107,9 +108,9 @@ pub fn fzf_args(
     let namew = namew.max(0) as usize;
     let bin = bin.display();
     let socket = socket.display();
-    let state_dir = state_dir.display();
-    let reload = format!("reload-sync({bin} --state-dir {state_dir} _list)");
-    let edit_tag = format!("{bin} --state-dir {state_dir} _edit-tag {{1}}");
+    let arguments = arguments.join(" ");
+    let reload = format!("reload-sync({bin} {arguments} _list)");
+    let edit_tag = format!("{bin} {arguments} _edit-tag {{1}}");
     let header_cols = format!(
         "{:<namew$}   {:<LOCATION_W$} {:<7} {:<6} {:<ROLE_W$} TAGS",
         "NAME", "LOCATION", "STARTED", "IDLE", "ROLE"
@@ -153,7 +154,7 @@ pub fn fzf_args(
             "--bind=ctrl-d:execute-silent(printf '%s' {{1}} >\"$TX_ARM_FILE\")+transform-header({arm_cmd})+rebind(y,n)"
         ));
         args.push(format!(
-            "--bind=y:execute-silent({bin} --state-dir {state_dir} kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"
+            "--bind=y:execute-silent({bin} {arguments} kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"
         ));
     }
     args.push(format!(
@@ -269,7 +270,7 @@ impl Verb for Pick {
         let args = fzf_args(
             &bin,
             core.socket_path(),
-            &core.config().state_dir,
+            &core.config().cli_arguments(),
             namew,
             &options.query,
             &arm_file,
@@ -437,7 +438,7 @@ mod tests {
         fzf_args(
             Path::new("/x/txc"),
             Path::new("/k/tmux.sock"),
-            Path::new("/s"),
+            &["--data-dir".to_owned(), "/s".to_owned()],
             12,
             "",
             Path::new("/t/arm"),
@@ -462,7 +463,7 @@ mod tests {
 
     #[test]
     fn fzf_args_are_exact() {
-        let reload = "reload-sync(/x/txc --state-dir /s _list)";
+        let reload = "reload-sync(/x/txc --data-dir /s _list)";
         let focus = format!(
             "printf '\x1b[38;2;122;162;247m\x1b[1m%s\x1b[0m \x1b[38;2;192;202;245m\x1b[1m%s\x1b[0m\\n%s' {{1}} {{2}} '{HEADER}'"
         );
@@ -486,9 +487,9 @@ mod tests {
             format!("--bind=start:execute-silent(( while sleep 1; do curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || exit 0; done ) &)+unbind(y,n)"),
             format!("--bind=ctrl-r:{reload}"),
             format!("--bind=focus:transform-header({focus})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"),
-            format!("--bind=ctrl-t:execute(tmux -S /k/tmux.sock display-popup -E -h 4 -w 60% \"/x/txc --state-dir /s _edit-tag {{1}}\")+{reload}"),
+            format!("--bind=ctrl-t:execute(tmux -S /k/tmux.sock display-popup -E -h 4 -w 60% \"/x/txc --data-dir /s _edit-tag {{1}}\")+{reload}"),
             format!("--bind=ctrl-d:execute-silent(printf '%s' {{1}} >\"$TX_ARM_FILE\")+transform-header({arm})+rebind(y,n)"),
-            format!("--bind=y:execute-silent(/x/txc --state-dir /s kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"),
+            format!("--bind=y:execute-silent(/x/txc --data-dir /s kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+unbind(y,n)"),
             format!("--bind=n:transform-header({focus})+execute-silent(: >\"$TX_ARM_FILE\")+unbind(y,n)"),
         ];
         assert_eq!(args(ALL), expected);

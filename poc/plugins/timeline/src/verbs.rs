@@ -14,7 +14,6 @@ use tx_ui::tmux::{Ui, shell_quote};
 use crate::app::DEFAULT_WINDOW_MIN;
 use crate::model::{Builder, DEFAULT_DAYS, chat_sources, is_agent, load_sessions};
 use crate::{PLUGIN_ID, run};
-use tx_chat::data_dir;
 
 pub const RESIDENT_VERB: &str = "_timeline-resident";
 /// The tmux session (a view, not a record) hosting the resident timeline.
@@ -127,10 +126,10 @@ pub fn parse_options(argv: &[String], allowed: &[&str]) -> Result<Options, Strin
 }
 
 pub fn builder(core: &TxCore) -> Builder {
-    let state = &core.config().state_dir;
+    let config = core.config();
     Builder::new(
-        tx_chat::data_dir(state, tx_chat::HISTORY_ID),
-        data_dir(state, PLUGIN_ID),
+        config.plugin_data_dir(tx_chat::HISTORY_ID),
+        config.plugin_data_dir(PLUGIN_ID),
     )
 }
 
@@ -196,19 +195,16 @@ impl Verb for Timeline {
     }
 }
 
-/// `<txc> --state-dir <state> [--socket <socket>] _timeline-resident --last 30m`, shell-quoted.
+/// `<txc> <cli_arguments> _timeline-resident --last 30m`, shell-quoted.
 fn resident_command(core: &TxCore) -> Result<String, VerbError> {
     let exe = std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
-    let config = core.config();
-    let mut words = vec![
-        shell_quote(&exe.to_string_lossy()),
-        "--state-dir".to_owned(),
-        shell_quote(&config.state_dir.to_string_lossy()),
-    ];
-    if let Some(socket) = &config.tmux_socket {
-        words.push("--socket".to_owned());
-        words.push(shell_quote(&socket.to_string_lossy()));
-    }
+    let mut words = vec![shell_quote(&exe.to_string_lossy())];
+    words.extend(
+        core.config()
+            .cli_arguments()
+            .iter()
+            .map(|word| shell_quote(word)),
+    );
     words.extend([
         RESIDENT_VERB.to_owned(),
         "--last".to_owned(),
@@ -224,7 +220,12 @@ fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
     }
     let command = resident_command(core)?;
     // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
-    let cwd = core.config().state_dir.to_string_lossy().replace('#', "##");
+    let cwd = core
+        .config()
+        .directories
+        .data
+        .to_string_lossy()
+        .replace('#', "##");
     ui.run(&[
         "new-session",
         "-d",
@@ -264,7 +265,7 @@ impl Verb for TimelineAttach {
             return Ok(2);
         }
         let ui = Ui::from_core(core);
-        let dir = data_dir(&core.config().state_dir, PLUGIN_ID);
+        let dir = core.config().plugin_data_dir(PLUGIN_ID);
         tx_chat::ensure_dir(&dir).map_err(|error| failed(format!("{}: {error}", dir.display())))?;
         // Two clients opening at once must reuse the same session.
         let lock_path = dir.join(POPUP_LOCK);

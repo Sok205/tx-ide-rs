@@ -13,10 +13,10 @@
 set -u
 
 TXC=$(tmux show-option -gv @tx-bin 2>/dev/null)
-STATE=$(tmux show-option -gv @tx-state 2>/dev/null)
-[ -n "$STATE" ] || exit 0
+ARGUMENTS=$(tmux show-option -gv @tx-arguments 2>/dev/null)
+[ -n "$ARGUMENTS" ] || exit 0
 [ -n "$TXC" ] || exit 0
-TX="$TXC --state-dir $STATE"
+TX="$TXC $ARGUMENTS"
 
 CONF=$(mktemp -t tx-picker-keys.XXXXXX)
 trap 'rm -f "$CONF"' EXIT

@@ -17,11 +17,11 @@
 # last-write-wins.
 set -u
 
-# The state directory, handed over by the server's own options (written by `txc ui install`);
-# the helper scripts live in <state>/bin.
-STATE=$(tmux show-option -gv @tx-state 2>/dev/null)
-[ -n "$STATE" ] || exit 0
-DIR="$STATE/bin"
+# The data directory, handed over by the server's own options (written by `txc ui install`);
+# the helper scripts live in <data>/bin.
+DATA=$(tmux show-option -gv @tx-data 2>/dev/null)
+[ -n "$DATA" ] || exit 0
+DIR="$DATA/bin"
 # Navigator for the nav-keys edge path.
 NAV="$DIR/tmux-nav"
 

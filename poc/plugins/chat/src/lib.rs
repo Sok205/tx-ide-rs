@@ -1,6 +1,6 @@
 //! tx-core plugins `history` (transcript mirror, `history` listing) and `chat` (chat-id
 //! capture, chat ops, prefix+f). Neither uses a core slot beyond verbs and resources; each
-//! keeps bulk state under `<state_dir>/plugins/<id>/`.
+//! keeps bulk state under `<data>/plugins/<id>/` (`CoreConfig::plugin_data_dir`).
 
 pub mod capture;
 pub mod detach;
@@ -21,11 +21,6 @@ use tx_ui::tmux::UiError;
 
 pub const HISTORY_ID: &str = "history";
 pub const CHAT_ID: &str = "chat";
-
-/// `<state_dir>/plugins/<plugin>/`. Pure: nothing is created.
-pub fn data_dir(state_dir: &Path, plugin: &str) -> PathBuf {
-    state_dir.join("plugins").join(plugin)
-}
 
 /// `create_dir_all`, then mode 0755 on the leaf.
 pub fn ensure_dir(dir: &Path) -> std::io::Result<()> {
@@ -108,7 +103,7 @@ impl Plugin for HistoryPlugin {
     }
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
-        for verb in history_verbs::verbs(data_dir(&r.config().state_dir, HISTORY_ID)) {
+        for verb in history_verbs::verbs(r.config().plugin_data_dir(HISTORY_ID)) {
             r.verb(verb);
         }
         Ok(())
@@ -144,11 +139,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn data_dir_is_pure_and_write_atomic_replaces() {
+    fn write_atomic_replaces() {
         let dir = tempfile::tempdir().unwrap();
-        let data = data_dir(dir.path(), HISTORY_ID);
-        assert_eq!(data, dir.path().join("plugins/history"));
-        assert!(!data.exists());
+        let data = dir.path().join("plugins/history");
         ensure_dir(&data).unwrap();
         let file = data.join("x.json");
         write_atomic(&file, b"one").unwrap();

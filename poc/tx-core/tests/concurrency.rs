@@ -9,11 +9,11 @@ use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
 use common::{Harness, process, typed, wait_for};
-use tx_core::{CoreConfig, CoreError, ListFilter, SendOptions, TxCore};
+use tx_core::{CoreConfig, CoreError, Directories, ListFilter, SendOptions, TxCore};
 
 const CHILD_ENV: &str = "TX_CORE_TEST_CHILD";
 
-/// The child role of the multi-process test: `create:<state_dir>:<name>:<cwd>` → prints
+/// The child role of the multi-process test: `create:<home>:<name>:<cwd>` → prints
 /// `ok <id>` or `err <variant>`.
 #[test]
 fn child_entry() {
@@ -22,7 +22,7 @@ fn child_entry() {
     };
     let parts: Vec<&str> = spec.splitn(4, ':').collect();
     assert_eq!(parts[0], "create");
-    let core = TxCore::open(CoreConfig::new(parts[1])).unwrap();
+    let core = TxCore::open(CoreConfig::new(Directories::under(parts[1]))).unwrap();
     match core.create_session(process(parts[2], std::path::Path::new(parts[3]))) {
         Ok(id) => println!("\nTXC-VERDICT ok {id}"),
         Err(CoreError::NameTaken(_)) => println!("\nTXC-VERDICT err NameTaken"),
@@ -43,11 +43,7 @@ fn concurrent_create_from_eight_processes_yields_one_session() {
                 .args(["--exact", "child_entry", "--nocapture", "--test-threads=1"])
                 .env(
                     CHILD_ENV,
-                    format!(
-                        "create:{}:shared:{}",
-                        h.state_dir().display(),
-                        cwd.display()
-                    ),
+                    format!("create:{}:shared:{}", h.home().display(), cwd.display()),
                 )
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
@@ -129,7 +125,7 @@ fn concurrent_tag_and_rename_lose_no_update() {
     let tagged = log.iter().filter(|l| l["type"] == "tagged").count();
     let renamed = log.iter().filter(|l| l["type"] == "renamed").count();
     assert_eq!((tagged, renamed), (50, 50));
-    let temp_files = std::fs::read_dir(h.state_dir().join("sessions"))
+    let temp_files = std::fs::read_dir(h.data_dir().join("sessions"))
         .unwrap()
         .filter(|e| {
             e.as_ref()

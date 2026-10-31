@@ -20,7 +20,7 @@ use crate::ext::{
     AgentLaunch, ChatExt, ChatRef, Origin, Role, active_chat, agent_launch, chat_ext,
 };
 use crate::history_verbs::say;
-use crate::{CHAT_ID, ChatError, data_dir};
+use crate::{CHAT_ID, ChatError};
 
 /// The fork's chat ref, pending until the capture hook reports the fork's own chat id.
 fn pending_fork_ref(origin_session: &SessionId, origin_chat: &str) -> ChatRef {
@@ -44,7 +44,7 @@ fn pending_fork_ref(origin_session: &SessionId, origin_chat: &str) -> ChatRef {
 
 pub struct Ops<'a> {
     pub core: &'a TxCore,
-    /// `<state_dir>/plugins/chat/`.
+    /// `<data>/plugins/chat/`.
     pub chat_dir: PathBuf,
 }
 
@@ -59,7 +59,7 @@ impl<'a> Ops<'a> {
     pub fn new(core: &'a TxCore) -> Self {
         Self {
             core,
-            chat_dir: data_dir(&core.config().state_dir, CHAT_ID),
+            chat_dir: core.config().plugin_data_dir(CHAT_ID),
         }
     }
 
@@ -431,8 +431,11 @@ mod tests {
     #[test]
     fn next_free_name_skips_running_names() {
         let dir = tempfile::tempdir().unwrap();
-        let core = TxCore::open(tx_core::CoreConfig::new(dir.path())).unwrap();
-        let store = tx_core::SessionStore::new(dir.path().join("sessions"));
+        let core = TxCore::open(tx_core::CoreConfig::new(tx_core::Directories::under(
+            dir.path(),
+        )))
+        .unwrap();
+        let store = tx_core::SessionStore::new(dir.path().join("data/sessions"));
         let record = |id: &str, name: &str, lifecycle: &str| -> Session {
             serde_json::from_value(json!({
                 "id": id, "name": name, "parent": null, "tags": [], "cwd": "/tmp",

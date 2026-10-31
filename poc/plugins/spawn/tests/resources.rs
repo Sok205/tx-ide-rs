@@ -8,7 +8,10 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
         .prefix("txc")
         .tempdir_in("/tmp")
         .unwrap();
-    let mut core = TxCore::open(CoreConfig::new(dir.path().join("state"))).unwrap();
+    let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
+        dir.path().join("state"),
+    )))
+    .unwrap();
     core.plug(vec![Box::new(SpawnPlugin)], config).unwrap();
     (dir, core)
 }
@@ -22,7 +25,7 @@ fn the_key_fragment_declares_its_key() {
     assert_eq!(keys[0].name, "keys/spawn.tmux");
     let text = std::str::from_utf8(keys[0].bytes).unwrap();
     assert!(text.lines().any(|line| line == "# keys: n"), "{text}");
-    assert!(text.contains("$STATE/bin/tmux-new-agent"), "{text}");
+    assert!(text.contains("$DATA/bin/tmux-new-agent"), "{text}");
 }
 
 #[test]

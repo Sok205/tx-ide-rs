@@ -366,21 +366,19 @@ impl Nav<'_> {
             .find(|candidate| bound_artifact(candidate).as_deref() == Some(artifact_id))
     }
 
-    /// `<txc> --state-dir <state> [--socket <socket>] argv…`, shell-quoted: `run-shell` and the
-    /// popup run in the server's environment, which knows neither.
+    /// `<txc> <cli_arguments> argv…`, shell-quoted: `run-shell` and the popup run in the
+    /// server's environment, which knows neither the directories nor the socket.
     fn txc_command(&self, argv: &[&str]) -> Result<String, VerbError> {
         let exe =
             std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
-        let config = self.core.config();
-        let mut words = vec![
-            shell_quote(&exe.to_string_lossy()),
-            "--state-dir".to_owned(),
-            shell_quote(&config.state_dir.to_string_lossy()),
-        ];
-        if let Some(socket) = &config.tmux_socket {
-            words.push("--socket".to_owned());
-            words.push(shell_quote(&socket.to_string_lossy()));
-        }
+        let mut words = vec![shell_quote(&exe.to_string_lossy())];
+        words.extend(
+            self.core
+                .config()
+                .cli_arguments()
+                .iter()
+                .map(|word| shell_quote(word)),
+        );
         words.extend(argv.iter().map(|word| shell_quote(word)));
         Ok(words.join(" "))
     }

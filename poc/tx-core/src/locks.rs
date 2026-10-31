@@ -1,4 +1,4 @@
-//! Advisory file locks under `<state_dir>/locks/`: `create.lock` serializes name checks and
+//! Advisory file locks under `<state>/locks/`: `create.lock` serializes name checks and
 //! `<id>.lock` serializes writes to (and keystrokes into) one session. `std::fs::File::lock`, no
 //! extra dependency. Lock order is always `create.lock` before `<id>.lock`.
 

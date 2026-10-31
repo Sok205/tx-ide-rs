@@ -1,4 +1,4 @@
-//! Shared harness for the integration suites: a temp state dir under /tmp (short socket path),
+//! Shared harness for the integration suites: temp directories under /tmp (short socket path),
 //! a shell-stub engine, and a kill-server on drop so no private server outlives its test.
 #![allow(dead_code)]
 
@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use tx_core::{
-    CoreConfig, CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine,
-    SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CreateOptions, Directories, EngineError, LaunchOptions, LaunchPlan, LaunchRequest,
+    LlmEngine, SessionId, TxCore, WorkspaceAction,
 };
 
 /// `None` when tmux is not installed; callers skip.
@@ -26,7 +26,7 @@ macro_rules! require_tmux {
     };
 }
 
-/// A state dir under /tmp; the tmux server behind it is killed on drop.
+/// The five directories under one root in /tmp; the tmux server behind them is killed on drop.
 pub struct Harness {
     pub dir: tempfile::TempDir,
 }
@@ -40,16 +40,29 @@ impl Harness {
         Self { dir }
     }
 
+    /// The root the five directories live under (`Directories::under`).
+    pub fn home(&self) -> PathBuf {
+        self.dir.path().join("home")
+    }
+
+    pub fn directories(&self) -> Directories {
+        Directories::under(self.home())
+    }
+
+    pub fn data_dir(&self) -> PathBuf {
+        self.directories().data
+    }
+
     pub fn state_dir(&self) -> PathBuf {
-        self.dir.path().join("state")
+        self.directories().state
     }
 
     pub fn socket(&self) -> PathBuf {
-        self.state_dir().join("tmux.sock")
+        self.directories().run.join("tmux.sock")
     }
 
     pub fn config(&self) -> CoreConfig {
-        CoreConfig::new(self.state_dir())
+        CoreConfig::new(self.directories())
     }
 
     pub fn open(&self) -> TxCore {
@@ -108,7 +121,7 @@ impl Harness {
     }
 
     pub fn log_lines(&self) -> Vec<serde_json::Value> {
-        std::fs::read_to_string(self.state_dir().join("log.jsonl"))
+        std::fs::read_to_string(self.data_dir().join("log.jsonl"))
             .unwrap_or_default()
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
@@ -116,7 +129,7 @@ impl Harness {
     }
 
     pub fn record_bytes(&self, id: &SessionId) -> Vec<u8> {
-        std::fs::read(self.state_dir().join(format!("sessions/{id}.json"))).unwrap()
+        std::fs::read(self.data_dir().join(format!("sessions/{id}.json"))).unwrap()
     }
 }
 

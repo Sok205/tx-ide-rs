@@ -199,7 +199,7 @@ fn forget_drops_the_record_and_leaves_tmux_alone() {
     let profile = h.state_dir().join(format!("profiles/{id}.md"));
     assert!(profile.exists());
     assert!(core.forget_session(&id).unwrap());
-    assert!(!h.state_dir().join(format!("sessions/{id}.json")).exists());
+    assert!(!h.data_dir().join(format!("sessions/{id}.json")).exists());
     assert!(!profile.exists());
     assert_eq!(h.live_names(), ["f"], "the tmux session keeps running");
     assert!(!core.forget_session(&id).unwrap());

@@ -38,7 +38,8 @@ fn expected_conf(cli: &Cli) -> String {
          set -g history-limit 50000\n\
          set -g detach-on-destroy off\n\
          set -g @tx-bin \"{}\"\n\
-         set -g @tx-state \"{state}\"\n\
+         set -g @tx-data \"{state}\"\n\
+         set -g @tx-arguments \"{arguments}\"\n\
          source-file \"{state}/conf/tmux.conf\"\n\
          run-shell \"{state}/keys/ide.tmux\"\n\
          run-shell \"{state}/keys/chat.tmux\"\n\
@@ -51,6 +52,7 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/timeline.tmux\"\n\
          run-shell \"{state}/keys/menu.tmux\"\n",
         exe().display(),
+        arguments = cli.arguments(),
     )
 }
 
@@ -141,10 +143,10 @@ fn ui_install_materialises_resources() {
     }
     assert!(state.join("conf/tmux.conf").is_file());
     for role in [
-        "agents/COMMON.md",
-        "agents/DEVELOPER.md",
-        "agents/TX-ASSISTANT.md",
-        "agents/skills/tx-sessions/SKILL.md",
+        "roles/COMMON.md",
+        "roles/DEVELOPER.md",
+        "roles/TX-ASSISTANT.md",
+        "roles/skills/tx-sessions/SKILL.md",
     ] {
         let path = state.join(role);
         assert!(path.is_file(), "{path:?}");
@@ -183,7 +185,7 @@ fn ui_install_deletes_files_no_plugin_provides() {
         cli.state().join("bin/old-script"),
         cli.state().join("keys/old.tmux"),
         cli.state().join("conf/old.conf"),
-        cli.state().join("agents/OLD.md"),
+        cli.state().join("roles/OLD.md"),
     ];
     for path in &stale {
         std::fs::write(path, "x").unwrap();
@@ -272,8 +274,12 @@ fn ui_install_fragment_loads() {
         exe().to_str().unwrap()
     );
     assert_eq!(
-        cli.tmux_out(&["show-option", "-gv", "@tx-state"]),
+        cli.tmux_out(&["show-option", "-gv", "@tx-data"]),
         cli.state().to_str().unwrap()
+    );
+    assert_eq!(
+        cli.tmux_out(&["show-option", "-gv", "@tx-arguments"]),
+        cli.arguments()
     );
     assert!(bound("prefix", "n").contains("tmux-new-agent"));
     assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
@@ -507,8 +513,7 @@ fn ui_install_refuses_unsafe_paths() {
     let cli = Cli::new();
     let state = cli.dir.path().join("with space");
     let output = Command::new(env!("CARGO_BIN_EXE_txc"))
-        .arg("--state-dir")
-        .arg(&state)
+        .args(common::directory_flags(&state))
         .args(["ui", "install"])
         .env_remove("TMUX")
         .output()
@@ -529,9 +534,9 @@ fn ui_install_refuses_unsafe_paths() {
 
 fn attach_command(cli: &Cli) -> String {
     format!(
-        "{} --state-dir {} ui attach",
+        "{} {} ui attach",
         env!("CARGO_BIN_EXE_txc"),
-        cli.state().display()
+        cli.arguments()
     )
 }
 

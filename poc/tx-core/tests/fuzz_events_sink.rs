@@ -930,7 +930,7 @@ fn sinks_still_run_when_the_log_cannot_be_appended() {
     core.subscribe(Box::new(Arc::clone(&recorder)));
     let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
     assert_eq!(h.log_lines().len(), 1);
-    let path = h.state_dir().join("log.jsonl");
+    let path = h.data_dir().join("log.jsonl");
     std::fs::remove_file(&path).unwrap();
     std::fs::create_dir(&path).unwrap();
     core.stop_session(&id).unwrap();

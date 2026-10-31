@@ -13,10 +13,10 @@
 set -u
 
 TXC=$(tmux show-option -gv @tx-bin 2>/dev/null)
-STATE=$(tmux show-option -gv @tx-state 2>/dev/null)
-[ -n "$STATE" ] || exit 0
+ARGUMENTS=$(tmux show-option -gv @tx-arguments 2>/dev/null)
+[ -n "$ARGUMENTS" ] || exit 0
 [ -n "$TXC" ] || exit 0
-TX="$TXC --state-dir $STATE"
+TX="$TXC $ARGUMENTS"
 
 CONF=$(mktemp -t tx-labels-keys.XXXXXX)
 trap 'rm -f "$CONF"' EXIT
@@ -28,7 +28,7 @@ trap 'rm -f "$CONF"' EXIT
 # A view is marked by the @tx-view session option, so the hook reads it directly with `if-shell
 # -F` (non-empty/non-zero = true).
 cat >>"$CONF" <<'EOF2'
-set -g pane-border-format " [#P] #(#{@tx-bin} --state-dir #{@tx-state} _pane-label #D #{@tx-label-rev}) "
+set -g pane-border-format " [#P] #(#{@tx-bin} #{@tx-arguments} _pane-label #D #{@tx-label-rev}) "
 set-hook -g after-new-window "if-shell -F '#{@tx-view}' 'setw pane-border-status top'"
 EOF2
 

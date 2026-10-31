@@ -29,8 +29,7 @@ impl Cli {
     }
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_txc"))
-            .arg("--state-dir")
-            .arg(self.state())
+            .args(common::directory_flags(&self.state()))
             .args(args)
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID")

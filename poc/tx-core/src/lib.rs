@@ -12,6 +12,7 @@ pub mod locks;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod messaging;
+pub mod migrate;
 pub mod plugin;
 pub mod profile;
 pub mod session;
@@ -23,7 +24,7 @@ pub mod store;
 #[doc(hidden)]
 pub mod tmux;
 
-pub use config::{CoreConfig, MAX_SOCKET_PATH_BYTES};
+pub use config::{CoreConfig, Directories, MAX_SOCKET_PATH_BYTES};
 pub use core::{
     CreateOptions, DeliveryReceipt, ExecutionLocation, LaunchOptions, ListFilter, RefreshResult,
     SendOptions, TxCore,

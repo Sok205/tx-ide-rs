@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use tx_core::{
-    CoreConfig, CreateOptions, Effort, EventType, LaunchOptions, LaunchPlan, LaunchRequest,
-    Lifecycle, ListFilter, LlmEngine, Profile, ResolvedProfile, SendOptions, SessionId, TxCore,
-    WorkspaceAction,
+    CoreConfig, CreateOptions, Directories, Effort, EventType, LaunchOptions, LaunchPlan,
+    LaunchRequest, Lifecycle, ListFilter, LlmEngine, Profile, ResolvedProfile, SendOptions,
+    SessionId, TxCore, WorkspaceAction,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -113,7 +113,7 @@ fn create_options_and_launch_options_builders() {
 
 #[test]
 fn config_filter_and_send_builders() {
-    let config = CoreConfig::new("/s")
+    let config = CoreConfig::new(Directories::under("/s"))
         .tmux_socket("/k.sock")
         .env("A", "1")
         .profile_dirs(["/p1", "/p2"])

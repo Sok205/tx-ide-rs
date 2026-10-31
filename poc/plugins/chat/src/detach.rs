@@ -5,18 +5,17 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Spawns `exe --state-dir <state_dir> args…` with `env` added to the inherited environment
-/// and returns without waiting.
+/// Spawns `exe <arguments> args…` with `env` added to the inherited environment and returns
+/// without waiting. `arguments` are the core's `cli_arguments()`, so the child opens this core.
 pub fn detach(
     exe: &Path,
-    state_dir: &Path,
+    arguments: &[String],
     args: &[&str],
     env: &[(&str, &str)],
 ) -> std::io::Result<()> {
     let mut command = Command::new(exe);
     command
-        .arg("--state-dir")
-        .arg(state_dir)
+        .args(arguments)
         .args(args)
         .envs(env.iter().copied())
         .stdin(Stdio::null())
@@ -40,7 +39,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn child_runs_detached_with_state_dir_args_and_env() {
+    fn child_runs_detached_with_the_core_arguments_and_env() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fake-txc");
         let out = dir.path().join("out");
@@ -56,7 +55,13 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        detach(&script, Path::new("/st"), &["_x", "op1"], &[("MARK", "m")]).unwrap();
+        detach(
+            &script,
+            &["--data-dir".to_owned(), "/st".to_owned()],
+            &["_x", "op1"],
+            &[("MARK", "m")],
+        )
+        .unwrap();
         let mut text = String::new();
         for _ in 0..100 {
             text = std::fs::read_to_string(&out).unwrap_or_default();
@@ -66,7 +71,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         let mut parts = text.split('|');
-        assert_eq!(parts.next(), Some("--state-dir /st _x op1"));
+        assert_eq!(parts.next(), Some("--data-dir /st _x op1"));
         assert_eq!(parts.next(), Some("m"));
         let sid = parts.next().unwrap();
         let (session, pid) = sid.split_once("==").unwrap();

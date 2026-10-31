@@ -1,6 +1,6 @@
 //! `txi`: tx's internal entry point. Machines run it, people do not: nothing here is listed in
 //! `txc help`. The one verb today is `txi hook <Event>`, which the hooks an engine adapter wires
-//! into its CLI run. It opens the same core as `txc` (`$TX_CORE_HOME`, the session's socket).
+//! into its CLI run. It opens the same core as `txc` (the `TX_*_DIR` and socket every session carries).
 //!
 //! A hook must never fail the agent: anything that is not ours (outside a session, a malformed
 //! id, an unknown record) exits 0, and the wired command caps every other failure at exit 1.

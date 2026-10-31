@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use tx_core::config::{MAX_SOCKET_PATH_BYTES, SOCKET_FILE};
 use tx_core::session::{MAX_NAME_BYTES, RECORD_VERSION};
 use tx_core::{
-    CoreConfig, CoreError, Effort, Launch, Lifecycle, RecordError, Session, SessionId,
+    CoreConfig, CoreError, Directories, Effort, Launch, Lifecycle, RecordError, Session, SessionId,
     validate_name,
 };
 
@@ -478,14 +478,14 @@ proptest! {
         state_dir in arb_text(),
         tmux_socket in prop::option::of(arb_text()),
     ) {
-        let mut config = CoreConfig::new(state_dir.clone());
+        let mut config = CoreConfig::new(Directories::under(&state_dir));
         config.tmux_socket = tmux_socket.clone().map(PathBuf::from);
         let expected = match &tmux_socket {
             Some(s) => PathBuf::from(s),
-            None => PathBuf::from(&state_dir).join(SOCKET_FILE),
+            None => PathBuf::from(&state_dir).join("run").join(SOCKET_FILE),
         };
         prop_assert_eq!(config.socket_path(), expected);
-        prop_assert_eq!(config.tmux_conf_path(), PathBuf::from(&state_dir).join("tmux.conf"));
+        prop_assert_eq!(config.tmux_conf_path(), PathBuf::from(&state_dir).join("data").join("tmux.conf"));
     }
 
     #[test]
@@ -493,7 +493,7 @@ proptest! {
         state_dir in prop_oneof![arb_text(), "/[a-z/]{0,120}", "/[\\PC]{0,60}"],
         tmux_socket in prop::option::of(prop_oneof![arb_text(), "/[a-z/]{0,120}", "/[\\PC]{0,60}"]),
     ) {
-        let mut config = CoreConfig::new(state_dir);
+        let mut config = CoreConfig::new(Directories::under(state_dir));
         config.tmux_socket = tmux_socket.map(PathBuf::from);
         let socket = config.socket_path();
         let len = socket.as_os_str().len();
@@ -514,12 +514,12 @@ proptest! {
     #[test]
     fn check_socket_path_boundary(extra in 0usize..3, use_override in any::<bool>()) {
         let len = MAX_SOCKET_PATH_BYTES - 1 + extra; // 99, 100, 101
-        let mut config = CoreConfig::new("/x");
+        let mut config = CoreConfig::new(Directories::under("/x"));
         if use_override {
             config.tmux_socket = Some(PathBuf::from(format!("/{}", "s".repeat(len - 1))));
         } else {
-            let dir_len = len - 1 - SOCKET_FILE.len(); // "/" + dir + "/" + "tmux.sock"
-            config = CoreConfig::new(format!("/{}", "d".repeat(dir_len - 1)));
+            let dir_len = len - "/run/".len() - SOCKET_FILE.len(); // "/" + dir + "/run/" + "tmux.sock"
+            config = CoreConfig::new(Directories::under(format!("/{}", "d".repeat(dir_len - 1))));
         }
         prop_assert_eq!(config.socket_path().as_os_str().len(), len);
         prop_assert_eq!(config.check_socket_path().is_ok(), len <= MAX_SOCKET_PATH_BYTES);

@@ -102,7 +102,7 @@ fn the_wired_hooks_move_a_claude_session() {
     let mut child = Command::new("sh")
         .args(["-c", &command])
         .env("TX_SESSION_ID", &id)
-        .env("TX_CORE_HOME", cli.state())
+        .envs(common::directory_environment(&cli.state()))
         .env_remove("TMUX")
         .stdin(Stdio::piped())
         .spawn()

@@ -9,7 +9,10 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
         .prefix("txc")
         .tempdir_in("/tmp")
         .unwrap();
-    let mut core = TxCore::open(CoreConfig::new(dir.path().join("state"))).unwrap();
+    let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
+        dir.path().join("state"),
+    )))
+    .unwrap();
     core.plug(vec![Box::new(ArtifactsPlugin)], config).unwrap();
     (dir, core)
 }
@@ -23,7 +26,7 @@ fn the_key_fragment_declares_prefix_a() {
     assert_eq!(keys[0].name, "keys/artifacts.tmux");
     let text = std::str::from_utf8(keys[0].bytes).unwrap();
     assert!(text.lines().any(|line| line == "# keys: a"), "{text}");
-    assert!(text.contains("$STATE/bin/tmux-artifact-menu"), "{text}");
+    assert!(text.contains("$DATA/bin/tmux-artifact-menu"), "{text}");
     assert!(text.contains("send-keys $menu_prefix a"), "{text}");
 }
 
@@ -49,7 +52,10 @@ fn a_disabled_plugin_publishes_nothing() {
 #[test]
 fn a_non_string_editor_setting_is_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let mut core = TxCore::open(CoreConfig::new(dir.path().join("state"))).unwrap();
+    let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
+        dir.path().join("state"),
+    )))
+    .unwrap();
     let mut config = PluginConfig::default();
     config
         .settings

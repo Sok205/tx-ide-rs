@@ -1,4 +1,4 @@
-//! `<state_dir>/plugins/tutor/<lang>.json`: where the project lives and how far the user got.
+//! `<data>/plugins/tutor/<lang>.json`: where the project lives and how far the user got.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};

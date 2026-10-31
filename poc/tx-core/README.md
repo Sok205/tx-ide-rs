@@ -1,7 +1,7 @@
 # tx-core
 
 A plain core for a swarm of interactive agents. Each agent is a normal process inside a detached
-session on tx's **own** tmux server (`-S <state_dir>/tmux.sock -f <state_dir>/tmux.conf`). Agents
+session on tx's **own** tmux server (`-S <run>/tmux.sock -f <data>/tmux.conf`). Agents
 keep running after the launching CLI exits; attaching shows the agent's native terminal.
 
 Design: `../../docs/superpowers/specs/2026-10-15-tx-core-design.md`.
@@ -15,16 +15,23 @@ Plan and the decisions the spec left open: `../../docs/superpowers/plans/2026-10
 | `tx-engine-claude`, `tx-engine-codex` | one `LlmEngine` each, depending only on `tx-core` |
 | `tx-core-cli` | `txc`, a thin CLI that registers the bundled engines |
 
-## Layout of `state_dir` (default `~/.tx-core`)
+## Layout
+
+`CoreConfig::directories` names five directories (`Directories { config, data, state, cache,
+run }`); the front end resolves them (XDG, `TX_APPNAME`; see `../README.md`), the library never
+reads the environment.
 
 ```
-sessions/<id>.json   the record; atomic temp-file + rename writes, mode 0600
-profiles/<id>.md     the combined role text handed to the engine
-locks/               create.lock, <id>.lock  (std::fs::File::lock)
-log.jsonl            one {"ts","actor","type","msg"} line per mutation, ≤ 512 bytes, O_APPEND
-tmux.conf            written once if absent; the IDE may replace it
-tmux.sock            the private server (must stay ≤ 100 bytes; set CoreConfig::tmux_socket)
+<data>/sessions/<id>.json   the record; atomic temp-file + rename writes, mode 0600
+<data>/log.jsonl            one {"ts","actor","type","msg"} line per mutation, ≤ 512 bytes, O_APPEND
+<data>/tmux.conf            written once if absent; `ui install` replaces it
+<data>/plugins/<id>/        a plugin's own data (CoreConfig::plugin_data_dir)
+<state>/profiles/<id>.md    the combined role text handed to the engine
+<state>/locks/              create.lock, <id>.lock  (std::fs::File::lock)
+<run>/tmux.sock             the private server (must stay ≤ 100 bytes; set CoreConfig::tmux_socket)
 ```
+
+`tx_core::migrate::migrate_home` moves a version-1 home (everything in one directory) into them.
 
 Disk is the record. tmux holds only the session option `@tx-id`; `$N` / `%N` targets are looked
 up by it on every call and never stored, so a rename behind core's back changes nothing.
@@ -32,7 +39,13 @@ up by it on every call and never stored, so a rename behind core's back changes 
 ## Using the library
 
 ```rust
-let mut core = TxCore::open(CoreConfig::new("/path/to/state"))?;
+let mut core = TxCore::open(CoreConfig::new(Directories {
+    config: "/home/me/.config/tx-ide".into(),
+    data: "/home/me/.local/share/tx-ide".into(),
+    state: "/home/me/.local/state/tx-ide".into(),
+    cache: "/home/me/.cache/tx-ide".into(),
+    run: "/tmp/tx-ide.me".into(),
+}))?;
 core.register_engine(Box::new(tx_engine_claude::Claude))?;
 let id = core.create_session(CreateOptions::new(
     "worker-1",

@@ -58,13 +58,18 @@ fn ask(core: &TxCore, pane: &str, client: &str) -> Result<i32, VerbError> {
         .map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?
         .display()
         .to_string();
-    let state = core.config().state_dir.display().to_string();
+    let arguments: Vec<String> = core
+        .config()
+        .cli_arguments()
+        .iter()
+        .map(|word| shell_quote(word))
+        .collect();
     // A nonzero exit would make `run-shell` echo the whole command; the outcome is already on
     // the status line.
     let command = format!(
-        "{} --state-dir {} _fork-pane {} {} {} || true",
+        "{} {} _fork-pane {} {} {} || true",
         shell_quote(&exe),
-        shell_quote(&state),
+        arguments.join(" "),
         shell_quote(pane),
         shell_quote(client),
         shell_quote(name.trim()),
