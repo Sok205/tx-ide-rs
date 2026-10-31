@@ -190,7 +190,7 @@ mod tests {
     fn session(id: &str, name: &str, extra: Value) -> Session {
         let mut record = json!({
             "version": 1, "id": id, "name": name, "parent": null, "tags": [], "cwd": "/r",
-            "created_at": 1.0, "ended_at": null, "lifecycle": "running",
+            "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": "running",
             "launch": {"kind": "process", "program": "sleep", "args": []},
         });
         for (key, value) in extra.as_object().unwrap() {

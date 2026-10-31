@@ -188,9 +188,12 @@ fn record(
     ended: Value,
     ext: Value,
 ) -> Session {
+    // The last write: the end when there is one, else the creation.
+    let last_modified_at = ended.as_f64().map_or(created, |ended| ended.max(created));
     serde_json::from_value(json!({
         "id": id, "name": name, "parent": null, "tags": [], "cwd": "/r",
-        "created_at": created, "ended_at": ended, "lifecycle": lifecycle,
+        "created_at": created, "ended_at": ended, "last_modified_at": last_modified_at,
+        "lifecycle": lifecycle,
         "launch": launch, "ext": ext,
     }))
     .unwrap()

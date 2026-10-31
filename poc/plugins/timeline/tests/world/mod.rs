@@ -71,11 +71,17 @@ pub fn record(session: &Value, transcripts: &Path) -> Value {
     if let Some(group) = session.get("group") {
         ext.insert("edit".into(), json!({ "group": group }));
     }
+    // The record's last write: whichever of creation, end and the last state change came last.
+    let last_modified_at = ["created_at", "ended_at", "activity"]
+        .iter()
+        .filter_map(|key| session.get(*key).and_then(Value::as_f64))
+        .fold(f64::MIN, f64::max);
     json!({
         "version": 1,
         "id": session["id"], "name": session["name"],
         "parent": session.get("parent"), "tags": session["tags"], "cwd": "/tmp",
         "created_at": session["created_at"], "ended_at": session.get("ended_at"),
+        "last_modified_at": last_modified_at,
         "lifecycle": if state == "exited" { "exited" } else { "running" },
         "launch": launch, "ext": ext,
         "status": {"state": if state == "exited" { "ended" } else { state }, "since": session["activity"]},

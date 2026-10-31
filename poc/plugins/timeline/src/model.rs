@@ -403,13 +403,10 @@ pub fn is_alive(session: &Session) -> bool {
     session.lifecycle == Lifecycle::Running
 }
 
-/// The latest sign of life: creation, end, or the last agent state change.
+/// The latest sign of life: the record's last write (creation, a state change, the end, a
+/// rename or a tag).
 pub fn activity_at(session: &Session) -> f64 {
-    let since = session.status.as_ref().map_or(0.0, |status| status.since);
-    session
-        .created_at
-        .max(session.ended_at.unwrap_or(0.0))
-        .max(since)
+    session.last_modified_at
 }
 
 /// The agent's state as its engine adapter last reported it; `idle` for a record without one.

@@ -222,6 +222,7 @@ mod tests {
             cwd: PathBuf::from("/"),
             created_at,
             ended_at: None,
+            last_modified_at: created_at,
             lifecycle: Lifecycle::Running,
             launch: Launch::Process {
                 program: "sh".into(),
@@ -487,6 +488,7 @@ mod tests {
         );
         assert!(!store.dir().exists());
         session.created_at = 1.0;
+        session.last_modified_at = 1.0;
         store.save(&session).unwrap();
     }
 

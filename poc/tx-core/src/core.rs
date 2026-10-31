@@ -607,7 +607,7 @@ impl TxCore {
             Err(error) => return Err(undo(CoreError::Tmux(error))),
         };
         let created_at = now();
-        let session = Session {
+        let mut session = Session {
             id: id.clone(),
             name: opts.name.clone(),
             parent: opts.parent,
@@ -615,6 +615,7 @@ impl TxCore {
             cwd: opts.cwd,
             created_at,
             ended_at: exited_at_once.then_some(created_at),
+            last_modified_at: created_at,
             lifecycle: if exited_at_once {
                 Lifecycle::Exited
             } else {
@@ -636,7 +637,7 @@ impl TxCore {
             launch,
             ext: std::collections::BTreeMap::new(),
         };
-        if let Err(error) = self.store.save(&session) {
+        if let Err(error) = self.save(&mut session) {
             return Err(undo(CoreError::Store(error)));
         }
         let mut events = vec![event(EventType::Created, &session, None, "")];
@@ -649,6 +650,12 @@ impl TxCore {
             ));
         }
         Ok((id, events))
+    }
+
+    /// Every record write goes through here: stamps `last_modified_at`, then saves.
+    fn save(&self, session: &mut Session) -> Result<(), StoreError> {
+        session.last_modified_at = now();
+        self.store.save(session)
     }
 
     /// Whether a `Running` record other than `except` carries `name`.
@@ -697,7 +704,7 @@ impl TxCore {
             }
         }
         let old = std::mem::replace(&mut session.name, name.to_owned());
-        self.store.save(&session)?;
+        self.save(&mut session)?;
         let renamed = event(
             EventType::Renamed,
             &session,
@@ -733,7 +740,7 @@ impl TxCore {
         } else {
             session.ext.insert(plugin.to_owned(), value);
         }
-        self.store.save(&session)?;
+        self.save(&mut session)?;
         Ok(true)
     }
 
@@ -772,7 +779,7 @@ impl TxCore {
             if after == before {
                 return Ok(Some(after));
             }
-            self.store.save(&session)?;
+            self.save(&mut session)?;
             let events = match from {
                 Some(from) => {
                     let mut detail = format!("{} → {}", from.as_str(), after.state.as_str());
@@ -799,7 +806,7 @@ impl TxCore {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
             session.tags = tags;
-            self.store.save(&session)?;
+            self.save(&mut session)?;
             let tagged = event(EventType::Tagged, &session, None, session.tags.join(", "));
             (session, tagged)
         };
@@ -858,7 +865,7 @@ impl TxCore {
     /// Saves the record as `Exited`; the caller emits the returned event once its lock is gone.
     fn mark_exited(&self, mut session: Session) -> Result<(Session, Event), CoreError> {
         mark_ended(&mut session, Lifecycle::Exited);
-        self.store.save(&session)?;
+        self.save(&mut session)?;
         let exited = event(EventType::Exited, &session, None, "");
         Ok((session, exited))
     }
@@ -908,7 +915,7 @@ impl TxCore {
                 Some(live) => {
                     self.tmux.kill_session(&live.session_target)?;
                     mark_ended(&mut session, Lifecycle::Stopped);
-                    self.store.save(&session)?;
+                    self.save(&mut session)?;
                     let stopped = event(EventType::Stopped, &session, None, "");
                     (session, stopped)
                 }
@@ -1209,6 +1216,7 @@ mod tests {
             cwd: "/".into(),
             created_at: 1.0,
             ended_at: None,
+            last_modified_at: 1.0,
             lifecycle,
             launch: Launch::Process {
                 program: "x".into(),

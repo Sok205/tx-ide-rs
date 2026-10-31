@@ -197,6 +197,9 @@ pub struct Session {
     pub cwd: PathBuf,
     pub created_at: f64,
     pub ended_at: Option<f64>,
+    /// When the record was last written; core stamps it on every save. A record written before
+    /// this field existed loads with `created_at`.
+    pub last_modified_at: f64,
     pub lifecycle: Lifecycle,
     pub launch: Launch,
     /// The agent's state as its engine adapter reported it. Core-owned. `None` for process
@@ -248,6 +251,9 @@ impl Session {
         if self.ended_at.is_some_and(|at| !at.is_finite()) {
             return Err(RecordError::NonFiniteTime("ended_at"));
         }
+        if !self.last_modified_at.is_finite() {
+            return Err(RecordError::NonFiniteTime("last_modified_at"));
+        }
         let record = RecordOut {
             version: RECORD_VERSION,
             session: self,
@@ -258,7 +264,7 @@ impl Session {
     }
 
     pub fn from_json(text: &str) -> Result<Self, RecordError> {
-        let value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)?;
+        let mut value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)?;
         match value.get("version") {
             None => return Err(RecordError::MissingVersion),
             Some(serde_json::Value::Number(version))
@@ -270,6 +276,10 @@ impl Session {
                 });
             }
             Some(other) => return Err(RecordError::InvalidVersion(other.to_string())),
+        }
+        // Written before `last_modified_at` existed: the last write is unknown, creation stands in.
+        if let Some(created_at) = value.get("created_at").cloned() {
+            value.entry("last_modified_at").or_insert(created_at);
         }
         let record: RecordIn = serde_json::from_value(serde_json::Value::Object(value))?;
         let _ = record.version;
@@ -315,6 +325,7 @@ mod tests {
             cwd: PathBuf::from("/tmp/w"),
             created_at: 1727000000.5,
             ended_at: None,
+            last_modified_at: 1727000000.5,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
                 engine: "claude".into(),
@@ -337,6 +348,7 @@ mod tests {
             cwd: PathBuf::from("/"),
             created_at: 1.0,
             ended_at: Some(2.0),
+            last_modified_at: 1.0,
             lifecycle: Lifecycle::Stopped,
             launch: Launch::Process {
                 program: "sh".into(),
@@ -391,6 +403,17 @@ mod tests {
         assert!(
             matches!(session.launch, Launch::Agent { ref model, ref effort, ref resume, .. } if model.is_none() && effort.is_none() && resume.is_none())
         );
+    }
+
+    #[test]
+    fn a_record_without_last_modified_at_loads_with_its_creation() {
+        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":7.5,"ended_at":null,"lifecycle":"running","launch":{"kind":"process","program":"sh","args":[]}}"#;
+        assert_eq!(Session::from_json(text).unwrap().last_modified_at, 7.5);
+        let stamped = text.replace(
+            r#""created_at":7.5,"#,
+            r#""created_at":7.5,"last_modified_at":9.0,"#,
+        );
+        assert_eq!(Session::from_json(&stamped).unwrap().last_modified_at, 9.0);
     }
 
     #[test]

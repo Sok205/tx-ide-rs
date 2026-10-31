@@ -436,7 +436,7 @@ mod tests {
         let record = |id: &str, name: &str, lifecycle: &str| -> Session {
             serde_json::from_value(json!({
                 "id": id, "name": name, "parent": null, "tags": [], "cwd": "/tmp",
-                "created_at": 1.0, "ended_at": null, "lifecycle": lifecycle,
+                "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": lifecycle,
                 "launch": {"kind": "process", "program": "sh", "args": []}, "ext": {},
             }))
             .unwrap()

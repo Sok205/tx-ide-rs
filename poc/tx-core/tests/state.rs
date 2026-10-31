@@ -147,3 +147,40 @@ fn a_hook_for_an_unknown_session_is_not_found() {
         Err(tx_core::CoreError::NotFound(_))
     ));
 }
+
+#[test]
+fn every_write_stamps_last_modified_at() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("a", &h.workdir("a"))).unwrap();
+    let created = core.get_session(&id).unwrap();
+    assert!(created.last_modified_at >= created.created_at);
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(5));
+
+    pause();
+    let renamed = core.rename_session(&id, "b").unwrap();
+    assert!(
+        renamed.last_modified_at > created.last_modified_at,
+        "rename"
+    );
+    pause();
+    let tagged = core.set_session_tags(&id, vec!["t".into()]).unwrap();
+    assert!(tagged.last_modified_at > renamed.last_modified_at, "tag");
+    pause();
+    core.hook(&id, hook("idle", json!({}), 1.0)).unwrap();
+    let changed = core.get_session(&id).unwrap();
+    assert!(
+        changed.last_modified_at > tagged.last_modified_at,
+        "state change"
+    );
+    pause();
+    // A hook that changes nothing writes nothing.
+    core.hook(&id, hook("idle", json!({}), 2.0)).unwrap();
+    let unchanged = core.get_session(&id).unwrap();
+    assert_eq!(unchanged.last_modified_at, changed.last_modified_at);
+    pause();
+    let stopped = core.stop_session(&id).unwrap();
+    assert!(stopped.last_modified_at > changed.last_modified_at, "stop");
+    assert!(stopped.last_modified_at >= stopped.ended_at.unwrap());
+}
