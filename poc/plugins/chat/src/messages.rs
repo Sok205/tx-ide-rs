@@ -493,14 +493,9 @@ fn read_dir_paths(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The latest sign of life of a record: creation, end, or its last hook state change.
+/// The latest sign of life of a record: creation, end, or its last agent state change.
 fn activity_at(session: &Session) -> f64 {
-    let since = session
-        .ext
-        .get("hooks")
-        .and_then(|hooks| hooks.get("since"))
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
+    let since = session.status.as_ref().map_or(0.0, |status| status.since);
     session
         .created_at
         .max(session.ended_at.unwrap_or(0.0))

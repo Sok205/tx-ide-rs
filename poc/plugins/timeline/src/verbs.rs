@@ -350,12 +350,6 @@ fn health(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
                 notes.push(format!("ext.{plugin} malformed: {error}"));
             }
         }
-        if session.ext.get("hooks").is_some_and(|hooks| {
-            !hooks.is_object() || hooks.get("state").is_some_and(|state| !state.is_string())
-        }) {
-            problems += 1;
-            notes.push("ext.hooks malformed".to_owned());
-        }
         let chats = chat_sources(session).len();
         let found = builder.transcript_paths(session).len();
         if found < chats {

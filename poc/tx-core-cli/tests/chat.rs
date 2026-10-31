@@ -247,7 +247,7 @@ fn chat_ls_unknown_session_exits_1() {
 }
 
 #[test]
-fn chat_hooks_install_coexists_with_hook_install() {
+fn chat_hooks_install_coexists_with_other_hooks() {
     require_tmux!();
     let cli = Cli::new();
     let home = cli.dir.path().join("home");
@@ -273,14 +273,19 @@ fn chat_hooks_install_coexists_with_hook_install() {
             .map(|h| h["command"].as_str().unwrap().to_owned())
             .collect()
     };
-    run(&["hook", "install"]);
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    std::fs::write(
+        &settings,
+        r#"{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"say done"}]}]}}"#,
+    )
+    .unwrap();
     let with_hooks = std::fs::read(&settings).unwrap();
     run(&["chat", "hooks", "install", "--dry-run"]);
     assert_eq!(std::fs::read(&settings).unwrap(), with_hooks, "dry run");
     run(&["chat", "hooks", "install"]);
     run(&["history-hooks", "install"]);
     let commands = stop_commands();
-    for needle in [" hook stop", " _chat-hook stop", " _history-ingest"] {
+    for needle in ["say done", " _chat-hook stop", " _history-ingest"] {
         assert!(
             commands.iter().any(|c| c.contains(needle)),
             "{needle}: {commands:?}"
@@ -293,7 +298,7 @@ fn chat_hooks_install_coexists_with_hook_install() {
         "{commands:?}"
     );
     assert!(commands.iter().any(|c| c.contains("_history-ingest")));
-    assert!(commands.iter().any(|c| c.contains(" hook stop")));
+    assert!(commands.iter().any(|c| c == "say done"));
 }
 
 fn has_run(argv: &[String], run: &[&str]) -> bool {

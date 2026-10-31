@@ -17,12 +17,32 @@ impl Cli {
     fn show(&self, name: &str) -> serde_json::Value {
         serde_json::from_str(&self.ok(&["show", name])).unwrap()
     }
+    /// A Claude session whose `claude` just stays alive.
+    fn create_claude(&self, name: &str) -> String {
+        let cwd = self.dir.path().join(name);
+        std::fs::create_dir_all(&cwd).unwrap();
+        let path = self.fake_claude_path();
+        let output = self.run(
+            &[
+                "create",
+                name,
+                "--cwd",
+                cwd.to_str().unwrap(),
+                "--engine",
+                "claude",
+            ],
+            &[("PATH", path.as_str())],
+            "",
+        );
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
     fn history_dir(&self) -> PathBuf {
         self.state().join("plugins/history")
     }
-    /// What the agent's two Stop hooks run: `hook stop` and `_history-ingest`.
+    /// What the agent's two Stop hooks run: `chat hook Stop` and `_history-ingest`.
     fn stop_hooks(&self, id: &str, payload: &str) {
-        for args in [&["hook", "stop"][..], &["_history-ingest"][..]] {
+        for args in [&["chat", "hook", "Stop"][..], &["_history-ingest"][..]] {
             let output = self.run(args, &[("TX_SESSION_ID", id)], payload);
             assert!(output.status.success(), "{args:?}");
         }
@@ -46,7 +66,7 @@ fn source(cli: &Cli, chat: &str) -> PathBuf {
 fn stop_hook_mirrors_the_claude_transcript_byte_for_byte() {
     require_tmux!();
     let cli = Cli::new();
-    let id = cli.create("a");
+    let id = cli.create_claude("a");
     let src = source(&cli, "c1");
     std::fs::copy(FIXTURE, &src).unwrap();
     cli.stop_hooks(&id, &payload("c1", &src));
@@ -62,7 +82,7 @@ fn stop_hook_mirrors_the_claude_transcript_byte_for_byte() {
         cli.show("a")["ext"]["history"]["chats"]["c1"]["bundle"] == bundle.to_str().unwrap()
     }));
     let shown = cli.show("a");
-    assert_eq!(shown["ext"]["hooks"]["state"], "waiting");
+    assert_eq!(shown["status"]["state"], "idle");
     assert_eq!(
         shown["ext"]["history"]["chats"]["c1"]["transcript"],
         src.to_str().unwrap()
@@ -224,7 +244,12 @@ fn history_hooks_install_round_trip() {
         );
     };
     let settings = home.join(".claude/settings.json");
-    run(&["hook", "install"]);
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    std::fs::write(
+        &settings,
+        r#"{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"say done"}]}]}}"#,
+    )
+    .unwrap();
     let with_hooks = std::fs::read(&settings).unwrap();
 
     run(&["history-hooks", "install", "--dry-run"]);
@@ -232,7 +257,7 @@ fn history_hooks_install_round_trip() {
     run(&["history-hooks", "install"]);
     let both = std::fs::read_to_string(&settings).unwrap();
     assert!(both.contains("_history-ingest"));
-    assert!(both.contains("hook stop"), "hook entries survive");
+    assert!(both.contains("say done"), "foreign entries survive");
     run(&["history-hooks", "install"]);
     assert_eq!(
         std::fs::read_to_string(&settings).unwrap(),
@@ -242,5 +267,4 @@ fn history_hooks_install_round_trip() {
 
     run(&["history-hooks", "uninstall"]);
     assert_eq!(std::fs::read(&settings).unwrap(), with_hooks);
-    run(&["hook", "uninstall"]);
 }

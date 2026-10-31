@@ -2,7 +2,6 @@
 //! Pure formatting; every function takes the records and `now`, nothing reads the clock.
 
 use serde::Deserialize;
-use serde_json::{Map, Value};
 use tx_core::{Launch, Session};
 
 use crate::tmux::Location;
@@ -120,13 +119,9 @@ pub fn chips(tags: &[String]) -> String {
     tags.iter().map(|tag| format!(" [{tag}]")).collect()
 }
 
-/// `ext["hooks"].since`; a missing or malformed record (anything but an object) reads as absent.
-fn hooks_since(session: &Session) -> Option<f64> {
-    session
-        .ext::<Map<String, Value>>("hooks")
-        .ok()
-        .flatten()
-        .and_then(|hooks| hooks.get("since")?.as_f64())
+/// When the agent's state last changed; `None` for a process session.
+fn status_since(session: &Session) -> Option<f64> {
+    session.status.as_ref().map(|status| status.since)
 }
 
 #[derive(Deserialize)]
@@ -154,13 +149,13 @@ pub fn role_of(session: &Session) -> &'static str {
 }
 
 pub fn activity_at(session: &Session) -> f64 {
-    hooks_since(session).unwrap_or(session.created_at)
+    status_since(session).unwrap_or(session.created_at)
 }
 
 /// IDLE: the last-turn age for an agent session, `—` for a process (no activity signal).
 pub fn idle_cell(session: &Session, now: f64) -> String {
     match session.launch {
-        Launch::Agent { .. } => reltime(hooks_since(session), now),
+        Launch::Agent { .. } => reltime(status_since(session), now),
         Launch::Process { .. } => "—".into(),
     }
 }
@@ -225,7 +220,7 @@ mod tests {
     use std::path::PathBuf;
 
     use serde_json::json;
-    use tx_core::{Lifecycle, SessionId};
+    use tx_core::{Lifecycle, SessionId, State, Status};
 
     use super::*;
 
@@ -397,10 +392,7 @@ mod tests {
     fn row_layout_is_byte_exact() {
         let mut session = agent("worker-1", NOW - 90.0);
         session.tags = vec!["a".into()];
-        session.ext.insert(
-            "hooks".into(),
-            json!({"state": "working", "since": NOW - 5.0}),
-        );
+        session.status = Some(Status::new(State::Working, NOW - 5.0));
         let attached = [location("main", "1")];
         let rows = [Row {
             session: &session,
@@ -439,10 +431,7 @@ mod tests {
         let old = agent("o", NOW - 500.0);
         let long = process("a-very-long-session-name", NOW - 100.0);
         let mut fresh = agent("f", NOW - 900.0);
-        fresh.ext.insert(
-            "hooks".into(),
-            json!({"state": "idle", "since": NOW - 10.0}),
-        );
+        fresh.status = Some(Status::new(State::Idle, NOW - 10.0));
         let rows = [&old, &long, &fresh].map(|session| Row {
             session,
             target: "$1",
@@ -475,22 +464,19 @@ mod tests {
     }
 
     #[test]
-    fn malformed_hooks_ext_is_tolerated() {
-        for bad in [json!("oops"), json!(7), json!([1]), json!({"since": "x"})] {
-            let mut session = agent("w", NOW - 90.0);
-            session.ext.insert("hooks".into(), bad);
-            session.ext.insert("spawn".into(), json!("junk"));
-            assert_eq!(activity_at(&session), NOW - 90.0);
-            assert_eq!(idle_cell(&session, NOW), "-");
-            assert_eq!(role_of(&session), "llm");
-            let rows = [Row {
-                session: &session,
-                target: "$1",
-                attached: &[],
-            }];
-            let out = picker_rows(&rows, 12, NOW);
-            assert!(out.contains("1m"), "{out:?}");
-        }
+    fn an_agent_without_a_status_and_a_malformed_spawn_ext_are_tolerated() {
+        let mut session = agent("w", NOW - 90.0);
+        session.ext.insert("spawn".into(), json!("junk"));
+        assert_eq!(activity_at(&session), NOW - 90.0);
+        assert_eq!(idle_cell(&session, NOW), "-");
+        assert_eq!(role_of(&session), "llm");
+        let rows = [Row {
+            session: &session,
+            target: "$1",
+            attached: &[],
+        }];
+        let out = picker_rows(&rows, 12, NOW);
+        assert!(out.contains("1m"), "{out:?}");
         let mut process = process("p", 5.0);
         process.ext.insert("spawn".into(), json!(42));
         assert_eq!(role_of(&process), "shell");

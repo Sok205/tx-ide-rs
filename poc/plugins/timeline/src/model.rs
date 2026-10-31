@@ -12,7 +12,7 @@
 //! Where main read its own record fields, this reads tx-core's record and other plugins'
 //! `ext` entries, never failing on a malformed one (`timeline health` reports those):
 //! transcripts from `ext.chat.chats[].transcript` and `ext.history.chats` (the mirrored bundle
-//! as fallback), the live state from `ext.hooks.state`, the group override from
+//! as fallback), the live state from the record's `status`, the group override from
 //! `ext.edit.group`. Artifacts have no plugin yet, so milestones name the raw command.
 //!
 //! Times inside the payload are MINUTES from `epoch` (the local midnight `days` days back), as
@@ -403,26 +403,21 @@ pub fn is_alive(session: &Session) -> bool {
     session.lifecycle == Lifecycle::Running
 }
 
-fn hooks_field<'a>(session: &'a Session, field: &str) -> Option<&'a Value> {
-    session.ext.get("hooks")?.get(field)
-}
-
-/// The latest sign of life: creation, end, or the last hook state change.
+/// The latest sign of life: creation, end, or the last agent state change.
 pub fn activity_at(session: &Session) -> f64 {
-    let since = hooks_field(session, "since")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
+    let since = session.status.as_ref().map_or(0.0, |status| status.since);
     session
         .created_at
         .max(session.ended_at.unwrap_or(0.0))
         .max(since)
 }
 
-/// The agent's state as the `hooks` plugin last recorded it; `idle` before any hook ran.
-pub fn hook_state(session: &Session) -> String {
-    hooks_field(session, "state")
-        .and_then(Value::as_str)
-        .unwrap_or("idle")
+/// The agent's state as its engine adapter last reported it; `idle` for a record without one.
+pub fn agent_state(session: &Session) -> String {
+    session
+        .status
+        .as_ref()
+        .map_or("idle", |status| status.state.as_str())
         .to_owned()
 }
 
@@ -777,7 +772,7 @@ impl Builder {
                 .unwrap_or("");
             let message_count = rows.iter().filter(|row| row.kind.is_message()).count();
             let state = if live {
-                hook_state(primary)
+                agent_state(primary)
             } else {
                 "killed".to_owned()
             };

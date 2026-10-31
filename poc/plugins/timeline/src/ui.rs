@@ -271,7 +271,7 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     let indicator = match (lane.live, lane.state.as_str()) {
         (false, _) => "×",
         (true, "working") => "●",
-        (true, "idle" | "waiting") => "○",
+        (true, "starting" | "idle" | "waiting") => "○",
         (true, _) => "·",
     };
     put(

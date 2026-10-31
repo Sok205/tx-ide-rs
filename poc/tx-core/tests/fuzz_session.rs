@@ -116,6 +116,7 @@ fn arb_session_with(
                 lifecycle,
                 launch,
                 ext,
+                status: None,
             },
         )
 }
