@@ -34,16 +34,51 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm`, the `tx-assistant` session `ui attach` lands in; ships the TX-ASSISTANT role | tx-core, tx-ui |
 | `plugins/mockup` (`tx-mockup`) | plugin: `txc mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-ui, ratatui |
 | `plugins/tutor` (`tx-tutor`) | plugin: `txc tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships the repo's `tutor/` lesson packs | tx-core, tx-ui, toml, libc |
-| `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|doctor` (durable versioned deliverables in `<state_dir>/plugins/artifacts/`), `txc group` (effort groups), prefix+a | tx-core, tx-ui |
+| `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`), `txc group` (effort groups), prefix+a | tx-core, tx-ui |
 | `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-ui, tx-chat (message parser), ratatui |
 | `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `txc menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-ui, ratatui, tempfile |
 | `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins | tx-core |
 | `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins. `txi`: the internal binary the engines' wired hooks run (`txi hook <Event>`) | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
-carries everything; only `txc` touches `std::env`. Without `--profile-dir` / `--skill-dir`,
-`txc` resolves roles from `<state_dir>/agents` (the roles plugins ship, written by `ui install`)
-and `<state_dir>/user-agents` (yours, never pruned), with skills under each one's `skills/`.
+carries everything; only `txc` / `txi` touch `std::env`. Without `--profile-dir` / `--skill-dir`,
+`txc` resolves roles from `<data>/roles` (the roles plugins ship, written by `ui install`) and
+then `<config>/roles` (yours, never pruned, overriding a shipped role of the same name), with
+skills under each one's `skills/`.
+
+## Where files live
+
+Five directories, the XDG Base Directory layout the way nvim uses it (on macOS too), under the
+application name `tx-ide`. `TX_APPNAME` renames all five at once, as `NVIM_APPNAME` does; it must
+match `[A-Za-z0-9_.-]+`. Each directory resolves, first match wins:
+
+| directory | flag | exported by core | XDG variable | default | holds |
+|---|---|---|---|---|---|
+| config | `--config-dir` | `TX_CONFIG_DIR` | `$XDG_CONFIG_HOME/<app>` | `~/.config/<app>` | `plugins.yaml`, `roles/` (yours) |
+| data | `--data-dir` | `TX_DATA_DIR` | `$XDG_DATA_HOME/<app>` | `~/.local/share/<app>` | `sessions/<id>.json`, `log.jsonl`, `plugins/<id>/`, `roles/` (shipped), `bin/`, `keys/`, `conf/`, `tmux.conf` |
+| state | `--state-dir` | `TX_STATE_DIR` | `$XDG_STATE_HOME/<app>` | `~/.local/state/<app>` | `locks/`, `profiles/<id>.md` |
+| cache | `--cache-dir` | `TX_CACHE_DIR` | `$XDG_CACHE_HOME/<app>` | `~/.cache/<app>` | nothing yet |
+| run | `--run-dir` | `TX_RUN_DIR` | `$XDG_RUNTIME_DIR/<app>` | `$TMPDIR/<app>.$USER` (else `/tmp`) | `tmux.sock` (the directory is mode 0700) |
+
+Core exports all five, and `TX_APPNAME`, into every session it launches: tmux does not pass the
+caller's `XDG_*` on, and this is how a `txc` or a `txi hook` inside a session opens the same core.
+A plugin that re-invokes `txc` (key bindings, popups, detached children) passes
+`CoreConfig::cli_arguments()`, the five flags plus `--socket` when it is overridden; the tmux key
+fragments read the same words from the server option `@tx-arguments`.
+
+`--state-dir` used to name the one directory everything lived in (`~/.tx-core`, or
+`$TX_CORE_HOME`). It now names only the state directory, and `txc` refuses it, pointing at
+`txc migrate`, when it is the only directory flag and names a directory with `sessions/` in it.
+
+`txc migrate [--from DIR]` moves such a version-1 home (default `$TX_CORE_HOME`, else
+`~/.tx-core`) once: `agents/` to `<data>/roles/`, `user-agents/` to `<config>/roles/`,
+`plugins.yaml` to config, `sessions/`, `log.jsonl`, `plugins/`, `bin/`, `keys/`, `conf/` and
+`tmux.conf` to data, `profiles/` to state; `locks/` and the socket stay. It refuses while the old
+server has sessions (stop them first), when the old home has a `MOVED-TO` (a second run), and
+when a destination already holds something, so two homes are never merged. It renames within a
+filesystem and copies then deletes across filesystems, writes `<data>/MIGRATED-FROM` and
+`<old>/MOVED-TO`, keeps the old directory, and finishes with `ui install`, since the moved
+`tmux.conf` names the old paths. Records are moved as they are.
 
 ## Architecture
 
@@ -54,15 +89,15 @@ and `<state_dir>/user-agents` (yours, never pruned), with skills under each one'
           +---------------------------------+
           |  TxCore  (one struct, open once) |
           |  config   CoreConfig            |
-          |  store    SessionStore   <state_dir>/sessions/<id>.json
-          |  tmux     Tmux           tmux -S <state_dir>/tmux.sock -f <state_dir>/tmux.conf
-          |  events   EventLog       <state_dir>/log.jsonl
+          |  store    SessionStore   <data>/sessions/<id>.json
+          |  tmux     Tmux           tmux -S <run>/tmux.sock -f <data>/tmux.conf
+          |  events   EventLog       <data>/log.jsonl
           |  engines  EngineRegistry id -> Box<dyn LlmEngine>
           |  profiles Profiles       role + skill search dirs
-          |  locks    Locks          <state_dir>/locks/{create,<id>}.lock
+          |  locks    Locks          <state>/locks/{create,<id>}.lock
           +---------------------------------+
                         |
-                        v   new-session -d -e TX_SESSION_ID=.. -e TX_TMUX_SOCKET=.. -e TX_CORE_HOME=.. -- program args
+                        v   new-session -d -e TX_SESSION_ID=.. -e TX_TMUX_SOCKET=.. -e TX_*_DIR=.. -- program args
           +---------------------------------+
           |  private tmux server            |   session option @tx-id = record id
           |  session "worker-1"  pane %3    |   $N / %N looked up by @tx-id, never stored
@@ -109,13 +144,14 @@ with a role already did, through `-c developer_instructions`; only role-less one
    canonicalize `cwd`.
 2. Pure checks before any lock: the engine must be registered, the profile must resolve.
 3. Take `create.lock`. Refuse the name if a `Running` record holds it.
-4. Mint the id. For an agent: write `profiles/<id>.md`, call `engine.launch(&request)` (pure),
+4. Mint the id. For an agent: write `<state>/profiles/<id>.md`, call `engine.launch(&request)` (pure),
    apply the plan's workspace actions under `cwd`, merge its env.
 5. `tmux new-session -d -s <name> -c <cwd> -e K=V … -- program args`, then `set-option @tx-id`.
 6. Save the record, append `created` to the log. If anything after step 5 fails, the tmux session
    is killed and the profile file removed: no orphans.
 
-Env layering, later wins: `TX_SESSION_ID`, `TX_TMUX_SOCKET`, `TX_CORE_HOME`, then `CoreConfig::env`,
+Env layering, later wins: `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the five `TX_*_DIR`, then
+`CoreConfig::env` (where `txc` puts `TX_APPNAME`),
 then `CreateOptions::env`, then the engine plan's env.
 
 ### Liveness and messaging
@@ -203,7 +239,7 @@ on an event, re-read the session with `get_session`. Lines are never torn, so `t
 
 ### From inside an agent
 
-Every session carries `TX_SESSION_ID`, `TX_TMUX_SOCKET` and `TX_CORE_HOME`, so an agent can
+Every session carries `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the five `TX_*_DIR` and `TX_APPNAME`, so an agent can
 run `txc send <name> …` and the message arrives as `<from-agent session="…">`. `txc` treats the
 caller as an agent only when `$TMUX` names tx's own socket; anywhere else the sender is the user.
 
@@ -212,7 +248,7 @@ caller as an agent only when `$TMUX` names tx's own socket; anywhere else the se
 Everything but the core is a plugin: a crate under `plugins/<id>/` implementing `tx_core::Plugin`,
 which fills any of four slots — engines, event sinks, verbs, resources (`tx-core/src/plugin.rs`). `txc`
 links them through `tx-core-cli/src/plugins.rs::MANIFEST` and switches them in
-`<state_dir>/plugins.yaml` (`--plugins FILE` overrides):
+`<config>/plugins.yaml` (`--plugins FILE` overrides):
 
 ```yaml
 plugins:
@@ -228,7 +264,8 @@ record's `ext.<id>` object via `TxCore::update_ext`. Design:
 `../docs/superpowers/specs/2026-10-16-poc-plugins-design.md`.
 
 A resource is a named static blob a plugin publishes with `Registry::resource(name, bytes)`
-(`keys/<id>.tmux`, `bin/<file>`, `conf/<file>`, `agents/<file>`); the core stores it and lists it with
+(`keys/<id>.tmux`, `bin/<file>`, `conf/<file>`, `agents/<file>`, a shipped role installed as
+`<data>/roles/<file>`); the core stores it and lists it with
 `TxCore::resources(prefix)` but never reads one, and a disabled plugin's resources are absent just
 like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-design.md`).
 
@@ -242,12 +279,12 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
 | `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_session`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
 | `chat` | `fork`, `resume`, `chat ls <session>`, `chat hooks install\|uninstall`, and the internal `_fork-pane`, `_chat-hook`; resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session`; owns `ext.chat` |
-| `history` | `history` (the mirrored chats), `history-hooks install\|uninstall`, the internal `_history-ingest`; owns `ext.history` and `<state_dir>/plugins/history/` |
+| `history` | `history` (the mirrored chats), `history-hooks install\|uninstall`, the internal `_history-ingest`; owns `ext.history` and `<data>/plugins/history/` |
 | `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name); resource `agents/TX-ASSISTANT.md` |
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
-| `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<state_dir>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<state_dir>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
+| `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<data>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<data>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
 
-| `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"bound": artifact id, "group": …}`) and the store `<state_dir>/plugins/artifacts/` (`<id>.json`, `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl` and `.locks/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
+| `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"bound": artifact id, "group": …}`) and the store `<data>/plugins/artifacts/` (`<id>.json`, `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl` and `.locks/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
 | `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads `ext.chat` / `ext.history` (transcripts), `status` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
 | `menu` | `menu` and the internal `_menu-open <pane> <client>` (the menu in an 80% popup; after it closes, runs the choice through `txc` / tmux: `_new-agent`, `pick`, `_fork-pane`, `_timeline-attach`, `_artifact-menu`, `tutor start`, `assistant warm` + `switch-client`, `resume`), `_menu-first` (the client-attached hook: test-and-sets the server option `@tx-menu-shown`, skips clients nested in the server's own panes) and `_menu-tui`; items of disabled plugins are hidden; reads `ext.chat` (chat counts) and the other plugins' `keys/*.tmux` (the cheat sheet); resource `keys/menu.tmux` (prefix+m, hook `client-attached`) |
 
@@ -261,8 +298,8 @@ dirs but COMMON, which every agent gets; `none` first, DEVELOPER preselected). N
 The session is created in the popup; the outcome lands on the client's status line.
 
 `assistant warm` creates `tx-assistant` with the engine `claude`, roles COMMON + TX-ASSISTANT,
-model `opus`, effort `medium`, tag `tx-system`, in the state dir (so the engine's skill links
-land under `<state_dir>/.claude/skills`). A `Running` record whose tmux session is gone is
+model `opus`, effort `medium`, tag `tx-system`, in the data dir (so the engine's skill links
+land under `<data>/.claude/skills`). A `Running` record whose tmux session is gone is
 refreshed to `Exited` and the assistant started again.
 
 ### Chat and history
@@ -279,7 +316,7 @@ txc history-hooks install   # mirrors transcripts byte for byte on every Stop
 `uninstall` reverses either, and `--dry-run` prints the change. Without the chat hooks nothing
 records the chat id, so `fork` and `resume` report `has no chat`.
 
-Data lives under the state dir: `plugins/history/<session>/<chat>/` (the mirrored transcript and
+Data lives under the data dir: `plugins/history/<session>/<chat>/` (the mirrored transcript and
 its sidecar files). Per-session state is `ext.chat` and `ext.history`. prefix+f forks
 the session in the active pane through `_fork-pane`; the outcome is on the status line.
 
@@ -288,16 +325,16 @@ the session in the active pane through `_fork-pane`; the outcome is on the statu
 Needs tmux, `fzf` and `curl` (the picker reloads itself through fzf's `--listen` port).
 
 ```
-txc ui install    # writes <state_dir>/{bin,keys,conf}/* and <state_dir>/tmux.conf
+txc ui install    # writes <data>/{bin,keys,conf,roles}/* and <data>/tmux.conf
 txc ui attach     # attaches this terminal to the core server's `home` session
 ```
 
-`ui install` materialises each active plugin's resources under `<state_dir>/{bin,keys,conf}` and
-writes `<state_dir>/tmux.conf`, which sets `@tx-bin` and `@tx-state` and runs `keys/ide.tmux`
-and then every other active plugin's `keys/<id>.tmux`. The key bindings and `bin/*` find `txc`
-through those two server options, so re-run `ui install` after rebuilding `txc`. Files in those
+`ui install` materialises each active plugin's resources under `<data>/{bin,keys,conf,roles}` and
+writes `<data>/tmux.conf`, which sets `@tx-bin`, `@tx-data` and `@tx-arguments` and runs
+`keys/ide.tmux` and then every other active plugin's `keys/<id>.tmux`. The key bindings and
+`bin/*` find `txc`, its directories and the helper scripts through those server options, so re-run `ui install` after rebuilding `txc`. Files in those
 directories that no active plugin provides are deleted, so `txc` needs nothing from the source
-tree at run time. It refuses a binary or state path containing whitespace, a backslash, a
+tree at run time. It refuses a binary or directory path containing whitespace, a backslash, a
 backtick or any of `"'$#;`, since the paths are spliced into tmux config lines.
 
 Disabling a plugin in `plugins.yaml` and re-running `ui install` removes that plugin's keys, even
@@ -347,11 +384,11 @@ a `tx-<id> = { path = "../plugins/<id>" }` dependency in `poc/tx-core-cli/Cargo.
 line in `tx-core-cli/src/plugins.rs::MANIFEST`; a verb may not take a name in
 `plugins.rs::RESERVED`. Give it a `tests/resources.rs` (what it publishes, and nothing when
 disabled; `kill`'s is the template) and a `poc/tx-core-cli/tests/<id>.rs` through the binary
-(the `tests/common` harness has the state dir, a private server, and `shim_path` for stand-in
+(the `tests/common` harness has one temp directory for all five, a private server, and `shim_path` for stand-in
 executables such as a `claude` that sleeps).
 
-Resources land under the state dir when `ui install` runs: `bin/` and `keys/` executable,
-`conf/` and `agents/` plain; files there that no active plugin provides are deleted, so a plugin
+Resources land under the data dir when `ui install` runs: `bin/` and `keys/` executable,
+`conf/` and `roles/` (the `agents/` resources) plain; files there that no active plugin provides are deleted, so a plugin
 that publishes any of these must also be listed in `tests/ide.rs::ui_install_materialises_resources`.
 
 ### Adding a key
@@ -363,7 +400,7 @@ A key is a plugin, with:
   line near its top declares the prefix keys it binds: `# keys: <key>` (`none` for root-table binds only). If it
   sets global state, it also declares `# unset: <option> …` and `# unhook: <hook> …`, so that
   `ui install` can undo them when the plugin is disabled;
-- optionally helper scripts, registered as `bin/<file>` resources (they land in `<state_dir>/bin`,
+- optionally helper scripts, registered as `bin/<file>` resources (they land in `<data>/bin`,
   mode 0755).
 
 Nothing else in the source needs editing: `ui install` finds the fragment by its resource name,
