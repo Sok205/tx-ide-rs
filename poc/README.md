@@ -108,7 +108,7 @@ whose engine plugin is disabled is left for a later run (`deferred`). The report
           +---------------------------------+
           |  TxCore  (one struct, open once) |
           |  config   CoreConfig            |
-          |  store    SessionStore   <data>/agents/<id>/agent.json
+          |  store    AgentStore     <data>/agents/<id>/agent.json
           |  tmux     Tmux           tmux -S <run>/tmux.sock -f <data>/tmux.conf
           |  events   EventLog       <data>/log.jsonl
           |  engines  EngineRegistry EngineKind -> Box<dyn LlmEngine>
@@ -134,7 +134,7 @@ whose engine plugin is disabled is left for a later run (`deferred`). The report
 
 There is no lifecycle field: an agent is running while `state` is not `ended`, and `ended` is
 final until a respawn; the event log says whether it exited (vanished) or was stopped
-(`stop_session`). `ListFilter::running()` / `ended()` and `txc ls --running` / `--ended` pick a
+(`stop_agent`). `ListFilter::running()` / `ended()` and `txc ls --running` / `--ended` pick a
 side.
 
 ### Agent state: the engine adapter decides, core applies
@@ -159,7 +159,7 @@ Because the hooks are `-c` overrides, every Codex session runs without Codex's s
 server (Codex warns: "command-line configuration overrides … requires embedded mode"). Sessions
 with a role already did, through `-c developer_instructions`; only role-less ones change.
 
-### One operation, end to end: `create_session`
+### One operation, end to end: `create_agent`
 
 1. Validate the name (`[A-Za-z0-9_-]{1,128}`), the env keys, and that `cwd` is a directory;
    canonicalize `cwd`.
@@ -184,8 +184,8 @@ then `CreateOptions::env`, then the engine plan's env.
 
 - `list-sessions -F '#{@tx-id}\t#{session_id}\t#{pane_id}'` is the only liveness signal. "No
   server" means nothing is live; any other failure is `TmuxError::InspectionFailed` and the
-  operation writes nothing. Reads (`list_sessions`, `get_session`, `resolve`) never touch tmux.
-- `refresh_session` / `refresh_all` turn a `Running` record without a live `@tx-id` into
+  operation writes nothing. Reads (`list_agents`, `get_agent`, `resolve`) never touch tmux.
+- `refresh_agent` / `refresh_all` turn a `Running` record without a live `@tx-id` into
   `Exited`. Records are scanned before tmux is listed, so a session created in between is never
   misjudged.
 - `send_message` wraps the text in `<from-user>…</from-user>` or
@@ -197,7 +197,7 @@ then `CreateOptions::env`, then the engine plan's env.
 
 | lock | held across | prevents |
 |---|---|---|
-| `create.lock` | name check → tmux create → record save; also `rename_session` | two processes taking one name |
+| `create.lock` | name check → tmux create → record save; also `rename_agent` | two processes taking one name |
 | `<id>.lock` | load → modify → save for rename, tags, stop, refresh | lost updates |
 | `<id>.lock` | the whole `send_message` | interleaved keystrokes |
 
@@ -249,12 +249,12 @@ impl LlmEngine for Aider {
 
     // Aider keeps no conversation to come back to: a resume starts afresh, a fork likewise.
     fn resume(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> { self.start(r, "") }
-    fn fork(&self, r: &LaunchRequest<'_>, _: &Session, prompt: &str) -> Result<LaunchPlan, EngineError> { self.start(r, prompt) }
+    fn fork(&self, r: &LaunchRequest<'_>, _: &Agent, prompt: &str) -> Result<LaunchPlan, EngineError> { self.start(r, prompt) }
 
     // Optional: how to leave and how to abort a turn (`None`, the default, means core kills /
     // cannot interrupt); `receive_message` defaults to the `<from-…>` envelope, submitted.
-    fn stop(&self, _: &Session) -> Option<Input> { Some(Input::line("/exit")) }
-    fn interrupt(&self, _: &Session) -> Option<(Input, Option<LlmEngineState>)> { Some((Input::Key(Key::ControlC), Some(LlmEngineState::Idle))) }
+    fn stop(&self, _: &Agent) -> Option<Input> { Some(Input::line("/exit")) }
+    fn interrupt(&self, _: &Agent) -> Option<(Input, Option<LlmEngineState>)> { Some((Input::Key(Key::ControlC), Some(LlmEngineState::Idle))) }
 }
 
 // in your binary:
@@ -270,7 +270,7 @@ crate depending only on `tx-core`; the CLI registers the bundled ones in `main`.
 
 `log.jsonl` is `{"ts","actor","type","msg"}` per line; types are `created`, `renamed`, `tagged`,
 `message-sent`, `state-changed`, `exited`, `stopped`, `archived`. It is a notification trail, not the record:
-on an event, re-read the session with `get_session`. Lines are never torn, so `tail -f` works.
+on an event, re-read the session with `get_agent`. Lines are never torn, so `tail -f` works.
 
 ### From inside an agent
 
@@ -312,8 +312,8 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
-| `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_session`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
-| `chat` | `chat ls <session>` (the current conversation, `TxCore::conversation`), `doctor --fix-hooks` (see "Upgrading" below), and the internal `_fork-pane` (prefix+f: `TxCore::fork_session` with the name from the popup); resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session` |
+| `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_agent`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
+| `chat` | `chat ls <session>` (the current conversation, `TxCore::conversation`), `doctor --fix-hooks` (see "Upgrading" below), and the internal `_fork-pane` (prefix+f: `TxCore::fork_agent` with the name from the popup); resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session` |
 | `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name), `assistant ask --from-buffer` and `assistant ask TEXT…` (warm, wait up to 20 s for the assistant to leave `starting`, deliver the line as the operator via `prefix+/`: `<from-user session="prefix+/">`; `--from-buffer` reads and deletes the server's `tx-assistant-input` paste buffer, which the prefix+/ bind fills from a command prompt); resources `keys/assistant.tmux` (prefix+/) and `agents/TX-ASSISTANT.md` |
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
 | `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<data>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<data>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
@@ -518,7 +518,7 @@ add now and breaking to add later.
 
 Before freezing the API: add `Send + Sync` to `LlmEngine`, put a session id in every log
 line, mark `CoreError`, `EventType`, `WorkspaceAction`, `LaunchRequest`, `LaunchPlan`,
-`CreateOptions`, `Session` and `CoreConfig` `#[non_exhaustive]` with builder constructors, and
+`CreateOptions`, `Agent` and `CoreConfig` `#[non_exhaustive]` with builder constructors, and
 re-export only the types a plugin author needs.
 
 What not to add: generics over the store, async traits, dylib or WASM engines, hooks that can
@@ -529,9 +529,9 @@ veto, runtime (re)loading of plugins. Dynamic dispatch costs nothing next to a t
 
 | operation | cost |
 |---|---|
-| `create_session` | about 12 ms (two tmux spawns, two fsyncs) |
+| `create_agent` | about 12 ms (two tmux spawns, two fsyncs) |
 | `list_live` / `refresh_all` | 3 to 6 ms, flat up to 200 sessions |
-| `list_sessions` / `resolve` | 1.2 ms at 100 records, 193 ms at 10 000 |
+| `list_agents` / `resolve` | 1.2 ms at 100 records, 193 ms at 10 000 |
 | `send_message` | 340 ms, of which 300 ms is the delivery pause |
 
 The delivery pause is the one real throughput ceiling (about three messages per second per
