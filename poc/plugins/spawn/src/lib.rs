@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(engine, "codex");
         assert_eq!(profile, ["COMMON", "DEVELOPER"]);
         assert_eq!(options, json!({"effort": "xhigh", "model": "gpt-6-sol"}));
-        assert_eq!(initial_prompt.as_deref(), Some("add GET /health"));
+        assert_eq!(initial_prompt, "add GET /health");
     }
 
     #[test]

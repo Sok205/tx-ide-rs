@@ -69,7 +69,7 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
         options,
         serde_json::json!({"model": "opus", "effort": "medium"})
     );
-    assert_eq!(initial_prompt.as_deref(), Some(tx_assistant::GREETING));
+    assert_eq!(initial_prompt, tx_assistant::GREETING);
 }
 
 #[test]

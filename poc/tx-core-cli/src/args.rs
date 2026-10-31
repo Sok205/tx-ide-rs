@@ -11,7 +11,7 @@ usage: txc [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DI
 
 verbs:
   create NAME --cwd DIR (--engine ID [--role R]... [--option KEY=VALUE]... [--model M] [--effort E]
-                (--prompt T | --resume ID) | --exec PROG [ARG]...)
+                --prompt T | --exec PROG [ARG]...)
                 [--parent ID] [--tag T]... [--env KEY=VALUE]...     start a session; prints its id. An agent runs in its
                                                                     own worktree of the checkout DIR (name NAME, else NAME-2 …).
                                                                     --model M and --effort E are --option model=M / effort=E;
@@ -32,7 +32,9 @@ verbs:
   refresh [TARGET]                                                  mark vanished sessions exited
   where TARGET                                                      socket, session target, pane target
   attach TARGET                                                     attach the terminal to the session
-  stop TARGET
+  stop TARGET                                                       kill the session; waits for its process to exit
+  respawn TARGET                                                    start an ended agent again: same record, worktree
+                                                                    and conversation; prints its id and name
   forget TARGET                                                     drop the record; leave tmux alone
   engines                                                           registered engine ids
   plugins                                                           id and active|disabled per plugin
@@ -84,8 +86,7 @@ pub enum LaunchSpec {
         /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
         /// a repeated key is settled by the engine's options object, last one wins.
         options: Vec<(String, String)>,
-        prompt: Option<String>,
-        resume: Option<String>,
+        prompt: String,
     },
     Process {
         program: String,
@@ -143,6 +144,9 @@ pub enum Verb {
         target: String,
     },
     Stop {
+        target: String,
+    },
+    Respawn {
         target: String,
     },
     Forget {
@@ -371,6 +375,9 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("stop") => Verb::Stop {
             target: target(&mut cursor, "stop")?,
         },
+        Some("respawn") => Verb::Respawn {
+            target: target(&mut cursor, "respawn")?,
+        },
         Some("forget") => Verb::Forget {
             target: target(&mut cursor, "forget")?,
         },
@@ -406,7 +413,6 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut roles = Vec::new();
     let mut options = Vec::new();
     let mut prompt = None;
-    let mut resume = None;
     let mut exec: Option<(String, Vec<String>)> = None;
     while let Some(flag) = cursor.next() {
         match flag {
@@ -420,7 +426,6 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             "--effort" => options.push(option_value("effort", flag, cursor.value(flag)?)?),
             "--option" => options.push(option_pair(cursor.value(flag)?)?),
             "--prompt" => prompt = Some(cursor.value(flag)?.to_owned()),
-            "--resume" => resume = Some(cursor.value(flag)?.to_owned()),
             "--exec" => {
                 let program = cursor
                     .next()
@@ -433,22 +438,18 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
     let launch = match (engine, exec) {
         (Some(engine), None) => {
-            // A resume carries its history instead; PR 6 removes resume-by-create.
-            if prompt.is_none() && resume.is_none() {
-                return Err(usage("--prompt is required with --engine"));
-            }
+            let prompt = prompt.ok_or_else(|| usage("--prompt is required with --engine"))?;
             LaunchSpec::Agent {
                 engine,
                 roles,
                 options,
                 prompt,
-                resume,
             }
         }
         (None, Some((program, args))) => {
-            if !roles.is_empty() || !options.is_empty() || prompt.is_some() || resume.is_some() {
+            if !roles.is_empty() || !options.is_empty() || prompt.is_some() {
                 return Err(usage(
-                    "--role, --option, --model, --effort, --prompt and --resume belong to --engine, not --exec",
+                    "--role, --option, --model, --effort and --prompt belong to --engine, not --exec",
                 ));
             }
             LaunchSpec::Process { program, args }
@@ -602,7 +603,7 @@ mod tests {
 
     #[test]
     fn create_agent() {
-        let inv = parse_str("create w1 --cwd /w --engine claude --role dev --role ops --model opus --effort xhigh --option model=sonnet --option thinking=on --prompt go --resume chat-1 --parent p-1 --tag a --tag b --env K=V").unwrap();
+        let inv = parse_str("create w1 --cwd /w --engine claude --role dev --role ops --model opus --effort xhigh --option model=sonnet --option thinking=on --prompt go --parent p-1 --tag a --tag b --env K=V").unwrap();
         let Verb::Create {
             name,
             cwd,
@@ -630,8 +631,7 @@ mod tests {
                     ("model".into(), "sonnet".into()),
                     ("thinking".into(), "on".into()),
                 ],
-                prompt: Some("go".into()),
-                resume: Some("chat-1".into()),
+                prompt: "go".into(),
             }
         );
     }
@@ -737,10 +737,9 @@ mod tests {
                 "--role needs a value",
             ),
             ("create n --cwd /w --model m --exec sh", "--model"),
-            ("create n --cwd /w --resume x --exec sh", "--resume"),
             (
-                "create n --cwd /w --engine e --resume",
-                "--resume needs a value",
+                "create n --cwd /w --engine e --prompt go --resume x",
+                "--resume",
             ),
             (
                 "create n --cwd /w --engine e --model m",
@@ -856,6 +855,10 @@ mod tests {
         assert_eq!(
             parse_str("stop x").unwrap().verb,
             Verb::Stop { target: "x".into() }
+        );
+        assert_eq!(
+            parse_str("respawn x").unwrap().verb,
+            Verb::Respawn { target: "x".into() }
         );
         assert_eq!(
             parse_str("forget x").unwrap().verb,

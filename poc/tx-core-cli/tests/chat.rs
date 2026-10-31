@@ -1,5 +1,5 @@
-//! The chat plugin through the binary: capture (`_chat-hook`, `chat ls`, `chat hooks`), the chat
-//! op `resume`, and prefix+f (`_fork-pane`) over core's built-in `fork`.
+//! The chat plugin through the binary: capture (`_chat-hook`, `chat ls`, `chat hooks`) and
+//! prefix+f (`_fork-pane`) over core's built-in `fork`.
 
 mod common;
 
@@ -346,64 +346,6 @@ fn fork_launches_the_source_conversation_forked_in_a_new_worktree() {
         })
         .collect();
     assert_eq!(types, ["created", "forked", "forked"]);
-}
-
-#[test]
-fn resume_relaunches_the_active_chat_from_ext() {
-    require_tmux!();
-    let cli = Cli::new();
-    let old = cli.create_agent("a");
-    cli.capture(&old, "c1");
-    cli.ok(&["stop", "a"]);
-    let output = cli.op(&["resume", "a"], &[]);
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("resume: warning — transcript for chat c1 not found under "),
-        "{stderr}"
-    );
-    // The stopped agent keeps its worktree, so the resumed one gets the next free name and tree.
-    let new = cli.show("a-2");
-    assert_eq!(new["lifecycle"], "running");
-    assert_ne!(new["id"], old.as_str());
-    assert_eq!(new["parent"], old.as_str());
-    assert_eq!(new["launch"]["kind"], "agent");
-    assert_eq!(new["launch"]["resume"], "c1");
-    assert_ne!(new["cwd"], cli.show("a")["cwd"]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        format!(
-            "Resumed 'a' as 'a-2' (chat c1, cwd={})\n",
-            new["cwd"].as_str().unwrap()
-        )
-    );
-    cli.wait_argv(|argv| has_run(argv, &["--resume", "c1"]));
-    let first = &new["ext"]["chat"]["chats"][0];
-    assert_eq!(first["id"], "c1");
-    assert_eq!(first["role"], "primary");
-    assert_eq!(first["how"], "resume");
-    assert_eq!(first["origin"]["session"], old.as_str());
-    assert_eq!(first["origin"]["chat"], "c1");
-    assert_eq!(new["ext"]["chat"]["chats"].as_array().unwrap().len(), 1);
-
-    let again = cli.op(&["resume", "a-2"], &[]);
-    assert_eq!(again.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&again.stderr)
-            .contains("resume: a live session named 'a-2' already exists — pass --as <new-name>")
-    );
-    let gone = cli.dir.path().join("gone");
-    let missing = cli.op(
-        &["resume", "a", "--as", "b", "--cwd", gone.to_str().unwrap()],
-        &[],
-    );
-    assert_eq!(missing.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&missing.stderr).contains(&format!(
-        "resume: cwd '{}' does not exist — '{}' is not a directory (C8)",
-        gone.display(),
-        gone.display()
-    )));
-    assert_eq!(cli.op(&["resume"], &[]).status.code(), Some(2));
 }
 
 #[test]

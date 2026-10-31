@@ -71,20 +71,19 @@ fn chat_count(session: &Session) -> usize {
         .map_or(0, Vec::len)
 }
 
-/// A session `resume` can bring back: an engine session, or one that recorded a chat (a fork
-/// runs the engine as a process). An exited shell is not.
-fn resumable(session: &Session) -> bool {
-    matches!(session.launch, Launch::Agent { .. }) || chat_count(session) > 0
+/// A session `respawn` can bring back in place: an agent. An exited shell is not.
+fn respawnable(session: &Session) -> bool {
+    matches!(session.launch, Launch::Agent { .. })
 }
 
-/// Resumable exited and stopped sessions, newest end first (the `history` verb's list, minus
-/// what `resume` would refuse).
+/// Respawnable exited and stopped sessions, newest end first (the `history` verb's list, minus
+/// what `respawn` would refuse).
 pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
     let mut sessions = Vec::new();
     for lifecycle in [Lifecycle::Exited, Lifecycle::Stopped] {
         for id in core.list_sessions(&ListFilter::new().lifecycle(lifecycle))? {
             match core.get_session(&id) {
-                Ok(session) if resumable(&session) => sessions.push(session),
+                Ok(session) if respawnable(&session) => sessions.push(session),
                 Ok(_) => {}
                 Err(CoreError::NotFound(_)) => {}
                 Err(error) => return Err(error),
@@ -164,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn only_engine_sessions_or_sessions_with_chats_are_resumable() {
+    fn only_agents_are_respawnable() {
         let agent = Launch::Agent {
             engine: "claude".into(),
             profile: Vec::new(),
@@ -176,19 +175,12 @@ mod tests {
             program: "zsh".into(),
             args: Vec::new(),
         };
-        assert!(resumable(&session(agent, None)));
-        assert!(!resumable(&session(shell(), None)));
-        assert!(!resumable(&session(
-            shell(),
-            Some(serde_json::json!({"chats": []}))
-        )));
-        assert!(resumable(&session(
+        assert!(respawnable(&session(agent, None)));
+        assert!(!respawnable(&session(shell(), None)));
+        // A recorded chat does not make a shell an agent.
+        assert!(!respawnable(&session(
             shell(),
             Some(serde_json::json!({"chats": [{"id": "c1"}]}))
-        )));
-        assert!(!resumable(&session(
-            shell(),
-            Some(serde_json::json!("bad"))
         )));
     }
 

@@ -26,6 +26,9 @@ pub enum EventType {
     /// A new agent branched from another's conversation; detail is the source's id, and the
     /// record's `parent` names it. Emitted instead of `Created`.
     Forked,
+    /// An ended agent started again in its own record, worktree and conversation; detail is
+    /// the lifecycle it came back from.
+    Respawned,
     Renamed,
     Tagged,
     MessageSent,
@@ -42,6 +45,7 @@ impl EventType {
     pub const ALL: &'static [EventType] = &[
         EventType::Created,
         EventType::Forked,
+        EventType::Respawned,
         EventType::Renamed,
         EventType::Tagged,
         EventType::MessageSent,
@@ -56,6 +60,7 @@ impl EventType {
         match self {
             EventType::Created => "created",
             EventType::Forked => "forked",
+            EventType::Respawned => "respawned",
             EventType::Renamed => "renamed",
             EventType::Tagged => "tagged",
             EventType::MessageSent => "message-sent",
@@ -391,6 +396,7 @@ mod tests {
             [
                 "created",
                 "forked",
+                "respawned",
                 "renamed",
                 "tagged",
                 "message-sent",

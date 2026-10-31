@@ -1,13 +1,32 @@
-//! rename / tags / refresh / stop / forget / location / send, against a private tmux server.
+//! rename / tags / refresh / stop / respawn / forget / location / send, against a private tmux
+//! server.
 
 mod common;
 
 use std::time::Duration;
 
-use common::{Harness, agent, cwd_of, process, typed, wait_for};
+use common::{Harness, STUB_ID, agent, cwd_of, process, typed, wait_for};
 use tx_core::{
-    CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, Sender, SessionId, TmuxError,
+    CoreError, LaunchOptions, Lifecycle, ListFilter, LlmEngineState, RefreshResult, SendOptions,
+    Sender, SessionId, TmuxError,
 };
+
+/// `KEY=value` lines of the `env.txt` the stub engine writes in its working directory.
+fn stub_env(cwd: &std::path::Path, key: &str) -> Option<String> {
+    std::fs::read_to_string(cwd.join("env.txt"))
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}=")).map(str::to_owned))
+}
+
+fn process_exists(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
 
 #[test]
 fn rename_updates_tmux_and_record() {
@@ -190,6 +209,180 @@ fn stop_kills_and_keeps_the_record() {
         .map(|l| l["type"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(types, ["created", "created", "stopped", "exited"]);
+}
+
+#[test]
+fn stop_waits_for_a_process_that_survives_the_pane_and_then_kills_it() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open();
+    let mut opts = process("tough", &h.workdir("t"));
+    // Ignores the hang-up the closed pane sends, as a CLI busy with its exit hooks might.
+    opts.launch = LaunchOptions::process("sh", ["-c", "trap '' HUP TERM; sleep 120"]);
+    let id = core.create_session(opts).unwrap();
+    let pid: u32 = h
+        .tmux_ok(&["list-panes", "-t", "tough", "-F", "#{pane_pid}"])
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(process_exists(pid));
+    let started = std::time::Instant::now();
+    let session = core.stop_session(&id).unwrap();
+    let waited = started.elapsed();
+    assert_eq!(session.lifecycle, Lifecycle::Stopped);
+    assert!(
+        !process_exists(pid),
+        "the process is gone once stop returns"
+    );
+    assert!(
+        waited >= Duration::from_secs(10) && waited < Duration::from_secs(14),
+        "stop waited {waited:?}: the full grace period, then the kill"
+    );
+}
+
+#[test]
+fn respawn_brings_an_ended_agent_back_in_place() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let mut opts = agent("r", &h.repository("repo"));
+    // Model `data`: the stub names its conversation in the engine data, as Claude does.
+    opts.launch = LaunchOptions::agent(STUB_ID)
+        .option("model", "data")
+        .initial_prompt("remember OTTER-7");
+    let id = core.create_session(opts).unwrap();
+    let before = core.get_session(&id).unwrap();
+    assert!(matches!(
+        core.respawn_session(&id).unwrap_err(),
+        CoreError::StillRunning(ref running) if *running == id
+    ));
+
+    let stopped = core.stop_session(&id).unwrap();
+    assert_eq!(stopped.lifecycle, Lifecycle::Stopped);
+    let session = core.respawn_session(&id).unwrap();
+    assert_eq!(session.id, id, "the same record");
+    assert_eq!(session.name, "r");
+    assert_eq!(session.cwd, before.cwd, "the same worktree");
+    assert_eq!(session.created_at, before.created_at);
+    assert_eq!(session.lifecycle, Lifecycle::Running);
+    assert_eq!(session.state, Some(LlmEngineState::Starting));
+    assert_eq!(session.ended_at, None);
+    assert_eq!(session.ext.get(STUB_ID), before.ext.get(STUB_ID));
+    assert_eq!(core.get_session(&id).unwrap(), session);
+    assert_eq!(h.live_names(), ["r"]);
+    assert!(wait_for(Duration::from_secs(5), || {
+        stub_env(&session.cwd, "STUB_MODE").as_deref() == Some("resume")
+    }));
+    assert_eq!(
+        stub_env(&session.cwd, "STUB_RESUME").as_deref(),
+        Some(id.as_str()),
+        "the engine continues the conversation named in its data"
+    );
+    assert_eq!(
+        stub_env(&session.cwd, "STUB_SESSION_ID").as_deref(),
+        Some(id.as_str())
+    );
+    assert!(
+        h.state_dir()
+            .join("profiles")
+            .join(format!("{id}.md"))
+            .is_file()
+    );
+    assert_eq!(
+        core.list_sessions(&ListFilter::new()).unwrap(),
+        std::slice::from_ref(&id)
+    );
+    assert!(matches!(
+        core.respawn_session(&id).unwrap_err(),
+        CoreError::StillRunning(_)
+    ));
+    // An exited agent (its process gone behind core's back) respawns the same way.
+    h.tmux_ok(&["kill-session", "-t", "=r"]);
+    assert!(matches!(
+        core.refresh_session(&id).unwrap(),
+        RefreshResult::Exited(_)
+    ));
+    assert_eq!(
+        core.respawn_session(&id).unwrap().lifecycle,
+        Lifecycle::Running
+    );
+    core.stop_session(&id).unwrap();
+
+    let types: Vec<String> = h
+        .log_lines()
+        .iter()
+        .map(|line| line["type"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "created",
+            "stopped",
+            "respawned",
+            "exited",
+            "respawned",
+            "stopped"
+        ]
+    );
+    let respawned = &h.log_lines()[2];
+    assert_eq!(respawned["id"], id.as_str());
+    assert_eq!(respawned["msg"], "after stopped");
+}
+
+#[test]
+fn respawn_refusals_change_nothing() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let shell = core.create_session(process("p", &h.workdir("p"))).unwrap();
+    core.stop_session(&shell).unwrap();
+    assert!(matches!(
+        core.respawn_session(&shell).unwrap_err(),
+        CoreError::NotAnAgent(_)
+    ));
+    assert!(matches!(
+        core.respawn_session(&"zz".parse::<SessionId>().unwrap())
+            .unwrap_err(),
+        CoreError::NotFound(_)
+    ));
+
+    let repository = h.repository("repo");
+    let mut opts = agent("a", &repository);
+    opts.launch = LaunchOptions::agent(STUB_ID)
+        .option("model", "data")
+        .initial_prompt("start");
+    let a = core.create_session(opts).unwrap();
+    core.stop_session(&a).unwrap();
+    // Another running agent took the name meanwhile: `a` cannot come back under it.
+    let b = core.create_session(agent("b", &repository)).unwrap();
+    core.rename_session(&b, "a").unwrap();
+    assert!(matches!(
+        core.respawn_session(&a).unwrap_err(),
+        CoreError::NameTaken(ref name) if name == "a"
+    ));
+    core.rename_session(&b, "b").unwrap();
+    // A worktree that is gone is never recreated.
+    let worktree = cwd_of(&core, &a);
+    std::fs::remove_dir_all(&worktree).unwrap();
+    assert!(matches!(
+        core.respawn_session(&a).unwrap_err(),
+        CoreError::WorktreeMissing(ref path) if *path == worktree
+    ));
+    let still = core.get_session(&a).unwrap();
+    assert_eq!(still.lifecycle, Lifecycle::Stopped);
+    assert!(still.ended_at.is_some());
+    assert_eq!(h.live_names(), ["b"]);
+    let types: Vec<String> = h
+        .log_lines()
+        .iter()
+        .map(|line| line["type"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "created", "stopped", "created", "stopped", "created", "renamed", "renamed"
+        ]
+    );
 }
 
 #[test]
