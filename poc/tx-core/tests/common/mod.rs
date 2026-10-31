@@ -145,8 +145,19 @@ pub struct ShellStub;
 pub const STUB_ID: &str = "stub";
 
 impl LlmEngine for ShellStub {
-    fn on_hook(&self, _: &tx_core::Status, _: &tx_core::Hook) -> tx_core::Change {
-        tx_core::Change::default()
+    /// A hook named after a state moves to it, with `payload.note` as the note; any other name
+    /// changes nothing.
+    fn on_hook(&self, _: &tx_core::Status, hook: &tx_core::Hook) -> tx_core::Change {
+        tx_core::Change {
+            state: tx_core::State::ALL
+                .into_iter()
+                .find(|state| state.as_str() == hook.name),
+            note: hook
+                .payload
+                .get("note")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+        }
     }
 
     fn id(&self) -> &str {

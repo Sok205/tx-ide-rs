@@ -10,6 +10,7 @@ use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
 use crate::profile::{Profile, Profiles};
 use crate::session::{Effort, Launch, Lifecycle, Session, SessionId, validate_name};
+use crate::state::{Change, Hook, State, Status};
 use crate::store::{SessionStore, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 
@@ -315,6 +316,17 @@ fn event(
     )
 }
 
+/// The process is gone, whatever the adapter last said: `ended_at` is set and an agent's state
+/// becomes `Ended`. No `StateChanged`: `Exited` / `Stopped` already say so.
+fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
+    let ended_at = now();
+    session.lifecycle = lifecycle;
+    session.ended_at = Some(ended_at);
+    if let Some(status) = &mut session.status {
+        status.apply(Change::to(State::Ended), ended_at);
+    }
+}
+
 fn store_io(path: &Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {
     move |source| {
         CoreError::Store(StoreError::Io {
@@ -605,9 +617,21 @@ impl TxCore {
             } else {
                 Lifecycle::Running
             },
+            // An agent starts in `Starting` until its adapter's first change; a process has
+            // no engine and so no state.
+            status: match &launch {
+                Launch::Agent { .. } => Some(Status::new(
+                    if exited_at_once {
+                        State::Ended
+                    } else {
+                        State::Starting
+                    },
+                    created_at,
+                )),
+                Launch::Process { .. } => None,
+            },
             launch,
             ext: std::collections::BTreeMap::new(),
-            status: None,
         };
         if let Err(error) = self.store.save(&session) {
             return Err(undo(CoreError::Store(error)));
@@ -710,6 +734,53 @@ impl TxCore {
         Ok(true)
     }
 
+    /// A hook the session's engine wired fired inside it: the engine decides the change, core
+    /// applies it under the session lock (see [`Status::apply`]) and emits `StateChanged` when
+    /// the state moved. Returns the status after the hook; `None` when the hook is not for a
+    /// live agent this core can read: the session is no longer `Running` (a stale hook), is a
+    /// process session, or its engine is not registered here.
+    pub fn hook(&self, id: &SessionId, hook: Hook) -> Result<Option<Status>, CoreError> {
+        let (status, events) = {
+            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+            let mut session = self.get_session(id)?;
+            if session.lifecycle != Lifecycle::Running {
+                return Ok(None);
+            }
+            let Launch::Agent { engine, .. } = &session.launch else {
+                return Ok(None);
+            };
+            let Some(adapter) = self.engines.get(engine) else {
+                return Ok(None);
+            };
+            let status = session
+                .status
+                .as_mut()
+                .expect("agent sessions carry a status");
+            let before = status.clone();
+            let change = adapter.on_hook(status, &hook);
+            let from = status.apply(change, hook.at);
+            let after = status.clone();
+            if after == before {
+                return Ok(Some(after));
+            }
+            self.store.save(&session)?;
+            let events = match from {
+                Some(from) => {
+                    let mut detail = format!("{} → {}", from.as_str(), after.state.as_str());
+                    if let Some(note) = &after.note {
+                        detail.push_str(": ");
+                        detail.push_str(note);
+                    }
+                    vec![event(EventType::StateChanged, &session, None, detail)]
+                }
+                None => Vec::new(),
+            };
+            (after, events)
+        };
+        self.emit(events);
+        Ok(Some(status))
+    }
+
     pub fn set_session_tags(
         &self,
         id: &SessionId,
@@ -777,8 +848,7 @@ impl TxCore {
 
     /// Saves the record as `Exited`; the caller emits the returned event once its lock is gone.
     fn mark_exited(&self, mut session: Session) -> Result<(Session, Event), CoreError> {
-        session.lifecycle = Lifecycle::Exited;
-        session.ended_at = Some(now());
+        mark_ended(&mut session, Lifecycle::Exited);
         self.store.save(&session)?;
         let exited = event(EventType::Exited, &session, None, "");
         Ok((session, exited))
@@ -828,8 +898,7 @@ impl TxCore {
                 None => self.mark_exited(session)?,
                 Some(live) => {
                     self.tmux.kill_session(&live.session_target)?;
-                    session.lifecycle = Lifecycle::Stopped;
-                    session.ended_at = Some(now());
+                    mark_ended(&mut session, Lifecycle::Stopped);
                     self.store.save(&session)?;
                     let stopped = event(EventType::Stopped, &session, None, "");
                     (session, stopped)
