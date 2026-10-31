@@ -1,10 +1,12 @@
 //! Gathering the menu's [`Context`]: plugin status and the cheat sheet from the core's
-//! registry, past sessions from the records, the fork check from tmux. Reads only; another
+//! registry, past sessions from the records, the running agent and view counts, the fork check
+//! from tmux. Reads only; another
 //! plugin is seen through its status, its resources and `Session.ext` (D3).
 
 use serde_json::Value;
 use tx_client::tmux::Ui;
-use tx_core::{CoreError, Launch, Lifecycle, ListFilter, PluginStatus, Session, TxCore};
+use tx_client::views;
+use tx_core::{CoreError, Launch, Lifecycle, ListFilter, PluginStatus, Session, TxCore, VerbError};
 
 use crate::model::{Context, KeyHint, Past};
 
@@ -114,7 +116,7 @@ pub fn session_in_pane(core: &TxCore, ui: &Ui, pane: &str) -> Option<Session> {
     core.get_session(&id).ok()
 }
 
-pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, CoreError> {
+pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, VerbError> {
     let plugins: Vec<(String, bool)> = core
         .plugin_status()
         .iter()
@@ -135,6 +137,12 @@ pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, CoreError>
         pane_session: session_in_pane(core, ui, pane).is_some(),
         history: past_sessions(core)?,
         keys,
+        agents: core
+            .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?
+            .len(),
+        views: views::list(ui)
+            .map_err(|error| VerbError::Failed(error.to_string()))?
+            .len(),
         now: tx_core::events::now(),
     })
 }
