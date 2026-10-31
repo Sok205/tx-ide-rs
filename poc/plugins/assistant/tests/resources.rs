@@ -28,11 +28,30 @@ fn the_role_is_a_resource() {
 }
 
 #[test]
-fn the_assistant_is_claude_with_common_and_its_role_in_the_data_dir() {
+fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
     let (_dir, core) = core(&PluginConfig::default());
-    let options = create_options(&core);
+    let options = create_options(&core).unwrap();
     assert_eq!(options.name, "tx-assistant");
-    assert_eq!(options.cwd, core.config().directories.data);
+    let home = core.config().plugin_data_dir("assistant").join("home");
+    assert_eq!(options.cwd, home);
+    assert!(
+        home.join(".git").is_dir(),
+        "a repository, made on first use"
+    );
+    assert!(home.join("README.md").is_file());
+    let head = std::process::Command::new("git")
+        .args([
+            "-C",
+            home.to_str().unwrap(),
+            "rev-parse",
+            "--verify",
+            "HEAD",
+        ])
+        .output()
+        .unwrap();
+    assert!(head.status.success(), "one commit to branch worktrees from");
+    // Second time: the same repository, untouched.
+    assert_eq!(create_options(&core).unwrap().cwd, home);
     assert_eq!(options.tags, ["tx-system"]);
     let LaunchOptions::Agent {
         engine,

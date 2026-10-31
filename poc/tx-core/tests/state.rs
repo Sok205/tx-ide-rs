@@ -27,7 +27,7 @@ fn hooks_move_an_agent_and_core_ends_it() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("a", &h.workdir("a"))).unwrap();
+    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
     let state = |core: &tx_core::TxCore| core.get_session(&id).unwrap().state;
     assert_eq!(state(&core), Some(LlmEngineState::Starting));
 
@@ -75,7 +75,7 @@ fn hooks_write_engine_data_under_the_engines_key() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("a", &h.workdir("a"))).unwrap();
+    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
     assert!(core.get_session(&id).unwrap().ext.is_empty());
 
     let first = json!({"conversation_id": "c-1", "transcript_path": "/t/c-1.jsonl"});
@@ -114,7 +114,7 @@ fn an_exited_agent_reads_ended() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("a", &h.workdir("a"))).unwrap();
+    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
     core.hook(&id, hook("working", json!({}), 10.0)).unwrap();
     let live = core.get_execution_location(&id).unwrap();
     h.tmux_ok(&["kill-session", "-t", &live.session_target]);
@@ -140,7 +140,7 @@ fn a_hook_for_an_unregistered_engine_is_ignored() {
     let h = Harness::new();
     let id = h
         .open_with_engine()
-        .create_session(agent("a", &h.workdir("a")))
+        .create_session(agent("a", &h.repository("a")))
         .unwrap();
     let bare = h.open();
     assert_eq!(bare.hook(&id, hook("idle", json!({}), 1.0)).unwrap(), None);
@@ -166,7 +166,7 @@ fn every_write_stamps_last_modified_at() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("a", &h.workdir("a"))).unwrap();
+    let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
     let created = core.get_session(&id).unwrap();
     assert!(created.last_modified_at >= created.created_at);
     let pause = || std::thread::sleep(std::time::Duration::from_millis(5));

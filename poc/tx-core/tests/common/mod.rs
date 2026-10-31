@@ -83,6 +83,41 @@ impl Harness {
         path
     }
 
+    /// A git repository with one commit under `work/<name>`: an agent's starting checkout,
+    /// isolated from the host's git config.
+    pub fn repository(&self, name: &str) -> PathBuf {
+        let repository = self.workdir(name);
+        std::fs::write(repository.join("README.md"), "hello\n").unwrap();
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", "README.md"],
+            &["commit", "-q", "-m", "init"],
+        ] {
+            let output = git(&repository, args);
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        repository
+    }
+
+    /// `<data>/worktrees`: where every agent's worktree lands.
+    pub fn worktrees_dir(&self) -> PathBuf {
+        self.config().worktrees_dir()
+    }
+
+    /// How many worktrees are on disk under `<data>/worktrees/<repository-key>/`.
+    pub fn worktree_count(&self) -> usize {
+        let Ok(keys) = self.worktrees_dir().read_dir() else {
+            return 0;
+        };
+        keys.flatten()
+            .map(|key| key.path().read_dir().unwrap().count())
+            .sum()
+    }
+
     /// Raw tmux against the private server.
     pub fn tmux(&self, args: &[&str]) -> std::process::Output {
         Command::new("tmux")
@@ -137,6 +172,47 @@ impl Drop for Harness {
     fn drop(&mut self) {
         let _ = self.tmux(&["kill-server"]);
     }
+}
+
+/// `git -C <directory> <args>`, with the host's git config out of the way.
+pub fn git(directory: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .output()
+        .unwrap()
+}
+
+/// Trimmed stdout of a git command that must succeed.
+pub fn git_ok(directory: &Path, args: &[&str]) -> String {
+    let output = git(directory, args);
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// Every checkout git lists for the repository `directory` belongs to, canonical, main first.
+pub fn git_worktrees(directory: &Path) -> Vec<PathBuf> {
+    git_ok(directory, &["worktree", "list", "--porcelain"])
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(|path| PathBuf::from(path).canonicalize().unwrap())
+        .collect()
+}
+
+/// Where a session runs: its record's `cwd` (an agent's worktree, a process's directory).
+pub fn cwd_of(core: &TxCore, id: &SessionId) -> PathBuf {
+    core.get_session(id).unwrap().cwd
 }
 
 /// Waits up to `timeout` for `condition`.

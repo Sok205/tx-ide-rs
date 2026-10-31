@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
-use common::{Harness, agent, process, typed, wait_for};
+use common::{Harness, agent, cwd_of, process, typed, wait_for};
 use proptest::prelude::*;
 use tx_core::{CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TxCore};
 
@@ -796,9 +796,8 @@ fn env_values_with_equals_spaces_newline_and_8kb_reach_the_process() {
     ];
     let mut core = TxCore::open(config).unwrap();
     core.register_engine(Box::new(common::ShellStub)).unwrap();
-    let cwd = h.workdir("a");
     let big = "v".repeat(8 * 1024);
-    let mut opts = agent("e", &cwd);
+    let mut opts = agent("e", &h.repository("a"));
     opts.env = vec![
         ("EQ".into(), "a=b=c".into()),
         ("SP".into(), "  two  words  ".into()),
@@ -810,7 +809,7 @@ fn env_values_with_equals_spaces_newline_and_8kb_reach_the_process() {
         ("CFG".into(), "opts".into()),
     ];
     let id = core.create_session(opts).unwrap();
-    let text = env_text(&cwd);
+    let text = env_text(&cwd_of(&core, &id));
     assert!(text.contains("\nEQ=a=b=c\n"), "{text}");
     assert!(text.contains("\nSP=  two  words  \n"), "{text}");
     assert!(
@@ -928,8 +927,7 @@ fn forget_of_a_live_session_keeps_its_name_taken_in_tmux() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let cwd = h.workdir("a");
-    let id = core.create_session(agent("f", &cwd)).unwrap();
+    let id = core.create_session(agent("f", &h.repository("a"))).unwrap();
     assert!(core.forget_session(&id).unwrap());
     let error = core
         .create_session(process("f", &h.workdir("b")))

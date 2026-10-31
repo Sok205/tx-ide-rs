@@ -656,10 +656,9 @@ fn ui_attach_starts_the_assistant_and_nests_home_into_it() {
     let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "tx-assistant"])).unwrap();
     assert_eq!(json["lifecycle"], "running");
     assert_eq!(json["tags"], serde_json::json!(["tx-system"]));
-    assert_eq!(
-        json["cwd"],
-        cli.state().canonicalize().unwrap().to_str().unwrap()
-    );
+    let cwd = std::path::PathBuf::from(json["cwd"].as_str().unwrap());
+    assert!(cwd.starts_with(cli.worktrees_dir()), "{cwd:?}");
+    assert!(cwd.ends_with("home--tx-assistant"), "{cwd:?}");
     assert_eq!(
         json["launch"]["profile"],
         serde_json::json!(["COMMON", "TX-ASSISTANT"])

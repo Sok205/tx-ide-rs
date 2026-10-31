@@ -16,8 +16,7 @@ impl Cli {
         self.state().join("sessions").join(format!("{id}.json"))
     }
     fn create_agent(&self, name: &str) -> String {
-        let cwd = self.dir.path().join(name);
-        std::fs::create_dir_all(&cwd).unwrap();
+        let cwd = self.repository(name);
         let path = self.argv_path();
         let output = self.run(
             &[
@@ -371,16 +370,18 @@ fn resume_relaunches_the_active_chat_from_ext() {
         stderr.contains("resume: warning — transcript for chat c1 not found under "),
         "{stderr}"
     );
-    let new = cli.show("a");
+    // The stopped agent keeps its worktree, so the resumed one gets the next free name and tree.
+    let new = cli.show("a-2");
     assert_eq!(new["lifecycle"], "running");
     assert_ne!(new["id"], old.as_str());
     assert_eq!(new["parent"], old.as_str());
     assert_eq!(new["launch"]["kind"], "agent");
     assert_eq!(new["launch"]["resume"], "c1");
+    assert_ne!(new["cwd"], cli.show("a")["cwd"]);
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         format!(
-            "Resumed 'a' as 'a' (chat c1, cwd={})\n",
+            "Resumed 'a' as 'a-2' (chat c1, cwd={})\n",
             new["cwd"].as_str().unwrap()
         )
     );
@@ -393,11 +394,11 @@ fn resume_relaunches_the_active_chat_from_ext() {
     assert_eq!(first["origin"]["chat"], "c1");
     assert_eq!(new["ext"]["chat"]["chats"].as_array().unwrap().len(), 1);
 
-    let again = cli.op(&["resume", "a"], &[]);
+    let again = cli.op(&["resume", "a-2"], &[]);
     assert_eq!(again.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&again.stderr)
-            .contains("resume: a live session named 'a' already exists — pass --as <new-name>")
+            .contains("resume: a live session named 'a-2' already exists — pass --as <new-name>")
     );
     let gone = cli.dir.path().join("gone");
     let missing = cli.op(

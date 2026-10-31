@@ -19,8 +19,7 @@ impl Cli {
     }
     /// A Claude session whose `claude` just stays alive.
     fn create_claude(&self, name: &str) -> String {
-        let cwd = self.dir.path().join(name);
-        std::fs::create_dir_all(&cwd).unwrap();
+        let cwd = self.repository(name);
         let path = self.fake_claude_path();
         let output = self.run(
             &[

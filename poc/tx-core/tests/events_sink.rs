@@ -6,7 +6,7 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{Harness, agent, process, wait_for};
+use common::{Harness, agent, cwd_of, process, wait_for};
 use tx_core::{Event, EventSink, EventType, Lifecycle, SendOptions, SessionId, TxCore};
 
 #[derive(Default)]
@@ -29,8 +29,10 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
     let recorder = Arc::new(Recorder::default());
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let cwd = h.workdir("a");
-    let a = core.create_session(agent("alice", &cwd)).unwrap();
+    let a = core
+        .create_session(agent("alice", &h.repository("a")))
+        .unwrap();
+    let cwd = cwd_of(&core, &a);
     let b = core
         .create_session(process("bob", &h.workdir("b")))
         .unwrap();

@@ -9,11 +9,12 @@ use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
-use crate::profile::{Profile, Profiles};
+use crate::profile::{Profile, Profiles, ResolvedProfile};
 use crate::session::{Effort, Launch, Lifecycle, Session, SessionId, validate_name};
 use crate::state::{LlmEngineHook, LlmEngineState};
 use crate::store::{SessionStore, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
+use crate::worktree::WorktreeManager;
 
 pub const SESSIONS_DIR: &str = "sessions";
 pub const LOCKS_DIR: &str = "locks";
@@ -34,7 +35,12 @@ set -g history-limit 50000
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CreateOptions {
+    /// The name asked for. An agent may get `<name>-2` … `<name>-99` instead when the name is
+    /// taken by a running record or a worktree on disk; read it back from the record.
     pub name: String,
+    /// The starting directory. For an agent: a git checkout to branch from; the agent runs in
+    /// its own detached worktree at that checkout's `HEAD`, and the record's `cwd` names the
+    /// worktree. For a process: where it runs.
     pub cwd: PathBuf,
     pub parent: Option<SessionId>,
     pub tags: Vec<String>,
@@ -259,6 +265,7 @@ pub struct TxCore {
     events: EventLog,
     engines: EngineRegistry,
     profiles: Profiles,
+    worktrees: WorktreeManager,
     locks: Locks,
     sinks: Vec<Box<dyn EventSink>>,
     pub(crate) host: crate::plugin::Host,
@@ -373,6 +380,7 @@ impl TxCore {
             events: EventLog::new(directories.data.join(LOG_FILE)),
             engines: EngineRegistry::new(),
             profiles: Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone()),
+            worktrees: WorktreeManager::new(config.worktrees_dir()),
             locks: Locks::new(directories.state.join(LOCKS_DIR)),
             sinks: Vec::new(),
             host: Default::default(),
@@ -471,6 +479,9 @@ impl TxCore {
 
     // ----- create ------------------------------------------------------------------------------
 
+    /// Starts a session and returns its id. An agent runs in its own detached worktree of the
+    /// checkout `opts.cwd`, under the first free name (`opts.name`, else `opts.name-2` …); the
+    /// record carries the name and the worktree. A process runs in `opts.cwd` as asked.
     pub fn create_session(&self, opts: CreateOptions) -> Result<SessionId, CoreError> {
         let (id, events) = self.create_locked(opts)?;
         self.emit(events);
@@ -483,7 +494,8 @@ impl TxCore {
         if !opts.cwd.is_dir() {
             return Err(CoreError::NotADirectory(opts.cwd));
         }
-        // The process runs in the real directory; the record and every workspace path say so.
+        // The real directory: git is asked about the real checkout, a process runs in the real
+        // directory, and the record and every workspace path say so.
         let cwd = std::fs::canonicalize(&opts.cwd).map_err(store_io(&opts.cwd))?;
         let opts = CreateOptions { cwd, ..opts };
         // Pure checks before the lock: an unknown engine, a missing prompt or an unknown role never
@@ -523,9 +535,37 @@ impl TxCore {
         };
 
         let _create = self.locks.create().map_err(CoreError::Lock)?;
-        if self.name_in_use(&opts.name, None)? {
-            return Err(CoreError::NameTaken(opts.name));
+        if engine.is_none() {
+            // A process runs where it is asked to, under the name it is asked for.
+            if self.name_in_use(&opts.name, None)? {
+                return Err(CoreError::NameTaken(opts.name));
+            }
+            return self.launch_locked(opts, engine, roles);
         }
+        // An agent gets its own detached worktree at the starting checkout's `HEAD`, under the
+        // first name free among the running records and on disk (`name`, `name-2`, … `name-99`).
+        // A directory that is not a checkout fails here, with git's own words, before anything
+        // else exists. Whatever fails after this point takes the worktree with it.
+        let unavailable_names = self.running_names()?;
+        let (name, worktree) =
+            self.worktrees
+                .create_unique(&opts.cwd, &opts.name, &unavailable_names)?;
+        validate_name(&name)
+            .and_then(|()| std::fs::canonicalize(&worktree).map_err(store_io(&worktree)))
+            .and_then(|cwd| self.launch_locked(CreateOptions { name, cwd, ..opts }, engine, roles))
+            .inspect_err(|_| {
+                let _ = self.worktrees.remove(&worktree);
+            })
+    }
+
+    /// Under the create lock, with `opts.name` free and `opts.cwd` the directory the session
+    /// runs in: the profile, the engine's plan, the tmux session, then the record.
+    fn launch_locked(
+        &self,
+        opts: CreateOptions,
+        engine: Option<(&dyn LlmEngine, ResolvedProfile)>,
+        roles: Vec<String>,
+    ) -> Result<(SessionId, Vec<Event>), CoreError> {
         let id = SessionId::mint();
         let profile_file = self.profile_path(&id);
         let cleanup_profile = || {
@@ -698,6 +738,17 @@ impl TxCore {
     fn save(&self, session: &mut Session) -> Result<(), StoreError> {
         session.last_modified_at = now();
         self.store.save(session)
+    }
+
+    /// The names of the `Running` records: what a new agent's name must not collide with.
+    fn running_names(&self) -> Result<std::collections::HashSet<String>, CoreError> {
+        Ok(self
+            .store
+            .all()?
+            .into_iter()
+            .filter(|session| session.lifecycle == Lifecycle::Running)
+            .map(|session| session.name)
+            .collect())
     }
 
     /// Whether a `Running` record other than `except` carries `name`.

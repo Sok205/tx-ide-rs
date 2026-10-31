@@ -8,6 +8,7 @@ use crate::profile::RoleError;
 use crate::session::SessionId;
 use crate::store::StoreError;
 use crate::tmux::TmuxError;
+use crate::worktree::WorktreeError;
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -46,6 +47,8 @@ pub enum CoreError {
     Store(#[from] StoreError),
     #[error(transparent)]
     Tmux(#[from] TmuxError),
+    #[error(transparent)]
+    Worktree(#[from] WorktreeError),
     #[error("lock: {0}")]
     Lock(io::Error),
 }

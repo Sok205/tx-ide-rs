@@ -31,8 +31,7 @@ fn new_agent_creates_the_session_the_form_describes() {
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
     let path = cli.shim_path(&[("claude", "exec sleep 60"), ("nvim", fake_nvim())]);
-    let cwd = cli.dir.path().join("proj");
-    std::fs::create_dir_all(&cwd).unwrap();
+    let cwd = cli.repository("proj");
     let answers = answers(cwd.to_str().unwrap());
     let output = cli.run(
         &["_new-agent", "%0", "client-0"],
@@ -49,7 +48,11 @@ fn new_agent_creates_the_session_the_form_describes() {
     assert_eq!(lifecycle_of(&cli, "health"), "running");
     let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "health"])).unwrap();
     assert_eq!(json["tags"], serde_json::json!(["tutor", "api"]));
-    assert_eq!(json["cwd"], cwd.canonicalize().unwrap().to_str().unwrap());
+    // The agent runs in its own worktree of the form's directory, not in that directory.
+    let worktree = std::path::PathBuf::from(json["cwd"].as_str().unwrap());
+    assert!(worktree.starts_with(cli.worktrees_dir()), "{worktree:?}");
+    assert!(worktree.ends_with("proj--health"), "{worktree:?}");
+    assert!(worktree.join("README.md").is_file());
     assert_eq!(json["launch"]["engine"], "claude");
     assert_eq!(
         json["launch"]["profile"],
@@ -57,7 +60,8 @@ fn new_agent_creates_the_session_the_form_describes() {
     );
     assert_eq!(json["launch"]["model"], serde_json::Value::Null);
     assert_eq!(json["launch"]["effort"], "low");
-    assert!(cwd.join(".claude/skills/tx-diff-review").exists());
+    assert!(worktree.join(".claude/skills/tx-diff-review").exists());
+    assert!(!cwd.join(".claude").exists());
 }
 
 #[test]

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{Cli, lifecycle_of};
+use common::{Cli, cwd_of, lifecycle_of};
 
 #[test]
 fn warm_creates_once_and_reuses() {
@@ -25,10 +25,16 @@ fn warm_creates_once_and_reuses() {
     let second = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(second.status.code(), Some(0));
     assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]), id);
+    let cwd = cwd_of(&cli, "tx-assistant");
+    assert!(cwd.starts_with(cli.worktrees_dir()), "{cwd:?}");
+    assert!(cwd.ends_with("home--tx-assistant"), "{cwd:?}");
     assert!(
-        cli.state().join(".claude/skills/tx-sessions").exists(),
-        "skills link under the state dir"
+        cwd.join(".claude/skills/tx-sessions").exists(),
+        "skills link in the assistant's worktree"
     );
+    let home = cli.state().join("plugins/assistant/home");
+    assert!(home.join(".git").is_dir(), "the assistant's own repository");
+    assert!(!home.join(".claude").exists());
 }
 
 #[test]
