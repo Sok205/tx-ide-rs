@@ -185,27 +185,25 @@ fn claim_first(ui: &Ui) -> bool {
     ok && out.trim() == "mine"
 }
 
-/// How to run this `txc` against this state dir.
+/// How to run this `txc` against this core.
 struct Txc {
     exe: PathBuf,
-    state: PathBuf,
+    /// The core's `cli_arguments()`.
+    arguments: Vec<String>,
 }
 
 impl Txc {
     fn current(core: &TxCore) -> Result<Self, VerbError> {
         Ok(Txc {
             exe: std::env::current_exe().map_err(|e| failed(format!("current_exe: {e}")))?,
-            state: core.config().state_dir.clone(),
+            arguments: core.config().cli_arguments(),
         })
     }
 
     /// A shell command line, for popups.
     fn shell(&self, args: &[&str]) -> String {
-        let mut words = vec![
-            shell_quote(&self.exe.to_string_lossy()),
-            "--state-dir".to_owned(),
-            shell_quote(&self.state.to_string_lossy()),
-        ];
+        let mut words = vec![shell_quote(&self.exe.to_string_lossy())];
+        words.extend(self.arguments.iter().map(|word| shell_quote(word)));
         words.extend(args.iter().map(|arg| shell_quote(arg)));
         words.join(" ")
     }
@@ -213,8 +211,7 @@ impl Txc {
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(&self.exe);
         command
-            .arg("--state-dir")
-            .arg(&self.state)
+            .args(&self.arguments)
             .args(args)
             .stdin(Stdio::null());
         command
@@ -509,11 +506,11 @@ mod tests {
     fn popup_commands_are_shell_quoted() {
         let txc = Txc {
             exe: PathBuf::from("/opt/txc"),
-            state: PathBuf::from("/s/state"),
+            arguments: vec!["--state-dir".to_owned(), "/s/state".to_owned()],
         };
         assert_eq!(
             txc.shell(&["_new-agent", "%3", "/dev/ttys001"]),
-            "'/opt/txc' --state-dir '/s/state' '_new-agent' '%3' '/dev/ttys001'"
+            "'/opt/txc' '--state-dir' '/s/state' '_new-agent' '%3' '/dev/ttys001'"
         );
     }
 }

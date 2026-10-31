@@ -13,7 +13,7 @@
 # the kill targets the tmux name, which `txc kill` resolves either way.
 set -eu
 
-TX="$(tmux show-option -gv @tx-bin) --state-dir $(tmux show-option -gv @tx-state)"
+TX="$(tmux show-option -gv @tx-bin) $(tmux show-option -gv @tx-arguments)"
 
 pane_id="${1:-}"
 outer="${2:-}"
@@ -38,7 +38,7 @@ name="$target"
 tx_id=$(tmux show-options -vqt "$target" @tx-id 2>/dev/null) || tx_id=""
 if [[ -n "$tx_id" ]]; then
   resolved=""
-  # shellcheck disable=SC2086 # TX is a command plus its --state-dir flag
+  # shellcheck disable=SC2086 # TX is a command plus its directory flags
   IFS= read -r resolved < <($TX _pane-info "$tx_id" 2>/dev/null) || true
   if [[ -n "$resolved" ]]; then
     name="$resolved"

@@ -3,7 +3,7 @@
 # project / engine / model / effort / role in a popup on the firing client.
 set -eu
 
-TX="$(tmux show-option -gv @tx-bin) --state-dir $(tmux show-option -gv @tx-state)"
+TX="$(tmux show-option -gv @tx-bin) $(tmux show-option -gv @tx-arguments)"
 pane_id="$1"
 client_name="$2"
 

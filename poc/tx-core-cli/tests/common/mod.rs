@@ -1,4 +1,4 @@
-//! Shared harness for the CLI suites: a temp state dir under /tmp (short socket path), helpers
+//! Shared harness for the CLI suites: one temp dir under /tmp holding all five directories (short socket path), helpers
 //! that run `txc` against it, and a kill-server on drop so no private server outlives its test.
 #![allow(dead_code)]
 
@@ -19,6 +19,35 @@ pub fn tmux_available() -> bool {
     Command::new("tmux").arg("-V").output().is_ok()
 }
 
+/// Every directory flag naming `dir`: the suites keep the five directories in one place, so
+/// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
+pub fn directory_flags(dir: &std::path::Path) -> Vec<std::ffi::OsString> {
+    [
+        "--config-dir",
+        "--data-dir",
+        "--state-dir",
+        "--cache-dir",
+        "--run-dir",
+    ]
+    .into_iter()
+    .flat_map(|flag| [flag.into(), dir.as_os_str().to_owned()])
+    .collect()
+}
+
+/// The variables core exports into every session, all naming `dir`.
+pub fn directory_environment(dir: &std::path::Path) -> Vec<(&'static str, std::path::PathBuf)> {
+    [
+        "TX_CONFIG_DIR",
+        "TX_DATA_DIR",
+        "TX_STATE_DIR",
+        "TX_CACHE_DIR",
+        "TX_RUN_DIR",
+    ]
+    .into_iter()
+    .map(|key| (key, dir.to_path_buf()))
+    .collect()
+}
+
 pub struct Cli {
     pub dir: tempfile::TempDir,
 }
@@ -35,6 +64,14 @@ impl Cli {
     pub fn state(&self) -> PathBuf {
         self.dir.path().join("state")
     }
+    /// The directory flags, space-separated, as a shell command line carries them.
+    pub fn arguments(&self) -> String {
+        directory_flags(&self.state())
+            .iter()
+            .map(|word| word.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
     pub fn write_yaml(&self, text: &str) {
         std::fs::create_dir_all(self.state()).unwrap();
         std::fs::write(self.state().join("plugins.yaml"), text).unwrap();
@@ -42,8 +79,7 @@ impl Cli {
     pub fn command(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
         command
-            .arg("--state-dir")
-            .arg(self.state())
+            .args(directory_flags(&self.state()))
             .args(args)
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID");
@@ -69,12 +105,12 @@ impl Cli {
         child.wait_with_output().unwrap()
     }
     /// `txi` (the internal binary the wired hooks run) against this state dir, the way a hook
-    /// inside a session runs it: `$TX_CORE_HOME`, no flags.
+    /// inside a session runs it: the exported `TX_*_DIR`, no flags.
     pub fn txi(&self, args: &[&str], env: &[(&str, &str)], stdin: &str) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_txi"));
         command
             .args(args)
-            .env("TX_CORE_HOME", self.state())
+            .envs(directory_environment(&self.state()))
             .env_remove("TX_TMUX_SOCKET")
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID")

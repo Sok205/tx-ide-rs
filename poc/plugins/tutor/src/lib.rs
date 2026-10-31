@@ -2,8 +2,8 @@
 //! project from a lesson pack and opens the `tutor-<lang>` view; `check` verifies the current
 //! lesson and advances; `next` / `prev` / `goto` / `status` / `hint` / `reset` move around.
 //! Port of main's `verbs/tutor.rs` and `tutor/`. Progress lives in the plugin's data dir,
-//! `<state_dir>/plugins/tutor/<lang>.json`; the packs ship as `tutor/…` resources and are
-//! materialised under `<state_dir>/plugins/tutor/packs/`.
+//! `<data>/plugins/tutor/<lang>.json`; the packs ship as `tutor/…` resources and are
+//! materialised under `<data>/plugins/tutor/packs/`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -62,9 +62,9 @@ impl Plugin for TutorPlugin {
     }
 }
 
-/// The plugin's store: `<state_dir>/plugins/tutor/` (D1). Created by whoever writes into it.
+/// The plugin's store: `<data>/plugins/tutor/` (D1). Created by whoever writes into it.
 pub fn data_dir(core: &TxCore) -> PathBuf {
-    core.config().state_dir.join("plugins").join(PLUGIN_ID)
+    core.config().plugin_data_dir(PLUGIN_ID)
 }
 
 pub fn view_name(lang: &str) -> String {

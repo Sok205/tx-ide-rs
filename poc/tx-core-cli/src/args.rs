@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use tx_core::{Effort, Lifecycle};
 
 pub const USAGE: &str = "\
-usage: txc [--state-dir DIR] [--socket PATH] [--plugins FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
+usage: txc [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR] [--run-dir DIR] [--socket PATH]
+           [--plugins FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
 
 verbs:
   create NAME --cwd DIR (--engine ID [--role R]... [--model M] [--effort E] [--prompt T] [--resume ID] | --exec PROG [ARG]...)
@@ -23,11 +24,21 @@ verbs:
   forget TARGET                                                     drop the record; leave tmux alone
   engines                                                           registered engine ids
   plugins                                                           id and active|disabled per plugin
+  migrate [--from DIR]                                              move a version-1 home (default
+                                                                    $TX_CORE_HOME, else ~/.tx-core) into
+                                                                    the directories below, once
 
-TARGET is a session id or name. State lives in $TX_CORE_HOME, else ~/.tx-core.
-Roles resolve from --profile-dir, else <state-dir>/agents (written by `ui install`) and
-<state-dir>/user-agents; skills from --skill-dir, else skills/ under those two.
-Plugins are switched in <state-dir>/plugins.yaml (see --plugins).
+TARGET is a session id or name. Files live in five directories named after the application,
+$TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
+else the XDG variable, else the XDG default:
+  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           plugins.yaml, roles/ (your own)
+  data    $XDG_DATA_HOME/<app>, ~/.local/share/<app>        records, log, plugin data, roles/ (shipped)
+  state   $XDG_STATE_HOME/<app>, ~/.local/state/<app>       locks, profiles
+  cache   $XDG_CACHE_HOME/<app>, ~/.cache/<app>
+  run     $XDG_RUNTIME_DIR/<app>, $TMPDIR/<app>.<user>      tmux.sock
+Roles resolve from --profile-dir, else <data>/roles (written by `ui install`), then <config>/roles;
+skills from --skill-dir, else skills/ under those two.
+Plugins are switched in <config>/plugins.yaml (see --plugins).
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -41,7 +52,11 @@ impl fmt::Display for UsageError {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Global {
+    pub config_dir: Option<PathBuf>,
+    pub data_dir: Option<PathBuf>,
     pub state_dir: Option<PathBuf>,
+    pub cache_dir: Option<PathBuf>,
+    pub run_dir: Option<PathBuf>,
     pub socket: Option<PathBuf>,
     pub profile_dirs: Vec<PathBuf>,
     pub skill_dirs: Vec<PathBuf>,
@@ -112,6 +127,9 @@ pub enum Verb {
     },
     Engines,
     Plugins,
+    Migrate {
+        from: Option<PathBuf>,
+    },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
     Plugin {
         name: String,
@@ -171,9 +189,25 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut global = Global::default();
     loop {
         match cursor.peek() {
+            Some("--config-dir") => {
+                cursor.next();
+                global.config_dir = Some(cursor.value("--config-dir")?.into());
+            }
+            Some("--data-dir") => {
+                cursor.next();
+                global.data_dir = Some(cursor.value("--data-dir")?.into());
+            }
             Some("--state-dir") => {
                 cursor.next();
                 global.state_dir = Some(cursor.value("--state-dir")?.into());
+            }
+            Some("--cache-dir") => {
+                cursor.next();
+                global.cache_dir = Some(cursor.value("--cache-dir")?.into());
+            }
+            Some("--run-dir") => {
+                cursor.next();
+                global.run_dir = Some(cursor.value("--run-dir")?.into());
             }
             Some("--socket") => {
                 cursor.next();
@@ -205,6 +239,16 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("help" | "--help" | "-h") => Verb::Help,
         Some("engines") => Verb::Engines,
         Some("plugins") => Verb::Plugins,
+        Some("migrate") => {
+            let from = match cursor.peek() {
+                Some("--from") => {
+                    cursor.next();
+                    Some(cursor.value("--from")?.into())
+                }
+                _ => None,
+            };
+            Verb::Migrate { from }
+        }
         Some("create") => parse_create(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
         Some("show") => Verb::Show {
@@ -406,6 +450,31 @@ mod tests {
             }
         );
         assert_eq!(parse_str("plugins").unwrap().verb, Verb::Plugins);
+        assert_eq!(
+            parse_str("migrate").unwrap().verb,
+            Verb::Migrate { from: None }
+        );
+        assert_eq!(
+            parse_str("migrate --from /old").unwrap().verb,
+            Verb::Migrate {
+                from: Some("/old".into())
+            }
+        );
+        assert!(parse_str("migrate --from").is_err());
+        assert!(parse_str("migrate /old").is_err());
+    }
+
+    #[test]
+    fn every_directory_has_a_flag() {
+        let inv = parse_str(
+            "--config-dir /c --data-dir /d --state-dir /s --cache-dir /k --run-dir /r ls",
+        )
+        .unwrap();
+        assert_eq!(inv.global.config_dir.as_deref(), Some(Path::new("/c")));
+        assert_eq!(inv.global.data_dir.as_deref(), Some(Path::new("/d")));
+        assert_eq!(inv.global.state_dir.as_deref(), Some(Path::new("/s")));
+        assert_eq!(inv.global.cache_dir.as_deref(), Some(Path::new("/k")));
+        assert_eq!(inv.global.run_dir.as_deref(), Some(Path::new("/r")));
     }
 
     #[test]

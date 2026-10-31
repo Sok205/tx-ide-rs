@@ -2,7 +2,7 @@
 # prefix+e: edit the tx session visible in the firing pane, in a popup over that pane.
 set -eu
 
-TX="$(tmux show-option -gv @tx-bin) --state-dir $(tmux show-option -gv @tx-state)"
+TX="$(tmux show-option -gv @tx-bin) $(tmux show-option -gv @tx-arguments)"
 pane_id="$1"
 client_name="$2"
 pane_width=$(tmux display-message -p -t "$pane_id" '#{pane_width}')

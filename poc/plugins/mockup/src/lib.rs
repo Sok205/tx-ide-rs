@@ -153,20 +153,17 @@ fn project_of(dir: &Path) -> Result<&Path, VerbError> {
     })
 }
 
-/// `<txc> --state-dir <state> [--socket <socket>] _mockup-view <dir> <view>`, shell-quoted.
+/// `<txc> <cli_arguments> _mockup-view <dir> <view>`, shell-quoted.
 fn viewer_command(core: &TxCore, dir: &Path, view: &str) -> Result<String, VerbError> {
     let exe = std::env::current_exe()
         .map_err(|error| VerbError::Failed(format!("current exe: {error}")))?;
-    let configuration = core.config();
-    let mut words = vec![
-        shell_quote(&exe.to_string_lossy()),
-        "--state-dir".to_owned(),
-        shell_quote(&configuration.state_dir.to_string_lossy()),
-    ];
-    if let Some(socket) = &configuration.tmux_socket {
-        words.push("--socket".to_owned());
-        words.push(shell_quote(&socket.to_string_lossy()));
-    }
+    let mut words = vec![shell_quote(&exe.to_string_lossy())];
+    words.extend(
+        core.config()
+            .cli_arguments()
+            .iter()
+            .map(|word| shell_quote(word)),
+    );
     words.push(VIEW_VERB.to_owned());
     words.push(shell_quote(&dir.to_string_lossy()));
     words.push(shell_quote(view));

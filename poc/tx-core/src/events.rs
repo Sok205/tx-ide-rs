@@ -1,5 +1,5 @@
 //! Events: what happened to one session. Every mutation produces [`Event`]s that go to the
-//! operation log (`<state_dir>/log.jsonl`, one compact JSON line
+//! operation log (`<data>/log.jsonl`, one compact JSON line
 //! `{"ts","actor","type","id","name","msg"}` per event, appended with a single write on an
 //! `O_APPEND` descriptor so concurrent writers never tear a line) and then to every in-process
 //! [`EventSink`].

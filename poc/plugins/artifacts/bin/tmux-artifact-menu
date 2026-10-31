@@ -4,5 +4,6 @@
 set -eu
 
 TXC=$(tmux show-option -gv @tx-bin)
-STATE=$(tmux show-option -gv @tx-state)
-exec "$TXC" --state-dir "$STATE" _artifact-menu "$1" "$2"
+ARGUMENTS=$(tmux show-option -gv @tx-arguments)
+# shellcheck disable=SC2086 # the core's directory flags, one word each
+exec "$TXC" $ARGUMENTS _artifact-menu "$1" "$2"

@@ -905,7 +905,7 @@ fn eight_cores_create_distinct_names_in_parallel() {
     ids.sort();
     assert_eq!(listed, ids);
     assert_eq!(log_types(&h), vec!["created"; 8]);
-    let leftovers: Vec<String> = std::fs::read_dir(h.state_dir().join("sessions"))
+    let leftovers: Vec<String> = std::fs::read_dir(h.data_dir().join("sessions"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| !n.ends_with(".json") || n.starts_with('.'))

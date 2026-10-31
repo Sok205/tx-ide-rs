@@ -274,8 +274,8 @@ mod tests {
     #[test]
     fn owned_elsewhere_sees_chat_and_history_refs_but_not_own_resume() {
         let dir = tempfile::tempdir().unwrap();
-        let core = TxCore::open(CoreConfig::new(dir.path())).unwrap();
-        let store = SessionStore::new(dir.path().join("sessions"));
+        let core = TxCore::open(CoreConfig::new(tx_core::Directories::under(dir.path()))).unwrap();
+        let store = SessionStore::new(dir.path().join("data/sessions"));
         let chat = json!({"chat": {"chats": [
             {"id": "c1", "role": "primary", "how": "spawn", "since": 1.0}]}});
         let history = json!({"history": {"chats": {

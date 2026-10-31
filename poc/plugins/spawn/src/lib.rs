@@ -6,7 +6,7 @@
 //! The project is the firing pane's directory (the poc has no projects config). The roles are
 //! the `*.md` files in the core's profile dirs minus COMMON, which every agent gets. The plugin
 //! ships the COMMON and DEVELOPER roles and their skills as `agents/` resources, which
-//! `txc ui install` materialises under the state dir.
+//! `txc ui install` materialises under `<data>/roles/`.
 
 use std::fs;
 use std::path::{Path, PathBuf};

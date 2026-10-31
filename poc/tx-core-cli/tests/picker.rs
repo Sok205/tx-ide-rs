@@ -85,9 +85,9 @@ fn pick_nests_into_a_view_pane() {
     // `run-shell` stands in for the prefix+t popup: like the popup it runs `pick` with `$TMUX`
     // set while the pane's foreground process is still the shell.
     let pick = format!(
-        "FZF_DEFAULT_OPTS='--filter=inner' {} --state-dir {} pick",
+        "FZF_DEFAULT_OPTS='--filter=inner' {} {} pick",
         env!("CARGO_BIN_EXE_txc"),
-        cli.state().display()
+        cli.arguments()
     );
     assert!(
         cli.tmux(&["run-shell", "-b", "-t", &pane, &pick])

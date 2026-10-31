@@ -8,7 +8,10 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
         .prefix("txc")
         .tempdir_in("/tmp")
         .unwrap();
-    let mut core = TxCore::open(CoreConfig::new(dir.path().join("state"))).unwrap();
+    let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
+        dir.path().join("state"),
+    )))
+    .unwrap();
     core.plug(vec![Box::new(TimelinePlugin)], config).unwrap();
     (dir, core)
 }

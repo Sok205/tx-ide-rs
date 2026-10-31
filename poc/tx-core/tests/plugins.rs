@@ -316,10 +316,7 @@ fn preview_lists_verbs_without_opening_a_core() {
     let verbs = tx_core::plugin::preview_verbs(&plugins, &cfg, &h.config()).unwrap();
     let names: Vec<_> = verbs.iter().map(|v| v.name()).collect();
     assert_eq!(names, ["zeta"], "disabled plugin's verb is absent");
-    assert!(
-        !h.state_dir().exists(),
-        "preview never touches the state dir"
-    );
+    assert!(!h.home().exists(), "preview never touches the directories");
     let error = tx_core::plugin::preview_verbs(
         &[Box::new(Named("a", "ls"))],
         &PluginConfig {

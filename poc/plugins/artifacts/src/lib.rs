@@ -1,7 +1,7 @@
 //! tx-core plugin `artifacts`: durable versioned deliverables (`txc artifact …`), effort groups
 //! (`txc group`), and prefix+a (`_artifact-menu`, `_artifact-pick`, `_artifact-go`).
 //!
-//! The store lives under `<state_dir>/plugins/artifacts/`: `<id>.json` records,
+//! The store lives under `<data>/plugins/artifacts/`: `<id>.json` records,
 //! `<id>/current<ext>` working copies, `<id>/revs/<n><ext>` snapshots, plus the plugin's own
 //! `.log.jsonl` and `.locks/`. Per-session state is `ext["artifacts"] = {"bound", "group"}`.
 //! The touching session is `$TX_SESSION_ID`, else `user`.
@@ -28,9 +28,9 @@ pub mod views;
 pub const PLUGIN_ID: &str = "artifacts";
 pub const DEFAULT_EDITOR: &str = "nvim";
 
-/// `<state_dir>/plugins/artifacts/`, the plugin's own store. Created on first write.
+/// `<data>/plugins/artifacts/`, the plugin's own store. Created on first write.
 pub fn data_dir(config: &CoreConfig) -> PathBuf {
-    config.state_dir.join("plugins").join(PLUGIN_ID)
+    config.plugin_data_dir(PLUGIN_ID)
 }
 
 /// The session a touch is recorded for: `$TX_SESSION_ID` when it is a valid id, else `user`.

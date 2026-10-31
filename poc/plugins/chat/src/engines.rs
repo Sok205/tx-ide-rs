@@ -847,7 +847,10 @@ mod tests {
     #[test]
     fn agent_plan_resumes_through_the_adapter_then_forks() {
         let dir = tempfile::tempdir().unwrap();
-        let core = TxCore::open(tx_core::CoreConfig::new(dir.path())).unwrap();
+        let core = TxCore::open(tx_core::CoreConfig::new(tx_core::Directories::under(
+            dir.path(),
+        )))
+        .unwrap();
         let launch = AgentLaunch {
             engine: "claude".into(),
             profile: vec![],

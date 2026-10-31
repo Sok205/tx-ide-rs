@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Effort, EventType, Launch, LaunchOptions, LaunchPlan,
-    LaunchRequest, Lifecycle, ListFilter, LlmEngine, MAX_SOCKET_PATH_BYTES, Profile,
+    CoreConfig, CoreError, CreateOptions, Directories, Effort, EventType, Launch, LaunchOptions,
+    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, MAX_SOCKET_PATH_BYTES, Profile,
     ResolvedProfile, SendOptions, Session, SessionId, TxCore, WorkspaceAction,
 };
 
@@ -335,7 +335,7 @@ proptest! {
     ) {
         let dir = short_tempdir();
         let state = dir.path().join("state");
-        let core = TxCore::open(CoreConfig::new(&state)).unwrap();
+        let core = TxCore::open(CoreConfig::new(Directories::under(&state))).unwrap();
         let before = snapshot(&state);
 
         let launch = LaunchOptions::process("", args.clone());
@@ -359,7 +359,7 @@ proptest! {
     fn empty_program_loses_to_earlier_checks(args in texts()) {
         let dir = short_tempdir();
         let state = dir.path().join("state");
-        let core = TxCore::open(CoreConfig::new(&state)).unwrap();
+        let core = TxCore::open(CoreConfig::new(Directories::under(&state))).unwrap();
 
         let bad_name = CreateOptions::new("", dir.path(), LaunchOptions::process("", args.clone()));
         prop_assert_eq!(kind(&core.create_session(bad_name).unwrap_err()), "InvalidName");
@@ -508,44 +508,44 @@ proptest! {
         state in abs_path(), sock1 in abs_path(), sock2 in abs_path(),
         env in pairs(), pd1 in paths(), pd2 in paths(), sd in paths(),
     ) {
-        let mut expected = CoreConfig::new(&state);
+        let mut expected = CoreConfig::new(Directories::under(&state));
         expected.tmux_socket = Some(sock2.clone());
         expected.env = env.clone();
         expected.profile_dirs = pd1.iter().chain(&pd2).cloned().collect();
         expected.skill_dirs = sd.clone();
 
-        let mut built = CoreConfig::new(&state).tmux_socket(&sock1).tmux_socket(&sock2).profile_dirs(pd1.clone()).profile_dirs(pd2.clone()).skill_dirs(sd.clone());
+        let mut built = CoreConfig::new(Directories::under(&state)).tmux_socket(&sock1).tmux_socket(&sock2).profile_dirs(pd1.clone()).profile_dirs(pd2.clone()).skill_dirs(sd.clone());
         for (k, v) in &env {
             built = built.env(k, v);
         }
         prop_assert_eq!(&built, &expected);
         prop_assert_eq!(built.socket_path(), sock2.clone());
-        prop_assert_eq!(built.tmux_conf_path(), state.join("tmux.conf"));
+        prop_assert_eq!(built.tmux_conf_path(), state.join("data/tmux.conf"));
 
-        let mut reversed = CoreConfig::new(&state).skill_dirs(sd.clone());
+        let mut reversed = CoreConfig::new(Directories::under(&state)).skill_dirs(sd.clone());
         for (k, v) in &env {
             reversed = reversed.env(k, v);
         }
         reversed = reversed.profile_dirs(pd1.clone()).profile_dirs(pd2.clone()).tmux_socket(&sock2);
         prop_assert_eq!(&reversed, &expected);
 
-        let bare = CoreConfig::new(&state);
-        prop_assert_eq!(bare.socket_path(), state.join("tmux.sock"));
-        prop_assert_eq!(bare.tmux_conf_path(), state.join("tmux.conf"));
+        let bare = CoreConfig::new(Directories::under(&state));
+        prop_assert_eq!(bare.socket_path(), state.join("run/tmux.sock"));
+        prop_assert_eq!(bare.tmux_conf_path(), state.join("data/tmux.conf"));
         prop_assert!(bare.tmux_socket.is_none() && bare.env.is_empty() && bare.profile_dirs.is_empty() && bare.skill_dirs.is_empty());
-        // Only `tmux_socket` affects `socket_path`; `state_dir` alone decides the conf path.
-        prop_assert_eq!(CoreConfig::new(&state).tmux_socket(&sock1).tmux_conf_path(), state.join("tmux.conf"));
-        prop_assert_eq!(CoreConfig::new(&state).env("A", "b").profile_dirs(pd1.clone()).socket_path(), state.join("tmux.sock"));
+        // Only `tmux_socket` affects `socket_path`; the data dir alone decides the conf path.
+        prop_assert_eq!(CoreConfig::new(Directories::under(&state)).tmux_socket(&sock1).tmux_conf_path(), state.join("data/tmux.conf"));
+        prop_assert_eq!(CoreConfig::new(Directories::under(&state)).env("A", "b").profile_dirs(pd1.clone()).socket_path(), state.join("run/tmux.sock"));
     }
 
     /// `check_socket_path` is a pure byte-length test on `socket_path()`: ≤ 100 ok, > 100 error
-    /// naming that path; a builder-set socket is what is measured, not `state_dir`.
+    /// naming that path; a builder-set socket is what is measured, not the run dir.
     #[test]
     fn check_socket_path_boundary_with_builder_socket(len in 1usize..=2 * MAX_SOCKET_PATH_BYTES, state_len in 1usize..=200) {
         let socket = PathBuf::from(format!("/{}", "s".repeat(len - 1)));
         prop_assert_eq!(socket.as_os_str().len(), len);
         let state = PathBuf::from(format!("/{}", "d".repeat(state_len - 1)));
-        let config = CoreConfig::new(&state).tmux_socket(&socket);
+        let config = CoreConfig::new(Directories::under(&state)).tmux_socket(&socket);
         let result = config.check_socket_path();
         if len <= MAX_SOCKET_PATH_BYTES {
             prop_assert!(result.is_ok(), "{} bytes must pass", len);
@@ -557,25 +557,27 @@ proptest! {
             prop_assert!(text.contains(&format!("{len} bytes")), "{}", text);
             prop_assert!(text.contains(&format!("{MAX_SOCKET_PATH_BYTES} allowed")), "{}", text);
         }
-        // Without a builder socket, the state dir decides.
-        let default_len = state.join("tmux.sock").as_os_str().len();
-        prop_assert_eq!(CoreConfig::new(&state).check_socket_path().is_ok(), default_len <= MAX_SOCKET_PATH_BYTES);
+        // Without a builder socket, the run dir decides.
+        let default_len = state.join("run/tmux.sock").as_os_str().len();
+        prop_assert_eq!(CoreConfig::new(Directories::under(&state)).check_socket_path().is_ok(), default_len <= MAX_SOCKET_PATH_BYTES);
     }
 }
 
 #[test]
 fn check_socket_path_counts_bytes_not_chars() {
     // 'é' is 2 bytes: 1 + 49 * 2 = 99, + 1 more char = 101.
-    let ok = CoreConfig::new("/s").tmux_socket(format!("/{}", "é".repeat(49)));
+    let ok = CoreConfig::new(Directories::under("/s")).tmux_socket(format!("/{}", "é".repeat(49)));
     assert_eq!(ok.socket_path().as_os_str().len(), 99);
     assert!(ok.check_socket_path().is_ok());
-    let too_long = CoreConfig::new("/s").tmux_socket(format!("/{}", "é".repeat(50)));
+    let too_long =
+        CoreConfig::new(Directories::under("/s")).tmux_socket(format!("/{}", "é".repeat(50)));
     assert_eq!(too_long.socket_path().as_os_str().len(), 101);
     assert!(matches!(
         too_long.check_socket_path(),
         Err(CoreError::SocketPathTooLong(_))
     ));
-    let exact = CoreConfig::new("/s").tmux_socket(format!("/{}x", "é".repeat(49)));
+    let exact =
+        CoreConfig::new(Directories::under("/s")).tmux_socket(format!("/{}x", "é".repeat(49)));
     assert_eq!(exact.socket_path().as_os_str().len(), MAX_SOCKET_PATH_BYTES);
     assert!(exact.check_socket_path().is_ok());
 }
@@ -590,7 +592,7 @@ fn empty_or_relative_socket_is_refused_before_open() {
         .tempdir_in("/tmp")
         .unwrap();
     for bad in ["", "rel.sock", "."] {
-        let config = CoreConfig::new(dir.path().join("state")).tmux_socket(bad);
+        let config = CoreConfig::new(Directories::under(dir.path().join("state"))).tmux_socket(bad);
         let refused = matches!(
             config.check_socket_path(),
             Err(CoreError::SocketPathNotAbsolute(_))
@@ -604,7 +606,7 @@ fn empty_or_relative_socket_is_refused_before_open() {
 #[test]
 fn open_keeps_the_config_verbatim() {
     let dir = short_tempdir();
-    let config = CoreConfig::new(dir.path().join("state"))
+    let config = CoreConfig::new(Directories::under(dir.path().join("state")))
         .tmux_socket(dir.path().join("k.sock"))
         .env("A", "1")
         .profile_dirs(["/p"])

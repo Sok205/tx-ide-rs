@@ -25,8 +25,7 @@ impl Cli {
     fn run_env(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
         command
-            .arg("--state-dir")
-            .arg(self.state())
+            .args(directory_flags(&self.state()))
             .args(args)
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID");
@@ -249,12 +248,20 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
     }
     let cli = Cli::new();
     let cwd = cli.workdir("w");
-    // A relative --state-dir still yields absolute paths inside the session environment.
+    // Relative directory flags still yield absolute paths inside the session environment.
     let rel = Command::new(env!("CARGO_BIN_EXE_txc"))
         .current_dir(cli.dir.path())
         .args([
+            "--config-dir",
+            "config",
+            "--data-dir",
+            "data",
             "--state-dir",
             "state",
+            "--cache-dir",
+            "cache",
+            "--run-dir",
+            "run",
             "create",
             "me",
             "--cwd",
@@ -266,6 +273,7 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
         ])
         .env_remove("TMUX")
         .env_remove("TX_SESSION_ID")
+        .env_remove("TX_APPNAME")
         .output()
         .unwrap();
     assert!(
@@ -280,31 +288,62 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
             .find_map(|l| l.strip_prefix(&format!("{key}=")))
             .map(str::to_owned)
     };
-    let home = get("TX_CORE_HOME").unwrap();
     let socket = get("TX_TMUX_SOCKET").unwrap();
+    for (key, name) in [
+        ("TX_CONFIG_DIR", "config"),
+        ("TX_DATA_DIR", "data"),
+        ("TX_STATE_DIR", "state"),
+        ("TX_CACHE_DIR", "cache"),
+        ("TX_RUN_DIR", "run"),
+    ] {
+        let value = get(key).unwrap_or_else(|| panic!("{key} not exported"));
+        assert!(Path::new(&value).is_absolute(), "{key}={value}");
+        // config and cache are not created by opening the core; compare through the parent.
+        let value = Path::new(&value);
+        assert_eq!(value.file_name().unwrap(), name, "{key}");
+        assert_eq!(
+            value.parent().unwrap().canonicalize().unwrap(),
+            cli.dir.path().canonicalize().unwrap(),
+            "{key}"
+        );
+    }
+    assert_eq!(get("TX_APPNAME").as_deref(), Some("tx-ide"));
+    assert_eq!(get("TX_CORE_HOME"), None);
+    assert!(Path::new(&socket).is_absolute());
     assert_eq!(
-        Path::new(&home).canonicalize().unwrap(),
-        cli.state().canonicalize().unwrap()
+        Path::new(&socket).canonicalize().unwrap(),
+        cli.dir.path().join("run/tmux.sock").canonicalize().unwrap()
     );
-    assert!(Path::new(&home).is_absolute() && Path::new(&socket).is_absolute());
-    assert_eq!(Path::new(&socket).file_name().unwrap(), "tmux.sock");
-    // From inside the session: no --state-dir, only the exported environment.
-    let inner = Command::new(env!("CARGO_BIN_EXE_txc"))
+    // From inside the session: no flags, only the exported environment.
+    let mut inner = Command::new(env!("CARGO_BIN_EXE_txc"));
+    inner
         .args(["send", "me", "hello self"])
-        .env("TX_CORE_HOME", &home)
         .env("TX_TMUX_SOCKET", &socket)
         .env("TMUX", format!("{socket},0,0"))
         .env("TX_SESSION_ID", &id)
         .env_remove("HOME")
-        .current_dir("/")
-        .output()
-        .unwrap();
+        .current_dir("/");
+    for key in [
+        "TX_CONFIG_DIR",
+        "TX_DATA_DIR",
+        "TX_STATE_DIR",
+        "TX_CACHE_DIR",
+        "TX_RUN_DIR",
+    ] {
+        inner.env(key, get(key).unwrap());
+    }
+    let inner = inner.output().unwrap();
+    let typed = wait_for(&cwd.join("input.txt"), Duration::from_secs(5));
+    let _ = Command::new("tmux")
+        .arg("-S")
+        .arg(&socket)
+        .arg("kill-server")
+        .output();
     assert!(
         inner.status.success(),
         "{}",
         String::from_utf8_lossy(&inner.stderr)
     );
-    let typed = wait_for(&cwd.join("input.txt"), Duration::from_secs(5));
     assert_eq!(
         typed,
         "<from-agent session=\"me\">hello self</from-agent>\n"
@@ -335,36 +374,17 @@ fn refresh_reports_vanished_sessions() {
     assert_eq!(cli.ok(&["refresh"]), "");
 }
 
-#[test]
-fn state_dir_defaults_to_tx_core_home() {
-    let cli = Cli::new();
-    let home = cli.dir.path().join("home");
-    let output = Command::new(env!("CARGO_BIN_EXE_txc"))
-        .arg("engines")
-        .env("TX_CORE_HOME", &home)
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(home.join("sessions").is_dir());
-    let fallback = cli.dir.path().join("fallback-home");
-    let output = Command::new(env!("CARGO_BIN_EXE_txc"))
-        .arg("engines")
-        .env_remove("TX_CORE_HOME")
-        .env("HOME", &fallback)
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(fallback.join(".tx-core/sessions").is_dir());
-    // An empty TX_CORE_HOME means unset, not "the current directory".
-    let scratch = cli.dir.path().join("scratch");
-    std::fs::create_dir_all(&scratch).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_txc"))
-        .arg("engines")
-        .env("TX_CORE_HOME", "")
-        .env("HOME", &fallback)
-        .current_dir(&scratch)
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(!scratch.join("sessions").exists());
+/// Every directory flag naming `dir`: the suites keep the five directories in one place, so
+/// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
+pub fn directory_flags(dir: &std::path::Path) -> Vec<std::ffi::OsString> {
+    [
+        "--config-dir",
+        "--data-dir",
+        "--state-dir",
+        "--cache-dir",
+        "--run-dir",
+    ]
+    .into_iter()
+    .flat_map(|flag| [flag.into(), dir.as_os_str().to_owned()])
+    .collect()
 }

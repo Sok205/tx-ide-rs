@@ -1,6 +1,6 @@
 //! Adversarial / property tests over the built `txc` binary: randomized argv, argument corner
-//! cases, env-derived sender, state-dir resolution and concurrent creates. Every process runs
-//! with `--state-dir` under /tmp, so tmux always uses a private socket; the user's default tmux
+//! cases, env-derived sender, directory resolution and concurrent creates. Every process runs
+//! with its directories under /tmp, so tmux always uses a private socket; the user's default tmux
 //! server is never touched.
 
 use std::ffi::OsStr;
@@ -30,8 +30,7 @@ impl Cli {
     fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
         command
-            .arg("--state-dir")
-            .arg(self.state())
+            .args(directory_flags(&self.state()))
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID");
         command
@@ -847,65 +846,85 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 7. State dir resolution
+// 7. Directory resolution
 // ---------------------------------------------------------------------------------------------
 
+/// `txc` with an environment that holds nothing of the caller's: `HOME` and `TMPDIR` under
+/// `root`, no `XDG_*`, no `TX_*`.
+fn sandboxed(root: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
+    command
+        .env("HOME", root.join("home"))
+        .env("TMPDIR", root.join("tmp"))
+        .env("USER", "u")
+        .env_remove("TMUX")
+        .env_remove("TX_SESSION_ID")
+        .env_remove("TX_TMUX_SOCKET")
+        .env_remove("TX_APPNAME")
+        .env_remove("TX_CORE_HOME")
+        .env_remove("XDG_RUNTIME_DIR");
+    for (key, xdg) in [
+        ("TX_CONFIG_DIR", "XDG_CONFIG_HOME"),
+        ("TX_DATA_DIR", "XDG_DATA_HOME"),
+        ("TX_STATE_DIR", "XDG_STATE_HOME"),
+        ("TX_CACHE_DIR", "XDG_CACHE_HOME"),
+        ("TX_RUN_DIR", "XDG_RUNTIME_DIR"),
+    ] {
+        command.env_remove(key).env_remove(xdg);
+    }
+    command
+}
+
 #[test]
-fn state_dir_flag_beats_env_beats_home() {
+fn data_dir_flag_beats_exported_beats_xdg_beats_home() {
     let root = tempfile::Builder::new()
         .prefix("txcf")
         .tempdir_in("/tmp")
         .unwrap();
+    std::fs::create_dir_all(root.path().join("tmp")).unwrap();
     let flag = root.path().join("flag");
-    let env = root.path().join("env");
+    let exported = root.path().join("exported");
+    let xdg = root.path().join("xdg");
     let home = root.path().join("home");
-    let run = |args: &[&str], tx_home: Option<&Path>| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
-        command
-            .args(args)
-            .env("HOME", &home)
-            .env_remove("TMUX")
-            .env_remove("TX_SESSION_ID");
-        match tx_home {
-            Some(path) => command.env("TX_CORE_HOME", path),
-            None => command.env_remove("TX_CORE_HOME"),
-        };
+    let run = |args: &[&str], environment: &[(&str, &Path)]| {
+        let mut command = sandboxed(root.path());
+        command.args(args);
+        for (key, value) in environment {
+            command.env(key, value);
+        }
         command.output().unwrap()
     };
-    let flag_str = flag.to_str().unwrap();
-    assert!(
-        run(&["--state-dir", flag_str, "engines"], Some(&env))
-            .status
-            .success()
-    );
+    let all = [("TX_DATA_DIR", exported.as_path()), ("XDG_DATA_HOME", &xdg)];
+    let output = run(&["--data-dir", flag.to_str().unwrap(), "engines"], &all);
+    assert!(output.status.success(), "{}", stderr(&output));
     assert!(flag.join("sessions").is_dir());
-    assert!(!env.exists() && !home.exists());
+    assert!(!exported.exists() && !xdg.exists());
 
-    assert!(run(&["engines"], Some(&env)).status.success());
-    assert!(env.join("sessions").is_dir());
-    assert!(!home.exists());
+    assert!(run(&["engines"], &all).status.success());
+    assert!(exported.join("sessions").is_dir());
+    assert!(!xdg.exists());
 
-    assert!(run(&["engines"], None).status.success());
-    assert!(home.join(".tx-core/sessions").is_dir());
+    assert!(run(&["engines"], &all[1..]).status.success());
+    assert!(xdg.join("tx-ide/sessions").is_dir());
+    assert!(!home.join(".local/share").exists());
 
-    // An empty TX_CORE_HOME is taken literally (relative state dir), not treated as unset.
+    assert!(run(&["engines"], &[]).status.success());
+    assert!(home.join(".local/share/tx-ide/sessions").is_dir());
+
+    // An empty exported value means unset, not "the current directory".
     let scratch = root.path().join("scratch");
     std::fs::create_dir_all(&scratch).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_txc"))
+    let output = sandboxed(root.path())
         .arg("engines")
         .current_dir(&scratch)
-        .env("HOME", &home)
-        .env("TX_CORE_HOME", "")
-        .env_remove("TMUX")
-        .env_remove("TX_SESSION_ID")
+        .env("TX_DATA_DIR", "")
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(
-        !scratch.join("sessions").exists(),
-        "an empty TX_CORE_HOME means unset"
+        std::fs::read_dir(&scratch).unwrap().next().is_none(),
+        "an empty TX_DATA_DIR means unset"
     );
-    assert!(home.join(".tx-core/sessions").is_dir());
 }
 
 #[test]
@@ -918,15 +937,29 @@ fn long_socket_path_fails_before_touching_state_and_socket_overrides_it() {
     let base = root.path().to_str().unwrap().len() + "/".len() + "/tmux.sock".len();
     let too_long = root.path().join("d".repeat(101 - base));
     let just_fits = root.path().join("e".repeat(100 - base));
-    let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_txc"))
-            .args(args)
-            .env_remove("TMUX")
-            .env_remove("TX_SESSION_ID")
-            .output()
-            .unwrap()
+    let data = root.path().join("data");
+    let run = |args: &[&str]| sandboxed(root.path()).args(args).output().unwrap();
+    let flags = |run_dir: &Path| {
+        vec![
+            "--config-dir".to_owned(),
+            root.path().join("config").to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data.to_string_lossy().into_owned(),
+            "--state-dir".to_owned(),
+            root.path().join("state").to_string_lossy().into_owned(),
+            "--cache-dir".to_owned(),
+            root.path().join("cache").to_string_lossy().into_owned(),
+            "--run-dir".to_owned(),
+            run_dir.to_string_lossy().into_owned(),
+        ]
     };
-    let output = run(&["--state-dir", too_long.to_str().unwrap(), "engines"]);
+    let with = |run_dir: &Path, rest: &[&str]| {
+        let mut args = flags(run_dir);
+        args.extend(rest.iter().map(|word| (*word).to_owned()));
+        args
+    };
+    let args = with(&too_long, &["engines"]);
+    let output = run(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert_eq!(output.status.code(), Some(1));
     let err = stderr(&output);
     assert!(
@@ -934,38 +967,34 @@ fn long_socket_path_fails_before_touching_state_and_socket_overrides_it() {
         "{err}"
     );
     assert!(
-        !too_long.exists(),
-        "state dir was created despite the socket error"
+        !too_long.exists() && !data.exists(),
+        "a directory was created despite the socket error"
     );
     assert!(output.stdout.is_empty());
 
-    let output = run(&["--state-dir", just_fits.to_str().unwrap(), "engines"]);
+    let args = with(&just_fits, &["engines"]);
+    let output = run(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(just_fits.join("sessions").is_dir());
+    assert!(just_fits.is_dir() && data.join("sessions").is_dir());
 
     let short = root.path().join("s.sock");
-    let output = run(&[
-        "--state-dir",
-        too_long.to_str().unwrap(),
-        "--socket",
-        short.to_str().unwrap(),
-        "engines",
-    ]);
+    let args = with(&too_long, &["--socket", short.to_str().unwrap(), "engines"]);
+    let output = run(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(too_long.join("sessions").is_dir());
+    assert!(too_long.is_dir());
     // Flag order is free; a --socket that is itself too long still fails.
     let long_sock = root.path().join("x".repeat(120)).join("tmux.sock");
-    let output = run(&[
-        "--socket",
-        long_sock.to_str().unwrap(),
-        "--state-dir",
-        just_fits.to_str().unwrap(),
-        "engines",
-    ]);
+    let mut args = vec![
+        "--socket".to_owned(),
+        long_sock.to_string_lossy().into_owned(),
+    ];
+    args.extend(with(&just_fits, &["engines"]));
+    let output = run(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert_eq!(output.status.code(), Some(1));
     assert!(stderr(&output).contains("longer than"));
     // The usage error wins over the socket error: nothing is validated for a bad argv.
-    let output = run(&["--state-dir", too_long.to_str().unwrap()]);
+    let args = flags(&too_long);
+    let output = run(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert_eq!(output.status.code(), Some(2));
     // `engines` never starts a server, but make sure no private server is left behind.
     for sock in [
@@ -1083,4 +1112,19 @@ fn six_concurrent_creates_with_the_same_name_let_exactly_one_win() {
     ]);
     assert_eq!(cli.ok(&["ls", "--lifecycle", "running"]).lines().count(), 1);
     assert_eq!(cli.ok(&["ls"]).lines().count(), 2);
+}
+
+/// Every directory flag naming `dir`: the suites keep the five directories in one place, so
+/// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
+pub fn directory_flags(dir: &std::path::Path) -> Vec<std::ffi::OsString> {
+    [
+        "--config-dir",
+        "--data-dir",
+        "--state-dir",
+        "--cache-dir",
+        "--run-dir",
+    ]
+    .into_iter()
+    .flat_map(|flag| [flag.into(), dir.as_os_str().to_owned()])
+    .collect()
 }

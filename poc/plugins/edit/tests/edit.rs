@@ -20,12 +20,12 @@ impl Harness {
         }
     }
 
-    fn state_dir(&self) -> PathBuf {
-        self.dir.path().join("state")
+    fn directories(&self) -> tx_core::Directories {
+        tx_core::Directories::under(self.dir.path().join("home"))
     }
 
     fn core(&self) -> TxCore {
-        TxCore::open(CoreConfig::new(self.state_dir())).unwrap()
+        TxCore::open(CoreConfig::new(self.directories())).unwrap()
     }
 
     fn create(&self, core: &TxCore, name: &str) -> SessionId {
@@ -40,7 +40,7 @@ impl Harness {
     }
 
     fn record(&self, id: &SessionId) -> PathBuf {
-        self.state_dir().join(format!("sessions/{id}.json"))
+        self.directories().data.join(format!("sessions/{id}.json"))
     }
 }
 
@@ -48,7 +48,7 @@ impl Drop for Harness {
     fn drop(&mut self) {
         let _ = Command::new("tmux")
             .arg("-S")
-            .arg(self.state_dir().join("tmux.sock"))
+            .arg(self.directories().run.join("tmux.sock"))
             .arg("kill-server")
             .output();
     }

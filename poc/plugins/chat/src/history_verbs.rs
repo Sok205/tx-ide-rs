@@ -127,7 +127,7 @@ impl Ingest {
         {
             let _ = detach(
                 &exe,
-                &core.config().state_dir,
+                &core.config().cli_arguments(),
                 &["_history-ingest", &id.to_string()],
                 &[],
             );

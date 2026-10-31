@@ -1,5 +1,6 @@
 //! `TxCore`: the public operations. One struct, built once by `open`, owning its collaborators.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::config::CoreConfig;
@@ -21,10 +22,8 @@ pub const LOG_FILE: &str = "log.jsonl";
 pub const TMUX_BINARY: &str = "tmux";
 pub const SESSION_ID_ENV: &str = "TX_SESSION_ID";
 pub const TMUX_SOCKET_ENV: &str = "TX_TMUX_SOCKET";
-/// Exported into every session so a `txc` run by an agent opens the core that launched it.
-pub const STATE_DIR_ENV: &str = "TX_CORE_HOME";
 
-/// Written on `open` when the state dir has no `tmux.conf`. The IDE may replace it.
+/// Written on `open` when the data dir has no `tmux.conf`. The IDE may replace it.
 pub const DEFAULT_TMUX_CONF: &str = "\
 # tx-core server config. Edit freely; the IDE may replace this file.
 # The server exits with its last session; records of its sessions become `exited`.
@@ -339,7 +338,7 @@ fn store_io(path: &Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {
 impl std::fmt::Debug for TxCore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TxCore")
-            .field("state_dir", &self.config.state_dir)
+            .field("directories", &self.config.directories)
             .field("socket", &self.tmux.socket())
             .field("engines", &self.engines.ids())
             .finish_non_exhaustive()
@@ -347,26 +346,33 @@ impl std::fmt::Debug for TxCore {
 }
 
 impl TxCore {
-    /// Checks the socket path, creates the state layout, writes a default `tmux.conf` if none.
+    /// Checks the socket path, creates the layout (`<data>/sessions`, `<state>/locks`,
+    /// `<state>/profiles`, `<run>` private to the user), writes a default `tmux.conf` if none.
     /// Does not start tmux.
     pub fn open(config: CoreConfig) -> Result<Self, CoreError> {
         config.check_socket_path()?;
-        let state = &config.state_dir;
-        for sub in [SESSIONS_DIR, LOCKS_DIR, PROFILES_DIR] {
-            let dir = state.join(sub);
+        let directories = &config.directories;
+        for dir in [
+            directories.data.join(SESSIONS_DIR),
+            directories.state.join(LOCKS_DIR),
+            directories.state.join(PROFILES_DIR),
+            directories.run.clone(),
+        ] {
             std::fs::create_dir_all(&dir).map_err(store_io(&dir))?;
         }
+        std::fs::set_permissions(&directories.run, std::fs::Permissions::from_mode(0o700))
+            .map_err(store_io(&directories.run))?;
         let conf = config.tmux_conf_path();
         if !conf.exists() {
             std::fs::write(&conf, DEFAULT_TMUX_CONF).map_err(store_io(&conf))?;
         }
         Ok(Self {
-            store: SessionStore::new(state.join(SESSIONS_DIR)),
+            store: SessionStore::new(directories.data.join(SESSIONS_DIR)),
             tmux: Tmux::new(TMUX_BINARY, config.socket_path(), conf),
-            events: EventLog::new(state.join(LOG_FILE)),
+            events: EventLog::new(directories.data.join(LOG_FILE)),
             engines: EngineRegistry::new(),
             profiles: Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone()),
-            locks: Locks::new(state.join(LOCKS_DIR)),
+            locks: Locks::new(directories.state.join(LOCKS_DIR)),
             sinks: Vec::new(),
             host: Default::default(),
             config,
@@ -375,6 +381,15 @@ impl TxCore {
 
     pub fn config(&self) -> &CoreConfig {
         &self.config
+    }
+
+    /// `<state>/profiles/<id>.md`: the composed role prompt a session was launched with.
+    fn profile_path(&self, id: &SessionId) -> PathBuf {
+        self.config
+            .directories
+            .state
+            .join(PROFILES_DIR)
+            .join(format!("{id}.md"))
     }
 
     pub fn socket_path(&self) -> &Path {
@@ -499,11 +514,7 @@ impl TxCore {
             return Err(CoreError::NameTaken(opts.name));
         }
         let id = SessionId::mint();
-        let profile_file = self
-            .config
-            .state_dir
-            .join(PROFILES_DIR)
-            .join(format!("{id}.md"));
+        let profile_file = self.profile_path(&id);
         let cleanup_profile = || {
             let _ = std::fs::remove_file(&profile_file);
         };
@@ -514,11 +525,12 @@ impl TxCore {
                 TMUX_SOCKET_ENV.to_owned(),
                 self.tmux.socket().to_string_lossy().into_owned(),
             ),
-            (
-                STATE_DIR_ENV.to_owned(),
-                self.config.state_dir.to_string_lossy().into_owned(),
-            ),
         ];
+        // So a `txc` / `txi` run inside the session opens this same core: tmux does not pass the
+        // caller's `XDG_*` into sessions.
+        for (key, directory) in self.config.directories.environment() {
+            env.push((key.to_owned(), directory.to_string_lossy().into_owned()));
+        }
         merge_env(&mut env, &self.config.env);
         merge_env(&mut env, &opts.env);
 
@@ -915,12 +927,7 @@ impl TxCore {
                 .flatten()
                 .map(|session| session.name);
             let existed = self.store.delete(id)?;
-            let _ = std::fs::remove_file(
-                self.config
-                    .state_dir
-                    .join(PROFILES_DIR)
-                    .join(format!("{id}.md")),
-            );
+            let _ = std::fs::remove_file(self.profile_path(id));
             (existed, name)
         };
         if existed {
@@ -980,6 +987,7 @@ impl TxCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Directories;
     use crate::engine::{EngineError, LaunchPlan};
 
     fn dir() -> tempfile::TempDir {
@@ -992,28 +1000,36 @@ mod tests {
     #[test]
     fn open_creates_the_layout_and_a_default_conf() {
         let dir = dir();
-        let state = dir.path().join("state");
-        let core = TxCore::open(CoreConfig::new(&state)).unwrap();
-        for sub in ["sessions", "locks", "profiles"] {
-            assert!(state.join(sub).is_dir(), "{sub}");
+        let directories = Directories::under(dir.path());
+        let core = TxCore::open(CoreConfig::new(directories.clone())).unwrap();
+        for sub in [
+            directories.data.join("sessions"),
+            directories.state.join("locks"),
+            directories.state.join("profiles"),
+        ] {
+            assert!(sub.is_dir(), "{}", sub.display());
         }
-        let conf = std::fs::read_to_string(state.join("tmux.conf")).unwrap();
+        let run = std::fs::metadata(&directories.run).unwrap();
+        assert_eq!(run.permissions().mode() & 0o777, 0o700);
+        let conf = std::fs::read_to_string(directories.data.join("tmux.conf")).unwrap();
         assert!(conf.starts_with("# tx-core"), "{conf}");
         assert!(conf.contains("exit-empty"), "{conf}");
-        assert_eq!(core.socket_path(), state.join("tmux.sock"));
-        assert_eq!(core.config().state_dir, state);
+        assert_eq!(core.socket_path(), directories.run.join("tmux.sock"));
+        assert_eq!(core.config().directories, directories);
+        assert!(!directories.config.exists());
+        assert!(!directories.cache.exists());
         assert!(core.engine_ids().is_empty());
     }
 
     #[test]
     fn open_keeps_an_existing_conf() {
         let dir = dir();
-        let state = dir.path().join("state");
-        std::fs::create_dir_all(&state).unwrap();
-        std::fs::write(state.join("tmux.conf"), "mine\n").unwrap();
-        TxCore::open(CoreConfig::new(&state)).unwrap();
+        let directories = Directories::under(dir.path());
+        std::fs::create_dir_all(&directories.data).unwrap();
+        std::fs::write(directories.data.join("tmux.conf"), "mine\n").unwrap();
+        TxCore::open(CoreConfig::new(directories.clone())).unwrap();
         assert_eq!(
-            std::fs::read_to_string(state.join("tmux.conf")).unwrap(),
+            std::fs::read_to_string(directories.data.join("tmux.conf")).unwrap(),
             "mine\n"
         );
     }
@@ -1021,26 +1037,26 @@ mod tests {
     #[test]
     fn open_with_a_long_socket_path_creates_nothing() {
         let dir = dir();
-        let state = dir.path().join("s".repeat(120));
-        let error = TxCore::open(CoreConfig::new(&state)).unwrap_err();
+        let root = dir.path().join("s".repeat(120));
+        let error = TxCore::open(CoreConfig::new(Directories::under(&root))).unwrap_err();
         assert!(
             matches!(error, CoreError::SocketPathTooLong(_)),
             "{error:?}"
         );
-        assert!(!state.exists());
-        let mut config = CoreConfig::new(dir.path().join("short"));
+        assert!(!root.exists());
+        let mut config = CoreConfig::new(Directories::under(dir.path().join("short")));
         config.tmux_socket = Some(dir.path().join("s".repeat(120)));
         assert!(TxCore::open(config).is_err());
         assert!(!dir.path().join("short").exists());
     }
 
     #[test]
-    fn open_fails_when_state_dir_is_a_file() {
+    fn open_fails_when_the_data_dir_is_a_file() {
         let dir = dir();
-        let state = dir.path().join("file");
-        std::fs::write(&state, "").unwrap();
+        let directories = Directories::under(dir.path());
+        std::fs::write(&directories.data, "").unwrap();
         assert!(matches!(
-            TxCore::open(CoreConfig::new(&state)).unwrap_err(),
+            TxCore::open(CoreConfig::new(directories)).unwrap_err(),
             CoreError::Store(_)
         ));
     }
@@ -1066,7 +1082,8 @@ mod tests {
     #[test]
     fn register_engine_refuses_duplicates() {
         let dir = dir();
-        let mut core = TxCore::open(CoreConfig::new(dir.path().join("s"))).unwrap();
+        let mut core =
+            TxCore::open(CoreConfig::new(Directories::under(dir.path().join("s")))).unwrap();
         core.register_engine(Box::new(Stub)).unwrap();
         assert!(matches!(
             core.register_engine(Box::new(Stub)).unwrap_err(),
@@ -1116,8 +1133,8 @@ mod tests {
     fn create_fails_fast_without_touching_tmux() {
         // No tmux binary needed: the failures come before any call.
         let dir = dir();
-        let state = dir.path().join("s");
-        let mut config = CoreConfig::new(&state);
+        let directories = Directories::under(dir.path().join("s"));
+        let mut config = CoreConfig::new(directories.clone());
         config.env = vec![("OK".into(), "1".into())];
         let core = TxCore::open(config).unwrap();
         let cwd = dir.path().to_path_buf();
@@ -1151,18 +1168,18 @@ mod tests {
             CoreError::InvalidName(_)
         ));
         assert!(
-            std::fs::read_dir(state.join("sessions"))
+            std::fs::read_dir(directories.data.join("sessions"))
                 .unwrap()
                 .next()
                 .is_none()
         );
         assert!(
-            std::fs::read_dir(state.join("profiles"))
+            std::fs::read_dir(directories.state.join("profiles"))
                 .unwrap()
                 .next()
                 .is_none()
         );
-        assert!(!state.join("log.jsonl").exists());
+        assert!(!directories.data.join("log.jsonl").exists());
     }
 
     #[test]
