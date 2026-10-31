@@ -3,10 +3,12 @@
 //!
 //! The store lives under `<data>/plugins/artifacts/`: `<id>.json` records,
 //! `<id>/current<ext>` working copies, `<id>/revs/<n><ext>` snapshots, plus the plugin's own
-//! `.log.jsonl` and `.locks/`. Per-session state is `ext["artifacts"] = {"group"}` (records
-//! written before tx-client views may also carry a legacy `bound`, read until PR 11). An
-//! artifact's nvim view is a tx-client view of kind `editor` bound to it (`@tx-view-bound`).
-//! The touching session is `$TX_SESSION_ID`, else `user`.
+//! `.log.jsonl`, `.locks/` and `.worktrees/` (a diff's temporary worktrees). Per-session state is
+//! `ext["artifacts"] = {"group"}` (records written before tx-client views may also carry a legacy
+//! `bound`, read until PR 11). An artifact has a kind (`kinds`): a `document` opens in a
+//! tx-client view of kind `editor` bound to it (`@tx-view-bound`), a `diff` in one of kind `diff`
+//! running diffview in its worktree, and any other kind through the verb named after it
+//! (`txc <kind> open <id>`). The touching session is `$TX_SESSION_ID`, else `user`.
 //!
 //! Settings (`plugins.yaml`): `editor` (default `nvim`), the program an artifact's view runs.
 
@@ -18,6 +20,7 @@ use tx_core::{CoreConfig, Plugin, PluginError, Registry, SessionId, TxCore};
 pub mod artifact;
 pub mod difflib;
 pub mod grouping;
+pub mod kinds;
 pub mod menu;
 pub mod picker;
 pub mod render;

@@ -6,22 +6,33 @@
 //!
 //! Writes to one artifact are serialised by a flock on `.locks/<id>.lock`, held from loading the
 //! record to saving it, so two `txc` processes modifying at once produce two contiguous revs.
+//!
+//! A diff's content is its patch (`kinds`): created from the worktree, re-snapshotted as a new
+//! revision by `modify` and by `open`. The close step an `open` leaves behind (a temporary
+//! worktree) is kept in `<id>/.cleanup.json`, keyed by the view that needs it, until `close`,
+//! `doctor --repair`, or the next `open` of that artifact runs it.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use serde_json::{Number, Value, json};
+use serde_json::{Map, Number, Value, json};
 
-use crate::artifact::Artifact;
+use crate::artifact::{Artifact, Kind};
 use crate::difflib;
+use crate::kinds::{self, Cleanup, DIFF_PATCH, KindError, Opened};
 use crate::store::{
-    ArtifactContent, ArtifactStore, ArtifactStoreError, ClaimRevError, Scan, is_valid_id,
+    ArtifactContent, ArtifactStore, ArtifactStoreError, ClaimRevError, Scan, atomic_write,
+    is_valid_id,
 };
 
 pub const LOG_FILE: &str = ".log.jsonl";
 pub const LOCK_DIR: &str = ".locks";
+/// Under the data dir: a diff's temporary worktrees, one per open of a diff whose own is gone.
+pub const WORKTREES_DIR: &str = ".worktrees";
+/// Beside an artifact's working copy: its pending close steps, by view name.
+pub const CLEANUP_FILE: &str = ".cleanup.json";
 
 /// A precondition failed; the verb prints `txc artifact: <error>`, exit 1.
 #[derive(Debug, thiserror::Error)]
@@ -42,6 +53,13 @@ pub enum ArtifactError {
     NoRevision { id: String, rev: i64 },
     #[error("artifact {id} revision {rev} is not utf-8 text; cannot diff")]
     NotText { id: String, rev: i64 },
+    #[error(
+        "artifact {0} is a diff; its patch comes from the worktree, not a file (`txc artifact \
+         modify <id>` re-snapshots it)"
+    )]
+    NotEditable(String),
+    #[error(transparent)]
+    Kind(#[from] KindError),
     #[error(transparent)]
     Store(#[from] ArtifactStoreError),
     #[error("{}: {source}", path.display())]
@@ -90,6 +108,11 @@ impl ArtifactService {
 
     pub fn log_path(&self) -> PathBuf {
         self.dir.join(LOG_FILE)
+    }
+
+    /// Where a diff's temporary worktrees go.
+    pub fn worktrees_root(&self) -> PathBuf {
+        self.dir.join(WORKTREES_DIR)
     }
 
     /// Every readable record, plus the skipped files' warnings.
@@ -142,7 +165,7 @@ impl ArtifactService {
 
     // ----- mutations -----------------------------------------------------------------------
 
-    /// Register a new artifact: `revs/0<ext>` + `current<ext>`, the record, one log line.
+    /// Register a new document: `revs/0<ext>` + `current<ext>`, the record, one log line.
     pub fn create(
         &self,
         session_id: &str,
@@ -151,10 +174,52 @@ impl ArtifactService {
         filename: Option<String>,
         group: Option<String>,
     ) -> Result<Artifact> {
+        let filename = filename.unwrap_or_else(|| "artifact".to_owned());
+        let kind = Kind::Document {
+            file: filename.clone(),
+        };
+        self.create_with_kind(session_id, kind, content, title, filename, group)
+    }
+
+    /// Register a new diff of `worktree` against `base` (a ref or commit; empty means the
+    /// merge-base with the default branch), pinned to the commit id it resolves to now.
+    pub fn create_diff(
+        &self,
+        session_id: &str,
+        worktree: PathBuf,
+        base: &str,
+        title: Option<String>,
+        group: Option<String>,
+    ) -> Result<Artifact> {
+        let base = kinds::resolve_base(&worktree, base)?;
+        let kind = Kind::Diff { worktree, base };
+        let patch = kinds::create_content(&kind, None)?;
+        self.create_with_kind(
+            session_id,
+            kind,
+            &patch,
+            title,
+            DIFF_PATCH.to_owned(),
+            group,
+        )
+    }
+
+    /// Register a new artifact of any kind with `content` as its rev 0 and working copy; the
+    /// entry point for plugins owning a kind of their own (a tour's stops file).
+    pub fn create_with_kind(
+        &self,
+        session_id: &str,
+        kind: Kind,
+        content: &[u8],
+        title: Option<String>,
+        filename: String,
+        group: Option<String>,
+    ) -> Result<Artifact> {
         let artifact = Artifact::new(
             uuid::Uuid::new_v4().to_string(),
+            kind,
             title,
-            filename.unwrap_or_else(|| "artifact".to_owned()),
+            filename,
             float(tx_core::events::now()),
             group,
             session_id.to_owned(),
@@ -164,13 +229,19 @@ impl ArtifactService {
         self.save(&artifact)?;
         self.append(
             "artifact-create",
-            &format!("{} {}", artifact.id, artifact.filename),
+            &format!(
+                "{} {} {}",
+                artifact.id,
+                artifact.kind.name(),
+                artifact.filename
+            ),
             session_id,
         )?;
         Ok(artifact)
     }
 
-    /// Snapshot `content` as the next revision; identical to the last rev is a no-op.
+    /// Snapshot `content` as the next revision; identical to the last rev is a no-op. A diff's
+    /// content comes from its worktree, never from a file.
     pub fn modify(
         &self,
         artifact_id: &str,
@@ -180,10 +251,13 @@ impl ArtifactService {
     ) -> Result<Artifact> {
         let _lock = self.lock(artifact_id)?;
         let artifact = self.require(artifact_id)?;
+        if artifact.kind.is_diff() {
+            return Err(ArtifactError::NotEditable(artifact.id));
+        }
         self.apply_modify(artifact, session_id, content, changes)
     }
 
-    /// Snapshot the working copy as the next revision.
+    /// Snapshot the working copy as the next revision; for a diff, the worktree's patch again.
     pub fn snapshot_current(
         &self,
         artifact_id: &str,
@@ -192,8 +266,23 @@ impl ArtifactService {
     ) -> Result<Artifact> {
         let _lock = self.lock(artifact_id)?;
         let artifact = self.require(artifact_id)?;
-        let path = self.files.current_path(&artifact);
-        let content = self.files.read_current(&artifact).map_err(io_at(&path))?;
+        self.refresh(artifact, session_id, changes)
+    }
+
+    /// The kind's current content (a diff's patch, else the working copy) as the next revision.
+    fn refresh(
+        &self,
+        artifact: Artifact,
+        session_id: &str,
+        changes: Option<String>,
+    ) -> Result<Artifact> {
+        let content = match kinds::refresh(&artifact.kind)? {
+            Some(derived) => derived,
+            None => {
+                let path = self.files.current_path(&artifact);
+                self.files.read_current(&artifact).map_err(io_at(&path))?
+            }
+        };
         self.apply_modify(artifact, session_id, &content, changes)
     }
 
@@ -241,6 +330,27 @@ impl ArtifactService {
             &format!("{} {shown}", artifact.id),
             session_id,
         )?;
+        Ok(artifact)
+    }
+
+    /// Archive (hide from prefix+a and default listings, content kept) or unarchive: metadata
+    /// only, no touch, one log line.
+    pub fn set_archived(
+        &self,
+        artifact_id: &str,
+        session_id: &str,
+        archived: bool,
+    ) -> Result<Artifact> {
+        let _lock = self.lock(artifact_id)?;
+        let mut artifact = self.require(artifact_id)?;
+        artifact.archived = archived;
+        self.save(&artifact)?;
+        let type_ = if archived {
+            "artifact-archive"
+        } else {
+            "artifact-unarchive"
+        };
+        self.append(type_, &artifact.id, session_id)?;
         Ok(artifact)
     }
 
@@ -308,6 +418,148 @@ impl ArtifactService {
         )
     }
 
+    /// The artifact's directory; neither reads nor logs.
+    pub fn dir(&self, artifact_id: &str) -> Result<PathBuf> {
+        Ok(self.files.content_dir(&self.require(artifact_id)?))
+    }
+
+    /// Decide the view for an artifact: a diff whose worktree exists is re-snapshotted first (so
+    /// the view and the record agree), then the kind says where nvim runs and what it opens. The
+    /// caller starts the view, records the close step and logs the open.
+    pub fn open(&self, artifact_id: &str, session_id: &str) -> Result<(Artifact, Opened)> {
+        let _lock = self.lock(artifact_id)?;
+        let mut artifact = self.require(artifact_id)?;
+        if artifact.kind.worktree().is_some_and(Path::is_dir) {
+            artifact = self.refresh(artifact, session_id, None)?;
+        }
+        let current = self.files.current_path(&artifact);
+        let opened = kinds::open(&artifact, &current, &self.worktrees_root())?;
+        Ok((artifact, opened))
+    }
+
+    // ----- close steps ---------------------------------------------------------------------
+
+    fn cleanup_path(&self, artifact: &Artifact) -> PathBuf {
+        self.files.file_path(artifact, CLEANUP_FILE)
+    }
+
+    /// The pending close steps of an artifact, by view name.
+    pub fn pending_cleanups(&self, artifact: &Artifact) -> Result<BTreeMap<String, Cleanup>> {
+        let path = self.cleanup_path(artifact);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(source) => return Err(io_at(&path)(source)),
+        };
+        let data: Value = serde_json::from_slice(&bytes).map_err(ArtifactStoreError::from)?;
+        let entries = data.as_object().cloned().unwrap_or_default();
+        Ok(entries
+            .iter()
+            .filter_map(|(view, value)| Some((view.clone(), Cleanup::from_value(value)?)))
+            .collect())
+    }
+
+    fn write_cleanups(
+        &self,
+        artifact: &Artifact,
+        cleanups: &BTreeMap<String, Cleanup>,
+    ) -> Result<()> {
+        let path = self.cleanup_path(artifact);
+        if cleanups.is_empty() {
+            return match fs::remove_file(&path) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(io_at(&path)(error)),
+                _ => Ok(()),
+            };
+        }
+        let map: Map<String, Value> = cleanups
+            .iter()
+            .map(|(view, cleanup)| (view.clone(), cleanup.to_value()))
+            .collect();
+        let payload =
+            serde_json::to_string_pretty(&Value::Object(map)).map_err(ArtifactStoreError::from)?;
+        let dir = self.files.content_dir(artifact);
+        atomic_write(&dir, ".cleanup.", payload.as_bytes(), &path).map_err(io_at(&path))
+    }
+
+    /// Remember the close step an `open` left behind, keyed by the view that needs it, so the
+    /// close can run from whichever `txc` process sees that view gone.
+    pub fn record_cleanup(&self, artifact_id: &str, view: &str, cleanup: Cleanup) -> Result<()> {
+        let _lock = self.lock(artifact_id)?;
+        let artifact = self.require(artifact_id)?;
+        let mut cleanups = self.pending_cleanups(&artifact)?;
+        cleanups.insert(view.to_owned(), cleanup);
+        self.write_cleanups(&artifact, &cleanups)
+    }
+
+    /// Run the close step recorded for `view`, if any; whether one ran. Idempotent: a step
+    /// whose worktree is already gone still completes, and is forgotten.
+    pub fn close(&self, artifact_id: &str, view: &str) -> Result<bool> {
+        let _lock = self.lock(artifact_id)?;
+        let artifact = self.require(artifact_id)?;
+        let mut cleanups = self.pending_cleanups(&artifact)?;
+        let Some(cleanup) = cleanups.remove(view) else {
+            return Ok(false);
+        };
+        kinds::close(&cleanup)?;
+        self.write_cleanups(&artifact, &cleanups)?;
+        self.append(
+            "artifact-close",
+            &format!("{artifact_id} {view} {}", cleanup.describe()),
+            &self.actor,
+        )?;
+        Ok(true)
+    }
+
+    /// Run every pending close step of an artifact now (`txc artifact close`); how many ran.
+    pub fn close_all(&self, artifact_id: &str) -> Result<usize> {
+        let artifact = self.require(artifact_id)?;
+        let views: Vec<String> = self.pending_cleanups(&artifact)?.into_keys().collect();
+        for view in &views {
+            self.close(artifact_id, view)?;
+        }
+        Ok(views.len())
+    }
+
+    /// Run the close steps of an artifact's views that have ended; the lines describe what ran.
+    pub fn close_stale(
+        &self,
+        artifact_id: &str,
+        view_is_alive: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<String>> {
+        let artifact = self.require(artifact_id)?;
+        let mut lines = Vec::new();
+        for (view, cleanup) in self.stale_cleanups(&artifact, view_is_alive)? {
+            self.close(artifact_id, &view)?;
+            lines.push(format!(
+                "{}: ran the close step of ended view {view} ({})",
+                artifact.id,
+                cleanup.describe()
+            ));
+        }
+        Ok(lines)
+    }
+
+    fn stale_cleanups(
+        &self,
+        artifact: &Artifact,
+        view_is_alive: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<(String, Cleanup)>> {
+        Ok(self
+            .pending_cleanups(artifact)?
+            .into_iter()
+            .filter(|(view, _)| !view_is_alive(view))
+            .collect())
+    }
+
+    /// `close_stale` across the store (`doctor --repair`).
+    pub fn repair_cleanups(&self, view_is_alive: &dyn Fn(&str) -> bool) -> Result<Vec<String>> {
+        let mut lines = Vec::new();
+        for artifact in self.all() {
+            lines.extend(self.close_stale(&artifact.id, view_is_alive)?);
+        }
+        Ok(lines)
+    }
+
     /// A unified diff between two revisions (default: the last two); both must be utf-8.
     pub fn diff(&self, artifact_id: &str, revs: Option<(i64, i64)>) -> Result<String> {
         let artifact = self.require(artifact_id)?;
@@ -373,22 +625,24 @@ impl ArtifactService {
         Ok(current != self.last_snapshot(artifact)?)
     }
 
-    /// Every artifact `session_id` created or touched (a query, never denormalized).
+    /// Every unarchived artifact `session_id` created or touched (a query, never denormalized).
     pub fn artifacts_for_session(&self, session_id: &str) -> Vec<Artifact> {
         let mut artifacts = self.all();
         artifacts.retain(|artifact| {
-            artifact
-                .history()
-                .iter()
-                .any(|touch| touch.session_id == session_id)
+            !artifact.archived
+                && artifact
+                    .history()
+                    .iter()
+                    .any(|touch| touch.session_id == session_id)
         });
         artifacts
     }
 
     // ----- diagnostics ---------------------------------------------------------------------
 
-    /// Invariant check across the store (read-only); an empty list means clean.
-    pub fn doctor(&self) -> Result<Vec<String>> {
+    /// Invariant check across the store (read-only); an empty list means clean. `view_is_alive`
+    /// says whether a view a close step waits on still runs.
+    pub fn doctor(&self, view_is_alive: &dyn Fn(&str) -> bool) -> Result<Vec<String>> {
         let mut problems = Vec::new();
         let artifacts = self.all();
         let record_ids: HashSet<&str> = artifacts.iter().map(|a| a.id.as_str()).collect();
@@ -409,6 +663,14 @@ impl ArtifactService {
                 ));
             }
             problems.extend(self.current_health(artifact, &missing)?);
+            for (view, cleanup) in self.stale_cleanups(artifact, view_is_alive)? {
+                problems.push(format!(
+                    "{}: close step for ended view {view} never ran ({}); `doctor --repair` \
+                     runs it",
+                    artifact.id,
+                    cleanup.describe()
+                ));
+            }
             for touch in artifact.history() {
                 if !logged.contains(&signature(&artifact.id, touch.rev)) {
                     problems.push(format!(
@@ -604,7 +866,7 @@ mod tests {
             service.diff(&artifact.id, Some((-1, 0))),
             Err(ArtifactError::NoRevision { rev: -1, .. })
         ));
-        assert_eq!(service.doctor().unwrap(), Vec::<String>::new());
+        assert_eq!(service.doctor(&|_| true).unwrap(), Vec::<String>::new());
         assert!(matches!(
             service.modify(&artifact.id[..4], "s1", b"z", None),
             Err(ArtifactError::NotFound(_))
@@ -642,7 +904,7 @@ mod tests {
         let after = service.require(&artifact.id).unwrap();
         let revs: Vec<u64> = after.history().iter().map(|touch| touch.rev).collect();
         assert_eq!(revs, (0..=8).collect::<Vec<u64>>());
-        assert_eq!(service.doctor().unwrap(), Vec::<String>::new());
+        assert_eq!(service.doctor(&|_| true).unwrap(), Vec::<String>::new());
     }
 
     #[test]
@@ -662,6 +924,102 @@ mod tests {
     }
 
     #[test]
+    fn cleanups_are_recorded_closed_and_repaired() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = service(dir.path());
+        let artifact = service
+            .create("s1", b"x", None, Some("p.md".into()), None)
+            .unwrap();
+        let temp = dir.path().join("temp-tree");
+        fs::create_dir(&temp).unwrap();
+        service
+            .record_cleanup(
+                &artifact.id,
+                "review-diff",
+                Cleanup::RemoveWorktree(temp.clone()),
+            )
+            .unwrap();
+        service
+            .record_cleanup(
+                &artifact.id,
+                "review-diff-2",
+                Cleanup::RemoveWorktree(dir.path().join("gone")),
+            )
+            .unwrap();
+        assert_eq!(service.pending_cleanups(&artifact).unwrap().len(), 2);
+        let problems = service.doctor(&|view| view == "review-diff").unwrap();
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].contains("ended view review-diff-2"),
+            "{problems:?}"
+        );
+        assert!(service.doctor(&|_| true).unwrap().is_empty());
+
+        let ran = service
+            .repair_cleanups(&|view| view == "review-diff")
+            .unwrap();
+        assert_eq!(ran.len(), 1);
+        assert!(!service.close(&artifact.id, "review-diff-2").unwrap());
+        assert!(temp.is_dir(), "the live view's worktree stays");
+        assert_eq!(service.close_all(&artifact.id).unwrap(), 1);
+        assert!(!temp.exists());
+        assert!(service.pending_cleanups(&artifact).unwrap().is_empty());
+        assert!(
+            !dir.path()
+                .join("plugins/artifacts")
+                .join(&artifact.id)
+                .join(CLEANUP_FILE)
+                .exists()
+        );
+        assert_eq!(service.close_all(&artifact.id).unwrap(), 0);
+    }
+
+    #[test]
+    fn archive_hides_from_a_sessions_list_and_a_diff_refuses_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = service(dir.path());
+        let artifact = service
+            .create("s1", b"x", None, Some("p.md".into()), None)
+            .unwrap();
+        assert_eq!(service.artifacts_for_session("s1").len(), 1);
+        let archived = service.set_archived(&artifact.id, "s1", true).unwrap();
+        assert!(archived.archived);
+        assert_eq!(archived.latest_rev(), 0, "no touch");
+        assert!(service.artifacts_for_session("s1").is_empty());
+        assert_eq!(service.all().len(), 1, "content kept");
+        assert!(
+            !service
+                .set_archived(&artifact.id, "s1", false)
+                .unwrap()
+                .archived
+        );
+        assert_eq!(
+            service.dir(&artifact.id).unwrap(),
+            dir.path().join("plugins/artifacts").join(&artifact.id)
+        );
+
+        let diff_id = {
+            let mut diff = service
+                .create("s1", b"", None, Some(DIFF_PATCH.into()), None)
+                .unwrap();
+            diff.kind = Kind::Diff {
+                worktree: "/nonexistent".into(),
+                base: "abc".into(),
+            };
+            service.store().save(&diff).unwrap();
+            diff.id
+        };
+        assert!(matches!(
+            service.modify(&diff_id, "s1", b"y", None),
+            Err(ArtifactError::NotEditable(_))
+        ));
+        assert!(matches!(
+            service.snapshot_current(&diff_id, "s1", None),
+            Err(ArtifactError::Kind(KindError::WorktreeMissing(_)))
+        ));
+    }
+
+    #[test]
     fn doctor_ignores_the_hidden_log_and_locks() {
         let dir = tempfile::tempdir().unwrap();
         let service = service(dir.path());
@@ -671,6 +1029,6 @@ mod tests {
         service.modify(&artifact.id, "s1", b"y", None).unwrap();
         assert!(service.log_path().is_file());
         assert!(dir.path().join("plugins/artifacts/.locks").is_dir());
-        assert_eq!(service.doctor().unwrap(), Vec::<String>::new());
+        assert_eq!(service.doctor(&|_| true).unwrap(), Vec::<String>::new());
     }
 }

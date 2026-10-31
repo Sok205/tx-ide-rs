@@ -41,7 +41,7 @@ fn distinct_authors(artifact: &Artifact) -> Vec<&str> {
     authors
 }
 
-/// Newest-touched first; `names` is the caller-resolved id→name map.
+/// Newest-touched first, with each artifact's kind; `names` is the caller-resolved id→name map.
 pub fn render_artifacts(
     artifacts: &[Artifact],
     names: &HashMap<String, String>,
@@ -58,11 +58,13 @@ pub fn render_artifacts(
             .into_iter()
             .map(|author| actor_label(author, names))
             .collect();
+        let archived = if artifact.archived { " (archived)" } else { "" };
         lines.push(format!(
-            "  {:<8}  {:>3}r  {:>5}  {:<28}{}",
+            "  {:<8}  {:>3}r  {:>5}  {:<8}  {:<28}{}{archived}",
             artifact.id.chars().take(8).collect::<String>(),
             artifact.history().len(),
             reltime(Some(updated_at(artifact)), now),
+            trunc(artifact.kind.name(), 8),
             trunc(artifact.display_name(), 28),
             chips(&labels),
         ));
@@ -70,13 +72,17 @@ pub fn render_artifacts(
     lines.join("\n")
 }
 
-/// Metadata + the full touch log; `dirty` and `resolved_group` are computed by the caller.
+/// Metadata + the full touch log; `dirty`, `resolved_group`, `worktree_present` (a diff's
+/// worktree still exists) and `pending` (close steps waiting on views) are computed by the
+/// caller.
 pub fn render_artifact_show(
     artifact: &Artifact,
     dirty: bool,
     names: &HashMap<String, String>,
     now: f64,
     resolved_group: &str,
+    worktree_present: Option<bool>,
+    pending: &[String],
 ) -> String {
     let working = if dirty {
         "dirty: un-snapshotted edits (close with `txc artifact modify`)"
@@ -88,8 +94,17 @@ pub fn render_artifact_show(
         None => format!("derived: {resolved_group}"),
     };
     let created = artifact.created_at.as_f64();
+    let mut kind = artifact.kind.describe();
+    if let (Some(worktree), Some(present)) = (artifact.kind.worktree(), worktree_present) {
+        kind.push_str(&format!(
+            " in {}{}",
+            worktree.display(),
+            if present { "" } else { " (gone)" }
+        ));
+    }
     let mut lines = vec![
         format!("{}  ({})", artifact.display_name(), artifact.id),
+        format!("  kind:       {kind}"),
         format!("  filename:   {}", artifact.filename),
         format!("  created:    {} ago", reltime(created, now)),
         format!(
@@ -99,8 +114,14 @@ pub fn render_artifact_show(
         format!("  group:      {group}"),
         format!("  revisions:  {}", artifact.history().len()),
         format!("  working:    {working}"),
-        "  history:".into(),
     ];
+    if artifact.archived {
+        lines.push("  archived:   yes (hidden from prefix+a and ls)".into());
+    }
+    for step in pending {
+        lines.push(format!("  pending:    {step}"));
+    }
+    lines.push("  history:".into());
     for touch in artifact.history() {
         let note = match touch.changes.as_deref() {
             Some(changes) if !changes.is_empty() => format!("  {changes}"),
@@ -142,17 +163,18 @@ mod tests {
         let names = HashMap::from([("s1".to_owned(), "worker".to_owned())]);
         assert_eq!(
             render_artifacts(&[artifact()], &names, NOW),
-            "ARTIFACTS\n  01234567    3r     5s  plan.md                      [worker] [user]"
+            "ARTIFACTS\n  01234567    3r     5s  document  plan.md                      [worker] [user]"
         );
         assert_eq!(render_artifacts(&[], &names, NOW), "ARTIFACTS\n  (none)");
     }
 
     #[test]
     fn show_lists_every_touch() {
-        let text = render_artifact_show(&artifact(), true, &HashMap::new(), NOW, "feat");
+        let text = render_artifact_show(&artifact(), true, &HashMap::new(), NOW, "feat", None, &[]);
         assert_eq!(
             text,
-            "plan.md  (0123456789abcdef)\n  filename:   plan.md\n  created:    2h ago\n  \
+            "plan.md  (0123456789abcdef)\n  kind:       document\n  filename:   plan.md\n  \
+             created:    2h ago\n  \
              updated:    5s ago\n  group:      derived: feat\n  revisions:  3\n  working:    \
              dirty: un-snapshotted edits (close with `txc artifact modify`)\n  history:\n    \
              rev 0      2h ago  s1                  \n    rev 1      1m ago  user                  \

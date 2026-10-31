@@ -19,7 +19,7 @@ use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::View;
 use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
 
-use crate::artifact::{Artifact, USER_ACTOR};
+use crate::artifact::{Artifact, Kind, USER_ACTOR};
 use crate::grouping::bound_artifact;
 use crate::picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::render::{actor_label, updated_at};
@@ -96,7 +96,8 @@ pub struct Sections {
     pub targets: Vec<Target>,
 }
 
-/// Pure: the ARTIFACTS the session touched (newest first), its live PARENT, its live CHILDREN
+/// Pure: the ARTIFACTS the session touched (newest first; a kind other than document is the
+/// row's first chip), its live PARENT, its live CHILDREN
 /// (agents and unbound views; an artifact's view is a row under its artifact). `views` are the
 /// tx-client views; `live` the running core records, where a record bound through
 /// `ext.artifacts.bound` is a legacy view (PR 11 deletes). `locate` gives a tmux session's
@@ -126,6 +127,9 @@ pub fn sections(
                 .map(|session| session.name.as_str())
         };
         let mut chips = Vec::new();
+        if !matches!(artifact.kind, Kind::Document { .. }) {
+            chips.push(artifact.kind.name().to_owned());
+        }
         for touch in artifact.history() {
             let author = name_of(&touch.session_id);
             if !chips.contains(&author) {
@@ -462,14 +466,13 @@ impl Nav<'_> {
                     id: Some(record.id.clone()),
                     tags: record.tags.clone(),
                 };
-                let cwd = self.artifacts.files().content_dir(&artifact);
                 views::open(
                     &self.ui,
                     &self.artifacts,
                     &artifact,
                     &opener,
                     None,
-                    &cwd,
+                    None,
                     self.editor,
                 )?
                 .into()

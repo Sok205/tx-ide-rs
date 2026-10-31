@@ -1,6 +1,7 @@
-//! An artifact's nvim view: a tx-client view of kind `editor` running the editor on
-//! `current<ext>`, bound to the artifact through `@tx-view-bound`. No core record. Shared by
-//! `artifact open` and prefix+a.
+//! An artifact's nvim view, bound to the artifact through `@tx-view-bound`: for a document a
+//! tx-client view of kind `editor` running the editor on `current<ext>`; for a diff one of kind
+//! `diff` running diffview against the base in the worktree (`kinds::open` decides). No core
+//! record. Shared by `artifact open` and prefix+a.
 
 use std::path::Path;
 
@@ -10,6 +11,7 @@ use tx_core::{Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
 
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::grouping::bound_artifact;
+use crate::kinds::view_suffix;
 use crate::service::ArtifactService;
 
 /// Who opens the view: the calling session (its id becomes the view's parent) and the tags the
@@ -40,10 +42,14 @@ pub fn sanitize(title: &str) -> String {
     }
 }
 
-/// The view's name: the sanitized title, with the id's first 8 chars appended when a tmux
-/// session (an agent's or a view) already holds that name.
+/// The view's name: the sanitized title (plus `-diff` for a diff), with the id's first 8 chars
+/// appended when a tmux session (an agent's or a view) already holds that name.
 pub fn view_name(ui: &Ui, artifact: &Artifact) -> String {
-    let base = sanitize(artifact.display_name());
+    let base = format!(
+        "{}{}",
+        sanitize(artifact.display_name()),
+        view_suffix(&artifact.kind)
+    );
     if ui.has_session(&base) {
         let short: String = artifact.id.chars().take(8).collect();
         return format!("{base}-{}", sanitize(&short));
@@ -98,40 +104,58 @@ fn failed(error: impl std::fmt::Display) -> VerbError {
     VerbError::Failed(error.to_string())
 }
 
-/// Starts the view, bound to the artifact, and logs the open.
+/// Starts the view, bound to the artifact, and logs the open. Close steps left by earlier views
+/// of the artifact that have ended run first; the one this open leaves (a diff's temporary
+/// worktree) is recorded under the view's name. `cwd` overrides where a document's editor runs.
 pub fn open(
     ui: &Ui,
     artifacts: &ArtifactService,
     artifact: &Artifact,
     opener: &Opener,
     tags: Option<Vec<String>>,
-    cwd: &Path,
+    cwd: Option<&Path>,
     editor: &str,
 ) -> Result<View, VerbError> {
-    let current = artifacts.files().current_path(artifact);
+    let actor = opener
+        .id
+        .as_ref()
+        .map_or(USER_ACTOR.to_owned(), ToString::to_string);
+    artifacts
+        .close_stale(&artifact.id, &|name| ui.has_session(name))
+        .map_err(failed)?;
+    let (artifact, opened) = artifacts.open(&artifact.id, &actor).map_err(failed)?;
     let tags = tags
         .or_else(|| (!opener.tags.is_empty()).then(|| opener.tags.clone()))
         .unwrap_or_else(|| vec!["artifact".to_owned()]);
-    let arguments = [current.to_string_lossy().into_owned()];
-    let name = view_name(ui, artifact);
+    let name = view_name(ui, &artifact);
+    let kind = if opened.diffview {
+        ViewKind::Diff
+    } else {
+        ViewKind::Editor
+    };
+    let working_directory = match (&artifact.kind, cwd) {
+        (crate::artifact::Kind::Document { .. }, Some(cwd)) => cwd,
+        _ => &opened.working_directory,
+    };
     let view = views::open(
         ui,
         &ViewRequest {
             name: &name,
-            kind: ViewKind::Editor,
+            kind,
             program: editor,
-            arguments: &arguments,
-            working_directory: cwd,
+            arguments: &opened.arguments,
+            working_directory,
             tags: &tags,
             parent_id: opener.id.as_ref(),
             bound: Some(&artifact.id),
         },
     )
     .map_err(failed)?;
-    let actor = opener
-        .id
-        .as_ref()
-        .map_or(USER_ACTOR.to_owned(), ToString::to_string);
+    if let Some(cleanup) = opened.cleanup {
+        artifacts
+            .record_cleanup(&artifact.id, &view.name, cleanup)
+            .map_err(failed)?;
+    }
     artifacts.opened(&artifact.id, &actor).map_err(failed)?;
     Ok(view)
 }

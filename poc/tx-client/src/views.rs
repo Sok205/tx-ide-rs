@@ -1,5 +1,5 @@
-//! Views: the non-LLM tmux sessions tx-client owns (the home base, editors, shells, the
-//! timeline, tutor and mockup viewers). A view has no core record and never shows in `txc ls`;
+//! Views: the non-LLM tmux sessions tx-client owns (the home base, editors, diffviews, shells,
+//! the timeline, tutor and mockup viewers). A view has no core record and never shows in `txc ls`;
 //! its fields live in tmux session options only, so nothing goes stale when the server dies.
 //! Core marks its own sessions with `@tx-id`, and nothing here kills or renames one of those.
 
@@ -26,6 +26,8 @@ const LIST_FORMAT: &str = "#{session_name}\t#{@tx-view}\t#{@tx-view-kind}\t#{@tx
 pub enum ViewKind {
     Home,
     Editor,
+    /// nvim showing a diff artifact in diffview.
+    Diff,
     Shell,
     Timeline,
     Tutor,
@@ -33,9 +35,10 @@ pub enum ViewKind {
 }
 
 impl ViewKind {
-    pub const ALL: [ViewKind; 6] = [
+    pub const ALL: [ViewKind; 7] = [
         ViewKind::Home,
         ViewKind::Editor,
+        ViewKind::Diff,
         ViewKind::Shell,
         ViewKind::Timeline,
         ViewKind::Tutor,
@@ -46,6 +49,7 @@ impl ViewKind {
         match self {
             ViewKind::Home => "home",
             ViewKind::Editor => "editor",
+            ViewKind::Diff => "diff",
             ViewKind::Shell => "shell",
             ViewKind::Timeline => "timeline",
             ViewKind::Tutor => "tutor",
@@ -55,14 +59,14 @@ impl ViewKind {
 
     /// Whether the picker's Enter may replace one of this view's shell panes with a nested
     /// attach: the home base and the tutor (its viewer pane) are built for that; a shell,
-    /// editor, mockup or timeline view is the operator's own and gets the client switched.
+    /// editor, diff, mockup or timeline view is the operator's own and gets the client switched.
     pub fn hosts_nested_attaches(self) -> bool {
         matches!(self, ViewKind::Home | ViewKind::Tutor)
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("unknown view kind {0:?} (expected home, editor, shell, timeline, tutor or mockup)")]
+#[error("unknown view kind {0:?} (expected home, editor, diff, shell, timeline, tutor or mockup)")]
 pub struct InvalidViewKind(pub String);
 
 impl FromStr for ViewKind {
@@ -323,6 +327,7 @@ mod tests {
         for kind in [
             ViewKind::Shell,
             ViewKind::Editor,
+            ViewKind::Diff,
             ViewKind::Mockup,
             ViewKind::Timeline,
         ] {

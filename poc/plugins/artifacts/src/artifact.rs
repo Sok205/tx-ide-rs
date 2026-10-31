@@ -5,9 +5,14 @@
 //! must be exact, the history non-empty with revs contiguous from 0. `updated_at` is derived from
 //! the last touch, never stored. Timestamps stay `serde_json::Number`, so an integer written by
 //! hand stays an integer.
+//!
+//! `kind` (what the artifact is, with the facts its kind needs) and `archived` are the two keys
+//! records written before artifact kinds lack: such a record reads as an unarchived document.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 
 pub const ARTIFACT_SCHEMA_VERSION: u64 = 2;
@@ -24,7 +29,59 @@ const ARTIFACT_KEYS: [&str; 7] = [
     "group",
     "history",
 ];
+/// Written always, read when present.
+const OPTIONAL_ARTIFACT_KEYS: [&str; 2] = ["kind", "archived"];
 const TOUCH_KEYS: [&str; 4] = ["session_id", "at", "rev", "changes"];
+
+/// What an artifact is, with the structured facts its kind needs. The plugin derives the open
+/// behaviour of a document and a diff from this in code; any other kind is opened by convention
+/// through the verb named after it (`txc <kind> open <id>`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Kind {
+    /// A hand-edited file: the working copy `current<ext>`. The default when a record has no kind.
+    Document { file: String },
+    /// `git diff <base>` of a repository checkout, with `base` a commit id pinned at create.
+    Diff { worktree: PathBuf, base: String },
+    /// A kind another plugin owns; `facts` are its subfields, kept as written.
+    #[serde(untagged)]
+    Other {
+        kind: String,
+        #[serde(flatten)]
+        facts: Map<String, Value>,
+    },
+}
+
+impl Kind {
+    /// The kind's name: `document`, `diff`, or the other plugin's word.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Document { .. } => "document",
+            Self::Diff { .. } => "diff",
+            Self::Other { kind, .. } => kind,
+        }
+    }
+
+    pub fn is_diff(&self) -> bool {
+        matches!(self, Self::Diff { .. })
+    }
+
+    /// The checkout a diff points into (`None` for the other kinds).
+    pub fn worktree(&self) -> Option<&Path> {
+        match self {
+            Self::Diff { worktree, .. } => Some(worktree),
+            Self::Document { .. } | Self::Other { .. } => None,
+        }
+    }
+
+    /// A short label for listings: `document`, `diff vs <base7>`, or the kind's name.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Diff { base, .. } => format!("diff vs {}", &base[..base.len().min(7)]),
+            other => other.name().to_owned(),
+        }
+    }
+}
 
 /// A persisted record is not a current-version artifact record.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -57,10 +114,13 @@ impl Touch {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Artifact {
     pub id: String,
+    pub kind: Kind,
     pub title: Option<String>,
     pub filename: String,
     pub created_at: Number,
     pub group: Option<String>,
+    /// Hidden from prefix+a and `ls` (content kept); `ls --archived` shows it.
+    pub archived: bool,
     history: Vec<Touch>,
 }
 
@@ -68,6 +128,7 @@ impl Artifact {
     /// A fresh artifact whose history is the single create touch (rev 0) at `created_at`.
     pub fn new(
         id: String,
+        kind: Kind,
         title: Option<String>,
         filename: String,
         created_at: Number,
@@ -82,10 +143,12 @@ impl Artifact {
         };
         Self {
             id,
+            kind,
             title,
             filename,
             created_at,
             group,
+            archived: false,
             history: vec![create],
         }
     }
@@ -156,6 +219,11 @@ impl Artifact {
             "history".into(),
             Value::Array(self.history.iter().map(Touch::to_value).collect()),
         );
+        map.insert(
+            "kind".into(),
+            serde_json::to_value(&self.kind).expect("a kind serializes"),
+        );
+        map.insert("archived".into(), Value::Bool(self.archived));
         Value::Object(map)
     }
 
@@ -174,7 +242,12 @@ impl Artifact {
             )));
         }
         let id_repr = repr_opt(map.get("id"));
-        require_exact_keys(map, &ARTIFACT_KEYS, &format!("artifact {id_repr}"))?;
+        require_exact_keys(
+            map,
+            &ARTIFACT_KEYS,
+            &OPTIONAL_ARTIFACT_KEYS,
+            &format!("artifact {id_repr}"),
+        )?;
 
         let Value::Array(entries) = &map["history"] else {
             return Err(invalid(&id_repr, "history", &map["history"]));
@@ -186,7 +259,7 @@ impl Artifact {
                     "a history entry is not an object: {entry}"
                 )));
             };
-            require_exact_keys(touch, &TOUCH_KEYS, "a history entry")?;
+            require_exact_keys(touch, &TOUCH_KEYS, &[], "a history entry")?;
             touch_maps.push(touch);
         }
         validate_history(&touch_maps, &id_repr)?;
@@ -203,12 +276,27 @@ impl Artifact {
                 })
             })
             .collect::<Result<_, UnsupportedArtifactError>>()?;
+        let filename = req_str(map, "filename", &id_repr)?;
+        let kind = match map.get("kind") {
+            None => Kind::Document {
+                file: filename.clone(),
+            },
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|_| invalid(&id_repr, "kind", value))?,
+        };
+        let archived = match map.get("archived") {
+            None => false,
+            Some(Value::Bool(archived)) => *archived,
+            Some(other) => return Err(invalid(&id_repr, "archived", other)),
+        };
         Ok(Self {
             id: req_str(map, "id", &id_repr)?,
+            kind,
             title: opt_str_field(map, "title", &id_repr)?,
-            filename: req_str(map, "filename", &id_repr)?,
+            filename,
             created_at: req_num(map, "created_at", &id_repr)?,
             group: opt_str_field(map, "group", &id_repr)?,
+            archived,
             history,
         })
     }
@@ -224,12 +312,18 @@ fn invalid(id_repr: &str, field: &str, value: &Value) -> UnsupportedArtifactErro
     ))
 }
 
+/// Every `expected` key present, nothing outside `expected` and `optional`.
 fn require_exact_keys(
     data: &Map<String, Value>,
     expected: &[&str],
+    optional: &[&str],
     what: &str,
 ) -> Result<(), UnsupportedArtifactError> {
-    let keys: BTreeSet<&str> = data.keys().map(String::as_str).collect();
+    let keys: BTreeSet<&str> = data
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !optional.contains(key))
+        .collect();
     let expected: BTreeSet<&str> = expected.iter().copied().collect();
     if keys == expected {
         return Ok(());
@@ -347,8 +441,8 @@ mod tests {
         r#""filename":"plan.md","title":null,"id":"a","artifact_schema_version":2}"#
     );
 
-    /// Main's golden/art/01.txt.
-    const GOLDEN_01: &str = "{\n  \"artifact_schema_version\": 2,\n  \"id\": \"a\",\n  \"title\": null,\n  \"filename\": \"plan.md\",\n  \"created_at\": 1.5,\n  \"group\": null,\n  \"history\": [\n    {\n      \"session_id\": \"s1\",\n      \"at\": 1.5,\n      \"rev\": 0,\n      \"changes\": null\n    },\n    {\n      \"session_id\": \"user\",\n      \"at\": 2.0,\n      \"rev\": 1,\n      \"changes\": \"tweak\"\n    }\n  ]\n}";
+    /// Main's golden/art/01.txt, plus the two keys records written since artifact kinds carry.
+    const GOLDEN_01: &str = "{\n  \"artifact_schema_version\": 2,\n  \"id\": \"a\",\n  \"title\": null,\n  \"filename\": \"plan.md\",\n  \"created_at\": 1.5,\n  \"group\": null,\n  \"history\": [\n    {\n      \"session_id\": \"s1\",\n      \"at\": 1.5,\n      \"rev\": 0,\n      \"changes\": null\n    },\n    {\n      \"session_id\": \"user\",\n      \"at\": 2.0,\n      \"rev\": 1,\n      \"changes\": \"tweak\"\n    }\n  ],\n  \"kind\": {\n    \"kind\": \"document\",\n    \"file\": \"plan.md\"\n  },\n  \"archived\": false\n}";
 
     fn err(data: Value) -> String {
         Artifact::from_value(&data).unwrap_err().to_string()
@@ -373,6 +467,14 @@ mod tests {
     fn main_artifact_fixtures_round_trip() {
         let data: Value = serde_json::from_str(HAND_WRITTEN_A).unwrap();
         let artifact = Artifact::from_value(&data).unwrap();
+        assert_eq!(
+            artifact.kind,
+            Kind::Document {
+                file: "plan.md".into()
+            },
+            "a record without a kind is a document"
+        );
+        assert!(!artifact.archived);
         assert_eq!(pretty(&artifact.to_value()), GOLDEN_01);
         assert_eq!(artifact.updated_at().to_string(), "2.0");
         assert_eq!(artifact.latest_rev(), 1);
@@ -429,6 +531,13 @@ mod tests {
             "artifact null has an invalid key set: unexpected [x]; missing \
              [created_at, filename, group, history, id, title]"
         );
+        let mut extra = record("extra", &[0]);
+        extra["kind"] = json!({"kind": "document", "file": "plan.md"});
+        extra["archived"] = json!(false);
+        assert!(
+            Artifact::from_value(&extra).is_ok(),
+            "kind and archived are optional"
+        );
     }
 
     #[test]
@@ -452,12 +561,79 @@ mod tests {
         let mut data = record("t", &[0]);
         data["title"] = json!(3);
         assert_eq!(err(data), "artifact \"t\" has an invalid title: 3");
+        let mut data = record("k", &[0]);
+        data["kind"] = json!({"file": "x"});
+        assert_eq!(
+            err(data),
+            "artifact \"k\" has an invalid kind: {\"file\":\"x\"}"
+        );
+        let mut data = record("ar", &[0]);
+        data["archived"] = json!("yes");
+        assert_eq!(
+            err(data),
+            "artifact \"ar\" has an invalid archived: \"yes\""
+        );
+    }
+
+    #[test]
+    fn kinds_round_trip_through_the_record() {
+        let kinds = [
+            Kind::Document {
+                file: "plan.md".into(),
+            },
+            Kind::Diff {
+                worktree: "/w/tree".into(),
+                base: "b28bae8af3042e3e".into(),
+            },
+            Kind::Other {
+                kind: "tour".into(),
+                facts: json!({"worktree": "/w/tree", "stops": "stops.lua"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            },
+        ];
+        for kind in kinds {
+            let mut artifact = Artifact::new(
+                "id".into(),
+                kind.clone(),
+                None,
+                "f".into(),
+                Number::from(1),
+                None,
+                "s1".into(),
+            );
+            artifact.archived = true;
+            let value = artifact.to_value();
+            assert_eq!(value["kind"]["kind"], json!(kind.name()));
+            assert_eq!(value["archived"], json!(true));
+            let back = Artifact::from_value(&value).unwrap();
+            assert_eq!(back, artifact, "{kind:?}");
+        }
+        let tour: Kind = serde_json::from_value(json!({"kind": "tour", "stops": "s.lua"})).unwrap();
+        assert_eq!(tour.name(), "tour");
+        assert_eq!(tour.describe(), "tour");
+        assert_eq!(tour.worktree(), None);
+        let diff = Kind::Diff {
+            worktree: "/w".into(),
+            base: "b28bae8af3042e3e".into(),
+        };
+        assert_eq!(diff.describe(), "diff vs b28bae8");
+        assert_eq!(diff.worktree(), Some(Path::new("/w")));
+        assert!(diff.is_diff());
+        assert_eq!(
+            serde_json::to_value(&diff).unwrap(),
+            json!({"kind": "diff", "worktree": "/w", "base": "b28bae8af3042e3e"})
+        );
     }
 
     #[test]
     fn record_touch_appends_next_rev() {
         let mut artifact = Artifact::new(
             "id".into(),
+            Kind::Document {
+                file: "plan.md".into(),
+            },
             None,
             "plan.md".into(),
             Number::from(1),
