@@ -8,13 +8,15 @@
 //! its live children. Enter (or a digit) re-hosts the pane on the chosen view (the agent keeps
 //! running detached); f then a digit or Enter moves the terminal to the pane already showing it;
 //! p then a digit or Enter nest-attaches it in a popup over the terminal.
-//! In an artifact's view the key goes back to the controlling session: the artifact's most
-//! recent live non-`user` toucher, else its creator; in another companion, to its `parent`.
+//! In an artifact's view (a tx-client view bound to it) the key goes back to the controlling
+//! session: the artifact's most recent live non-`user` toucher, else its creator, else the view's
+//! parent agent; in another view, to its parent agent.
 
 use tx_client::render::{
     DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, tag_ansi, tag_hex,
 };
 use tx_client::tmux::{Ui, shell_quote};
+use tx_client::views::View;
 use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
 
 use crate::artifact::{Artifact, USER_ACTOR};
@@ -23,7 +25,7 @@ use crate::picker::{self, HINT, Item, Pick, row_label, visible_width};
 use crate::render::{actor_label, updated_at};
 use crate::service::ArtifactService;
 use crate::tmux::{self as tm, DIM_FG_HEX, FG_HEX};
-use crate::views::{self, Opener};
+use crate::views::{self, Opener, Shown};
 
 const NAME_FLOOR: usize = 12;
 const NAME_CEILING: usize = 40;
@@ -95,13 +97,16 @@ pub struct Sections {
 }
 
 /// Pure: the ARTIFACTS the session touched (newest first), its live PARENT, its live CHILDREN
-/// (artifact views excluded: they are rows under their artifact). `locate` gives a session's
+/// (agents and unbound views; an artifact's view is a row under its artifact). `views` are the
+/// tx-client views; `live` the running core records, where a record bound through
+/// `ext.artifacts.bound` is a legacy view (PR 11 deletes). `locate` gives a tmux session's
 /// LOCATION cell, `name_of` a touch author's name.
 pub fn sections(
     record: &Session,
     touched: &[Artifact],
     live: &[Session],
-    locate: impl Fn(&Session) -> String,
+    views: &[View],
+    locate: impl Fn(&str) -> String,
     name_of: impl Fn(&str) -> String,
 ) -> Sections {
     let mut touched: Vec<&Artifact> = touched.iter().collect();
@@ -109,9 +114,17 @@ pub fn sections(
     let mut out = Sections::default();
     let mut rows = Vec::new();
     for artifact in touched {
-        let view = live
+        let bound_view = views
             .iter()
-            .find(|candidate| bound_artifact(candidate).as_deref() == Some(artifact.id.as_str()));
+            .find(|view| view.bound.as_deref() == Some(artifact.id.as_str()))
+            .map(|view| view.name.as_str());
+        let legacy_view = || {
+            live.iter()
+                .find(|candidate| {
+                    bound_artifact(candidate).as_deref() == Some(artifact.id.as_str())
+                })
+                .map(|session| session.name.as_str())
+        };
         let mut chips = Vec::new();
         for touch in artifact.history() {
             let author = name_of(&touch.session_id);
@@ -121,7 +134,9 @@ pub fn sections(
         }
         rows.push(Row {
             name: artifact.display_name().to_owned(),
-            location: view.map_or_else(|| "—".to_owned(), &locate),
+            location: bound_view
+                .or_else(legacy_view)
+                .map_or_else(|| "—".to_owned(), &locate),
             chips,
         });
         out.targets.push(Target {
@@ -132,35 +147,56 @@ pub fn sections(
     if !rows.is_empty() {
         out.sections.push(("ARTIFACTS", std::mem::take(&mut rows)));
     }
-    let parent = record
+    let session_row = |session: &Session| {
+        (
+            Row {
+                name: session.name.clone(),
+                location: locate(&session.name),
+                chips: session.tags.clone(),
+            },
+            Target {
+                kind: "session",
+                id: session.id.to_string(),
+            },
+        )
+    };
+    let parent: Vec<(Row, Target)> = record
         .parent
         .as_ref()
-        .and_then(|parent| live.iter().find(|candidate| &candidate.id == parent));
-    let children: Vec<&Session> = live
+        .and_then(|parent| live.iter().find(|candidate| &candidate.id == parent))
+        .map(session_row)
+        .into_iter()
+        .collect();
+    let child_agents = live
         .iter()
         .filter(|candidate| {
             candidate.parent.as_ref() == Some(&record.id) && bound_artifact(candidate).is_none()
         })
-        .collect();
-    for (title, related) in [
-        ("PARENT", parent.into_iter().collect::<Vec<_>>()),
-        ("CHILDREN", children),
-    ] {
+        .map(session_row);
+    let child_views = views
+        .iter()
+        .filter(|view| view.parent_id.as_ref() == Some(&record.id) && view.bound.is_none())
+        .map(|view| {
+            (
+                Row {
+                    name: view.name.clone(),
+                    location: locate(&view.name),
+                    chips: view.tags.clone(),
+                },
+                Target {
+                    kind: "view",
+                    id: view.name.clone(),
+                },
+            )
+        });
+    let children: Vec<(Row, Target)> = child_agents.chain(child_views).collect();
+    for (title, related) in [("PARENT", parent), ("CHILDREN", children)] {
         if related.is_empty() {
             continue;
         }
-        for session in related {
-            rows.push(Row {
-                name: session.name.clone(),
-                location: locate(session),
-                chips: session.tags.clone(),
-            });
-            out.targets.push(Target {
-                kind: "session",
-                id: session.id.to_string(),
-            });
-        }
-        out.sections.push((title, std::mem::take(&mut rows)));
+        let (section, targets): (Vec<Row>, Vec<Target>) = related.into_iter().unzip();
+        out.targets.extend(targets);
+        out.sections.push((title, section));
     }
     out
 }
@@ -211,6 +247,10 @@ impl Nav<'_> {
             .collect()
     }
 
+    fn views(&self) -> Result<Vec<View>, VerbError> {
+        tx_client::views::list(&self.ui).map_err(failed)
+    }
+
     fn name_of(&self, session_id: &str) -> String {
         let names = session_id
             .parse::<SessionId>()
@@ -223,51 +263,67 @@ impl Nav<'_> {
     }
 
     pub fn menu(&self, session: &str, client: &str) -> Result<i32, VerbError> {
+        if let Some(view) = tx_client::views::get(&self.ui, session).map_err(failed)? {
+            let parent = view.parent_id.as_ref().map(ToString::to_string);
+            let back = match &view.bound {
+                Some(artifact_id) => self.controlling_of(artifact_id)?.or(parent),
+                None => parent,
+            };
+            return self.back_to(session, client, back);
+        }
         let Some(record) = self.record(session, client) else {
             return Ok(1);
         };
-        let back = match bound_artifact(&record) {
-            Some(artifact_id) => Some(
-                self.artifacts
-                    .require(&artifact_id)
-                    .map(|artifact| self.controlling_session(&artifact))
-                    .map_err(failed)?,
-            ),
+        // Legacy, PR 11 deletes: a core process record standing in for a view.
+        let legacy_back = match bound_artifact(&record) {
+            Some(artifact_id) => Some(self.controlling_of(&artifact_id)?),
             None => match (&record.launch, &record.parent) {
                 (Launch::Process { .. }, Some(parent)) => Some(Some(parent.to_string())),
                 _ => None,
             },
         };
+        if let Some(back) = legacy_back {
+            return self.back_to(session, client, back);
+        }
+        let listing = self.listing(&record, client)?;
+        let content = listing
+            .items
+            .iter()
+            .map(|item| visible_width(item.text()))
+            .chain([visible_width(&listing.header), HINT.chars().count()])
+            .max()
+            .unwrap_or(0);
+        let width = (content + POPUP_FRAME).min(self.client_width(client));
+        let height = listing.items.len().max(1) + POPUP_ROWS_OVERHEAD;
+        tm::display_popup(
+            &self.ui,
+            client,
+            &width.to_string(),
+            &height.to_string(),
+            &listing.title,
+            &self.txc_command(&[PICK_VERB, session, client])?,
+        )
+        .map_err(failed)?;
+        Ok(0)
+    }
+
+    /// From a view: to the session it goes back to, or a notice when there is none.
+    fn back_to(&self, session: &str, client: &str, back: Option<String>) -> Result<i32, VerbError> {
         match back {
+            Some(back) => self.go_back(session, client, &back),
             None => {
-                let listing = self.listing(&record, client);
-                let content = listing
-                    .items
-                    .iter()
-                    .map(|item| visible_width(item.text()))
-                    .chain([visible_width(&listing.header), HINT.chars().count()])
-                    .max()
-                    .unwrap_or(0);
-                let width = (content + POPUP_FRAME).min(self.client_width(client));
-                let height = listing.items.len().max(1) + POPUP_ROWS_OVERHEAD;
-                tm::display_popup(
-                    &self.ui,
-                    client,
-                    &width.to_string(),
-                    &height.to_string(),
-                    &listing.title,
-                    &self.txc_command(&[PICK_VERB, session, client])?,
-                )
-                .map_err(failed)?;
-                Ok(0)
-            }
-            Some(None) => {
                 self.ui
                     .display_status(client, "prefix+a: nothing to go back to");
                 Ok(1)
             }
-            Some(Some(back)) => self.go_back(session, client, &back),
         }
+    }
+
+    fn controlling_of(&self, artifact_id: &str) -> Result<Option<String>, VerbError> {
+        self.artifacts
+            .require(artifact_id)
+            .map(|artifact| self.controlling_session(&artifact))
+            .map_err(failed)
     }
 
     /// Inside the popup: run the list (a focus on a view no pane shows is declined with a
@@ -277,15 +333,17 @@ impl Nav<'_> {
         let Some(record) = self.record(session, client) else {
             return Ok(1);
         };
-        let listing = self.listing(&record, client);
+        let listing = self.listing(&record, client)?;
         let decline = |pick: Pick| match pick {
             Pick::Attach(_) | Pick::Popup(_) => None,
-            Pick::Focus(index) => {
-                let hosted = self
-                    .hosting_session(&listing.targets[index])
-                    .is_some_and(|name| self.ui.pane_for_session(&name, "").is_some());
-                (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
-            }
+            Pick::Focus(index) => match self.hosting_session(&listing.targets[index]) {
+                Ok(hosting) => {
+                    let hosted =
+                        hosting.is_some_and(|name| self.ui.pane_for_session(&name, "").is_some());
+                    (!hosted).then(|| format!("{} is not attached anywhere", listing.names[index]))
+                }
+                Err(error) => Some(error.to_string()),
+            },
         };
         let chosen = picker::pick(&listing.header, &listing.items, decline)
             .map_err(|error| failed(format!("picker: {error}")))?;
@@ -314,14 +372,16 @@ impl Nav<'_> {
         tm::client_width(&self.ui, client).unwrap_or(DEFAULT_WIDTH)
     }
 
-    fn listing(&self, record: &Session, client: &str) -> Listing {
+    fn listing(&self, record: &Session, client: &str) -> Result<Listing, VerbError> {
         let touched = self.artifacts.artifacts_for_session(record.id.as_str());
         let live = self.live();
+        let views = self.views()?;
         let Sections { sections, targets } = sections(
             record,
             &touched,
             &live,
-            |session| location_text(&self.ui.attached_to(&session.name)),
+            &views,
+            |name| location_text(&self.ui.attached_to(name)),
             |id| self.name_of(id),
         );
         let all_rows: Vec<&Row> = sections.iter().flat_map(|(_, rows)| rows).collect();
@@ -339,33 +399,32 @@ impl Nav<'_> {
                 index += 1;
             }
         }
-        Listing {
+        Ok(Listing {
             title: format!(" {} ", record.name),
             header: layout.header(),
             items,
             names,
             targets,
-        }
+        })
     }
 
-    /// The tmux session a row's view runs in: the session itself, or the live view bound to the
-    /// artifact (`None` when the artifact has no live view).
-    fn hosting_session(&self, target: &Target) -> Option<String> {
-        match target.kind {
+    /// The tmux session a row's view runs in: the agent's, the view itself, or the live view
+    /// bound to the artifact (`None` when the artifact has no live view).
+    fn hosting_session(&self, target: &Target) -> Result<Option<String>, VerbError> {
+        Ok(match target.kind {
             "session" => target
                 .id
                 .parse::<SessionId>()
                 .ok()
                 .and_then(|id| self.core.get_session(&id).ok())
                 .map(|session| session.name),
-            _ => self.live_view(&target.id).map(|view| view.name),
-        }
+            "view" => Some(target.id.clone()),
+            _ => self.live_view(&target.id)?.map(|shown| shown.name),
+        })
     }
 
-    fn live_view(&self, artifact_id: &str) -> Option<Session> {
-        self.live()
-            .into_iter()
-            .find(|candidate| bound_artifact(candidate).as_deref() == Some(artifact_id))
+    fn live_view(&self, artifact_id: &str) -> Result<Option<Shown>, VerbError> {
+        views::live_view(&self.ui, self.core, artifact_id)
     }
 
     /// `<txc> <cli_arguments> argv…`, shell-quoted: `run-shell` and the popup run in the
@@ -395,8 +454,8 @@ impl Nav<'_> {
         let Some(record) = self.record(session, client) else {
             return Ok(1);
         };
-        let view = match self.live_view(artifact_id) {
-            Some(view) => view,
+        let shown = match self.live_view(artifact_id)? {
+            Some(shown) => shown,
             None => {
                 let artifact = self.artifacts.require(artifact_id).map_err(failed)?;
                 let opener = Opener {
@@ -404,19 +463,19 @@ impl Nav<'_> {
                     tags: record.tags.clone(),
                 };
                 let cwd = self.artifacts.files().content_dir(&artifact);
-                let id = views::open(
-                    self.core,
+                views::open(
+                    &self.ui,
                     &self.artifacts,
                     &artifact,
                     &opener,
                     None,
                     &cwd,
                     self.editor,
-                )?;
-                self.core.get_session(&id)?
+                )?
+                .into()
             }
         };
-        self.show(session, client, mode, &view)
+        self.show(session, client, mode, &shown)
     }
 
     pub fn go_session(
@@ -429,7 +488,22 @@ impl Nav<'_> {
         let Some(target) = self.running(client, target_id) else {
             return Ok(1);
         };
-        self.show(session, client, mode, &target)
+        self.show(session, client, mode, &target.into())
+    }
+
+    pub fn go_view(
+        &self,
+        session: &str,
+        client: &str,
+        mode: Mode,
+        name: &str,
+    ) -> Result<i32, VerbError> {
+        let Some(view) = tx_client::views::get(&self.ui, name).map_err(failed)? else {
+            self.ui
+                .display_status(client, &format!("prefix+a: {name} has ended"));
+            return Ok(1);
+        };
+        self.show(session, client, mode, &view.into())
     }
 
     /// The target record when it runs and its tmux session exists; otherwise reported.
@@ -460,7 +534,7 @@ impl Nav<'_> {
         if tm::focus_hosting_pane(&self.ui, client, &target.name).is_ok() {
             return Ok(0);
         }
-        self.rehost(session, client, &target)
+        self.rehost(session, client, &target.into())
     }
 
     fn show(
@@ -468,7 +542,7 @@ impl Nav<'_> {
         session: &str,
         client: &str,
         mode: Mode,
-        target: &Session,
+        target: &Shown,
     ) -> Result<i32, VerbError> {
         match mode {
             Mode::Focus => match tm::focus_hosting_pane(&self.ui, client, &target.name) {
@@ -505,7 +579,7 @@ impl Nav<'_> {
 
     /// Re-host the pane the firing client paints into on `target` (`respawn-pane -k` onto a
     /// nested attach; the session it showed keeps running detached).
-    fn rehost(&self, session: &str, client: &str, target: &Session) -> Result<i32, VerbError> {
+    fn rehost(&self, session: &str, client: &str, target: &Shown) -> Result<i32, VerbError> {
         if session == target.name {
             self.ui
                 .display_status(client, &format!("prefix+a: already in {}", target.name));
@@ -546,7 +620,7 @@ impl Nav<'_> {
 }
 
 /// The popup's title: the view's name, its tags as chips, then `◂ owner`.
-fn popup_title(view: &Session, owner: Option<&Session>) -> String {
+fn popup_title(view: &Shown, owner: Option<&Session>) -> String {
     let mut title = format!(" {} ", view.name);
     for tag in &view.tags {
         title.push_str(&format!("#[fg={},nobold][{tag}]#[default] ", tag_hex(tag)));
@@ -705,28 +779,47 @@ mod tests {
         .unwrap()
     }
 
+    fn view(name: &str, parent: Option<&str>, bound: Option<&str>) -> View {
+        View {
+            name: name.to_owned(),
+            kind: tx_client::views::ViewKind::Editor,
+            working_directory: "/r".into(),
+            tags: vec!["t".to_owned()],
+            parent_id: parent.map(|parent| parent.parse().unwrap()),
+            bound: bound.map(str::to_owned),
+            created_at: 1.0,
+        }
+    }
+
     #[test]
     fn the_listing_holds_what_the_session_touched_its_parent_and_its_children() {
         let record = session("a1", "agent", json!({"parent": "p1"}));
         let live = vec![
             record.clone(),
             session("p1", "boss", json!({"tags": ["x"]})),
-            session("c1", "shell", json!({"parent": "a1"})),
+            session("c1", "worker", json!({"parent": "a1"})),
             session(
-                "v1",
-                "plan-md",
-                json!({"parent": "a1", "ext": {"artifacts": {"bound": "art-new"}}}),
+                "v0",
+                "legacy-md",
+                json!({"parent": "a1", "ext": {"artifacts": {"bound": "art-old"}}}),
             ),
+        ];
+        let views = [
+            view("plan-md", Some("a1"), Some("art-new")),
+            view("shell", Some("a1"), None),
+            view("elsewhere", Some("p1"), None),
         ];
         let touched = [
             artifact("art-old", "Old", 10.0, &["a1"]),
             artifact("art-new", "New", 20.0, &["a1", "user", "a1"]),
+            artifact("art-shut", "Shut", 5.0, &["a1"]),
         ];
         let out = sections(
             &record,
             &touched,
             &live,
-            |session| format!("at-{}", session.name),
+            &views,
+            |name| format!("at-{name}"),
             |id| id.to_owned(),
         );
         let titles: Vec<&str> = out.sections.iter().map(|(title, _)| *title).collect();
@@ -735,10 +828,19 @@ mod tests {
         assert_eq!(artifacts[0].name, "New");
         assert_eq!(artifacts[0].location, "at-plan-md");
         assert_eq!(artifacts[0].chips, ["a1", "user"]);
-        assert_eq!(artifacts[1].location, "—");
+        assert_eq!(
+            artifacts[1].location, "at-legacy-md",
+            "a legacy bound record"
+        );
+        assert_eq!(artifacts[2].location, "—");
         assert_eq!(out.sections[1].1[0].name, "boss");
         let children: Vec<&str> = out.sections[2].1.iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(children, ["shell"], "the bound view is not a child row");
+        assert_eq!(
+            children,
+            ["worker", "shell"],
+            "bound views are not child rows"
+        );
+        assert_eq!(out.sections[2].1[1].chips, ["t"]);
         let kinds: Vec<(&str, &str)> = out
             .targets
             .iter()
@@ -749,8 +851,10 @@ mod tests {
             [
                 ("artifact", "art-new"),
                 ("artifact", "art-old"),
+                ("artifact", "art-shut"),
                 ("session", "p1"),
-                ("session", "c1")
+                ("session", "c1"),
+                ("view", "shell"),
             ]
         );
     }
@@ -762,6 +866,7 @@ mod tests {
             &record,
             &[],
             std::slice::from_ref(&record),
+            &[],
             |_| String::new(),
             str::to_owned,
         );

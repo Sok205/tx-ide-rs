@@ -23,6 +23,20 @@ pub enum UiError {
     Spawn(std::io::Error),
 }
 
+impl UiError {
+    /// tmux found no server behind the socket (none started yet, or it quit with its last
+    /// session): no sessions. Core's rule (`tx-core/src/tmux.rs`, `is_no_server`, `server_quit`).
+    pub fn is_no_server(&self) -> bool {
+        let UiError::Failed { stderr, .. } = self else {
+            return false;
+        };
+        stderr.starts_with("no server running on ")
+            || (stderr.starts_with("error connecting to ")
+                && stderr.ends_with("(No such file or directory)"))
+            || stderr == "server exited unexpectedly"
+    }
+}
+
 /// One pane that surfaces a nested session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Location {

@@ -3,9 +3,13 @@
 //! ```text
 //! resolved(session)  = own override (ext.edit.group, else ext.artifacts.group)
 //!                      ?? first override up the parent chain (stops at hubs and cycles)
-//!                      ?? the bound artifact's group (ext.artifacts.bound, nvim views)
+//!                      ?? the bound artifact's group (legacy nvim records' ext.artifacts.bound)
 //!                      ?? tags[0]
 //!                      ?? session.name
+//! resolved(view)     = first override up the parent chain (from the view's parent agent)
+//!                      ?? the bound artifact's group (@tx-view-bound)
+//!                      ?? tags[0]
+//!                      ?? view.name
 //! resolved(artifact) = artifact.group
 //!                      ?? resolved(creator = history[0].session_id)
 //!                      ?? newest surviving toucher's resolved group
@@ -20,6 +24,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tx_client::views::View;
 use tx_core::Session;
 
 use crate::PLUGIN_ID;
@@ -37,7 +42,9 @@ const EDIT_PLUGIN: &str = "edit";
 /// `ext["artifacts"]` on a session record.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ext {
-    /// The artifact an nvim view shows (`artifact open`).
+    /// Legacy, PR 11 deletes: the artifact an nvim view shows, on records written before
+    /// `artifact open` made tx-client views (which carry it as `@tx-view-bound`). Read, never
+    /// written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound: Option<String>,
     /// The group override `txc group` sets.
@@ -58,7 +65,7 @@ pub fn ext_of(session: &Session) -> Result<Ext, String> {
         })
 }
 
-/// The artifact a view is bound to; `None` for a malformed record.
+/// Legacy, PR 11 deletes: the artifact a core record is bound to; `None` for a malformed record.
 pub fn bound_artifact(session: &Session) -> Option<String> {
     ext_of(session).ok()?.bound
 }
@@ -125,31 +132,60 @@ impl<'a> GroupResolver<'a> {
         self.sessions_by_id.get(parent.as_str()).copied()
     }
 
+    /// A view's effective group; a view has no override of its own, and the name is the floor.
+    pub fn view_group(&self, view: &View) -> String {
+        let parent = view
+            .parent_id
+            .as_ref()
+            .and_then(|parent| self.sessions_by_id.get(parent.as_str()).copied());
+        self.ancestor_override(parent, HashSet::new())
+            .or_else(|| self.bound_override(view.bound.as_deref(), &HashSet::new()))
+            .unwrap_or_else(|| view.tags.first().unwrap_or(&view.name).to_owned())
+    }
+
     /// Own override, first override up the parent chain, or the bound artifact's. Only overrides
     /// inherit; an ancestor's tags never leak down.
     fn session_override(&self, session: &Session, resolving: &HashSet<&'a str>) -> Option<String> {
         if let Some(group) = own_group(session) {
             return Some(group);
         }
-        let mut visited: HashSet<&str> = HashSet::from([session.id.as_str()]);
         if !is_hub(session) {
-            let mut ancestor = self.parent(session);
-            while let Some(current) = ancestor {
-                if visited.contains(current.id.as_str()) {
-                    break;
-                }
-                if let Some(group) = own_group(current) {
-                    return Some(group);
-                }
-                if is_hub(current) {
-                    break;
-                }
-                visited.insert(current.id.as_str());
-                ancestor = self.parent(current);
+            let visited = HashSet::from([session.id.as_str()]);
+            if let Some(group) = self.ancestor_override(self.parent(session), visited) {
+                return Some(group);
             }
         }
-        let bound = bound_artifact(session)?;
-        let artifact = self.artifacts_by_id.get(bound.as_str())?;
+        self.bound_override(bound_artifact(session).as_deref(), resolving)
+    }
+
+    /// The first override from `ancestor` up the parent chain; stops after a hub and at a cycle.
+    fn ancestor_override<'s>(
+        &self,
+        mut ancestor: Option<&'a Session>,
+        mut visited: HashSet<&'s str>,
+    ) -> Option<String>
+    where
+        'a: 's,
+    {
+        while let Some(current) = ancestor {
+            if visited.contains(current.id.as_str()) {
+                break;
+            }
+            if let Some(group) = own_group(current) {
+                return Some(group);
+            }
+            if is_hub(current) {
+                break;
+            }
+            visited.insert(current.id.as_str());
+            ancestor = self.parent(current);
+        }
+        None
+    }
+
+    /// The bound artifact's override, unless that artifact is already being resolved.
+    fn bound_override(&self, bound: Option<&str>, resolving: &HashSet<&'a str>) -> Option<String> {
+        let artifact = self.artifacts_by_id.get(bound?)?;
         if resolving.contains(artifact.id.as_str()) {
             return None;
         }
@@ -319,6 +355,45 @@ mod tests {
         assert_eq!(resolver.artifact_group(&artifacts[0]), "view");
     }
 
+    fn view(parent: Option<&str>, bound: Option<&str>, tags: &[&str]) -> View {
+        View {
+            name: "plan-md".to_owned(),
+            kind: tx_client::views::ViewKind::Editor,
+            working_directory: "/r".into(),
+            tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
+            parent_id: parent.map(|parent| parent.parse().unwrap()),
+            bound: bound.map(str::to_owned),
+            created_at: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_tx_client_view_resolves_through_its_parent_then_its_artifact() {
+        let mut sessions = fixture_g(Some("h1"), Some("hubgrp"));
+        sessions.push(session("w1", "writer", json!({"ext": group("effort")})));
+        sessions.push(session("l1", "lone", json!({"tags": ["lone-tag"]})));
+        let artifacts = [artifact("art", None, &["w1"])];
+        let resolver = GroupResolver::new(&sessions, &artifacts);
+        // The parent chain's override first (here up through assist to the hub), …
+        assert_eq!(
+            resolver.view_group(&view(Some("c1"), Some("art"), &[])),
+            "hubgrp"
+        );
+        // … then the bound artifact's group, …
+        assert_eq!(
+            resolver.view_group(&view(Some("l1"), Some("art"), &["t"])),
+            "effort"
+        );
+        assert_eq!(resolver.view_group(&view(None, Some("art"), &[])), "effort");
+        // … then its own tags, never the parent's, then its name.
+        assert_eq!(resolver.view_group(&view(Some("l1"), None, &["t"])), "t");
+        assert_eq!(
+            resolver.view_group(&view(Some("l1"), Some("gone"), &[])),
+            "plan-md"
+        );
+    }
+
+    /// Legacy, PR 11 deletes: a core record bound through `ext.artifacts.bound`.
     #[test]
     fn a_view_takes_its_artifacts_group() {
         let sessions = [

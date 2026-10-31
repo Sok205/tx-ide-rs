@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use tx_client::tmux::Ui;
-use tx_core::{ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
+use tx_core::{CoreError, ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
 
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::grouping::{GroupResolver, ext_of, own_group};
@@ -42,7 +42,7 @@ const HELP_ROWS: [(&str, &str); 8] = [
     ),
     (
         "open <id> [--tag T] [--cwd D]",
-        "open the working copy in an nvim view bound to the artifact",
+        "open the working copy in an nvim view bound to the artifact (reuses an open one)",
     ),
     (
         "doctor [--repair]",
@@ -481,13 +481,26 @@ impl Ctx<'_, '_> {
                 || self.artifacts.files().content_dir(&artifact),
                 PathBuf::from,
             );
+        let ui = Ui::from_core(self.core);
+        if let Some(shown) = views::live_view(&ui, self.core, &artifact_id)? {
+            let switched = ui.inside()
+                && ui
+                    .quiet(&["switch-client", "-t", &format!("={}", shown.name)])
+                    .0;
+            let note = if switched { "; switched to it" } else { "" };
+            self.print(&format!(
+                "Artifact {artifact_id} is already open in nvim view '{}'{note}",
+                shown.name
+            ))?;
+            return Ok(Outcome::Code(0));
+        }
         let invoker = self.invoker();
         let opener = Opener {
             id: invoker.as_ref().map(|session| session.id.clone()),
             tags: invoker.map(|session| session.tags).unwrap_or_default(),
         };
-        let id = views::open(
-            self.core,
+        let view = views::open(
+            &ui,
             &self.artifacts,
             &artifact,
             &opener,
@@ -495,7 +508,6 @@ impl Ctx<'_, '_> {
             &cwd,
             self.editor,
         )?;
-        let view = self.core.get_session(&id)?;
         let path = self.artifacts.files().current_path(&artifact);
         self.print(&format!(
             "Opened artifact {artifact_id} in nvim view '{}' ({})",
@@ -565,7 +577,13 @@ impl Verb for GroupVerb {
                 "a group cannot be empty; use --clear to drop the override",
             );
         }
-        let id = core.resolve(token)?;
+        let id = match core.resolve(token) {
+            Ok(id) => id,
+            Err(CoreError::NotFound(_)) => {
+                return view_group(core, io, token, clear || group.is_some());
+            }
+            Err(error) => return Err(error.into()),
+        };
         let session = core.get_session(&id)?;
         if let Err(problem) = ext_of(&session) {
             let _ = writeln!(io.stderr, "txc group: {problem}");
@@ -595,6 +613,31 @@ impl Verb for GroupVerb {
         writeln!(io.stdout, "own:      {own}\nresolved: {resolved}").map_err(write_failed)?;
         Ok(0)
     }
+}
+
+/// `txc group <view>`: a view has no override of its own, so it is read-only; its group comes
+/// from its parent agent's chain and its bound artifact. A name that is no view stays unknown.
+fn view_group(
+    core: &TxCore,
+    io: &mut VerbIo<'_>,
+    name: &str,
+    setting: bool,
+) -> Result<i32, VerbError> {
+    let view = tx_client::views::get(&Ui::from_core(core), name)
+        .map_err(|error| VerbError::Failed(error.to_string()))?
+        .ok_or_else(|| CoreError::NotFound(name.to_owned()))?;
+    if setting {
+        let _ = writeln!(
+            io.stderr,
+            "txc group: '{name}' is a view; its group follows its parent and its artifact"
+        );
+        return Ok(1);
+    }
+    let sessions = all_sessions(core);
+    let artifacts = service(core).all();
+    let resolved = GroupResolver::new(&sessions, &artifacts).view_group(&view);
+    writeln!(io.stdout, "own:      —\nresolved: {resolved}").map_err(write_failed)?;
+    Ok(0)
 }
 
 /// Sets or clears `group` in `ext["artifacts"]`, keeping `bound`. A malformed value (not an
@@ -627,7 +670,7 @@ pub struct PickVerb {
     pub editor: Arc<str>,
 }
 
-/// `_artifact-go <session> <client> attach|focus|popup artifact|session <id>`.
+/// `_artifact-go <session> <client> attach|focus|popup artifact|session|view <id>`.
 pub struct GoVerb {
     pub editor: Arc<str>,
 }
@@ -683,7 +726,7 @@ impl Verb for GoVerb {
     }
 
     fn usage(&self) -> &'static str {
-        "_artifact-go <session> <client> attach|focus|popup artifact|session <id>   show a view (internal)"
+        "_artifact-go <session> <client> attach|focus|popup artifact|session|view <id>   show a view (internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -691,7 +734,7 @@ impl Verb for GoVerb {
         let usage = |io: &mut VerbIo<'_>| {
             let _ = writeln!(
                 io.stderr,
-                "usage: txc {GO_VERB} <session> <client> attach|focus|popup artifact|session <id>"
+                "usage: txc {GO_VERB} <session> <client> attach|focus|popup artifact|session|view <id>"
             );
             Ok(2)
         };
@@ -705,6 +748,7 @@ impl Verb for GoVerb {
         match kind {
             "artifact" => nav.go_artifact(session, client, mode, id),
             "session" => nav.go_session(session, client, mode, id),
+            "view" => nav.go_view(session, client, mode, id),
             _ => usage(io),
         }
     }

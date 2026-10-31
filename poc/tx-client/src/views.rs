@@ -203,10 +203,14 @@ pub fn open(ui: &Ui, request: &ViewRequest<'_>) -> Result<View, ViewError> {
     })
 }
 
-/// Every session marked `@tx-view 1` with a kind, in tmux's listing order.
+/// Every session marked `@tx-view 1` with a kind, in tmux's listing order; none when no server
+/// runs yet (`open` starts it).
 pub fn list(ui: &Ui) -> Result<Vec<View>, ViewError> {
-    let listing = ui.run(&["list-sessions", "-F", LIST_FORMAT])?;
-    Ok(parse_views(&listing))
+    match ui.run(&["list-sessions", "-F", LIST_FORMAT]) {
+        Ok(listing) => Ok(parse_views(&listing)),
+        Err(error) if error.is_no_server() => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub fn get(ui: &Ui, name: &str) -> Result<Option<View>, ViewError> {
@@ -350,6 +354,16 @@ mod tests {
         std::fs::write(&conf, "").unwrap();
         let ui = Ui::new(dir.path().join("tmux.sock"), conf);
         let parent: SessionId = "11111111-2222-3333-4444-555555555555".parse().unwrap();
+        // No server yet: no views, no session, and `open` below starts the server.
+        match list(&ui) {
+            Ok(views) => assert!(views.is_empty()),
+            Err(ViewError::Tmux(UiError::Spawn(_))) => {
+                eprintln!("tmux not available; skipping");
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        }
+        assert!(!ui.has_session("sh1"));
         let arguments = ["30".to_owned()];
         let tags = ["qa".to_owned(), "x".to_owned()];
         let request = ViewRequest {
@@ -413,5 +427,9 @@ mod tests {
         assert!(!ui.has_session("sh2"));
         assert!(ui.has_session("agent"));
         ui.quiet(&["kill-server"]);
+        assert!(
+            list(&ui).unwrap().is_empty(),
+            "a stopped server lists no views"
+        );
     }
 }
