@@ -47,12 +47,23 @@ pub fn record(session: &Value, transcripts: &Path) -> Value {
     let state = session["state"].as_str().unwrap();
     let launch = match engine {
         Some(engine) => json!({
-            "kind": "agent", "engine": engine, "profile": [],
-            "model": session.get("model"), "effort": session.get("effort"), "resume": null,
+            "kind": "agent", "engine": engine, "profile": [], "resume": null,
         }),
         None => json!({"kind": "process", "program": "sh", "args": []}),
     };
     let mut ext = Map::new();
+    // Model and effort are engine data (PR 12a), under the engine's own `ext` key.
+    if let Some(engine) = engine {
+        let mut data = Map::new();
+        for key in ["model", "effort"] {
+            if let Some(value) = session.get(key).filter(|value| !value.is_null()) {
+                data.insert(key.to_owned(), value.clone());
+            }
+        }
+        if !data.is_empty() {
+            ext.insert(engine.to_owned(), Value::Object(data));
+        }
+    }
     let chats: Vec<Value> = session["transcripts"]
         .as_array()
         .unwrap()

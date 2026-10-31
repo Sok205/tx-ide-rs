@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use proptest::prelude::*;
 use tx_core::engine::{apply_workspace, resolve_in};
 use tx_core::{
-    CoreError, Effort, EngineError, EngineRegistry, Launch, LaunchPlan, LaunchRequest, Lifecycle,
+    CoreError, EngineError, EngineRegistry, Launch, LaunchPlan, LaunchRequest, Lifecycle,
     LlmEngine, Profile, ResolvedProfile, Session, SessionId, WorkspaceAction,
 };
 
@@ -34,6 +34,14 @@ impl LlmEngine for Stub {
     /// share one (leaked: a test stub).
     fn ext_key(&self) -> &'static str {
         String::leak(self.0.bytes().map(|byte| format!("{byte:02x}")).collect())
+    }
+
+    fn configure(
+        &self,
+        _: &tx_core::Session,
+        options: &serde_json::Value,
+    ) -> Result<serde_json::Value, EngineError> {
+        Ok(options.clone())
     }
 
     fn launch(&self, _req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
@@ -903,9 +911,7 @@ fn core_accepts_a_plan_with_empty_program() {
         state: None,
         ext: Default::default(),
     };
-    let request = LaunchRequest::new(&session, &profile)
-        .effort(Effort::Low)
-        .initial_prompt("");
+    let request = LaunchRequest::new(&session, &profile).initial_prompt("");
     let mut registry = EngineRegistry::new();
     registry.register(stub("empty")).unwrap();
     let plan = registry.get("empty").unwrap().launch(&request).unwrap();

@@ -17,8 +17,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tx_client::tmux::Ui;
 use tx_core::{
-    CreateOptions, Effort, LaunchOptions, Plugin, PluginError, Registry, TxCore, Verb, VerbError,
-    VerbIo,
+    CreateOptions, LaunchOptions, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo,
 };
 
 pub const PLUGIN_ID: &str = "spawn";
@@ -29,7 +28,8 @@ pub const NO_ROLE: &str = "none";
 /// Preselected when the profile dirs have it.
 pub const DEFAULT_ROLE: &str = "DEVELOPER";
 pub const DEFAULT_TAG: &str = "agent";
-pub const DEFAULT_EFFORT: Effort = Effort::High;
+/// Preselected effort; every engine listed in [`EFFORTS`] accepts it.
+pub const DEFAULT_EFFORT: &str = "high";
 const TAGS_HELP: &str = "Comma-separated (default: agent)";
 /// Each engine's models, the one it runs without `--model` first (preselected, passed as no
 /// `--model`). An engine missing here offers `default` alone.
@@ -41,6 +41,16 @@ const MODELS: &[(&str, &[&str])] = &[
     ),
 ];
 const FALLBACK_MODELS: &[&str] = &["default"];
+/// Each engine's effort tiers, as its own `Effort` names them (the engine validates the pick
+/// at create). An engine missing here offers the Claude list.
+const EFFORTS: &[(&str, &[&str])] = &[
+    ("claude", &["low", "medium", "high", "xhigh", "max"]),
+    (
+        "codex",
+        &["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+    ),
+];
+const FALLBACK_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 const FORM_MODULE: &str = "tx-new-agent";
 const FORM: &[u8] = include_bytes!("../nvim/tx-new-agent.lua");
 const SPEC_ENV: &str = "TX_NEW_AGENT_SPEC";
@@ -150,6 +160,13 @@ fn models_for(engine: &str) -> &'static [&'static str] {
         .map_or(FALLBACK_MODELS, |(_, models)| models)
 }
 
+fn efforts_for(engine: &str) -> &'static [&'static str] {
+    EFFORTS
+        .iter()
+        .find(|(name, _)| *name == engine)
+        .map_or(FALLBACK_EFFORTS, |(_, efforts)| efforts)
+}
+
 /// The form's spec: the one project, the engines, each one's models (its default first) and
 /// efforts, the roles (none first), and what is preselected; `result` is where the answers go.
 pub fn form_spec(
@@ -158,14 +175,13 @@ pub fn form_spec(
     project: (&str, &str),
     engines: &[&str],
 ) -> Value {
-    let efforts: Vec<&str> = Effort::ALL.iter().map(|effort| effort.as_str()).collect();
     let models: Map<String, Value> = engines
         .iter()
         .map(|engine| ((*engine).to_owned(), json!(models_for(engine))))
         .collect();
     let efforts: Map<String, Value> = engines
         .iter()
-        .map(|engine| ((*engine).to_owned(), json!(efforts)))
+        .map(|engine| ((*engine).to_owned(), json!(efforts_for(engine))))
         .collect();
     let role_options: Vec<&str> = std::iter::once(NO_ROLE)
         .chain(roles.iter().map(String::as_str))
@@ -185,7 +201,7 @@ pub fn form_spec(
         "models": models,
         "efforts": efforts,
         "engine": engines[0],
-        "effort": DEFAULT_EFFORT.as_str(),
+        "effort": DEFAULT_EFFORT,
         "roles": role_options,
         "role": role,
         "tags_hint": TAGS_HELP,
@@ -208,24 +224,20 @@ pub fn tags_of(tags: &str) -> Vec<String> {
 }
 
 /// The session the answers describe: COMMON plus the picked role, the model only when it is
-/// not the engine's default.
-pub fn create_options(reply: &Reply) -> Result<CreateOptions, VerbError> {
-    let effort: Effort = reply
-        .effort
-        .parse()
-        .map_err(|error| VerbError::Failed(format!("{error}")))?;
+/// not the engine's default. The engine validates the options when the session is created.
+pub fn create_options(reply: &Reply) -> CreateOptions {
     let mut roles = vec![COMMON_ROLE.to_owned()];
     if reply.role != NO_ROLE {
         roles.push(reply.role.clone());
     }
     let mut launch = LaunchOptions::agent(&reply.engine)
         .profile(roles)
-        .effort(effort)
+        .option("effort", reply.effort.as_str())
         .initial_prompt(&reply.prompt);
     if reply.model != default_model(&reply.engine) {
-        launch = launch.model(&reply.model);
+        launch = launch.option("model", reply.model.as_str());
     }
-    Ok(CreateOptions::new(&reply.name, &reply.cwd, launch).tags(tags_of(&reply.tags)))
+    CreateOptions::new(&reply.name, &reply.cwd, launch).tags(tags_of(&reply.tags))
 }
 
 fn io_failed(path: &Path) -> impl FnOnce(std::io::Error) -> VerbError {
@@ -314,9 +326,9 @@ impl Verb for NewAgent {
             return Ok(0);
         };
         // The agent may get `<name>-2` when the name is taken: say what it is really called.
-        let created = create_options(&reply)
-            .and_then(|options| Ok(core.create_session(options)?))
-            .and_then(|id| Ok(core.get_session(&id)?));
+        let created = core
+            .create_session(create_options(&reply))
+            .and_then(|id| core.get_session(&id));
         match created {
             Ok(session) => {
                 ui.display_status(client, &format!("spawned {}", session.name));
@@ -365,9 +377,14 @@ mod tests {
         assert_eq!(spec["models"]["claude"][0], "fable");
         assert_eq!(spec["models"]["aider"], json!(["default"]));
         assert_eq!(
-            spec["efforts"]["codex"],
+            spec["efforts"]["claude"],
             json!(["low", "medium", "high", "xhigh", "max"])
         );
+        assert_eq!(
+            spec["efforts"]["codex"],
+            json!(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
+        );
+        assert_eq!(spec["efforts"]["aider"], spec["efforts"]["claude"]);
         assert_eq!(spec["effort"], "high");
         assert_eq!(spec["roles"], json!(["none", "DEVELOPER", "REVIEWER"]));
         assert_eq!(spec["role"], "DEVELOPER");
@@ -421,15 +438,14 @@ mod tests {
 
     #[test]
     fn the_answers_become_an_agent_session_under_common_and_the_role() {
-        let options = create_options(&reply()).unwrap();
+        let options = create_options(&reply());
         assert_eq!(options.name, "health");
         assert_eq!(options.cwd, PathBuf::from("/p/my proj"));
         assert_eq!(options.tags, ["tutor", "api"]);
         let LaunchOptions::Agent {
             engine,
             profile,
-            model,
-            effort,
+            options,
             initial_prompt,
             ..
         } = options.launch
@@ -438,8 +454,7 @@ mod tests {
         };
         assert_eq!(engine, "codex");
         assert_eq!(profile, ["COMMON", "DEVELOPER"]);
-        assert_eq!(model.as_deref(), Some("gpt-6-sol"));
-        assert_eq!(effort, Some(Effort::XHigh));
+        assert_eq!(options, json!({"effort": "xhigh", "model": "gpt-6-sol"}));
         assert_eq!(initial_prompt.as_deref(), Some("add GET /health"));
     }
 
@@ -451,22 +466,29 @@ mod tests {
             tags: String::new(),
             ..reply()
         };
-        let options = create_options(&defaults).unwrap();
+        let options = create_options(&defaults);
         assert_eq!(options.tags, [DEFAULT_TAG]);
-        let LaunchOptions::Agent { profile, model, .. } = options.launch else {
+        let LaunchOptions::Agent {
+            profile, options, ..
+        } = options.launch
+        else {
             panic!("an agent launch");
         };
         assert_eq!(profile, ["COMMON"]);
-        assert_eq!(model, None);
+        assert_eq!(options, json!({"effort": "xhigh"}));
     }
 
+    /// The engine, not the form, decides what an effort may be: a bad one is passed through
+    /// and refused at create.
     #[test]
-    fn a_bad_effort_is_refused() {
+    fn a_bad_effort_is_passed_to_the_engine() {
         let bad = Reply {
             effort: "7".into(),
             ..reply()
         };
-        let error = create_options(&bad).unwrap_err();
-        assert!(error.to_string().contains("effort"), "{error}");
+        let LaunchOptions::Agent { options, .. } = create_options(&bad).launch else {
+            panic!("an agent launch");
+        };
+        assert_eq!(options["effort"], "7");
     }
 }

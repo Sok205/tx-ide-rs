@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use tx_core::config::{MAX_SOCKET_PATH_BYTES, SOCKET_FILE};
 use tx_core::session::{MAX_NAME_BYTES, RECORD_VERSION};
 use tx_core::{
-    CoreConfig, CoreError, Directories, Effort, Launch, Lifecycle, RecordError, Session, SessionId,
+    CoreConfig, CoreError, Directories, Launch, Lifecycle, RecordError, Session, SessionId,
     validate_name,
 };
 
@@ -26,10 +26,6 @@ use tx_core::{
 
 fn arb_lifecycle() -> impl Strategy<Value = Lifecycle> {
     prop::sample::select(Lifecycle::ALL.to_vec())
-}
-
-fn arb_effort() -> impl Strategy<Value = Effort> {
-    prop::sample::select(Effort::ALL.to_vec())
 }
 
 /// Any string, including control characters, NUL and astral-plane unicode.
@@ -55,7 +51,7 @@ fn arb_launch() -> impl Strategy<Value = Launch> {
             arb_text(),
             prop::collection::vec(arb_text(), 0..4),
             prop::option::of(arb_text()),
-            prop::option::of(arb_effort()),
+            prop::option::of(arb_text()),
         )
             .prop_map(|(engine, profile, model, effort)| Launch::Agent {
                 engine,
@@ -217,8 +213,12 @@ proptest! {
             Launch::Process { .. } => "process",
         };
         prop_assert_eq!(value["launch"].get("kind"), Some(&json!(kind)));
-        if let Launch::Agent { effort, .. } = &session.launch {
-            prop_assert_eq!(value["launch"].get("effort"), Some(&effort.map_or(Value::Null, |e| json!(e.as_str()))));
+        // The deprecated `model` / `effort` of an agent launch are written only when set.
+        if let Launch::Agent { model, effort, .. } = &session.launch {
+            let expected_effort = effort.as_ref().map(|e| json!(e));
+            prop_assert_eq!(value["launch"].get("effort"), expected_effort.as_ref());
+            let expected_model = model.as_ref().map(|m| json!(m));
+            prop_assert_eq!(value["launch"].get("model"), expected_model.as_ref());
         }
         prop_assert_eq!(session.to_json().unwrap(), session.to_json().unwrap());
     }
@@ -402,7 +402,7 @@ fn minted_ids_are_hyphenated_lowercase_uuid_v4() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 4. Lifecycle / Effort
+// 4. Lifecycle
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -421,24 +421,6 @@ fn lifecycle_as_str_from_str_bijection_and_serde_names() {
     assert_eq!(seen.len(), Lifecycle::ALL.len());
 }
 
-#[test]
-fn effort_as_str_from_str_bijection_and_serde_names() {
-    let mut seen = std::collections::HashSet::new();
-    for effort in Effort::ALL {
-        let name = effort.as_str();
-        assert!(seen.insert(name), "duplicate name {name}");
-        assert_eq!(Effort::from_str(name).unwrap(), effort);
-        assert_eq!(serde_json::to_value(effort).unwrap(), json!(name));
-        assert_eq!(
-            serde_json::from_value::<Effort>(json!(name)).unwrap(),
-            effort
-        );
-    }
-    assert_eq!(seen.len(), Effort::ALL.len());
-    // ALL is in ascending order, matching the derived Ord.
-    assert!(Effort::ALL.windows(2).all(|w| w[0] < w[1]));
-}
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
@@ -449,20 +431,11 @@ proptest! {
         prop_assert_eq!(serde_json::from_value::<Lifecycle>(Value::String(text.clone())).is_ok(), known, "{:?}", text);
     }
 
+    /// Case variants ("Running") are not accepted anywhere.
     #[test]
-    fn effort_from_str_rejects_everything_else(text in arb_text()) {
-        let known = Effort::ALL.iter().any(|e| e.as_str() == text);
-        prop_assert_eq!(Effort::from_str(&text).is_ok(), known, "{:?}", text);
-        prop_assert_eq!(serde_json::from_value::<Effort>(Value::String(text.clone())).is_ok(), known, "{:?}", text);
-    }
-
-    /// Case variants ("Running", "HIGH") are not accepted anywhere.
-    #[test]
-    fn enum_names_are_case_sensitive(lifecycle in arb_lifecycle(), effort in arb_effort()) {
+    fn enum_names_are_case_sensitive(lifecycle in arb_lifecycle()) {
         let upper = lifecycle.as_str().to_ascii_uppercase();
         prop_assert!(Lifecycle::from_str(&upper).is_err());
-        let upper = effort.as_str().to_ascii_uppercase();
-        prop_assert!(Effort::from_str(&upper).is_err());
     }
 }
 

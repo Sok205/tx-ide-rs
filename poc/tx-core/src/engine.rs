@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::CoreError;
 use crate::profile::Profile;
-use crate::session::{Effort, Session, validate_name};
+use crate::session::{Session, validate_name};
 use crate::state::{LlmEngineChange, LlmEngineHook};
 
 /// An adapter could not honor a request, or a workspace action could not be applied.
@@ -43,8 +43,6 @@ pub struct LaunchRequest<'a> {
     pub mode: LaunchMode<'a>,
     /// Combined role text, the file holding it, and the granted skill dirs.
     pub profile: &'a Profile,
-    pub model: Option<&'a str>,
-    pub effort: Option<Effort>,
     pub initial_prompt: Option<&'a str>,
     /// The argv prefix every hook the adapter wires runs, with the CLI's event name appended:
     /// `["/abs/txc", "chat", "hook"]`. Empty: wire no hooks.
@@ -52,14 +50,13 @@ pub struct LaunchRequest<'a> {
 }
 
 impl<'a> LaunchRequest<'a> {
-    /// A `Start` of `session` with no options.
+    /// A `Start` of `session`. Options such as a model or an effort are not here: they are
+    /// engine data, merged into `session.ext[ext_key]` by `LlmEngine::configure` beforehand.
     pub fn new(session: &'a Session, profile: &'a Profile) -> Self {
         Self {
             session,
             mode: LaunchMode::Start,
             profile,
-            model: None,
-            effort: None,
             initial_prompt: None,
             hook_command: &[],
         }
@@ -67,16 +64,6 @@ impl<'a> LaunchRequest<'a> {
 
     pub fn mode(mut self, mode: LaunchMode<'a>) -> Self {
         self.mode = mode;
-        self
-    }
-
-    pub fn model(mut self, model: &'a str) -> Self {
-        self.model = Some(model);
-        self
-    }
-
-    pub fn effort(mut self, effort: Effort) -> Self {
-        self.effort = Some(effort);
         self
     }
 
@@ -175,8 +162,8 @@ impl LaunchPlan {
     }
 }
 
-/// One coding-agent engine. Four required methods; no I/O in `launch` or `on_hook`. `Send + Sync`
-/// so a core can be shared across threads.
+/// One coding-agent engine. Five required methods; no I/O in `configure`, `launch` or `on_hook`.
+/// `Send + Sync` so a core can be shared across threads.
 pub trait LlmEngine: Send + Sync {
     /// A bare name (`[A-Za-z0-9_-]+`); stored in every record this engine launches.
     fn id(&self) -> &str;
@@ -184,6 +171,17 @@ pub trait LlmEngine: Send + Sync {
     /// The `ext` key this engine owns. Core stores engine data under it and never reads it.
     /// `[a-z0-9-]+`, unique among engines and plugin ids.
     fn ext_key(&self) -> &'static str;
+
+    /// Validates the caller's launch options and merges them into this session's engine data.
+    /// `options` is a JSON object (`{"model": "fable", "effort": "high"}`); each engine owns the
+    /// vocabulary, so an unknown key or a bad value is `EngineError::Refused`. Returns the
+    /// complete new value of `session.ext[self.ext_key()]`, which core stores before `launch`
+    /// reads it. Pure.
+    fn configure(
+        &self,
+        session: &Session,
+        options: &serde_json::Value,
+    ) -> Result<serde_json::Value, EngineError>;
 
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError>;
 
@@ -373,6 +371,19 @@ mod tests {
             self.0
         }
 
+        fn configure(
+            &self,
+            session: &Session,
+            options: &serde_json::Value,
+        ) -> Result<serde_json::Value, EngineError> {
+            let mut data = engine_data(self, session)
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            data.extend(options.as_object().cloned().unwrap_or_default());
+            Ok(serde_json::Value::Object(data))
+        }
+
         fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
             Ok(LaunchPlan {
                 program: self.0.to_owned(),
@@ -411,6 +422,14 @@ mod tests {
 
         fn ext_key(&self) -> &'static str {
             self.1
+        }
+
+        fn configure(
+            &self,
+            _: &Session,
+            options: &serde_json::Value,
+        ) -> Result<serde_json::Value, EngineError> {
+            Ok(options.clone())
         }
 
         fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
@@ -463,6 +482,22 @@ mod tests {
     }
 
     #[test]
+    fn configure_sees_the_current_data_and_returns_the_merged_object() {
+        let engine = Stub("e");
+        let mut session = record(Path::new("/tmp"));
+        session
+            .ext
+            .insert("e".into(), serde_json::json!({"conversation_id": "c"}));
+        let merged = engine
+            .configure(&session, &serde_json::json!({"model": "m"}))
+            .unwrap();
+        assert_eq!(
+            merged,
+            serde_json::json!({"conversation_id": "c", "model": "m"})
+        );
+    }
+
+    #[test]
     fn engine_data_is_the_object_under_the_key_or_null() {
         let engine = Keyed("e", "e");
         let mut session = record(Path::new("/tmp"));
@@ -498,10 +533,9 @@ mod tests {
         .unwrap();
         let session = record(dir.path());
         let source = record(dir.path());
-        let request = LaunchRequest::new(&session, &profile)
-            .model("m")
-            .effort(Effort::Low);
+        let request = LaunchRequest::new(&session, &profile).initial_prompt("go");
         assert!(matches!(request.mode, LaunchMode::Start));
+        assert_eq!(request.initial_prompt, Some("go"));
         let request = request.mode(LaunchMode::Fork { source: &source });
         assert!(
             matches!(request.mode, LaunchMode::Fork { source: forked } if forked.id == source.id)

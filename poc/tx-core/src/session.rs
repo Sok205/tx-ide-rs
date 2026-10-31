@@ -121,52 +121,6 @@ impl FromStr for Lifecycle {
     }
 }
 
-/// A reasoning-effort tier, as every engine CLI names them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Effort {
-    Low,
-    Medium,
-    High,
-    XHigh,
-    Max,
-}
-
-impl Effort {
-    pub const ALL: [Effort; 5] = [
-        Effort::Low,
-        Effort::Medium,
-        Effort::High,
-        Effort::XHigh,
-        Effort::Max,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Effort::Low => "low",
-            Effort::Medium => "medium",
-            Effort::High => "high",
-            Effort::XHigh => "xhigh",
-            Effort::Max => "max",
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("unknown effort {0:?} (expected low, medium, high, xhigh or max)")]
-pub struct InvalidEffort(pub String);
-
-impl FromStr for Effort {
-    type Err = InvalidEffort;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|effort| effort.as_str() == text)
-            .ok_or_else(|| InvalidEffort(text.to_owned()))
-    }
-}
-
 /// How the session's process was started. Engine ids are strings, so a new engine needs no
 /// change here.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,8 +129,14 @@ pub enum Launch {
     Agent {
         engine: String,
         profile: Vec<String>,
+        /// Written by builds before PR 12a; the model is engine data (`ext.<engine>.model`)
+        /// now. Kept only so an old record round-trips until Storage PR 14 migrates it. Never
+        /// read; new records write nothing here.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
-        effort: Option<Effort>,
+        /// As `model`: the effort of a record written before PR 12a (`ext.<engine>.effort` now).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
         #[serde(default)]
         resume: Option<String>,
     },
@@ -330,8 +290,8 @@ mod tests {
             launch: Launch::Agent {
                 engine: "claude".into(),
                 profile: vec!["COMMON".into(), "dev".into()],
-                model: Some("opus".into()),
-                effort: Some(Effort::XHigh),
+                model: None,
+                effort: None,
                 resume: Some("chat-1".into()),
             },
             ext: std::collections::BTreeMap::new(),
@@ -377,7 +337,9 @@ mod tests {
         assert_eq!(value["version"], RECORD_VERSION);
         assert_eq!(value["lifecycle"], "running");
         assert_eq!(value["launch"]["kind"], "agent");
-        assert_eq!(value["launch"]["effort"], "xhigh");
+        assert_eq!(value["launch"]["resume"], "chat-1");
+        assert_eq!(value["launch"].get("model"), None);
+        assert_eq!(value["launch"].get("effort"), None);
         assert_eq!(value["parent"], "p");
         assert_eq!(value["ended_at"], serde_json::Value::Null);
         let value: serde_json::Value = serde_json::from_str(&process().to_json().unwrap()).unwrap();
@@ -403,6 +365,23 @@ mod tests {
         assert!(
             matches!(session.launch, Launch::Agent { ref model, ref effort, ref resume, .. } if model.is_none() && effort.is_none() && resume.is_none())
         );
+    }
+
+    /// A record written before PR 12a carries `model` and `effort` in `launch`. They are engine
+    /// data now (`ext.<engine>`), never read here, but they round-trip until Storage PR 14
+    /// migrates them, so a hook re-saving the record loses nothing.
+    #[test]
+    fn launch_model_and_effort_of_an_old_record_round_trip() {
+        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{"kind":"agent","engine":"e","profile":[],"model":"opus","effort":"xhigh"}}"#;
+        let session = Session::from_json(text).unwrap();
+        assert!(matches!(
+            session.launch,
+            Launch::Agent { ref model, ref effort, .. }
+                if model.as_deref() == Some("opus") && effort.as_deref() == Some("xhigh")
+        ));
+        let value: serde_json::Value = serde_json::from_str(&session.to_json().unwrap()).unwrap();
+        assert_eq!(value["launch"]["model"], "opus");
+        assert_eq!(value["launch"]["effort"], "xhigh");
     }
 
     #[test]
@@ -584,15 +563,6 @@ mod tests {
         assert_eq!(Lifecycle::Running.as_str(), "running");
         assert_eq!("stopped".parse::<Lifecycle>().unwrap(), Lifecycle::Stopped);
         assert!("gone".parse::<Lifecycle>().is_err());
-    }
-
-    #[test]
-    fn effort_names() {
-        for effort in Effort::ALL {
-            assert_eq!(effort.as_str().parse::<Effort>().unwrap(), effort);
-        }
-        assert_eq!(Effort::XHigh.as_str(), "xhigh");
-        assert!("ultra".parse::<Effort>().is_err());
     }
 
     #[test]

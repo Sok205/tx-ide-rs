@@ -12,7 +12,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use tx_core::{
-    CoreError, CreateOptions, Effort, Launch, LaunchOptions, Lifecycle, ListFilter, Plugin,
+    CoreError, CreateOptions, Launch, LaunchOptions, Lifecycle, ListFilter, Plugin,
     PluginError, Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
 
@@ -23,7 +23,7 @@ pub const COMMON_ROLE: &str = "COMMON";
 pub const TAG: &str = "tx-system";
 pub const ENGINE: &str = "claude";
 pub const MODEL: &str = "opus";
-pub const EFFORT: Effort = Effort::Medium;
+pub const EFFORT: &str = "medium";
 /// The first turn, typed by core at launch: an agent needs an initial prompt.
 pub const GREETING: &str = "You are starting up. Reply with the single word READY.";
 /// Under the plugin's data directory: the assistant's own repository, the checkout its
@@ -104,8 +104,8 @@ fn io_error(path: &Path, source: std::io::Error) -> CoreError {
 pub fn create_options(core: &TxCore) -> Result<CreateOptions, CoreError> {
     let launch = LaunchOptions::agent(ENGINE)
         .profile([COMMON_ROLE, ROLE])
-        .model(MODEL)
-        .effort(EFFORT)
+        .option("model", MODEL)
+        .option("effort", EFFORT)
         .initial_prompt(GREETING);
     Ok(CreateOptions::new(SESSION_NAME, ensure_home(core)?, launch).tags([TAG]))
 }

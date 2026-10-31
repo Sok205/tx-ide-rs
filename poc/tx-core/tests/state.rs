@@ -76,7 +76,11 @@ fn hooks_write_engine_data_under_the_engines_key() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core.create_session(agent("a", &h.repository("a"))).unwrap();
-    assert!(core.get_session(&id).unwrap().ext.is_empty());
+    // No options: the engine's key holds the empty object `configure` returned.
+    assert_eq!(
+        core.get_session(&id).unwrap().ext.get(STUB_ID),
+        Some(&json!({}))
+    );
 
     let first = json!({"conversation_id": "c-1", "transcript_path": "/t/c-1.jsonl"});
     core.hook(&id, hook("data", first.clone(), 10.0)).unwrap();

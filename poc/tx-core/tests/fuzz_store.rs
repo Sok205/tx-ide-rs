@@ -8,7 +8,7 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use proptest::prelude::*;
-use tx_core::{Effort, Launch, Lifecycle, ReadError, RecordError, Session, SessionId, StoreError};
+use tx_core::{Launch, Lifecycle, ReadError, RecordError, Session, SessionId, StoreError};
 
 fn store() -> (tempfile::TempDir, tx_core::SessionStore) {
     let dir = tempfile::tempdir().unwrap();
@@ -97,7 +97,7 @@ fn launch() -> impl Strategy<Value = Launch> {
             text(),
             prop::collection::vec(text(), 0..4),
             prop::option::of(text()),
-            prop::option::of(prop::sample::select(Effort::ALL.to_vec())),
+            prop::option::of(text()),
         )
             .prop_map(|(engine, profile, model, effort)| Launch::Agent {
                 engine,

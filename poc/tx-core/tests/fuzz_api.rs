@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Directories, Effort, EventType, Launch, LaunchMode,
+    CoreConfig, CoreError, CreateOptions, Directories, EventType, Launch, LaunchMode,
     LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine,
     MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Session, SessionId, TxCore,
     WorkspaceAction,
@@ -62,10 +62,6 @@ fn texts() -> impl Strategy<Value = Vec<String>> {
 
 fn pairs() -> impl Strategy<Value = Vec<(String, String)>> {
     prop::collection::vec((text(), text()), 0..4)
-}
-
-fn effort() -> impl Strategy<Value = Effort> {
-    prop::sample::select(Effort::ALL.to_vec())
 }
 
 fn lifecycle() -> impl Strategy<Value = Lifecycle> {
@@ -182,9 +178,7 @@ proptest! {
 
     /// `LaunchRequest` setters: last call wins, nothing else moves, chaining order is irrelevant.
     #[test]
-    fn launch_request_builder_sets_named_field_only(
-        m1 in text(), m2 in text(), e1 in effort(), e2 in effort(), p in text(),
-    ) {
+    fn launch_request_builder_sets_named_field_only(p1 in text(), p in text()) {
         let dir = short_tempdir();
         let profile = Profile::write(
             ResolvedProfile { text: "t".into(), skill_dirs: vec![] },
@@ -194,24 +188,22 @@ proptest! {
         let source = session_with(None, vec![], Lifecycle::Running);
         let fork = LaunchMode::Fork { source: &source };
 
-        let a = LaunchRequest::new(&session, &profile).model(&m1).model(&m2).effort(e1).effort(e2).initial_prompt(&p).mode(LaunchMode::Resume).mode(fork);
-        let b = LaunchRequest::new(&session, &profile).mode(fork).initial_prompt(&p).effort(e2).model(&m2);
+        let a = LaunchRequest::new(&session, &profile).initial_prompt(&p1).initial_prompt(&p).mode(LaunchMode::Resume).mode(fork);
+        let b = LaunchRequest::new(&session, &profile).mode(fork).initial_prompt(&p);
         for req in [a, b] {
             prop_assert_eq!(&req.session.id, &session.id);
             prop_assert_eq!(req.profile.text(), "t");
-            prop_assert_eq!(req.model, Some(m2.as_str()));
-            prop_assert_eq!(req.effort, Some(e2));
             prop_assert_eq!(req.initial_prompt, Some(p.as_str()));
             let forked = matches!(req.mode, LaunchMode::Fork { source: forked } if forked.id == source.id);
             prop_assert!(forked);
         }
         // Single setter leaves the others untouched.
-        let only_model = LaunchRequest::new(&session, &profile).model(&m1);
-        prop_assert_eq!(only_model.model, Some(m1.as_str()));
-        let starts = matches!(only_model.mode, LaunchMode::Start);
-        prop_assert!(only_model.effort.is_none() && only_model.initial_prompt.is_none() && starts);
+        let only_prompt = LaunchRequest::new(&session, &profile).initial_prompt(&p1);
+        prop_assert_eq!(only_prompt.initial_prompt, Some(p1.as_str()));
+        let starts = matches!(only_prompt.mode, LaunchMode::Start);
+        prop_assert!(starts);
         // `Copy`: `a` is still usable after being moved into the loop above.
-        prop_assert_eq!(a.model, Some(m2.as_str()));
+        prop_assert_eq!(a.initial_prompt, Some(p.as_str()));
     }
 
     /// `CreateOptions`: `parent` replaces, `tags` and `env` append, order of setters is irrelevant.
@@ -249,34 +241,34 @@ proptest! {
         prop_assert!(fresh.parent.is_none() && fresh.tags.is_empty() && fresh.env.is_empty());
     }
 
-    /// `LaunchOptions::Agent`: scalar setters replace, `profile` appends, order is irrelevant.
+    /// `LaunchOptions::Agent`: scalar setters replace, `profile` appends, `option` replaces its
+    /// key, order is irrelevant.
     #[test]
     fn launch_options_agent_builder_sets_named_field_only(
         engine in text(),
         roles1 in texts(), roles2 in texts(),
-        m1 in text(), m2 in text(), e in effort(), p in text(), r in text(),
+        m1 in text(), m2 in text(), e in text(), p in text(), r in text(),
     ) {
-        let a = LaunchOptions::agent(&engine).profile(roles1.clone()).model(&m1).model(&m2).effort(e).initial_prompt(&p).resume(&r).profile(roles2.clone());
-        let b = LaunchOptions::agent(&engine).resume(&r).initial_prompt(&p).effort(e).model(&m2).profile(roles1.clone()).profile(roles2.clone());
+        let a = LaunchOptions::agent(&engine).profile(roles1.clone()).option("model", m1.as_str()).option("model", m2.as_str()).option("effort", e.as_str()).initial_prompt(&p).resume(&r).profile(roles2.clone());
+        let b = LaunchOptions::agent(&engine).resume(&r).initial_prompt(&p).option("effort", e.as_str()).option("model", m2.as_str()).profile(roles1.clone()).profile(roles2.clone());
         prop_assert_eq!(&a, &b);
-        let LaunchOptions::Agent { engine: eng, profile, model, effort, initial_prompt, resume, .. } = &a else {
+        let LaunchOptions::Agent { engine: eng, profile, options, initial_prompt, resume, .. } = &a else {
             prop_assert!(false, "agent() did not build an Agent");
             unreachable!()
         };
         let roles: Vec<String> = roles1.iter().chain(&roles2).cloned().collect();
         prop_assert_eq!(eng, &engine);
         prop_assert_eq!(profile, &roles);
-        prop_assert_eq!(model.as_deref(), Some(m2.as_str()));
-        prop_assert_eq!(*effort, Some(e));
+        prop_assert_eq!(options, &serde_json::json!({"model": m2, "effort": e}));
         prop_assert_eq!(initial_prompt.as_deref(), Some(p.as_str()));
         prop_assert_eq!(resume.as_deref(), Some(r.as_str()));
 
         let bare = LaunchOptions::agent(&engine);
-        let LaunchOptions::Agent { profile, model, effort, initial_prompt, resume, .. } = &bare else {
+        let LaunchOptions::Agent { profile, options, initial_prompt, resume, .. } = &bare else {
             prop_assert!(false, "agent() did not build an Agent");
             unreachable!()
         };
-        prop_assert!(profile.is_empty() && model.is_none() && effort.is_none() && initial_prompt.is_none() && resume.is_none());
+        prop_assert!(profile.is_empty() && options.as_object().is_some_and(|o| o.is_empty()) && initial_prompt.is_none() && resume.is_none());
     }
 
     /// Sharp edge (documented, not a failure): every agent-only setter on a `Process` launch is a
@@ -285,10 +277,10 @@ proptest! {
     #[test]
     fn launch_options_process_silently_ignores_agent_setters(
         program in text(), args in texts(),
-        roles in texts(), m in text(), e in effort(), p in text(), r in text(),
+        roles in texts(), m in text(), e in text(), p in text(), r in text(),
     ) {
         let plain = LaunchOptions::process(&program, args.clone());
-        let decorated = LaunchOptions::process(&program, args.clone()).profile(roles).model(&m).effort(e).initial_prompt(&p).resume(&r);
+        let decorated = LaunchOptions::process(&program, args.clone()).profile(roles).option("model", m.as_str()).options(serde_json::json!({"effort": e})).initial_prompt(&p).resume(&r);
         prop_assert_eq!(&decorated, &plain);
         let is_process = matches!(&decorated, LaunchOptions::Process { program: pr, args: ar, .. } if *pr == program && *ar == args);
         prop_assert!(is_process, "Process payload drifted");
@@ -416,7 +408,6 @@ fn public_types_have_the_promised_auto_traits() {
     assert_static::<CoreError>();
     assert_copy::<LaunchRequest<'static>>();
     assert_copy::<EventType>();
-    assert_copy::<Effort>();
     assert_copy::<Lifecycle>();
 
     // Value types are unwind-safe; a `TxCore` is not (it owns `Box<dyn LlmEngine>`), see report.
@@ -459,6 +450,15 @@ fn engine_adapter_object_is_usable_from_another_thread() {
         fn ext_key(&self) -> &'static str {
             "stub"
         }
+
+        fn configure(
+            &self,
+            _: &tx_core::Session,
+            options: &serde_json::Value,
+        ) -> Result<serde_json::Value, tx_core::EngineError> {
+            Ok(options.clone())
+        }
+
         fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, tx_core::EngineError> {
             Ok(LaunchPlan::new("true"))
         }

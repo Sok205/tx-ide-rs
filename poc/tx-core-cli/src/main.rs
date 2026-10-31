@@ -129,8 +129,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 LaunchSpec::Agent {
                     engine,
                     roles,
-                    model,
-                    effort,
+                    options,
                     prompt,
                     resume,
                 } => {
@@ -138,11 +137,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                     if let Some(resume) = resume {
                         launch = launch.resume(resume);
                     }
-                    if let Some(model) = model {
-                        launch = launch.model(model);
-                    }
-                    if let Some(effort) = effort {
-                        launch = launch.effort(effort);
+                    for (key, value) in options {
+                        launch = launch.option(key, value);
                     }
                     if let Some(prompt) = prompt {
                         launch = launch.initial_prompt(prompt);

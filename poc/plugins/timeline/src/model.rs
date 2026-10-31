@@ -373,24 +373,25 @@ pub fn engine_of(session: &Session) -> Option<String> {
     }
 }
 
-/// `(model, effort)` the record was launched with.
+/// `(model, effort)` the record was launched with: engine data (`ext.<engine>`, PR 12a) for an
+/// agent record, the chat plugin's launch for a process one. Engine 8c asks the engine instead.
 fn launch_options(session: &Session) -> (Option<String>, Option<String>) {
     match &session.launch {
-        Launch::Agent { model, effort, .. } => (
-            model.clone(),
-            effort.map(|effort| effort.as_str().to_owned()),
-        ),
-        Launch::Process { .. } => {
-            chat_ext(session)
-                .ok()
-                .and_then(|ext| ext.launch)
-                .map_or((None, None), |launch| {
-                    (
-                        launch.model,
-                        launch.effort.map(|effort| effort.as_str().to_owned()),
-                    )
-                })
+        Launch::Agent { engine, .. } => {
+            let option = |key: &str| {
+                session
+                    .ext
+                    .get(engine)?
+                    .get(key)?
+                    .as_str()
+                    .map(str::to_owned)
+            };
+            (option("model"), option("effort"))
         }
+        Launch::Process { .. } => chat_ext(session)
+            .ok()
+            .and_then(|ext| ext.launch)
+            .map_or((None, None), |launch| (launch.model, launch.effort)),
     }
 }
 

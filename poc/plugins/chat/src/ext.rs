@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use tx_core::{Effort, Launch, ListFilter, Session, SessionId, TxCore};
+use tx_core::{Launch, ListFilter, Session, SessionId, TxCore};
 
 use crate::{CHAT_ID, ChatError, HISTORY_ID};
 
@@ -49,8 +49,9 @@ pub struct AgentLaunch {
     pub profile: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The engine's own effort name (`"high"`); the engine validates it at launch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effort: Option<Effort>,
+    pub effort: Option<String>,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
 }
@@ -111,18 +112,24 @@ pub fn history_ext(s: &Session) -> Result<HistoryExt, ChatError> {
 pub fn agent_launch(s: &Session, ext: &ChatExt) -> Option<AgentLaunch> {
     match &s.launch {
         Launch::Agent {
-            engine,
-            profile,
-            model,
-            effort,
-            ..
-        } => Some(AgentLaunch {
-            engine: engine.clone(),
-            profile: profile.clone(),
-            model: model.clone(),
-            effort: *effort,
-            rest: Map::new(),
-        }),
+            engine, profile, ..
+        } => {
+            // Model and effort are engine data (PR 12a); the engine's `ext` key is its id.
+            let option = |key: &str| {
+                s.ext
+                    .get(engine)?
+                    .get(key)?
+                    .as_str()
+                    .map(str::to_owned)
+            };
+            Some(AgentLaunch {
+                engine: engine.clone(),
+                profile: profile.clone(),
+                model: option("model"),
+                effort: option("effort"),
+                rest: Map::new(),
+            })
+        }
         Launch::Process { .. } => ext.launch.clone(),
     }
 }
@@ -262,13 +269,21 @@ mod tests {
         agent.launch = Launch::Agent {
             engine: "claude".into(),
             profile: vec!["r".into()],
-            model: Some("opus".into()),
-            effort: Some(Effort::Low),
+            model: None,
+            effort: None,
             resume: None,
         };
         let launch = agent_launch(&agent, &ext).unwrap();
         assert_eq!(launch.engine, "claude");
-        assert_eq!(launch.effort, Some(Effort::Low));
+        assert_eq!(launch.model, None);
+        assert_eq!(launch.effort, None);
+        agent.ext.insert(
+            "claude".into(),
+            json!({"conversation_id": "c", "model": "opus", "effort": "low"}),
+        );
+        let launch = agent_launch(&agent, &ext).unwrap();
+        assert_eq!(launch.model.as_deref(), Some("opus"));
+        assert_eq!(launch.effort.as_deref(), Some("low"));
     }
 
     #[test]

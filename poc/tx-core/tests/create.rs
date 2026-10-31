@@ -125,8 +125,8 @@ fn agent_session_gets_profile_plan_and_workspace() {
                 repository.clone(),
                 LaunchOptions::agent(STUB_ID)
                     .profile(["dev"])
-                    .model("m")
-                    .effort(tx_core::Effort::Max)
+                    .option("model", "m")
+                    .option("effort", "max")
                     .initial_prompt("start"),
             )
             .tags(["t1"]),
@@ -161,11 +161,16 @@ fn agent_session_gets_profile_plan_and_workspace() {
     assert!(!repository.join("env.txt").exists());
     assert_eq!(git_ok(&repository, &["status", "--porcelain"]), "");
     let session = core.get_session(&id).unwrap();
+    // The options are engine data, not record fields.
     assert!(matches!(
         session.launch,
-        Launch::Agent { ref engine, ref profile, ref model, effort: Some(tx_core::Effort::Max), .. }
-            if engine == STUB_ID && *profile == ["dev"] && model.as_deref() == Some("m")
+        Launch::Agent { ref engine, ref profile, model: None, effort: None, .. }
+            if engine == STUB_ID && *profile == ["dev"]
     ));
+    assert_eq!(
+        session.ext.get(STUB_ID),
+        Some(&serde_json::json!({"model": "m", "effort": "max"}))
+    );
     assert_eq!(session.tags, ["t1"]);
 }
 
@@ -206,7 +211,7 @@ fn the_engine_sees_the_record_and_its_data_lands_in_ext() {
     let core = h.open_with_engine();
     let mut opts = agent("named", &h.repository("d"));
     opts.launch = LaunchOptions::agent(STUB_ID)
-        .model("data")
+        .option("model", "data")
         .initial_prompt("start");
     let id = core.create_session(opts).unwrap();
     let env = env_of(&cwd_of(&core, &id));
@@ -215,13 +220,17 @@ fn the_engine_sees_the_record_and_its_data_lands_in_ext() {
     let session = core.get_session(&id).unwrap();
     assert_eq!(
         session.ext.get(STUB_ID),
-        Some(&serde_json::json!({"conversation_id": id.as_str()}))
+        Some(&serde_json::json!({"conversation_id": id.as_str(), "model": "data"}))
     );
-    // No data in the plan: no entry.
+    // No options and no data in the plan: the engine's key holds the empty object `configure`
+    // returned.
     let plain = core
         .create_session(agent("plain", &h.repository("p")))
         .unwrap();
-    assert!(core.get_session(&plain).unwrap().ext.is_empty());
+    assert_eq!(
+        core.get_session(&plain).unwrap().ext.get(STUB_ID),
+        Some(&serde_json::json!({}))
+    );
 }
 
 #[test]
@@ -263,11 +272,12 @@ fn failures_before_launch_leave_nothing_behind() {
     let mut opts = agent("x", &cwd);
     opts.launch = LaunchOptions::agent(STUB_ID)
         .initial_prompt("start")
-        .model("refuse");
+        .option("model", "refuse");
     assert!(matches!(
         core.create_session(opts).unwrap_err(),
-        CoreError::Engine(_)
+        CoreError::Engine(tx_core::EngineError::Refused(ref text)) if text == "model refused"
     ));
+    assert!(core.list_sessions(&Default::default()).unwrap().is_empty());
 
     // Not a checkout: git's own words, and nothing made.
     let plain = h.workdir("plain");

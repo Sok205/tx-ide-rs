@@ -3,16 +3,19 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use tx_core::{Effort, Lifecycle};
+use tx_core::Lifecycle;
 
 pub const USAGE: &str = "\
 usage: txc [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR] [--run-dir DIR] [--socket PATH]
            [--plugins FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
 
 verbs:
-  create NAME --cwd DIR (--engine ID [--role R]... [--model M] [--effort E] (--prompt T | --resume ID) | --exec PROG [ARG]...)
+  create NAME --cwd DIR (--engine ID [--role R]... [--option KEY=VALUE]... [--model M] [--effort E]
+                (--prompt T | --resume ID) | --exec PROG [ARG]...)
                 [--parent ID] [--tag T]... [--env KEY=VALUE]...     start a session; prints its id. An agent runs in its
-                                                                    own worktree of the checkout DIR (name NAME, else NAME-2 …)
+                                                                    own worktree of the checkout DIR (name NAME, else NAME-2 …).
+                                                                    --model M and --effort E are --option model=M / effort=E;
+                                                                    the engine validates every option
   ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped]   id, name, lifecycle, cwd per line
   show TARGET                                                       the record as JSON
   rename TARGET NAME
@@ -70,8 +73,9 @@ pub enum LaunchSpec {
     Agent {
         engine: String,
         roles: Vec<String>,
-        model: Option<String>,
-        effort: Option<Effort>,
+        /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
+        /// a repeated key is settled by the engine's options object, last one wins.
+        options: Vec<(String, String)>,
         prompt: Option<String>,
         resume: Option<String>,
     },
@@ -147,6 +151,29 @@ pub struct Invocation {
 
 fn usage(text: impl Into<String>) -> UsageError {
     UsageError(text.into())
+}
+
+/// `--model M` / `--effort E` as the engine option they stand for; an empty value is a misuse
+/// (the engine would otherwise see a key with nothing in it).
+fn option_value(key: &str, flag: &str, value: &str) -> Result<(String, String), UsageError> {
+    if value.is_empty() {
+        return Err(usage(format!("{flag} needs a non-empty value")));
+    }
+    Ok((key.to_owned(), value.to_owned()))
+}
+
+/// `KEY=VALUE` of `--option`; the key is a bare name and the value is not empty.
+fn option_pair(text: &str) -> Result<(String, String), UsageError> {
+    let (key, value) = text
+        .split_once('=')
+        .ok_or_else(|| usage(format!("--option expects KEY=VALUE, got {text:?}")))?;
+    if key.is_empty() || !key.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-') {
+        return Err(usage(format!("--option key {key:?} is not a bare name ([A-Za-z0-9_-]+)")));
+    }
+    if value.is_empty() {
+        return Err(usage(format!("--option {key} needs a non-empty value")));
+    }
+    Ok((key.to_owned(), value.to_owned()))
 }
 
 fn env_pair(text: &str) -> Result<(String, String), UsageError> {
@@ -329,8 +356,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut env = Vec::new();
     let mut engine: Option<String> = None;
     let mut roles = Vec::new();
-    let mut model = None;
-    let mut effort = None;
+    let mut options = Vec::new();
     let mut prompt = None;
     let mut resume = None;
     let mut exec: Option<(String, Vec<String>)> = None;
@@ -342,16 +368,11 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             "--env" => env.push(env_pair(cursor.value(flag)?)?),
             "--engine" => engine = Some(cursor.value(flag)?.to_owned()),
             "--role" => roles.push(cursor.value(flag)?.to_owned()),
-            "--model" => model = Some(cursor.value(flag)?.to_owned()),
+            "--model" => options.push(option_value("model", flag, cursor.value(flag)?)?),
+            "--effort" => options.push(option_value("effort", flag, cursor.value(flag)?)?),
+            "--option" => options.push(option_pair(cursor.value(flag)?)?),
             "--prompt" => prompt = Some(cursor.value(flag)?.to_owned()),
             "--resume" => resume = Some(cursor.value(flag)?.to_owned()),
-            "--effort" => {
-                let text = cursor.value(flag)?;
-                effort = Some(
-                    text.parse::<Effort>()
-                        .map_err(|error| usage(error.to_string()))?,
-                );
-            }
             "--exec" => {
                 let program = cursor
                     .next()
@@ -371,21 +392,15 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             LaunchSpec::Agent {
                 engine,
                 roles,
-                model,
-                effort,
+                options,
                 prompt,
                 resume,
             }
         }
         (None, Some((program, args))) => {
-            if !roles.is_empty()
-                || model.is_some()
-                || effort.is_some()
-                || prompt.is_some()
-                || resume.is_some()
-            {
+            if !roles.is_empty() || !options.is_empty() || prompt.is_some() || resume.is_some() {
                 return Err(usage(
-                    "--role, --model, --effort, --prompt and --resume belong to --engine, not --exec",
+                    "--role, --option, --model, --effort, --prompt and --resume belong to --engine, not --exec",
                 ));
             }
             LaunchSpec::Process { program, args }
@@ -508,7 +523,7 @@ mod tests {
 
     #[test]
     fn create_agent() {
-        let inv = parse_str("create w1 --cwd /w --engine claude --role dev --role ops --model opus --effort xhigh --prompt go --resume chat-1 --parent p-1 --tag a --tag b --env K=V").unwrap();
+        let inv = parse_str("create w1 --cwd /w --engine claude --role dev --role ops --model opus --effort xhigh --option model=sonnet --option thinking=on --prompt go --resume chat-1 --parent p-1 --tag a --tag b --env K=V").unwrap();
         let Verb::Create {
             name,
             cwd,
@@ -530,12 +545,31 @@ mod tests {
             LaunchSpec::Agent {
                 engine: "claude".into(),
                 roles: vec!["dev".into(), "ops".into()],
-                model: Some("opus".into()),
-                effort: Some(Effort::XHigh),
+                options: vec![
+                    ("model".into(), "opus".into()),
+                    ("effort".into(), "xhigh".into()),
+                    ("model".into(), "sonnet".into()),
+                    ("thinking".into(), "on".into()),
+                ],
                 prompt: Some("go".into()),
                 resume: Some("chat-1".into()),
             }
         );
+    }
+
+    #[test]
+    fn empty_model_and_effort_values_are_a_misuse() {
+        for (flag, needle) in [
+            ("--effort", "--effort needs a non-empty value"),
+            ("--model", "--model needs a non-empty value"),
+        ] {
+            let args: Vec<String> = ["create", "n", "--cwd", "/w", "--engine", "e", flag, ""]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect();
+            let error = parse(&args).unwrap_err();
+            assert!(error.0.contains(needle), "{flag}: {error}");
+        }
     }
 
     #[test]
@@ -565,7 +599,11 @@ mod tests {
                 "--engine or --exec",
             ),
             ("create n --cwd /w --exec", "--exec needs a program"),
-            ("create n --cwd /w --engine e --effort ultra", "effort"),
+            ("create n --cwd /w --engine e --option model", "KEY=VALUE"),
+            ("create n --cwd /w --engine e --option =x", "bare name"),
+            ("create n --cwd /w --engine e --option a.b=x", "bare name"),
+            ("create n --cwd /w --engine e --option model=", "needs a non-empty value"),
+            ("create n --cwd /w --option k=v --exec sh", "--option"),
             (
                 "create n --cwd /w --engine e --role",
                 "--role needs a value",
