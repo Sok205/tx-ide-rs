@@ -8,7 +8,7 @@
 //! record to saving it, so two `txc` processes modifying at once produce two contiguous revs.
 //!
 //! A diff's content is its patch (`kinds`): created from the worktree, re-snapshotted as a new
-//! revision by `modify` and by `open`. The close step an `open` leaves behind (a temporary
+//! revision by `modify` and by `open`; the worktree's repository is recorded with it. The close step an `open` leaves behind (a temporary
 //! worktree) is kept in `<id>/.cleanup.json`, keyed by the view that needs it, until `close`,
 //! `doctor --repair`, or the next `open` of that artifact runs it.
 
@@ -182,7 +182,9 @@ impl ArtifactService {
     }
 
     /// Register a new diff of `worktree` against `base` (a ref or commit; empty means the
-    /// merge-base with the default branch), pinned to the commit id it resolves to now.
+    /// merge-base with the default branch), pinned to the commit id it resolves to now, with the
+    /// worktree's git common directory as the repository to show it from once the worktree is
+    /// gone.
     pub fn create_diff(
         &self,
         session_id: &str,
@@ -192,7 +194,12 @@ impl ArtifactService {
         group: Option<String>,
     ) -> Result<Artifact> {
         let base = kinds::resolve_base(&worktree, base)?;
-        let kind = Kind::Diff { worktree, base };
+        let repository = Some(kinds::common_directory(&worktree)?);
+        let kind = Kind::Diff {
+            worktree,
+            base,
+            repository,
+        };
         let patch = kinds::create_content(&kind, None)?;
         self.create_with_kind(
             session_id,
@@ -1005,6 +1012,7 @@ mod tests {
             diff.kind = Kind::Diff {
                 worktree: "/nonexistent".into(),
                 base: "abc".into(),
+                repository: None,
             };
             service.store().save(&diff).unwrap();
             diff.id

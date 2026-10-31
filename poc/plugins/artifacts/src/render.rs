@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use tx_client::render::{chips, reltime};
 
-use crate::artifact::{Artifact, USER_ACTOR};
+use crate::artifact::{Artifact, Kind, USER_ACTOR};
 
 /// A touch author as shown: `user`, the session's name, else the first 8 chars of its id.
 pub fn actor_label(session_id: &str, names: &HashMap<String, String>) -> String {
@@ -101,6 +101,13 @@ pub fn render_artifact_show(
             worktree.display(),
             if present { "" } else { " (gone)" }
         ));
+    }
+    if let Kind::Diff {
+        repository: Some(repository),
+        ..
+    } = &artifact.kind
+    {
+        kind.push_str(&format!(", repository {}", repository.display()));
     }
     let mut lines = vec![
         format!("{}  ({})", artifact.display_name(), artifact.id),

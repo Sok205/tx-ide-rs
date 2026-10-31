@@ -690,7 +690,7 @@ impl Ctx<'_, '_> {
 /// `<worktree> vs <base7>`, a diff's facts for the create line.
 fn diff_facts(kind: &Kind) -> String {
     match kind {
-        Kind::Diff { worktree, base } => {
+        Kind::Diff { worktree, base, .. } => {
             format!("{} vs {}", worktree.display(), &base[..base.len().min(7)])
         }
         _ => kind.name().to_owned(),

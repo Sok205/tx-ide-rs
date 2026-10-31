@@ -13,9 +13,10 @@
 //! through the service instead of rewriting a file here.
 //!
 //! A diff whose worktree is gone is opened in a temporary detached worktree at `base` (made from
-//! a sibling checkout of the same repository, one per open) with the patch applied; `close`
-//! removes it. When no checkout of the repository can be found, the patch itself is opened as
-//! text. Any other kind is opened by the plugin that registers the verb named after it.
+//! the repository recorded at create, else a sibling checkout of the gone worktree, one per
+//! open) with the patch applied; `close` removes it. When no checkout of the repository can be
+//! found, the patch itself is opened as text. Any other kind is opened by the plugin that
+//! registers the verb named after it.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -122,6 +123,20 @@ pub fn resolve_base(worktree: &Path, base: &str) -> Result<String, KindError> {
     Ok(out.trim().to_owned())
 }
 
+/// The checkout's git common directory (the main repository's `.git`), which outlives a linked
+/// worktree's removal; where a temporary worktree is made from once the worktree is gone.
+pub fn common_directory(worktree: &Path) -> Result<PathBuf, KindError> {
+    if !worktree.is_dir() {
+        return Err(KindError::WorktreeMissing(worktree.to_owned()));
+    }
+    let out = git(
+        worktree,
+        "rev-parse",
+        ["--path-format=absolute", "--git-common-dir"],
+    )?;
+    Ok(PathBuf::from(out.trim()))
+}
+
 fn rev_parse(worktree: &Path, reference: &str) -> Result<String, KindError> {
     let out = git(
         worktree,
@@ -138,7 +153,7 @@ pub fn create_content(kind: &Kind, source: Option<&Path>) -> Result<Vec<u8>, Kin
             let source = source.expect("a document is created from a file");
             fs::read(source).map_err(io_at(source))
         }
-        Kind::Diff { worktree, base } => patch(worktree, base),
+        Kind::Diff { worktree, base, .. } => patch(worktree, base),
     }
 }
 
@@ -146,7 +161,7 @@ pub fn create_content(kind: &Kind, source: Option<&Path>) -> Result<Vec<u8>, Kin
 pub fn refresh(kind: &Kind) -> Result<Option<Vec<u8>>, KindError> {
     match kind {
         Kind::Document { .. } | Kind::Other { .. } => Ok(None),
-        Kind::Diff { worktree, base } => patch(worktree, base).map(Some),
+        Kind::Diff { worktree, base, .. } => patch(worktree, base).map(Some),
     }
 }
 
@@ -195,7 +210,12 @@ pub fn open(
         diffview: false,
         cleanup: None,
     };
-    let Kind::Diff { worktree, base } = &artifact.kind else {
+    let Kind::Diff {
+        worktree,
+        base,
+        repository,
+    } = &artifact.kind
+    else {
         return Ok(file_view(current));
     };
     let diffview = |working_directory: PathBuf, cleanup: Option<Cleanup>| Opened {
@@ -207,7 +227,11 @@ pub fn open(
     if worktree.is_dir() {
         return Ok(diffview(worktree.clone(), None));
     }
-    let Some(checkout) = sibling_checkout(worktree, base) else {
+    let recorded = repository
+        .as_deref()
+        .filter(|repository| rev_parse(repository, base).is_ok())
+        .map(Path::to_path_buf);
+    let Some(checkout) = recorded.or_else(|| sibling_checkout(worktree, base)) else {
         return Ok(file_view(current));
     };
     // One temp worktree per open: two views of the same diff never share one, so each view's
@@ -234,8 +258,9 @@ pub fn open(
     Ok(diffview(temp.clone(), Some(Cleanup::RemoveWorktree(temp))))
 }
 
-/// Another checkout of the gone worktree's repository: a sibling directory (core keeps a
-/// repository's worktrees side by side) that has the base commit.
+/// Another checkout of the gone worktree's repository, for a diff recorded without one: a
+/// sibling directory (production keeps a repository's worktrees side by side) that has the base
+/// commit.
 fn sibling_checkout(worktree: &Path, base: &str) -> Option<PathBuf> {
     let parent = worktree.parent()?;
     let mut siblings: Vec<PathBuf> = fs::read_dir(parent)
@@ -391,6 +416,7 @@ mod tests {
         let diff = Kind::Diff {
             worktree: "/w".into(),
             base: "b28bae8af3042e3e".into(),
+            repository: None,
         };
         assert_eq!(view_suffix(&diff), "-diff");
         let cleanup = Cleanup::RemoveWorktree("/tmp/x".into());
@@ -479,9 +505,16 @@ mod tests {
             Err(KindError::WorktreeMissing(_))
         ));
 
+        let repository = common_directory(worktree).unwrap();
+        assert_eq!(repository, main.join(".git").canonicalize().unwrap());
+        assert!(matches!(
+            common_directory(Path::new("/nonexistent/tree")),
+            Err(KindError::WorktreeMissing(_))
+        ));
         let kind = Kind::Diff {
             worktree: worktree.clone(),
             base: base.clone(),
+            repository: None,
         };
         let patch = String::from_utf8(create_content(&kind, None).unwrap()).unwrap();
         assert!(patch.contains("+two\n+three\n"), "{patch}");
@@ -541,22 +574,47 @@ mod tests {
         close(fallback.cleanup.as_ref().unwrap()).unwrap();
         assert!(!git_ok(main, &["worktree", "list"]).contains("artifact-d1234567"));
 
-        // No checkout of the repository anywhere near: the patch opens as text.
-        let orphan = super::tests::artifact(
-            "o",
+        // A worktree gone from a directory with no sibling checkout (an agent's tree under
+        // core's hashed worktrees root): the recorded repository makes the temp worktree.
+        let far = super::tests::artifact(
+            "f",
             Kind::Diff {
-                worktree: PathBuf::from("/nonexistent/repo--gone"),
+                worktree: PathBuf::from("/nonexistent/repo-1a2b3c4d/repo--agent"),
                 base: base.clone(),
+                repository: Some(repository.clone()),
             },
             DIFF_PATCH,
         );
-        let text = open(&orphan, &current, &worktrees_root).unwrap();
-        assert_eq!(text.cleanup, None);
-        assert!(!text.diffview);
-        assert_eq!(text.arguments, [current.to_string_lossy().into_owned()]);
-        assert!(matches!(
-            refresh(&orphan.kind),
-            Err(KindError::WorktreeMissing(_))
-        ));
+        let from_repository = open(&far, &current, &worktrees_root).unwrap();
+        let Some(Cleanup::RemoveWorktree(temp)) = from_repository.cleanup.clone() else {
+            panic!("the recorded repository gives a temp worktree: {from_repository:?}");
+        };
+        assert!(from_repository.diffview);
+        assert_eq!(fs::read_to_string(temp.join("new.txt")).unwrap(), "fresh\n");
+        assert_eq!(git_ok(&temp, &["rev-parse", "HEAD"]), *base);
+        close(from_repository.cleanup.as_ref().unwrap()).unwrap();
+        assert!(!temp.exists());
+
+        // No checkout of the repository anywhere near, and none recorded (or the recorded one is
+        // gone too): the patch opens as text.
+        for repository in [None, Some(PathBuf::from("/nonexistent/repo/.git"))] {
+            let orphan = super::tests::artifact(
+                "o",
+                Kind::Diff {
+                    worktree: PathBuf::from("/nonexistent/repo--gone"),
+                    base: base.clone(),
+                    repository,
+                },
+                DIFF_PATCH,
+            );
+            let text = open(&orphan, &current, &worktrees_root).unwrap();
+            assert_eq!(text.cleanup, None);
+            assert!(!text.diffview);
+            assert_eq!(text.arguments, [current.to_string_lossy().into_owned()]);
+            assert!(matches!(
+                refresh(&orphan.kind),
+                Err(KindError::WorktreeMissing(_))
+            ));
+        }
     }
 }

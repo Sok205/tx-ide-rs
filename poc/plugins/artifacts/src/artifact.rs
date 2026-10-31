@@ -42,7 +42,15 @@ pub enum Kind {
     /// A hand-edited file: the working copy `current<ext>`. The default when a record has no kind.
     Document { file: String },
     /// `git diff <base>` of a repository checkout, with `base` a commit id pinned at create.
-    Diff { worktree: PathBuf, base: String },
+    /// `repository` is the checkout's git common directory, recorded at create so the diff can
+    /// be shown from a temporary worktree once `worktree` is gone (`None` on records written
+    /// before it was recorded).
+    Diff {
+        worktree: PathBuf,
+        base: String,
+        #[serde(default)]
+        repository: Option<PathBuf>,
+    },
     /// A kind another plugin owns; `facts` are its subfields, kept as written.
     #[serde(untagged)]
     Other {
@@ -584,6 +592,7 @@ mod tests {
             Kind::Diff {
                 worktree: "/w/tree".into(),
                 base: "b28bae8af3042e3e".into(),
+                repository: Some("/w/main/.git".into()),
             },
             Kind::Other {
                 kind: "tour".into(),
@@ -617,13 +626,25 @@ mod tests {
         let diff = Kind::Diff {
             worktree: "/w".into(),
             base: "b28bae8af3042e3e".into(),
+            repository: Some("/r/.git".into()),
         };
         assert_eq!(diff.describe(), "diff vs b28bae8");
         assert_eq!(diff.worktree(), Some(Path::new("/w")));
         assert!(diff.is_diff());
         assert_eq!(
             serde_json::to_value(&diff).unwrap(),
-            json!({"kind": "diff", "worktree": "/w", "base": "b28bae8af3042e3e"})
+            json!({"kind": "diff", "worktree": "/w", "base": "b28bae8af3042e3e", "repository": "/r/.git"})
+        );
+        let early: Kind =
+            serde_json::from_value(json!({"kind": "diff", "worktree": "/w", "base": "b"})).unwrap();
+        assert_eq!(
+            early,
+            Kind::Diff {
+                worktree: "/w".into(),
+                base: "b".into(),
+                repository: None
+            },
+            "a diff recorded before the repository was: no repository"
         );
     }
 
