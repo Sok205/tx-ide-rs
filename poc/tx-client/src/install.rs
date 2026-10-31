@@ -19,7 +19,10 @@ const INSTALLED: &str = "keys/.installed";
 const IDE_FRAGMENT: &str = "ide";
 const LEGACY_HINT: &str = "legacy bindings may remain; restart the server to drop them";
 /// The resource kinds `ui install` materialises under the data dir.
-const KINDS: [&str; 4] = ["bin", "keys", "conf", ROLES_RESOURCE];
+const KINDS: [&str; 5] = ["bin", "keys", "conf", NVIM_RESOURCE, ROLES_RESOURCE];
+/// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
+/// view's runtimepath by `views::open`.
+pub const NVIM_RESOURCE: &str = "nvim";
 /// Plugins ship roles as `agents/…` resources; they are installed under `<data>/roles/`, since
 /// `<data>/agents/` holds agent records.
 const ROLES_RESOURCE: &str = "agents";
@@ -225,9 +228,9 @@ fn kind_dir(data: &Path, kind: &str) -> PathBuf {
     }
 }
 
-/// Writes every `bin/`, `keys/`, `conf/` and `agents/` resource under `data` and deletes files
-/// in those directories that no resource accounts for. `bin/` and `keys/` files are executable:
-/// scripts, and fragments that `run-shell` executes.
+/// Writes every `bin/`, `keys/`, `conf/`, `nvim/` and `agents/` resource under `data` and
+/// deletes files in those directories that no resource accounts for. `bin/` and `keys/` files
+/// are executable: scripts, and fragments that `run-shell` executes.
 fn materialise(data: &Path, resources: &[Resource]) -> Result<(), VerbError> {
     let mut keep: HashSet<PathBuf> = HashSet::from([data.join(INSTALLED)]);
     for resource in resources {
