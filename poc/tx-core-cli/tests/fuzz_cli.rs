@@ -363,10 +363,10 @@ fn usage_level_inputs_are_table_driven() {
         ),
         (
             vec!["create", "n", "--cwd", "/"],
-            "create needs --engine ID",
+            "create needs --engine ENGINE",
         ),
         (
-            vec!["create", "n", "--cwd", "/", "--engine", "e"],
+            vec!["create", "n", "--cwd", "/", "--engine", "claude"],
             "--prompt is required with --engine",
         ),
         (vec!["send", "x", "--"], "send needs the message text"),

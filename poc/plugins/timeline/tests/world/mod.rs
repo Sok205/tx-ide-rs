@@ -109,7 +109,11 @@ pub fn transcripts(sessions: &[tx_core::Session]) -> tx_timeline::model::Transcr
         .iter()
         .filter_map(|session| {
             let tx_core::Launch::Agent { engine, .. } = &session.launch;
-            let path = session.ext.get(engine)?.get("transcript_path")?.as_str()?;
+            let path = session
+                .ext
+                .get(engine.as_str())?
+                .get("transcript_path")?
+                .as_str()?;
             Some((session.id.clone(), PathBuf::from(path)))
         })
         .collect()

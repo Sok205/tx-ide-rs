@@ -285,7 +285,7 @@ mod tests {
             last_modified_at: created_at,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
-                engine: "claude".into(),
+                engine: tx_core::EngineKind::Claude,
                 profile: vec![],
                 model: None,
                 effort: None,

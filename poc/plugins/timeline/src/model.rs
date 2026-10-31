@@ -334,7 +334,7 @@ pub fn transcripts(core: &TxCore, sessions: &[Session]) -> Transcripts {
 /// The engine the record runs.
 pub fn engine_of(session: &Session) -> String {
     let Launch::Agent { engine, .. } = &session.launch;
-    engine.clone()
+    engine.to_string()
 }
 
 /// `(model, effort)` the record was launched with: its engine data (`ext.<engine>`, PR 12a).
@@ -343,7 +343,7 @@ fn launch_options(session: &Session) -> (Option<String>, Option<String>) {
     let option = |key: &str| {
         session
             .ext
-            .get(engine)?
+            .get(engine.as_str())?
             .get(key)?
             .as_str()
             .map(str::to_owned)

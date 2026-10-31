@@ -294,22 +294,17 @@ pub fn open(global: &Global) -> Result<TxCore, Failure> {
     open_with(global, core_config(global)?)
 }
 
-/// Opens the core from an already resolved config. Process records left on disk by a build
-/// before PR 11 are skipped by every read; this names them on stderr, once per invocation,
-/// until Storage PR 14's migration moves them.
+/// Opens the core from an already resolved config. Records this build skips (process records
+/// left by a build before PR 11, records naming an engine it does not know) are skipped by
+/// every read; this names each on stderr, once per invocation, until Storage PR 14's migration
+/// moves them.
 pub fn open_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
     let cfg = plugin_config(global, &config)?;
     let mut core = TxCore::open(config)?;
     core.plug(plugins::manifest(), &cfg)
         .map_err(Failure::Plugin)?;
-    let skipped = core.skipped_records()?;
-    if !skipped.is_empty() {
-        let ids: Vec<String> = skipped.iter().map(ToString::to_string).collect();
-        eprintln!(
-            "txc: skipped {} process record(s) written before core held agents only: {}",
-            ids.len(),
-            ids.join(", ")
-        );
+    for (id, reason) in core.skipped_records()? {
+        eprintln!("txc: skipped record {id}: {reason}");
     }
     Ok(core)
 }

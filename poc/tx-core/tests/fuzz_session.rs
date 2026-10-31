@@ -16,8 +16,8 @@ use serde_json::{Map, Value, json};
 use tx_core::config::{MAX_SOCKET_PATH_BYTES, SOCKET_FILE};
 use tx_core::session::{MAX_NAME_BYTES, RECORD_VERSION};
 use tx_core::{
-    CoreConfig, CoreError, Directories, Launch, Lifecycle, LlmEngineState, RecordError, Session,
-    SessionId, validate_name,
+    CoreConfig, CoreError, Directories, EngineKind, Launch, Lifecycle, LlmEngineState, RecordError,
+    Session, SessionId, validate_name,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -47,13 +47,13 @@ fn arb_session_id() -> impl Strategy<Value = SessionId> {
 
 fn arb_launch() -> impl Strategy<Value = Launch> {
     (
-        arb_text(),
+        0..EngineKind::ALL.len(),
         prop::collection::vec(arb_text(), 0..4),
         prop::option::of(arb_text()),
         prop::option::of(arb_text()),
     )
         .prop_map(|(engine, profile, model, effort)| Launch::Agent {
-            engine,
+            engine: EngineKind::ALL[engine],
             profile,
             model,
             effort,
@@ -279,7 +279,7 @@ fn sample() -> Session {
         last_modified_at: 1.0,
         lifecycle: Lifecycle::Stopped,
         launch: Launch::Agent {
-            engine: "e".into(),
+            engine: EngineKind::Claude,
             profile: vec![],
             model: None,
             effort: None,

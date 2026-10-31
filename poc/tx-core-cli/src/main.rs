@@ -102,8 +102,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     match invocation.verb {
         Verb::Help | Verb::Migrate { .. } => unreachable!(),
         Verb::Engines => {
-            for id in core.engine_ids() {
-                writeln!(out, "{id}").ok();
+            for kind in core.engine_kinds() {
+                writeln!(out, "{kind}").ok();
             }
         }
         Verb::Plugins => {

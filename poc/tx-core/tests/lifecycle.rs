@@ -5,7 +5,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Harness, STUB_ID, agent, cwd_of, typed, wait_for};
+use common::{Harness, STUB_ID, STUB_KIND, agent, cwd_of, typed, wait_for};
 use tx_core::{
     CoreError, LaunchOptions, Lifecycle, ListFilter, LlmEngineState, RefreshResult, SendOptions,
     Sender, SessionId, TmuxError,
@@ -238,7 +238,7 @@ fn stop_waits_for_an_agent_that_survives_the_pane_and_then_kills_it() {
     let core = h.open_with_engine();
     let mut opts = agent("tough", &h.repository("t"));
     // Ignores the hang-up the closed pane sends, as a CLI busy with its exit hooks might.
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .initial_prompt("start")
         .option("model", "tough");
     let id = core.create_session(opts).unwrap();
@@ -325,7 +325,7 @@ fn respawn_brings_an_ended_agent_back_in_place() {
     let core = h.open_with_engine();
     let mut opts = agent("r", &h.repository("repo"));
     // Model `data`: the stub names its conversation in the engine data, as Claude does.
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .option("model", "data")
         .initial_prompt("remember OTTER-7");
     let id = core.create_session(opts).unwrap();
@@ -420,7 +420,7 @@ fn respawn_refusals_change_nothing() {
 
     let repository = h.repository("repo");
     let mut opts = agent("a", &repository);
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .option("model", "data")
         .initial_prompt("start");
     let a = core.create_session(opts).unwrap();
@@ -489,7 +489,7 @@ fn archive_stops_hides_and_keeps_everything_until_a_respawn() {
     let core = h.open_with_engine();
     let repository = h.repository("a");
     let mut opts = agent("f", &repository);
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .option("model", "data")
         .initial_prompt("start");
     let id = core.create_session(opts).unwrap();

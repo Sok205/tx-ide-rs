@@ -12,8 +12,8 @@ use std::process::Command;
 use std::sync::Arc;
 
 use tx_core::{
-    CoreError, CreateOptions, Launch, LaunchOptions, Lifecycle, ListFilter, Plugin, PluginError,
-    Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
+    CoreError, CreateOptions, EngineKind, Launch, LaunchOptions, Lifecycle, ListFilter, Plugin,
+    PluginError, Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
 
 pub const PLUGIN_ID: &str = "assistant";
@@ -21,7 +21,7 @@ pub const SESSION_NAME: &str = "tx-assistant";
 pub const ROLE: &str = "TX-ASSISTANT";
 pub const COMMON_ROLE: &str = "COMMON";
 pub const TAG: &str = "tx-system";
-pub const ENGINE: &str = "claude";
+pub const ENGINE: EngineKind = EngineKind::Claude;
 pub const MODEL: &str = "opus";
 pub const EFFORT: &str = "medium";
 /// The first turn, typed by core at launch: an agent needs an initial prompt.

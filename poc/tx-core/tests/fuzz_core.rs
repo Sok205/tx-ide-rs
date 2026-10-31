@@ -13,7 +13,9 @@ use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, typed, wait_for};
 use proptest::prelude::*;
-use tx_core::{CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TxCore};
+use tx_core::{
+    CoreError, EngineKind, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TxCore,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -28,7 +30,7 @@ fn kind(error: &CoreError) -> &'static str {
         CoreError::InvalidEnvKey(_) => "InvalidEnvKey",
         CoreError::NotADirectory(_) => "NotADirectory",
         CoreError::NotRunning(_) => "NotRunning",
-        CoreError::UnknownEngine(_) => "UnknownEngine",
+        CoreError::EngineDisabled(_) => "EngineDisabled",
         CoreError::EngineTaken(_) => "EngineTaken",
         CoreError::SocketPathTooLong(_) => "SocketPathTooLong",
         CoreError::Profile(_) => "Profile",

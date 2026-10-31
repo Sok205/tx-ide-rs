@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, EngineError, Input, Key, LaunchOptions, LaunchPlan,
-    LaunchRequest, LlmEngine, SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CreateOptions, Directories, EngineError, EngineKind, Input, Key, LaunchOptions,
+    LaunchPlan, LaunchRequest, LlmEngine, SessionId, TxCore, WorkspaceAction,
 };
 
 /// `None` when tmux is not installed; callers skip.
@@ -235,6 +235,8 @@ pub fn wait_for(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool 
 /// `configure`.
 pub struct ShellStub;
 
+/// The kind the stub registers as; a core with the stub has no Codex.
+pub const STUB_KIND: EngineKind = EngineKind::Claude;
 pub const STUB_ID: &str = "stub";
 
 impl LlmEngine for ShellStub {
@@ -256,8 +258,8 @@ impl LlmEngine for ShellStub {
         }
     }
 
-    fn id(&self) -> &str {
-        STUB_ID
+    fn kind(&self) -> EngineKind {
+        STUB_KIND
     }
 
     fn ext_key(&self) -> &'static str {
@@ -424,7 +426,7 @@ pub fn agent(name: &str, cwd: &Path) -> CreateOptions {
     CreateOptions::new(
         name,
         cwd,
-        LaunchOptions::agent(STUB_ID).initial_prompt("start"),
+        LaunchOptions::agent(STUB_KIND).initial_prompt("start"),
     )
 }
 
@@ -433,7 +435,7 @@ pub fn exiting(name: &str, cwd: &Path) -> CreateOptions {
     CreateOptions::new(
         name,
         cwd,
-        LaunchOptions::agent(STUB_ID)
+        LaunchOptions::agent(STUB_KIND)
             .initial_prompt("start")
             .option("model", "exit"),
     )

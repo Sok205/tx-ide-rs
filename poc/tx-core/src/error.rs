@@ -3,7 +3,7 @@
 use std::io;
 use std::path::PathBuf;
 
-use crate::engine::EngineError;
+use crate::engine::{EngineError, EngineKind};
 use crate::profile::RoleError;
 use crate::session::SessionId;
 use crate::store::StoreError;
@@ -34,12 +34,15 @@ pub enum CoreError {
     StillRunning(SessionId),
     #[error("worktree {} is gone; a respawn never recreates one", .0.display())]
     WorktreeMissing(PathBuf),
-    #[error("no engine registered as {0:?}")]
-    UnknownEngine(String),
+    /// The record's or request's engine kind has no adapter registered: its plugin is disabled.
+    #[error("engine {0} is disabled")]
+    EngineDisabled(EngineKind),
+    #[error("no engine named {0:?} (known: {known})", known = EngineKind::names())]
+    InvalidEngineKind(String),
     #[error("an agent needs an initial prompt")]
     PromptRequired,
-    #[error("an engine with id {0:?} is already registered")]
-    EngineTaken(String),
+    #[error("an engine of kind {0} is already registered")]
+    EngineTaken(EngineKind),
     #[error("an engine owning the ext key {0:?} is already registered")]
     ExtKeyTaken(String),
     #[error("invalid ext key {0:?}: use [a-z0-9-]+")]

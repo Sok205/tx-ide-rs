@@ -5,7 +5,7 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use common::{Harness, STUB_ID, ShellStub, agent};
+use common::{Harness, STUB_KIND, ShellStub, agent};
 use serde_json::json;
 use tx_core::{
     Event, EventSink, Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, TxCore,
@@ -124,7 +124,7 @@ fn a_plugin_fills_all_three_slots() {
         ..Default::default()
     };
     core.plug(vec![plugin], &cfg).unwrap();
-    assert_eq!(core.engine_ids(), vec![STUB_ID]);
+    assert_eq!(core.engine_kinds(), vec![STUB_KIND]);
     assert_eq!(*settings.lock().unwrap(), json!({"k": 1}));
     core.create_session(agent("alice", &h.repository("a")))
         .unwrap();
@@ -158,7 +158,7 @@ fn disabled_plugin_registers_nothing() {
         ..Default::default()
     };
     core.plug(vec![plugin], &cfg).unwrap();
-    assert!(core.engine_ids().is_empty());
+    assert!(core.engine_kinds().is_empty());
     assert!(core.verb("echo").is_none());
     assert!(settings.lock().unwrap().is_null(), "register never ran");
     assert_eq!(
@@ -242,7 +242,7 @@ fn reserved_verb_is_refused() {
 }
 
 #[test]
-fn duplicate_engine_id_fails_with_plugin_name() {
+fn duplicate_engine_kind_fails_with_plugin_name() {
     let h = Harness::new();
     let mut core = h.open();
     let error = core

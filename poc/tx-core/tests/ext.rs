@@ -11,7 +11,7 @@ use tx_core::{Session, SessionId};
 
 const RECORD: &str = r#"{"version":1,"id":"0f6b3b8a-1111-4222-8333-444444444444","name":"a","parent":null,
     "tags":[],"cwd":"/tmp","created_at":1.0,"ended_at":null,"lifecycle":"running",
-    "launch":{"kind":"agent","engine":"stub","profile":[]}"#;
+    "launch":{"kind":"agent","engine":"claude","profile":[]}"#;
 
 #[test]
 fn record_without_ext_loads_as_empty() {

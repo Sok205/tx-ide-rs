@@ -91,7 +91,7 @@ filesystem and copies then deletes across filesystems, writes `<data>/MIGRATED-F
           |  store    SessionStore   <data>/sessions/<id>.json
           |  tmux     Tmux           tmux -S <run>/tmux.sock -f <data>/tmux.conf
           |  events   EventLog       <data>/log.jsonl
-          |  engines  EngineRegistry id -> Box<dyn LlmEngine>
+          |  engines  EngineRegistry EngineKind -> Box<dyn LlmEngine>
           |  profiles Profiles       role + skill search dirs
           |  locks    Locks          <state>/locks/{create,<id>}.lock
           +---------------------------------+
@@ -195,18 +195,20 @@ Lock order is always `create.lock` before `<id>.lock`. Locks are `std::fs::File:
 
 ## How to extend
 
-### An engine today (20 lines, no change to core)
+### An engine today (20 lines, plus its `EngineKind` variant in core)
 
 ```rust
 use tx_core::{
-    EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
+    EngineError, EngineKind, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
     WorkspaceAction,
 };
 
 pub struct Aider;
 
 impl LlmEngine for Aider {
-    fn id(&self) -> &str { "aider" }
+    // The kinds are a closed set (`EngineKind { Claude, Codex }`): a new engine first adds its
+    // variant there, then declares it here. The registry is keyed by it.
+    fn kind(&self) -> EngineKind { EngineKind::Aider }
 
     // No hooks wired: the session stays `starting`. See the bundled adapters for real rules.
     fn on_hook(&self, _: LlmEngineState, _: &LlmEngineHook) -> Option<LlmEngineState> { None }
@@ -304,7 +306,7 @@ process session shows `shell`.
 
 `_new-agent` runs main's nvim form (`plugins/spawn/nvim/tx-new-agent.lua`, embedded and written
 to a temp dir at run time): name, tags, project (the firing pane's directory), prompt, engine
-(`core.engine_ids()`), model, effort (`low` to `max`) and role (every `<NAME>.md` in the profile
+(`core.engine_kinds()`), model, effort (`low` to `max`) and role (every `<NAME>.md` in the profile
 dirs but COMMON, which every agent gets; `none` first, DEVELOPER preselected). Needs `nvim`.
 The session is created in the popup; the outcome lands on the client's status line.
 

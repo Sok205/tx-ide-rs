@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, typed, wait_for};
 use tx_core::{
-    CreateOptions, EngineError, EnvelopeSender, Input, LaunchOptions, LaunchPlan, LaunchRequest,
-    LlmEngine, SendOptions, Sender,
+    CreateOptions, EngineError, EngineKind, EnvelopeSender, Input, LaunchOptions, LaunchPlan,
+    LaunchRequest, LlmEngine, SendOptions, Sender,
 };
 
 struct Shout;
@@ -23,8 +23,9 @@ impl LlmEngine for Shout {
         tx_core::LlmEngineChange::NONE
     }
 
-    fn id(&self) -> &str {
-        "shout"
+    /// Codex: the harness's stub holds Claude.
+    fn kind(&self) -> EngineKind {
+        EngineKind::Codex
     }
 
     fn ext_key(&self) -> &'static str {
@@ -75,7 +76,7 @@ fn the_recipients_engine_frames_the_message() {
         .create_session(CreateOptions::new(
             "shouter",
             h.repository("s"),
-            LaunchOptions::agent("shout").initial_prompt("start"),
+            LaunchOptions::agent(EngineKind::Codex).initial_prompt("start"),
         ))
         .unwrap();
     let cwd = cwd_of(&core, &shouter);

@@ -5,7 +5,7 @@ mod common;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use common::{Harness, STUB_ID, agent, wait_for};
+use common::{Harness, STUB_KIND, agent, wait_for};
 use serde_json::json;
 use tx_core::{EventType, LaunchOptions, LlmEngineHook, LlmEngineState, SessionId};
 
@@ -121,7 +121,7 @@ fn respawn_restores_a_deleted_transcript_from_the_archive() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let mut opts = agent("r", &h.repository("repo"));
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .option("model", "data")
         .initial_prompt("remember OTTER-7");
     let id = core.create_session(opts).unwrap();

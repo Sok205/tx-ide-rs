@@ -48,6 +48,9 @@ pub enum StoreError {
     },
 }
 
+/// A record every read skips, and why ([`SessionStore::skipped`]).
+pub type SkippedRecord = (SessionId, RecordError);
+
 fn io_error(path: &Path) -> impl FnOnce(io::Error) -> StoreError + '_ {
     move |source| StoreError::Io {
         path: path.to_owned(),
@@ -107,14 +110,16 @@ impl SessionStore {
         Ok(())
     }
 
-    /// One record by id; `None` if there is no such file, or if the file is a process record
-    /// written before PR 11 (see [`SessionStore::skipped`]).
+    /// One record by id; `None` if there is no such file, or if the file is a record this build
+    /// skips (see [`SessionStore::skipped`]).
     pub fn load(&self, id: &SessionId) -> Result<Option<Session>, StoreError> {
         let path = self.path(id);
         match read(&path, id) {
             Ok(session) => Ok(Some(session)),
             Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(ReadError::Record(RecordError::ProcessRecord)) => Ok(None),
+            Err(ReadError::Record(RecordError::ProcessRecord | RecordError::UnknownEngine(_))) => {
+                Ok(None)
+            }
             Err(source) => Err(StoreError::Unreadable {
                 file: file_name(&path),
                 source,
@@ -133,24 +138,23 @@ impl SessionStore {
     }
 
     /// Every record, sorted by `created_at` then id. A missing directory is an empty store. A
-    /// record deleted between the directory scan and its read is skipped, and so is a process
-    /// record written before PR 11 ([`SessionStore::skipped`] names those); any other unreadable
-    /// record fails the scan by name. Entries that are not `<name>.json` regular files (temp
+    /// record deleted between the directory scan and its read is skipped, and so is a record this
+    /// build does not hold ([`SessionStore::skipped`] names those); any other unreadable record
+    /// fails the scan by name. Entries that are not `<name>.json` regular files (temp
     /// files, hidden files, directories) are ignored.
     pub fn all(&self) -> Result<Vec<Session>, StoreError> {
         Ok(self.scan()?.0)
     }
 
-    /// The ids of the process records in the store: records written before PR 11, when core
-    /// still held non-LLM sessions. Every read skips them; Storage PR 14's migration moves
-    /// them out. Sorted by id.
-    pub fn skipped(&self) -> Result<Vec<SessionId>, StoreError> {
+    /// The records this build skips, each with why: process records written before PR 11, when
+    /// core still held non-LLM sessions, and records naming an engine this build does not know.
+    /// Every read skips them; Storage PR 14's migration moves them out. Sorted by id.
+    pub fn skipped(&self) -> Result<Vec<SkippedRecord>, StoreError> {
         Ok(self.scan()?.1)
     }
 
-    /// One pass over the directory: the readable records and the ids of the skipped process
-    /// records.
-    fn scan(&self) -> Result<(Vec<Session>, Vec<SessionId>), StoreError> {
+    /// One pass over the directory: the readable records, and the skipped records with why.
+    fn scan(&self) -> Result<(Vec<Session>, Vec<SkippedRecord>), StoreError> {
         let entries = match std::fs::read_dir(&self.dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -188,7 +192,9 @@ impl SessionStore {
             match read(&path, &id) {
                 Ok(session) => sessions.push(session),
                 Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(ReadError::Record(RecordError::ProcessRecord)) => skipped.push(id),
+                Err(ReadError::Record(
+                    reason @ (RecordError::ProcessRecord | RecordError::UnknownEngine(_)),
+                )) => skipped.push((id, reason)),
                 Err(source) => {
                     return Err(StoreError::Unreadable {
                         file: name.to_owned(),
@@ -202,7 +208,7 @@ impl SessionStore {
                 .total_cmp(&b.created_at)
                 .then_with(|| a.id.cmp(&b.id))
         });
-        skipped.sort();
+        skipped.sort_by(|a, b| a.0.cmp(&b.0));
         Ok((sessions, skipped))
     }
 }
@@ -230,6 +236,7 @@ mod tests {
     fn sid(id: &str) -> SessionId {
         id.parse().unwrap()
     }
+    use crate::engine::EngineKind;
     use crate::session::{Launch, Lifecycle};
     use crate::state::LlmEngineState;
     use std::os::unix::fs::PermissionsExt;
@@ -248,7 +255,7 @@ mod tests {
             last_modified_at: created_at,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
-                engine: "e".into(),
+                engine: EngineKind::Claude,
                 profile: vec![],
                 model: None,
                 effort: None,
@@ -299,9 +306,50 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].id, sid("a"));
         assert_eq!(store.load(&sid("p")).unwrap(), None);
-        assert_eq!(store.skipped().unwrap(), [sid("o"), sid("p")]);
+        let skipped = store.skipped().unwrap();
+        assert_eq!(ids_of(&skipped), [sid("o"), sid("p")]);
+        assert!(
+            skipped
+                .iter()
+                .all(|(_, reason)| matches!(reason, RecordError::ProcessRecord)),
+            "{skipped:?}"
+        );
         let (_dir, empty) = self::tests::store();
-        assert_eq!(empty.skipped().unwrap(), []);
+        assert!(empty.skipped().unwrap().is_empty());
+    }
+
+    fn ids_of(skipped: &[SkippedRecord]) -> Vec<SessionId> {
+        skipped.iter().map(|(id, _)| id.clone()).collect()
+    }
+
+    /// A record naming an engine this build does not know (hand-edited, or another build's) is
+    /// skipped and named like a process record, so the other records still list; a record
+    /// whose engine is not even a string is unreadable, as before.
+    #[test]
+    fn records_with_an_unknown_engine_are_skipped_and_named() {
+        let (_dir, store) = store();
+        store.save(&session("a", 1.0)).unwrap();
+        store.save(&session("k", 2.0)).unwrap();
+        let text = std::fs::read_to_string(store.path(&sid("k")))
+            .unwrap()
+            .replace("\"claude\"", "\"kodex\"");
+        assert!(text.contains("\"kodex\""), "{text}");
+        std::fs::write(store.path(&sid("k")), text).unwrap();
+        let all = store.all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, sid("a"));
+        assert_eq!(store.load(&sid("k")).unwrap(), None);
+        let skipped = store.skipped().unwrap();
+        assert_eq!(ids_of(&skipped), [sid("k")]);
+        assert!(
+            matches!(&skipped[0].1, RecordError::UnknownEngine(engine) if engine == "kodex"),
+            "{skipped:?}"
+        );
+        let message = skipped[0].1.to_string();
+        assert!(
+            message.contains("\"kodex\"") && message.contains("claude, codex"),
+            "{message}"
+        );
     }
 
     #[test]
