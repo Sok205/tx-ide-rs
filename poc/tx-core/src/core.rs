@@ -485,15 +485,27 @@ impl TxCore {
         // The process runs in the real directory; the record and every workspace path say so.
         let cwd = std::fs::canonicalize(&opts.cwd).map_err(store_io(&opts.cwd))?;
         let opts = CreateOptions { cwd, ..opts };
-        // Pure checks before the lock: an unknown engine or role never touches state.
+        // Pure checks before the lock: an unknown engine, a missing prompt or an unknown role never
+        // touches state.
         let (engine, roles) = match &opts.launch {
             LaunchOptions::Agent {
-                engine, profile, ..
+                engine,
+                profile,
+                initial_prompt,
+                resume,
+                ..
             } => {
                 let adapter = self
                     .engines
                     .get(engine)
                     .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+                // A resume carries its history instead; PR 6 removes resume-by-create.
+                let has_prompt = initial_prompt
+                    .as_deref()
+                    .is_some_and(|prompt| !prompt.trim().is_empty());
+                if !has_prompt && resume.is_none() {
+                    return Err(CoreError::PromptRequired);
+                }
                 (
                     Some((adapter, self.profiles.resolve(profile)?)),
                     profile.clone(),

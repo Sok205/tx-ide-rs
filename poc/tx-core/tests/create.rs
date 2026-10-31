@@ -199,14 +199,31 @@ fn failures_before_launch_leave_nothing_behind() {
     );
 
     let mut opts = agent("x", &cwd);
-    opts.launch = LaunchOptions::agent(STUB_ID).profile(["missing"]);
+    opts.launch = LaunchOptions::agent(STUB_ID)
+        .initial_prompt("start")
+        .profile(["missing"]);
     assert!(matches!(
         core.create_session(opts).unwrap_err(),
         CoreError::Profile(_)
     ));
 
+    for launch in [
+        LaunchOptions::agent(STUB_ID),
+        LaunchOptions::agent(STUB_ID).initial_prompt(""),
+        LaunchOptions::agent(STUB_ID).initial_prompt(" \n "),
+    ] {
+        let mut opts = agent("x", &cwd);
+        opts.launch = launch;
+        assert!(matches!(
+            core.create_session(opts).unwrap_err(),
+            CoreError::PromptRequired
+        ));
+    }
+
     let mut opts = agent("x", &cwd);
-    opts.launch = LaunchOptions::agent(STUB_ID).model("refuse");
+    opts.launch = LaunchOptions::agent(STUB_ID)
+        .initial_prompt("start")
+        .model("refuse");
     assert!(matches!(
         core.create_session(opts).unwrap_err(),
         CoreError::Engine(_)

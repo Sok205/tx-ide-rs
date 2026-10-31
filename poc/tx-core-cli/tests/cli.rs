@@ -130,6 +130,8 @@ fn core_errors_exit_1() {
             cwd.to_str().unwrap(),
             "--engine",
             "ghost",
+            "--prompt",
+            "start",
         ],
         1,
     );

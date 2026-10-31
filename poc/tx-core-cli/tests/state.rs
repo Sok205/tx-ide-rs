@@ -39,6 +39,8 @@ impl Cli {
                 cwd.to_str().unwrap(),
                 "--engine",
                 "claude",
+                "--prompt",
+                "start",
             ],
             &[("PATH", path.as_str())],
             "",

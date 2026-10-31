@@ -218,7 +218,11 @@ pub fn process(name: &str, cwd: &Path) -> CreateOptions {
 }
 
 pub fn agent(name: &str, cwd: &Path) -> CreateOptions {
-    CreateOptions::new(name, cwd, LaunchOptions::agent(STUB_ID))
+    CreateOptions::new(
+        name,
+        cwd,
+        LaunchOptions::agent(STUB_ID).initial_prompt("start"),
+    )
 }
 
 /// The lines typed into a session so far (its `input.txt`).

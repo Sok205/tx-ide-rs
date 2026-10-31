@@ -344,7 +344,9 @@ fn session_checks_pass_against_a_spawned_worker() {
     tutor.ok(&["tutor", "goto", "05-spawn-worker"], "");
     let (code, out, _) = tutor.code(&["tutor", "check"], "");
     assert_eq!(code, Some(1), "a shell is not a worker: {out}");
-    tutor.create(&["worker", "--engine", "claude", "--tag", "tutor"]);
+    tutor.create(&[
+        "worker", "--engine", "claude", "--prompt", "start", "--tag", "tutor",
+    ]);
     let out = tutor.ok(&["tutor", "check"], "");
     assert!(
         out.contains("✓ a Claude worker tagged tutor exists"),

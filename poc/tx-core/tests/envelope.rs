@@ -49,7 +49,7 @@ fn the_recipients_engine_frames_the_message() {
         .create_session(CreateOptions::new(
             "shouter",
             &cwd,
-            LaunchOptions::agent("shout"),
+            LaunchOptions::agent("shout").initial_prompt("start"),
         ))
         .unwrap();
     let plain_dir = h.workdir("p");
