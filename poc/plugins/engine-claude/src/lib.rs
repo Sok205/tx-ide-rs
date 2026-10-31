@@ -39,7 +39,7 @@ use serde_json::Value;
 use tx_core::{
     EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
     LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command, mirror_file,
-    mirror_tree,
+    mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -333,10 +333,11 @@ impl LlmEngine for ClaudeAdapter {
         LlmEngineChange { state, engine_data }
     }
 
-    /// The current conversation's transcript by offset and its sidecar directory copy-if-absent,
-    /// both keyed by conversation id, so the conversations before a `/clear` stay archived. A
-    /// live transcript that is not on disk yet (a `SessionStart` before the first line) archives
-    /// nothing.
+    /// The current conversation's transcript by offset while the process lives, compared whole
+    /// once the record is terminal (the process gone, the transcript final), and its sidecar
+    /// directory copy-if-absent; both keyed by conversation id, so the conversations before a
+    /// `/clear` stay archived. A live transcript that is not on disk yet (a `SessionStart`
+    /// before the first line) archives nothing.
     fn archive(&self, session: &Session, archive_directory: &Path) -> Result<(), EngineError> {
         let (transcript, sidecars) = self.live_paths(session);
         if !transcript.is_file() {
@@ -344,7 +345,11 @@ impl LlmEngine for ClaudeAdapter {
         }
         let (archived_transcript, archived_sidecars) =
             self.archived_paths(session, archive_directory);
-        mirror_file(&transcript, &archived_transcript)?;
+        if session.lifecycle.is_terminal() {
+            mirror_file_exact(&transcript, &archived_transcript)?;
+        } else {
+            mirror_file(&transcript, &archived_transcript)?;
+        }
         mirror_tree(&sidecars, &archived_sidecars)
     }
 
@@ -1182,6 +1187,34 @@ mod tests {
             std::fs::read(archive.join("c2.jsonl")).unwrap(),
             b"{\"fresh\":true}\n"
         );
+    }
+
+    #[test]
+    fn a_terminal_record_archives_by_whole_compare_a_running_one_by_offset() {
+        use tx_core::Lifecycle;
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("home/projects/-w/c1.jsonl");
+        let data: Vec<u8> = (0..=255u8).cycle().take(204_800).collect();
+        write(&transcript, &data);
+        let archive = dir.path().join("archive");
+        let engine = ClaudeAdapter::new(dir.path().join("home"));
+        let running = recorded(dir.path(), "c1", &transcript);
+        engine.archive(&running, &archive).unwrap();
+        assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), data);
+
+        // A rewrite 100 KiB before the end: a hook's offset mirror keeps the stale copy...
+        let mut rewritten = data.clone();
+        rewritten[data.len() - 102_400] ^= 0xFF;
+        std::fs::write(&transcript, &rewritten).unwrap();
+        engine.archive(&running, &archive).unwrap();
+        assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), data);
+        // ...and the archive of a stopped record is exact.
+        let stopped = Session {
+            lifecycle: Lifecycle::Stopped,
+            ..recorded(dir.path(), "c1", &transcript)
+        };
+        engine.archive(&stopped, &archive).unwrap();
+        assert_eq!(std::fs::read(archive.join("c1.jsonl")).unwrap(), rewritten);
     }
 
     #[test]

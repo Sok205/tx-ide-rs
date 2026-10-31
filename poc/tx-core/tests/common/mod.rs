@@ -319,8 +319,9 @@ impl LlmEngine for ShellStub {
     }
 
     /// The data's `transcript_path` mirrored to `<archive>/<conversation_id>.jsonl`, as Claude
-    /// does; no path or no file yet archives nothing; the path `refuse` is refused, as an
-    /// unreadable transcript would fail.
+    /// does: by offset while running, compared whole once the record is terminal; no path or no
+    /// file yet archives nothing; the path `refuse` is refused, as an unreadable transcript
+    /// would fail.
     fn archive(
         &self,
         session: &tx_core::Session,
@@ -335,10 +336,12 @@ impl LlmEngine for ShellStub {
         if !transcript.is_file() {
             return Ok(());
         }
-        tx_core::mirror_file(
-            &transcript,
-            &archive_directory.join(format!("{conversation}.jsonl")),
-        )
+        let archived = archive_directory.join(format!("{conversation}.jsonl"));
+        if session.lifecycle.is_terminal() {
+            tx_core::mirror_file_exact(&transcript, &archived)
+        } else {
+            tx_core::mirror_file(&transcript, &archived)
+        }
     }
 
     /// The archived transcript back to `transcript_path` when the live one is gone.

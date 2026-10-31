@@ -213,8 +213,11 @@ pub trait LlmEngine: Send + Sync {
     /// (append-by-offset, [`crate::mirror::mirror_file`]) and its sidecars (copy-if-absent,
     /// [`crate::mirror::mirror_tree`]), keyed by conversation so every past conversation of the
     /// session is kept. Core calls it after every hook, outside the session lock, under a
-    /// non-blocking per-session lock of its own, so it must be cheap when nothing changed.
-    /// Idempotent; a missing live transcript archives nothing. The default archives nothing.
+    /// non-blocking per-session lock of its own, so it must be cheap when nothing changed; and
+    /// once more after a stop or an exit, when `session.lifecycle` is terminal: the process is
+    /// gone, the transcript final, and the copy must be exact, so the engine compares it whole
+    /// ([`crate::mirror::mirror_file_exact`]) rather than by its trailing window. Idempotent; a
+    /// missing live transcript archives nothing. The default archives nothing.
     fn archive(&self, session: &Session, archive_directory: &Path) -> Result<(), EngineError> {
         let _ = (session, archive_directory);
         Ok(())

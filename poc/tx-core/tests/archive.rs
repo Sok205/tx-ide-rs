@@ -164,34 +164,50 @@ fn respawn_restores_a_deleted_transcript_from_the_archive() {
     assert!(archive_lines(&h).is_empty());
 }
 
-/// The process is gone, so the transcript is final: a stop and an exit both archive it.
+/// The process is gone, so the transcript is final: a stop and an exit both archive it, and
+/// compared whole, so a rewrite further back than the offset mirror's trailing window (which a
+/// hook leaves stale) is picked up too.
 #[test]
-fn a_stop_and_an_exit_archive_the_final_transcript() {
+fn a_stop_and_an_exit_archive_the_final_transcript_exactly() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
     let transcript_of = |name: &str| h.dir.path().join("live").join(format!("{name}.jsonl"));
     std::fs::create_dir_all(h.dir.path().join("live")).unwrap();
+    let original: Vec<u8> = (0..=255u8).cycle().take(204_800).collect();
+    // Rewritten 100 KiB before the end, same length, then appended to after the last hook.
+    let mut final_bytes = original.clone();
+    final_bytes[original.len() - 102_400] ^= 0xFF;
+    final_bytes.extend_from_slice(b"written after the last hook\n");
 
     let stopped = core.create_session(agent("s", &h.repository("s"))).unwrap();
     let transcript = transcript_of("s");
-    std::fs::write(&transcript, "one\n").unwrap();
+    std::fs::write(&transcript, &original).unwrap();
     let data = json!({"conversation_id": "s", "transcript_path": transcript});
     core.hook(&stopped, hook("idle", json!({}), 10.0)).unwrap();
     core.hook(&stopped, hook("data", data, 11.0)).unwrap();
-    std::fs::write(&transcript, "one\nwritten after the last hook\n").unwrap();
+    std::fs::write(&transcript, &final_bytes).unwrap();
+    core.hook(&stopped, hook("working", json!({}), 12.0))
+        .unwrap();
+    let copy = archived(&h, &stopped, "s");
+    assert_eq!(
+        std::fs::read(&copy).unwrap()[..original.len()],
+        original[..],
+        "a hook appends by offset and misses the early rewrite"
+    );
     core.stop_session(&stopped).unwrap();
     assert_eq!(
-        std::fs::read(archived(&h, &stopped, "s")).unwrap(),
-        b"one\nwritten after the last hook\n"
+        std::fs::read(&copy).unwrap(),
+        final_bytes,
+        "exact after the stop"
     );
 
     let exited = core.create_session(agent("e", &h.repository("e"))).unwrap();
     let transcript = transcript_of("e");
-    std::fs::write(&transcript, "one\n").unwrap();
+    std::fs::write(&transcript, &original).unwrap();
     let data = json!({"conversation_id": "e", "transcript_path": transcript});
-    core.hook(&exited, hook("data", data, 12.0)).unwrap();
-    std::fs::write(&transcript, "one\nwritten after the last hook\n").unwrap();
+    core.hook(&exited, hook("data", data, 13.0)).unwrap();
+    std::fs::write(&transcript, &final_bytes).unwrap();
     let live = core.get_execution_location(&exited).unwrap();
     h.tmux_ok(&["kill-session", "-t", &live.session_target]);
     core.refresh_all().unwrap();
@@ -201,7 +217,8 @@ fn a_stop_and_an_exit_archive_the_final_transcript() {
     );
     assert_eq!(
         std::fs::read(archived(&h, &exited, "e")).unwrap(),
-        b"one\nwritten after the last hook\n"
+        final_bytes,
+        "exact after the exit"
     );
     assert!(archive_lines(&h).is_empty());
 }

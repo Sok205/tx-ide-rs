@@ -47,6 +47,54 @@ pub fn mirror_file(source: &Path, destination: &Path) -> Result<(), EngineError>
     Ok(())
 }
 
+/// Mirror a file whose writer is gone: the whole contents compared, and a whole copy on any
+/// difference, wherever it is. The offset mirror's trailing window misses a rewrite further
+/// back; this is the check for the moment the file is final (a stop, an exit), when reading it
+/// once more is affordable and the archive must be exact.
+pub fn mirror_file_exact(source: &Path, destination: &Path) -> Result<(), EngineError> {
+    if destination.is_file() && same_contents(source, destination)? {
+        return Ok(());
+    }
+    copy_whole(source, destination)
+}
+
+/// Whether two files hold the same bytes, read side by side in chunks.
+fn same_contents(left: &Path, right: &Path) -> Result<bool, EngineError> {
+    const CHUNK: usize = 1 << 20;
+    let left_size = std::fs::metadata(left).map_err(io_error(left))?.len();
+    let right_size = std::fs::metadata(right).map_err(io_error(right))?.len();
+    if left_size != right_size {
+        return Ok(false);
+    }
+    let mut left_file = File::open(left).map_err(io_error(left))?;
+    let mut right_file = File::open(right).map_err(io_error(right))?;
+    let mut left_chunk = vec![0; CHUNK];
+    let mut right_chunk = vec![0; CHUNK];
+    loop {
+        let read = read_full(&mut left_file, &mut left_chunk).map_err(io_error(left))?;
+        let other = read_full(&mut right_file, &mut right_chunk).map_err(io_error(right))?;
+        if read != other || left_chunk[..read] != right_chunk[..other] {
+            return Ok(false);
+        }
+        if read == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+/// Fills `buffer` as far as the file goes; the count read, 0 at the end.
+fn read_full(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let read = file.read(&mut buffer[filled..])?;
+        if read == 0 {
+            break;
+        }
+        filled += read;
+    }
+    Ok(filled)
+}
+
 /// Temp file in the destination's directory plus rename: a reader never sees a half copy.
 fn copy_whole(source: &Path, destination: &Path) -> Result<(), EngineError> {
     let bytes = std::fs::read(source).map_err(io_error(source))?;
@@ -209,6 +257,62 @@ mod tests {
         std::fs::write(&destination, b"").unwrap();
         mirror_file(&source, &destination).unwrap();
         assert_eq!(std::fs::read(&destination).unwrap(), modified);
+    }
+
+    #[test]
+    fn exact_mirror_recopies_a_rewrite_the_window_misses() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let destination = dir.path().join("destination");
+        let data = big();
+        write(&source, &data);
+        mirror_file(&source, &destination).unwrap();
+
+        // A rewrite 100 KiB before the end, same length: the offset mirror keeps the stale copy.
+        let mut rewritten = data.clone();
+        rewritten[data.len() - 102_400] ^= 0xFF;
+        std::fs::write(&source, &rewritten).unwrap();
+        mirror_file(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), data);
+        // The exact mirror sees it.
+        mirror_file_exact(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), rewritten);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+
+        // An identical copy is left alone; a missing one is made; a shorter source is copied.
+        let past = backdate(&destination);
+        mirror_file_exact(&source, &destination).unwrap();
+        assert_eq!(
+            std::fs::metadata(&destination).unwrap().modified().unwrap(),
+            past
+        );
+        std::fs::remove_file(&destination).unwrap();
+        mirror_file_exact(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), rewritten);
+        std::fs::write(&source, b"short").unwrap();
+        mirror_file_exact(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"short");
+    }
+
+    #[test]
+    fn exact_mirror_compares_past_the_first_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let destination = dir.path().join("destination");
+        let data: Vec<u8> = (0..=255u8).cycle().take(3 << 20).collect();
+        write(&source, &data);
+        write(&destination, &data);
+        let past = backdate(&destination);
+        mirror_file_exact(&source, &destination).unwrap();
+        assert_eq!(
+            std::fs::metadata(&destination).unwrap().modified().unwrap(),
+            past
+        );
+        let mut rewritten = data.clone();
+        rewritten[(2 << 20) + 7] ^= 0xFF;
+        std::fs::write(&source, &rewritten).unwrap();
+        mirror_file_exact(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), rewritten);
     }
 
     #[test]

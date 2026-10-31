@@ -47,7 +47,7 @@ pub use locks::{LockGuard, Locks};
 pub use messaging::DELIVERY_PAUSE;
 /// The default envelope; an `LlmEngine::envelope` override may wrap it.
 pub use messaging::{EnvelopeSender, build_envelope};
-pub use mirror::{mirror_file, mirror_tree};
+pub use mirror::{mirror_file, mirror_file_exact, mirror_tree};
 pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };
