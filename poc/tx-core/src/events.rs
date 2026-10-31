@@ -23,6 +23,9 @@ pub const PIPE_BUF: usize = 512;
 #[non_exhaustive]
 pub enum EventType {
     Created,
+    /// A new agent branched from another's conversation; detail is the source's id, and the
+    /// record's `parent` names it. Emitted instead of `Created`.
+    Forked,
     Renamed,
     Tagged,
     MessageSent,
@@ -38,6 +41,7 @@ pub enum EventType {
 impl EventType {
     pub const ALL: &'static [EventType] = &[
         EventType::Created,
+        EventType::Forked,
         EventType::Renamed,
         EventType::Tagged,
         EventType::MessageSent,
@@ -51,6 +55,7 @@ impl EventType {
     pub fn as_str(self) -> &'static str {
         match self {
             EventType::Created => "created",
+            EventType::Forked => "forked",
             EventType::Renamed => "renamed",
             EventType::Tagged => "tagged",
             EventType::MessageSent => "message-sent",
@@ -385,6 +390,7 @@ mod tests {
             names,
             [
                 "created",
+                "forked",
                 "renamed",
                 "tagged",
                 "message-sent",

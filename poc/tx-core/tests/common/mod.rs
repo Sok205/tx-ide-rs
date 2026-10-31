@@ -294,7 +294,7 @@ impl LlmEngine for ShellStub {
                     .as_str()
                     .unwrap(),
             ),
-            LaunchMode::Fork { .. } => ("fork", ""),
+            LaunchMode::Fork { source } => ("fork", source.id.as_str()),
         };
         let plan = LaunchPlan::new("sh")
             .args(["-c".to_owned(), script])

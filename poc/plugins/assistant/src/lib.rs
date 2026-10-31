@@ -12,8 +12,8 @@ use std::process::Command;
 use std::sync::Arc;
 
 use tx_core::{
-    CoreError, CreateOptions, Launch, LaunchOptions, Lifecycle, ListFilter, Plugin,
-    PluginError, Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
+    CoreError, CreateOptions, Launch, LaunchOptions, Lifecycle, ListFilter, Plugin, PluginError,
+    Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
 
 pub const PLUGIN_ID: &str = "assistant";

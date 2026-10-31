@@ -246,7 +246,9 @@ impl LlmEngine for ClaudeAdapter {
         }
         args.extend([
             EFFORT_FLAG.to_owned(),
-            option(EFFORT_KEY).unwrap_or(DEFAULT_EFFORT.as_str()).to_owned(),
+            option(EFFORT_KEY)
+                .unwrap_or(DEFAULT_EFFORT.as_str())
+                .to_owned(),
             NO_CHROME_FLAG.to_owned(),
         ]);
         if !req.profile.text().is_empty() {
@@ -963,7 +965,10 @@ mod tests {
             (json!({"effort": "extreme"}), "unknown variant `extreme`"),
             (json!({"effort": 3}), "invalid type: integer `3`"),
             (json!({"model": ""}), "model must not be empty"),
-            (json!({"model": 7}), "invalid type: integer `7`, expected a string"),
+            (
+                json!({"model": 7}),
+                "invalid type: integer `7`, expected a string",
+            ),
             (json!({"temperature": 1}), "unknown field `temperature`"),
             (json!("sonnet"), "expected a JSON object, got \"sonnet\""),
             (json!(null), "expected a JSON object, got null"),

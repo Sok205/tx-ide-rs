@@ -1,16 +1,19 @@
 //! `_fork-pane`: the prefix+f seam. In the key's popup (bin/tmux-fork-tx-session) it asks for the
 //! fork's name (blank: the `<source>-fork` default) and hands the fork to a background
 //! `run-shell`, so the popup closes at once; the background half forks the tx session shown in
-//! the firing pane and reports the outcome on the firing client's status line.
+//! the firing pane through `TxCore::fork_session` (a new worktree, the source's engine, the
+//! fixed first prompt below) and reports the outcome on the firing client's status line.
 
 use std::sync::Arc;
 
 use tx_client::prompt::prompt_with_default;
 use tx_client::render::{ACCENT_ANSI, BOLD, RESET};
 use tx_client::tmux::{Ui, shell_quote};
-use tx_core::{CoreError, Session, TxCore, Verb, VerbError, VerbIo};
+use tx_core::{CoreError, ForkOptions, Session, TxCore, Verb, VerbError, VerbIo};
 
-use crate::ops::Ops;
+/// What a fork made from the key is first told; `{source}` is the source's name. Core has no
+/// default prompt, and the popup asks only for a name.
+pub const FORK_PROMPT: &str = "You are a fork of {source}. Introduce yourself.";
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![Arc::new(ForkPane)]
@@ -85,9 +88,13 @@ fn fork(core: &TxCore, pane: &str, client: &str, name: &str) -> Result<i32, Verb
     let Some(source) = source_in_pane(core, &ui, pane, client)? else {
         return Ok(1);
     };
-    let forked = Ops::new(core).fork(source.id.as_str(), Some(name));
-    match forked {
+    let mut options = ForkOptions::new(FORK_PROMPT.replace("{source}", &source.name));
+    if !name.is_empty() {
+        options = options.name(name);
+    }
+    match core.fork_session(&source.id, options) {
         Ok(forked) => {
+            let forked = core.get_session(&forked)?;
             ui.display_status(client, &format!("forked {} → {}", source.name, forked.name));
             Ok(0)
         }

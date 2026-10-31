@@ -369,6 +369,7 @@ fn event_type_names_unique_and_stable() {
         names,
         [
             "created",
+            "forked",
             "renamed",
             "tagged",
             "message-sent",

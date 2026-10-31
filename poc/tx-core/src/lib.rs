@@ -27,8 +27,8 @@ pub mod worktree;
 
 pub use config::{CoreConfig, Directories, MAX_SOCKET_PATH_BYTES};
 pub use core::{
-    CreateOptions, DeliveryReceipt, ExecutionLocation, LaunchOptions, ListFilter, RefreshResult,
-    SendOptions, TxCore,
+    CreateOptions, DeliveryReceipt, ExecutionLocation, ForkOptions, LaunchOptions, ListFilter,
+    RefreshResult, SendOptions, TxCore,
 };
 #[doc(hidden)]
 pub use engine::EngineRegistry;

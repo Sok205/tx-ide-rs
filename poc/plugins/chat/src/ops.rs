@@ -1,10 +1,11 @@
-//! Chat ops: `fork` and `resume`. Port of main's `chat.rs` / `verbs/chat.rs`.
+//! Chat ops: `resume`. Port of main's `chat.rs` / `verbs/chat.rs`.
 //!
-//! - **fork**: a NEW Process session running the engine's resume argv rewritten to fork; a
-//!   pending `fork` ref the capture hook fills from the fork's first new chat id.
 //! - **resume**: a NEW agent session resumed onto a past record's active chat.
+//!
+//! Fork is core's (`TxCore::fork_session`, the built-in `fork` verb); prefix+f reaches it through
+//! `fork_pane`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
@@ -14,38 +15,18 @@ use tx_core::{
     Verb, VerbError, VerbIo,
 };
 
+use crate::engines::Locator;
 use crate::engines::prepare_chat_for_cwd;
-use crate::engines::{Locator, agent_plan, fork_args};
 use crate::ext::{
     AgentLaunch, ChatExt, ChatRef, Origin, Role, active_chat, agent_launch, chat_ext,
 };
 use crate::history_verbs::say;
 use crate::{CHAT_ID, ChatError};
 
-/// The fork's chat ref, pending until the capture hook reports the fork's own chat id.
-fn pending_fork_ref(origin_session: &SessionId, origin_chat: &str) -> ChatRef {
-    ChatRef {
-        id: None,
-        role: Role::Fork,
-        how: "fork".to_owned(),
-        since: now(),
-        ended_at: None,
-        origin: Some(Origin {
-            session: origin_session.to_string(),
-            chat: origin_chat.to_owned(),
-            rest: Map::new(),
-        }),
-        transcript: None,
-        rest: Map::new(),
-    }
-}
-
 // ----- the operations ----------------------------------------------------------------------
 
 pub struct Ops<'a> {
     pub core: &'a TxCore,
-    /// `<data>/plugins/chat/`.
-    pub chat_dir: PathBuf,
 }
 
 /// The pieces of a resolved source the ops share.
@@ -57,37 +38,7 @@ struct Source {
 
 impl<'a> Ops<'a> {
     pub fn new(core: &'a TxCore) -> Self {
-        Self {
-            core,
-            chat_dir: core.config().plugin_data_dir(CHAT_ID),
-        }
-    }
-
-    fn profile_file(&self, name: &str) -> PathBuf {
-        self.chat_dir.join("profiles").join(format!("{name}.md"))
-    }
-
-    /// `base`, `base-2`, `base-3` … : the first not carried by a Running record.
-    pub fn next_free_name(&self, base: &str) -> Result<String, ChatError> {
-        let mut running = Vec::new();
-        for id in self
-            .core
-            .list_sessions(&ListFilter::new().lifecycle(Lifecycle::Running))?
-        {
-            match self.core.get_session(&id) {
-                Ok(session) => running.push(session.name),
-                Err(CoreError::NotFound(_)) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        let taken = |name: &str| running.iter().any(|n| n == name);
-        if !taken(base) {
-            return Ok(base.to_owned());
-        }
-        Ok((2..)
-            .map(|n| format!("{base}-{n}"))
-            .find(|name| !taken(name))
-            .expect("an unbounded range always has a free name"))
+        Self { core }
     }
 
     fn lookup(&self, op: &str, token: &str) -> Result<Session, ChatError> {
@@ -152,48 +103,6 @@ impl<'a> Ops<'a> {
             options = options.option("effort", effort.as_str());
         }
         options
-    }
-
-    // ----- fork --------------------------------------------------------------------------
-
-    /// Branch the source's active chat into a NEW session carrying its full history.
-    pub fn fork(&self, source: &str, name: Option<&str>) -> Result<Session, ChatError> {
-        let src = self.source("fork", source, "chat to fork")?;
-        let base = match name.filter(|name| !name.is_empty()) {
-            Some(name) => name.to_owned(),
-            None => format!("{}-fork", src.session.name),
-        };
-        let name = self.next_free_name(&base)?;
-        let cwd = &src.session.cwd;
-        let mut plan = agent_plan(
-            self.core,
-            &src.launch,
-            cwd,
-            &self.profile_file(&name),
-            Some(&src.chat_id),
-            None,
-        )?;
-        fork_args(&src.launch.engine, &mut plan.args);
-        tx_core::engine::apply_workspace(cwd, &plan.workspace)?;
-        let mut opts = CreateOptions::new(
-            &name,
-            cwd,
-            LaunchOptions::process(&plan.program, &plan.args),
-        )
-        .parent(src.session.id.clone())
-        .tags(src.session.tags.clone());
-        for (key, value) in &plan.env {
-            opts = opts.env(key, value);
-        }
-        let id = self.core.create_session(opts)?;
-        let launch = src.launch.clone();
-        let fork = pending_fork_ref(&src.session.id, &src.chat_id);
-        self.update_chat(&id, |ext| {
-            ext.engine = Some(launch.engine.clone());
-            ext.launch = Some(launch);
-            ext.chats = vec![fork];
-        })?;
-        Ok(self.core.get_session(&id)?)
     }
 
     // ----- resume ------------------------------------------------------------------------
@@ -297,48 +206,7 @@ fn short(id: &str) -> String {
 }
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
-    vec![Arc::new(Fork), Arc::new(Resume)]
-}
-
-struct Fork;
-
-const FORK_USAGE: &str = "usage: txc fork <source> [<new-name>]\n";
-
-impl Verb for Fork {
-    fn name(&self) -> &'static str {
-        "fork"
-    }
-
-    fn usage(&self) -> &'static str {
-        "fork <source> [<new-name>]   a NEW session on a fork of the source's chat"
-    }
-
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let (source, name) = match argv {
-            [source] if !source.starts_with('-') => (source.as_str(), None),
-            [source, name] if !source.starts_with('-') && !name.starts_with('-') => {
-                (source.as_str(), Some(name.as_str()))
-            }
-            _ => {
-                say(io.stderr, FORK_USAGE)?;
-                return Ok(2);
-            }
-        };
-        match Ops::new(core).fork(source, name) {
-            Ok(new) => {
-                say(
-                    io.stdout,
-                    &format!(
-                        "Forked '{source}' → '{}' (chat pending, cwd={})\n",
-                        new.name,
-                        new.cwd.display()
-                    ),
-                )?;
-                Ok(0)
-            }
-            Err(error) => report(io, "fork", error),
-        }
-    }
+    vec![Arc::new(Resume)]
 }
 
 /// `<target> [--as <name>] [--cwd <dir>]`, each option at most once.
@@ -419,51 +287,5 @@ impl Verb for Resume {
             }
             Err(error) => report(io, "resume", error),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn next_free_name_skips_running_names() {
-        let dir = tempfile::tempdir().unwrap();
-        let core = TxCore::open(tx_core::CoreConfig::new(tx_core::Directories::under(
-            dir.path(),
-        )))
-        .unwrap();
-        let store = tx_core::SessionStore::new(dir.path().join("data/sessions"));
-        let record = |id: &str, name: &str, lifecycle: &str| -> Session {
-            serde_json::from_value(json!({
-                "id": id, "name": name, "parent": null, "tags": [], "cwd": "/tmp",
-                "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": lifecycle,
-                "launch": {"kind": "process", "program": "sh", "args": []}, "ext": {},
-            }))
-            .unwrap()
-        };
-        for session in [
-            record("s1", "w", "running"),
-            record("s2", "w-2", "running"),
-            record("s3", "w-3", "stopped"),
-            record("s4", "x", "exited"),
-        ] {
-            store.save(&session).unwrap();
-        }
-        let ops = Ops::new(&core);
-        assert_eq!(ops.next_free_name("w").unwrap(), "w-3");
-        assert_eq!(ops.next_free_name("x").unwrap(), "x");
-        assert_eq!(ops.next_free_name("new").unwrap(), "new");
-    }
-
-    #[test]
-    fn the_pending_fork_ref_names_its_origin() {
-        let id: SessionId = "s".parse().unwrap();
-        let r = pending_fork_ref(&id, "c");
-        assert_eq!(r.how, "fork");
-        assert!(r.id.is_none());
-        assert_eq!(r.origin.unwrap().chat, "c");
     }
 }
