@@ -10,10 +10,10 @@ usage: txc [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DI
            [--plugins FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
 
 verbs:
-  create NAME --cwd DIR (--engine ID [--role R]... [--option KEY=VALUE]... [--model M] [--effort E]
-                --prompt T | --exec PROG [ARG]...)
-                [--parent ID] [--tag T]... [--env KEY=VALUE]...     start a session; prints its id. An agent runs in its
-                                                                    own worktree of the checkout DIR (name NAME, else NAME-2 …).
+  create NAME --cwd DIR --engine ID --prompt T [--role R]... [--option KEY=VALUE]... [--model M]
+                [--effort E] [--parent ID] [--tag T]... [--env KEY=VALUE]...
+                                                                    start an agent; prints its id. It runs in its own
+                                                                    worktree of the checkout DIR (name NAME, else NAME-2 …).
                                                                     --model M and --effort E are --option model=M / effort=E;
                                                                     the engine validates every option
   fork SOURCE --prompt T [--name NAME] [--tag T]... [--option KEY=VALUE]... [--model M] [--effort E]
@@ -82,22 +82,6 @@ pub struct Global {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LaunchSpec {
-    Agent {
-        engine: String,
-        roles: Vec<String>,
-        /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
-        /// a repeated key is settled by the engine's options object, last one wins.
-        options: Vec<(String, String)>,
-        prompt: String,
-    },
-    Process {
-        program: String,
-        args: Vec<String>,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verb {
     Create {
         name: String,
@@ -105,7 +89,12 @@ pub enum Verb {
         parent: Option<String>,
         tags: Vec<String>,
         env: Vec<(String, String)>,
-        launch: LaunchSpec,
+        engine: String,
+        roles: Vec<String>,
+        /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
+        /// a repeated key is settled by the engine's options object, last one wins.
+        options: Vec<(String, String)>,
+        prompt: String,
     },
     Fork {
         source: String,
@@ -417,7 +406,6 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut roles = Vec::new();
     let mut options = Vec::new();
     let mut prompt = None;
-    let mut exec: Option<(String, Vec<String>)> = None;
     while let Some(flag) = cursor.next() {
         match flag {
             "--cwd" => cwd = Some(cursor.value(flag)?.into()),
@@ -430,43 +418,22 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             "--effort" => options.push(option_value("effort", flag, cursor.value(flag)?)?),
             "--option" => options.push(option_pair(cursor.value(flag)?)?),
             "--prompt" => prompt = Some(cursor.value(flag)?.to_owned()),
-            "--exec" => {
-                let program = cursor
-                    .next()
-                    .ok_or_else(|| usage("--exec needs a program"))?;
-                exec = Some((program.to_owned(), cursor.rest()));
-            }
             other => return Err(usage(format!("create: unexpected argument {other:?}"))),
         }
     }
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
-    let launch = match (engine, exec) {
-        (Some(engine), None) => {
-            let prompt = prompt.ok_or_else(|| usage("--prompt is required with --engine"))?;
-            LaunchSpec::Agent {
-                engine,
-                roles,
-                options,
-                prompt,
-            }
-        }
-        (None, Some((program, args))) => {
-            if !roles.is_empty() || !options.is_empty() || prompt.is_some() {
-                return Err(usage(
-                    "--role, --option, --model, --effort and --prompt belong to --engine, not --exec",
-                ));
-            }
-            LaunchSpec::Process { program, args }
-        }
-        _ => return Err(usage("create needs exactly one of --engine or --exec")),
-    };
+    let engine = engine.ok_or_else(|| usage("create needs --engine ID"))?;
+    let prompt = prompt.ok_or_else(|| usage("--prompt is required with --engine"))?;
     Ok(Verb::Create {
         name,
         cwd,
         parent,
         tags,
         env,
-        launch,
+        engine,
+        roles,
+        options,
+        prompt,
     })
 }
 
@@ -617,7 +584,10 @@ mod tests {
             parent,
             tags,
             env,
-            launch,
+            engine,
+            roles,
+            options,
+            prompt,
         } = inv.verb
         else {
             panic!()
@@ -627,20 +597,18 @@ mod tests {
         assert_eq!(parent.as_deref(), Some("p-1"));
         assert_eq!(tags, ["a", "b"]);
         assert_eq!(env, [("K".to_owned(), "V".to_owned())]);
+        assert_eq!(engine, "claude");
+        assert_eq!(roles, ["dev", "ops"]);
         assert_eq!(
-            launch,
-            LaunchSpec::Agent {
-                engine: "claude".into(),
-                roles: vec!["dev".into(), "ops".into()],
-                options: vec![
-                    ("model".into(), "opus".into()),
-                    ("effort".into(), "xhigh".into()),
-                    ("model".into(), "sonnet".into()),
-                    ("thinking".into(), "on".into()),
-                ],
-                prompt: "go".into(),
-            }
+            options,
+            [
+                ("model".to_owned(), "opus".to_owned()),
+                ("effort".to_owned(), "xhigh".to_owned()),
+                ("model".to_owned(), "sonnet".to_owned()),
+                ("thinking".to_owned(), "on".to_owned()),
+            ]
         );
+        assert_eq!(prompt, "go");
     }
 
     #[test]
@@ -705,32 +673,12 @@ mod tests {
     }
 
     #[test]
-    fn create_process_takes_the_rest_verbatim() {
-        let inv = parse_str("create sh1 --cwd /w --tag t --exec sh -c --flag --cwd x").unwrap();
-        let Verb::Create { launch, tags, .. } = inv.verb else {
-            panic!()
-        };
-        assert_eq!(tags, ["t"]);
-        assert_eq!(
-            launch,
-            LaunchSpec::Process {
-                program: "sh".into(),
-                args: vec!["-c".into(), "--flag".into(), "--cwd".into(), "x".into()],
-            }
-        );
-    }
-
-    #[test]
     fn create_usage_errors() {
         for (line, needle) in [
             ("create", "name"),
             ("create n", "--cwd"),
-            ("create n --cwd /w", "--engine or --exec"),
-            (
-                "create n --cwd /w --engine e --exec sh",
-                "--engine or --exec",
-            ),
-            ("create n --cwd /w --exec", "--exec needs a program"),
+            ("create n --cwd /w", "--engine"),
+            ("create n --cwd /w --prompt go", "--engine"),
             ("create n --cwd /w --engine e --option model", "KEY=VALUE"),
             ("create n --cwd /w --engine e --option =x", "bare name"),
             ("create n --cwd /w --engine e --option a.b=x", "bare name"),
@@ -738,12 +686,10 @@ mod tests {
                 "create n --cwd /w --engine e --option model=",
                 "needs a non-empty value",
             ),
-            ("create n --cwd /w --option k=v --exec sh", "--option"),
             (
                 "create n --cwd /w --engine e --role",
                 "--role needs a value",
             ),
-            ("create n --cwd /w --model m --exec sh", "--model"),
             (
                 "create n --cwd /w --engine e --prompt go --resume x",
                 "--resume",
@@ -752,8 +698,8 @@ mod tests {
                 "create n --cwd /w --engine e --model m",
                 "--prompt is required with --engine",
             ),
-            ("create n --cwd /w --bogus --exec sh", "--bogus"),
-            ("create n extra --cwd /w --exec sh", "extra"),
+            ("create n --cwd /w --bogus --engine e", "--bogus"),
+            ("create n extra --cwd /w --engine e", "extra"),
         ] {
             let error = parse_str(line).unwrap_err();
             assert!(error.0.contains(needle), "{line}: {error}");

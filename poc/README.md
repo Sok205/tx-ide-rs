@@ -365,7 +365,9 @@ txc ui attach     # then prefix+t
 ```
 
 `txc ui view open … -- PROGRAM` is the way to start a shell or any other non-LLM program on the
-core's server; `txc create … --exec PROGRAM` still works until the process launch leaves core.
+core's server; `txc create` starts agents only (`--engine` and `--prompt` are required). A
+record with `"kind": "process"` left on disk by an older build is skipped by every read and
+named on stderr when `txc` opens the core, until Storage PR 14's migration moves it.
 
 **Views.** Every non-LLM tmux session on the core's server is a tx-client *view*: the `home`
 base, the `tutor-<lang>`, `mockup-<agent>` and `tx-timeline` viewers, an artifact's nvim

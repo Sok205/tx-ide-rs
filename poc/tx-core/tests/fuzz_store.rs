@@ -8,7 +8,9 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use proptest::prelude::*;
-use tx_core::{Launch, Lifecycle, ReadError, RecordError, Session, SessionId, StoreError};
+use tx_core::{
+    Launch, Lifecycle, LlmEngineState, ReadError, RecordError, Session, SessionId, StoreError,
+};
 
 fn store() -> (tempfile::TempDir, tx_core::SessionStore) {
     let dir = tempfile::tempdir().unwrap();
@@ -32,12 +34,15 @@ fn session(id: &str, created_at: f64) -> Session {
         archived_at: None,
         last_modified_at: created_at,
         lifecycle: Lifecycle::Running,
-        launch: Launch::Process {
-            program: "sh".into(),
-            args: vec![],
+        launch: Launch::Agent {
+            engine: "e".into(),
+            profile: vec![],
+            model: None,
+            effort: None,
+            resume: None,
         },
         ext: std::collections::BTreeMap::new(),
-        state: None,
+        state: LlmEngineState::Idle,
     }
 }
 
@@ -91,23 +96,23 @@ fn text() -> impl Strategy<Value = String> {
 }
 
 fn launch() -> impl Strategy<Value = Launch> {
-    prop_oneof![
-        (text(), prop::collection::vec(text(), 0..4))
-            .prop_map(|(program, args)| { Launch::Process { program, args } }),
-        (
-            text(),
-            prop::collection::vec(text(), 0..4),
-            prop::option::of(text()),
-            prop::option::of(text()),
-        )
-            .prop_map(|(engine, profile, model, effort)| Launch::Agent {
-                engine,
-                profile,
-                model,
-                effort,
-                resume: None,
-            }),
-    ]
+    (
+        text(),
+        prop::collection::vec(text(), 0..4),
+        prop::option::of(text()),
+        prop::option::of(text()),
+    )
+        .prop_map(|(engine, profile, model, effort)| Launch::Agent {
+            engine,
+            profile,
+            model,
+            effort,
+            resume: None,
+        })
+}
+
+fn state() -> impl Strategy<Value = LlmEngineState> {
+    prop::sample::select(LlmEngineState::ALL.to_vec())
 }
 
 fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Session> {
@@ -121,22 +126,25 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Sessi
         prop::option::of(finite_f64()),
         prop::sample::select(Lifecycle::ALL.to_vec()),
         launch(),
+        state(),
     )
         .prop_map(
-            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch)| Session {
-                id: sid(&id),
-                name,
-                parent: parent.map(|p| sid(&p)),
-                tags,
-                cwd: PathBuf::from(cwd),
-                created_at,
-                ended_at,
-                archived_at: None,
-                last_modified_at: created_at,
-                lifecycle,
-                launch,
-                ext: std::collections::BTreeMap::new(),
-                state: None,
+            |(id, name, parent, tags, cwd, created_at, ended_at, lifecycle, launch, state)| {
+                Session {
+                    id: sid(&id),
+                    name,
+                    parent: parent.map(|p| sid(&p)),
+                    tags,
+                    cwd: PathBuf::from(cwd),
+                    created_at,
+                    ended_at,
+                    archived_at: None,
+                    last_modified_at: created_at,
+                    lifecycle,
+                    launch,
+                    ext: std::collections::BTreeMap::new(),
+                    state,
+                }
             },
         )
 }
@@ -585,12 +593,12 @@ proptest! {
         "{\"version\": -1}",
         "{\"version\": 1.5}",
         "{\"version\": 18446744073709551616}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": \"1\", \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"process\", \"program\": \"sh\", \"args\": []}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"Running\", \"launch\": {\"kind\": \"process\", \"program\": \"sh\", \"args\": []}}",
+        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": \"1\", \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": []}}",
+        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"Running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": []}}",
         "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"shell\"}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": [], \"model\": null, \"effort\": \"ultra\"}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": \"p/q\", \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"process\", \"program\": \"sh\", \"args\": []}}",
-        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"process\", \"program\": \"sh\", \"args\": []}} trailing",
+        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": [], \"model\": null, \"effort\": 7}}",
+        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": \"p/q\", \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": []}}",
+        "{\"version\": 1, \"id\": \"x\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"e\", \"profile\": []}} trailing",
     ])) {
         let (_dir, store) = store();
         std::fs::create_dir_all(store.dir()).unwrap();
@@ -599,6 +607,31 @@ proptest! {
         let kind_ok = matches!(source, ReadError::Record(_));
         prop_assert!(kind_ok, "{:?}", source);
     }
+}
+
+/// A `"kind": "process"` record, written before core held agents only: not a failure of the
+/// scan but a skip, and `skipped` names it, whatever else the record says.
+#[test]
+fn process_records_are_skipped_and_named() {
+    let (_dir, store) = store();
+    std::fs::create_dir_all(store.dir()).unwrap();
+    store.save(&session("a", 1.0)).unwrap();
+    let process = record_text("p", 2.0).replace(
+        r#""launch": {
+    "kind": "agent","#,
+        r#""launch": {
+    "kind": "process",
+    "program": "sh",
+    "args": [],"#,
+    );
+    assert!(process.contains("\"kind\": \"process\""), "{process}");
+    std::fs::write(store.path(&sid("p")), process).unwrap();
+    let odd = "{\"version\": 1, \"id\": \"q\", \"name\": \"n\", \"created_at\": \"1\", \"lifecycle\": \"Running\", \"launch\": {\"kind\": \"process\"}}";
+    std::fs::write(store.path(&sid("q")), odd).unwrap();
+    assert_eq!(ids(&store.all().unwrap()), ["a"]);
+    assert_eq!(store.skipped().unwrap(), [sid("p"), sid("q")]);
+    assert_eq!(store.load(&sid("p")).unwrap(), None);
+    assert_eq!(store.load(&sid("q")).unwrap(), None);
 }
 
 #[test]

@@ -504,11 +504,14 @@ mod tests {
             archived_at: None,
             last_modified_at: 0.0,
             lifecycle: Lifecycle::Running,
-            launch: Launch::Process {
-                program: "x".into(),
-                args: Vec::new(),
+            launch: Launch::Agent {
+                engine: "e".into(),
+                profile: Vec::new(),
+                model: None,
+                effort: None,
+                resume: None,
             },
-            state: None,
+            state: crate::state::LlmEngineState::Starting,
             ext: BTreeMap::new(),
         }
     }

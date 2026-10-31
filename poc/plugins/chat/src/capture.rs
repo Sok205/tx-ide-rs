@@ -84,10 +84,11 @@ pub fn capture(core: &TxCore, id: &SessionId, c: &Captured) -> Result<bool, Chat
     {
         return Ok(false);
     }
-    let launch_engine = match &session.launch {
-        Launch::Agent { engine, .. } => Some(engine.clone()),
-        Launch::Process { .. } => None,
-    };
+    let Launch::Agent {
+        engine: launch_engine,
+        ..
+    } = &session.launch;
+    let launch_engine = launch_engine.clone();
     let changed = core.update_ext(id, crate::CHAT_ID, |value| {
         let Ok(mut ext) = (match &*value {
             Value::Null => Ok(ChatExt::default()),
@@ -121,7 +122,7 @@ pub fn capture(core: &TxCore, id: &SessionId, c: &Captured) -> Result<bool, Chat
             return;
         }
         if ext.engine.is_none() {
-            ext.engine = launch_engine;
+            ext.engine = Some(launch_engine);
         }
         if let Ok(updated) = serde_json::to_value(&ext) {
             *value = updated;

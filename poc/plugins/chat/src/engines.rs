@@ -284,7 +284,7 @@ fn scratch_record(
             effort: None,
             resume: resume.map(str::to_owned),
         },
-        state: None,
+        state: tx_core::LlmEngineState::Starting,
         ext: std::collections::BTreeMap::new(),
     };
     if let Some(resume) = resume {

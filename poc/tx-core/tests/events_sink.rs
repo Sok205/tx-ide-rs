@@ -6,7 +6,7 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{Harness, agent, cwd_of, process, wait_for};
+use common::{Harness, agent, cwd_of, wait_for};
 use tx_core::{Event, EventSink, EventType, Lifecycle, SendOptions, SessionId, TxCore};
 
 #[derive(Default)]
@@ -34,7 +34,7 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
         .unwrap();
     let cwd = cwd_of(&core, &a);
     let b = core
-        .create_session(process("bob", &h.workdir("b")))
+        .create_session(agent("bob", &h.repository("b")))
         .unwrap();
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
@@ -119,9 +119,9 @@ fn sinks_run_after_the_record_is_saved_and_locks_are_released() {
         core: h.open(),
         seen: Mutex::new(vec![]),
     });
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&sink)));
-    let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
+    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
     core.stop_session(&id).unwrap();
     let seen = sink.seen.lock().unwrap().clone();
     // The sink's own core has no subscribers, so its `tagged` goes to the log only.
@@ -154,10 +154,10 @@ fn a_panicking_sink_never_fails_the_operation_and_later_sinks_still_run() {
     require_tmux!();
     let h = Harness::new();
     let recorder = Arc::new(Recorder::default());
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     core.subscribe(Box::new(Panicky));
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
+    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
     assert_eq!(core.get_session(&id).unwrap().lifecycle, Lifecycle::Running);
     assert_eq!(types(&recorder.0.lock().unwrap()), [EventType::Created]);
     assert_eq!(h.log_lines().len(), 1);
@@ -168,7 +168,7 @@ fn closures_are_sinks_and_cores_stay_send_sync() {
     require_tmux!();
     let h = Harness::new();
     let names = Arc::new(Mutex::new(Vec::<String>::new()));
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     let sink_names = Arc::clone(&names);
     core.subscribe(Box::new(move |event: &Event| {
         sink_names.lock().unwrap().push(event.name.clone());
@@ -176,8 +176,8 @@ fn closures_are_sinks_and_cores_stay_send_sync() {
     let core = Arc::new(core);
     let worker = {
         let core = Arc::clone(&core);
-        let cwd = h.workdir("t");
-        std::thread::spawn(move || core.create_session(process("threaded", &cwd)).unwrap())
+        let cwd = h.repository("t");
+        std::thread::spawn(move || core.create_session(agent("threaded", &cwd)).unwrap())
     };
     let id: SessionId = worker.join().unwrap();
     assert_eq!(core.get_session(&id).unwrap().name, "threaded");
@@ -189,10 +189,13 @@ fn a_failed_operation_emits_nothing() {
     require_tmux!();
     let h = Harness::new();
     let recorder = Arc::new(Recorder::default());
-    let mut core = h.open();
+    let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
-    assert!(core.create_session(process("p", &h.workdir("q"))).is_err());
+    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
+    assert!(
+        core.create_session(agent("bad name", &h.repository("q")))
+            .is_err()
+    );
     assert!(core.rename_session(&id, "bad name").is_err());
     assert!(
         core.send_message(

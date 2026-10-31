@@ -30,8 +30,6 @@ pub enum CoreError {
     NotADirectory(PathBuf),
     #[error("session {0} is not running")]
     NotRunning(SessionId),
-    #[error("session {0} is not an agent")]
-    NotAnAgent(SessionId),
     #[error("session {0} is still running; stop it before a respawn")]
     StillRunning(SessionId),
     #[error("worktree {} is gone; a respawn never recreates one", .0.display())]

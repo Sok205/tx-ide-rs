@@ -107,12 +107,14 @@ impl SessionStore {
         Ok(())
     }
 
-    /// One record by id; `None` if there is no such file.
+    /// One record by id; `None` if there is no such file, or if the file is a process record
+    /// written before PR 11 (see [`SessionStore::skipped`]).
     pub fn load(&self, id: &SessionId) -> Result<Option<Session>, StoreError> {
         let path = self.path(id);
         match read(&path, id) {
             Ok(session) => Ok(Some(session)),
             Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(ReadError::Record(RecordError::ProcessRecord)) => Ok(None),
             Err(source) => Err(StoreError::Unreadable {
                 file: file_name(&path),
                 source,
@@ -131,16 +133,33 @@ impl SessionStore {
     }
 
     /// Every record, sorted by `created_at` then id. A missing directory is an empty store. A
-    /// record deleted between the directory scan and its read is skipped; any other unreadable
+    /// record deleted between the directory scan and its read is skipped, and so is a process
+    /// record written before PR 11 ([`SessionStore::skipped`] names those); any other unreadable
     /// record fails the scan by name. Entries that are not `<name>.json` regular files (temp
     /// files, hidden files, directories) are ignored.
     pub fn all(&self) -> Result<Vec<Session>, StoreError> {
+        Ok(self.scan()?.0)
+    }
+
+    /// The ids of the process records in the store: records written before PR 11, when core
+    /// still held non-LLM sessions. Every read skips them; Storage PR 14's migration moves
+    /// them out. Sorted by id.
+    pub fn skipped(&self) -> Result<Vec<SessionId>, StoreError> {
+        Ok(self.scan()?.1)
+    }
+
+    /// One pass over the directory: the readable records and the ids of the skipped process
+    /// records.
+    fn scan(&self) -> Result<(Vec<Session>, Vec<SessionId>), StoreError> {
         let entries = match std::fs::read_dir(&self.dir) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok((Vec::new(), Vec::new()));
+            }
             Err(source) => return Err(io_error(&self.dir)(source)),
         };
         let mut sessions = Vec::new();
+        let mut skipped = Vec::new();
         for entry in entries {
             let entry = entry.map_err(io_error(&self.dir))?;
             let name = entry.file_name();
@@ -169,6 +188,7 @@ impl SessionStore {
             match read(&path, &id) {
                 Ok(session) => sessions.push(session),
                 Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(ReadError::Record(RecordError::ProcessRecord)) => skipped.push(id),
                 Err(source) => {
                     return Err(StoreError::Unreadable {
                         file: name.to_owned(),
@@ -182,7 +202,8 @@ impl SessionStore {
                 .total_cmp(&b.created_at)
                 .then_with(|| a.id.cmp(&b.id))
         });
-        Ok(sessions)
+        skipped.sort();
+        Ok((sessions, skipped))
     }
 }
 
@@ -210,6 +231,7 @@ mod tests {
         id.parse().unwrap()
     }
     use crate::session::{Launch, Lifecycle};
+    use crate::state::LlmEngineState;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 
@@ -225,13 +247,23 @@ mod tests {
             archived_at: None,
             last_modified_at: created_at,
             lifecycle: Lifecycle::Running,
-            launch: Launch::Process {
-                program: "sh".into(),
-                args: vec![],
+            launch: Launch::Agent {
+                engine: "e".into(),
+                profile: vec![],
+                model: None,
+                effort: None,
+                resume: None,
             },
             ext: std::collections::BTreeMap::new(),
-            state: None,
+            state: LlmEngineState::Idle,
         }
+    }
+
+    /// A `"kind": "process"` record as a build before PR 11 wrote it.
+    fn process_record_text(id: &str) -> String {
+        format!(
+            r#"{{"version":1,"id":"{id}","name":"n-{id}","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{{"kind":"process","program":"sh","args":[]}}}}"#
+        )
     }
 
     fn store() -> (tempfile::TempDir, SessionStore) {
@@ -253,6 +285,23 @@ mod tests {
         let store = SessionStore::new("/s");
         assert_eq!(store.path(&sid("abc")), PathBuf::from("/s/abc.json"));
         assert_eq!(store.dir(), Path::new("/s"));
+    }
+
+    /// A process record from before PR 11 is skipped by every read and named by `skipped`,
+    /// never an error: the store still opens, Storage PR 14 migrates the record.
+    #[test]
+    fn process_records_are_skipped_and_named() {
+        let (_dir, store) = store();
+        store.save(&session("a", 1.0)).unwrap();
+        std::fs::write(store.dir().join("p.json"), process_record_text("p")).unwrap();
+        std::fs::write(store.dir().join("o.json"), process_record_text("o")).unwrap();
+        let all = store.all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, sid("a"));
+        assert_eq!(store.load(&sid("p")).unwrap(), None);
+        assert_eq!(store.skipped().unwrap(), [sid("o"), sid("p")]);
+        let (_dir, empty) = self::tests::store();
+        assert_eq!(empty.skipped().unwrap(), []);
     }
 
     #[test]

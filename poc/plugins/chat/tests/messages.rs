@@ -194,6 +194,7 @@ fn record(
         "id": id, "name": name, "parent": null, "tags": [], "cwd": "/r",
         "created_at": created, "ended_at": ended, "last_modified_at": last_modified_at,
         "lifecycle": lifecycle,
+        "state": if lifecycle == "running" { "idle" } else { "ended" },
         "launch": launch, "ext": ext,
     }))
     .unwrap()
@@ -201,10 +202,6 @@ fn record(
 
 fn agent() -> Value {
     json!({"kind": "agent", "engine": "claude", "profile": [], "model": null, "effort": null})
-}
-
-fn process() -> Value {
-    json!({"kind": "process", "program": "sh", "args": []})
 }
 
 struct Tree {
@@ -244,16 +241,7 @@ fn tree() -> Tree {
             "s0",
             "alice",
             "running",
-            process(),
-            900.0,
-            Value::Null,
-            json!({}),
-        ),
-        record(
-            "h1",
-            "home",
-            "running",
-            process(),
+            agent(),
             900.0,
             Value::Null,
             json!({}),
@@ -288,12 +276,14 @@ fn collect_over_the_fixture_tree() {
             )
         })
         .collect();
+    // Every core record is an agent (PR 11), so a `<from-agent>` envelope from a name that is
+    // no record (`home`, a tx-client view) reads as an agent's, not as the operator's.
     assert_eq!(
         rows,
         [
             "u2 you typed you bob t1 c1 \"typed by you\" 1767315600.0",
             "c1:2026-01-02T01:30:00Z:8 you typed you bob t1 c1 \"kick off\" 1767317400.0",
-            "u3 you send-message home gone gone c9 \"from home\" 1767319200.0",
+            "u3 agent send-message home gone gone c9 \"from home\" 1767319200.0",
             "u1 agent send-message alice bob t1 c1 \"peer\" 1767322800.0",
             "u4 you typed you bob t1 c1 \"later\" 1767326400.0",
         ]

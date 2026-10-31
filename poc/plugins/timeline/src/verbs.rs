@@ -13,7 +13,7 @@ use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
 use crate::app::DEFAULT_WINDOW_MIN;
-use crate::model::{Builder, DEFAULT_DAYS, chat_sources, is_agent, load_sessions};
+use crate::model::{Builder, DEFAULT_DAYS, chat_sources, load_sessions};
 use crate::{PLUGIN_ID, run};
 
 pub const RESIDENT_VERB: &str = "_timeline-resident";
@@ -331,7 +331,7 @@ fn health(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let sessions = load_sessions(core)?;
     let builder = builder(core);
     let mut problems = 0;
-    for session in sessions.iter().filter(|session| is_agent(session)) {
+    for session in &sessions {
         let mut notes = Vec::new();
         for (plugin, result) in [
             ("chat", tx_chat::ext::chat_ext(session).map(drop)),

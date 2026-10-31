@@ -88,11 +88,10 @@ pub fn ingest_session(
     let engine = chat_ext(&session)
         .ok()
         .and_then(|ext| ext.engine)
-        .or_else(|| match &session.launch {
-            Launch::Agent { engine, .. } => Some(engine.clone()),
-            Launch::Process { .. } => None,
-        })
-        .unwrap_or_else(|| "claude".to_owned());
+        .unwrap_or_else(|| {
+            let Launch::Agent { engine, .. } = &session.launch;
+            engine.clone()
+        });
     let mut bundles = Vec::new();
     for (chat_id, chat) in &history.chats {
         let src = Path::new(&chat.transcript);

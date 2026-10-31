@@ -5,7 +5,7 @@ mod common;
 
 use std::process::Command;
 
-use common::{Harness, process};
+use common::{Harness, ShellStub, agent};
 use tx_core::{CoreConfig, CoreError, Directories, TxCore};
 
 /// A label on the *default* socket directory that stands in for the user's own server: we must
@@ -49,7 +49,7 @@ fn private_server_never_touches_the_default_one_or_the_home_conf() {
         .env_remove("TMUX")
         .env(
             "TX_CORE_ISOLATION_CHILD",
-            format!("{}:{}", h.home().display(), h.workdir("w").display()),
+            format!("{}:{}", h.home().display(), h.repository("w").display()),
         )
         .status()
         .unwrap();
@@ -84,8 +84,9 @@ fn child_create() {
         return;
     };
     let (home, cwd) = spec.split_once(':').unwrap();
-    let core = TxCore::open(CoreConfig::new(Directories::under(home))).unwrap();
-    core.create_session(process("iso", std::path::Path::new(cwd)))
+    let mut core = TxCore::open(CoreConfig::new(Directories::under(home))).unwrap();
+    core.register_engine(Box::new(ShellStub)).unwrap();
+    core.create_session(agent("iso", std::path::Path::new(cwd)))
         .unwrap();
 }
 

@@ -1,7 +1,9 @@
 //! Adversarial / property tests over the built `txc` binary: randomized argv, argument corner
 //! cases, env-derived sender, directory resolution and concurrent creates. Every process runs
 //! with its directories under /tmp, so tmux always uses a private socket; the user's default tmux
-//! server is never touched.
+//! server is never touched. Agents run a fake `claude` (a shim that just stays alive).
+
+mod common;
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -9,18 +11,22 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+use common::{repository_at, shim_path_in};
+
 struct Cli {
     dir: tempfile::TempDir,
+    /// PATH with the fake `claude` first.
+    path: String,
 }
 
 impl Cli {
     fn new() -> Self {
-        Self {
-            dir: tempfile::Builder::new()
-                .prefix("txcf")
-                .tempdir_in("/tmp")
-                .unwrap(),
-        }
+        let dir = tempfile::Builder::new()
+            .prefix("txcf")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let path = shim_path_in(&dir.path().join("shim"), &[("claude", "exec sleep 30")]);
+        Self { dir, path }
     }
 
     fn state(&self) -> PathBuf {
@@ -31,6 +37,7 @@ impl Cli {
         let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
         command
             .args(directory_flags(&self.state()))
+            .env("PATH", &self.path)
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID");
         command
@@ -82,6 +89,17 @@ impl Cli {
         path
     }
 
+    /// A git repository with one commit under `<dir>/<name>`: an agent's starting checkout.
+    fn repository(&self, name: &str) -> PathBuf {
+        repository_at(&self.dir.path().join(name))
+    }
+
+    /// Where `name` runs: its record's `cwd`, the agent's worktree.
+    fn cwd_of(&self, name: &str) -> PathBuf {
+        let shown: serde_json::Value = serde_json::from_str(&self.ok(&["show", name])).unwrap();
+        PathBuf::from(shown["cwd"].as_str().unwrap())
+    }
+
     fn tmux(&self, args: &[&str]) -> Output {
         Command::new("tmux")
             .arg("-S")
@@ -91,18 +109,32 @@ impl Cli {
             .unwrap()
     }
 
-    /// A process session that captures its argv, env and typed input into files under `cwd`.
+    /// PATH with a `claude` that captures its argv, env and typed input into files in the
+    /// agent's worktree.
+    fn capture_path(&self) -> String {
+        shim_path_in(
+            &self.dir.path().join("capture-shim"),
+            &[(
+                "claude",
+                "printf '%s\\n' \"$@\" > args.txt; env > env.txt; cat > input.txt",
+            )],
+        )
+    }
+
+    /// An agent started from the checkout `cwd` whose `claude` captures its argv, env and typed
+    /// input into files in its worktree (see `cwd_of`).
     fn capture_session(&self, name: &str, cwd: &Path, extra: &[&str]) -> String {
+        let path = self.capture_path();
         let mut args = vec!["create", name, "--cwd", cwd.to_str().unwrap()];
         args.extend_from_slice(extra);
-        args.extend_from_slice(&[
-            "--exec",
-            "sh",
-            "-c",
-            "printf '%s\\n' \"$@\" > args.txt; env > env.txt; cat > input.txt",
-            "argv0",
-        ]);
-        self.ok(&args).trim().to_owned()
+        args.extend_from_slice(&["--engine", "claude", "--prompt", "start"]);
+        let output = self.run_env(&args, &[("PATH", path.as_str())]);
+        assert!(
+            output.status.success(),
+            "txc {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
 }
 
@@ -148,6 +180,23 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// The main checkout a linked worktree was cut from: the first entry of `git worktree list`.
+fn main_checkout_of(worktree: &Path) -> PathBuf {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let listed = String::from_utf8_lossy(&output.stdout);
+    let first = listed
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))
+        .unwrap_or_else(|| panic!("no worktree line in {listed}"));
+    PathBuf::from(first).canonicalize().unwrap()
+}
+
 /// A tiny deterministic generator so failures reproduce from the printed seed.
 struct Lcg(u64);
 
@@ -170,7 +219,7 @@ impl Lcg {
 // ---------------------------------------------------------------------------------------------
 
 /// `--cwd` is deliberately absent from the pool: without it `create` can never pass parsing, so
-/// no random argv spawns a process. Everything else is fair game.
+/// no random argv spawns an agent. Everything else is fair game.
 fn token_pool() -> Vec<String> {
     let mut pool: Vec<String> = [
         "create",
@@ -198,7 +247,6 @@ fn token_pool() -> Vec<String> {
         "--tag",
         "--lifecycle",
         "--engine",
-        "--exec",
         "--role",
         "--model",
         "--effort",
@@ -314,8 +362,12 @@ fn usage_level_inputs_are_table_driven() {
             "create needs a session name",
         ),
         (
-            vec!["create", "n", "--cwd", "/", "--engine", "e", "--exec", "sh"],
-            "--engine or --exec",
+            vec!["create", "n", "--cwd", "/"],
+            "create needs --engine ID",
+        ),
+        (
+            vec!["create", "n", "--cwd", "/", "--engine", "e"],
+            "--prompt is required with --engine",
         ),
         (vec!["send", "x", "--"], "send needs the message text"),
         (vec!["send", "--"], "send needs the message text"),
@@ -371,7 +423,7 @@ fn non_utf8_argv_is_a_usage_error_not_a_panic() {
 #[test]
 fn create_rejects_bad_names_with_exit_1_before_spawning() {
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
+    let cwd = cli.repository("w");
     let cwd = cwd.to_str().unwrap();
     let long = "n".repeat(129);
     for name in [
@@ -386,16 +438,19 @@ fn create_rejects_bad_names_with_exit_1_before_spawning() {
         "a\tb",
         long.as_str(),
     ] {
-        let err = cli.fails(&["create", name, "--cwd", cwd, "--exec", "sleep", "30"], 1);
+        let err = cli.fails(
+            &[
+                "create", name, "--cwd", cwd, "--engine", "claude", "--prompt", "start",
+            ],
+            1,
+        );
         assert!(err.contains("invalid session name"), "{name:?}: {err}");
         assert_eq!(err.lines().count(), 1, "{name:?}: {err}");
     }
     assert_eq!(cli.ok(&["ls"]), "");
     // Nothing was spawned: the private server never started.
     assert!(!cli.state().join("tmux.sock").exists());
-    // An empty program is rejected too, and --cwd that is a file exits 1.
-    let err = cli.fails(&["create", "n", "--cwd", cwd, "--exec", ""], 1);
-    assert!(err.contains("invalid session name \"\""), "{err}");
+    // A --cwd that is a file exits 1.
     let file = cli.dir.path().join("file");
     std::fs::write(&file, "x").unwrap();
     let err = cli.fails(
@@ -404,44 +459,14 @@ fn create_rejects_bad_names_with_exit_1_before_spawning() {
             "n",
             "--cwd",
             file.to_str().unwrap(),
-            "--exec",
-            "sleep",
-            "30",
+            "--engine",
+            "claude",
+            "--prompt",
+            "start",
         ],
         1,
     );
     assert!(err.contains("is not a directory"), "{err}");
-}
-
-/// Sharp edge: `--exec` swallows the rest of argv, so `--engine e` after it is an argument to
-/// the program, not a usage error; and a program that exits at once surfaces as a tmux error.
-#[test]
-fn exec_swallows_trailing_flags_and_fast_exit_is_exit_1() {
-    if !has_tmux() {
-        return;
-    }
-    let cli = Cli::new();
-    let cwd = cli.workdir("w");
-    let cwd = cwd.to_str().unwrap();
-    let output = cli.run(&["create", "n", "--cwd", cwd, "--exec", "sh", "--engine", "e"]);
-    assert_ne!(output.status.code(), Some(2), "{}", stderr(&output));
-    let output = cli.run(&["create", "t", "--cwd", cwd, "--exec", "true"]);
-    let err = stderr(&output);
-    assert!(matches!(output.status.code(), Some(0 | 1)), "{err}");
-    eprintln!(
-        "sharp edge: `--exec true` -> exit {:?}: {err}",
-        output.status.code()
-    );
-    assert!(err.is_empty() || err.starts_with("txc: "));
-    // Whatever happened, the record store is consistent: every listed line is well-formed.
-    for line in cli.ok(&["ls"]).lines() {
-        assert_eq!(line.split('\t').count(), 4, "{line:?}");
-    }
-    assert!(
-        cli.ok(&["refresh"])
-            .lines()
-            .all(|l| l.split('\t').count() == 3)
-    );
 }
 
 #[test]
@@ -451,9 +476,11 @@ fn create_boundary_names_and_relative_cwd() {
     }
     let cli = Cli::new();
     let base = cli.workdir("base");
+    repository_at(&base.join("rel"));
     std::fs::create_dir_all(base.join("rel/./deeper/..")).unwrap();
     // 128 bytes is the maximum, `-` and `-x` are legal names; relative --cwd resolves against
-    // the process cwd and is stored canonical and absolute.
+    // the process cwd: the agent's worktree is cut from `base/rel`, and the stored cwd (the
+    // worktree) is absolute.
     let max = "m".repeat(128);
     for (name, cwd) in [
         (max.as_str(), "rel"),
@@ -462,13 +489,19 @@ fn create_boundary_names_and_relative_cwd() {
     ] {
         let output = cli.run_in(
             &base,
-            &["create", name, "--cwd", cwd, "--exec", "sleep", "30"],
+            &[
+                "create", name, "--cwd", cwd, "--engine", "claude", "--prompt", "start",
+            ],
         );
         assert!(output.status.success(), "{name}: {}", stderr(&output));
         let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", name])).unwrap();
-        let expected = base.join("rel").canonicalize().unwrap();
-        assert_eq!(shown["cwd"], expected.to_str().unwrap(), "{name}");
-        assert!(Path::new(shown["cwd"].as_str().unwrap()).is_absolute());
+        let worktree = Path::new(shown["cwd"].as_str().unwrap());
+        assert!(worktree.is_absolute(), "{name}: {}", worktree.display());
+        assert_eq!(
+            main_checkout_of(worktree),
+            base.join("rel").canonicalize().unwrap(),
+            "{name}"
+        );
         assert_eq!(shown["name"], name);
     }
     // Sharp edge: the parser refuses `create --` but `rename` accepts any grammar-valid name,
@@ -487,9 +520,10 @@ fn create_boundary_names_and_relative_cwd() {
             "--cwd",
             "--cwd",
             base.to_str().unwrap(),
-            "--exec",
-            "sleep",
-            "1",
+            "--engine",
+            "claude",
+            "--prompt",
+            "start",
         ],
         2,
     );
@@ -502,12 +536,12 @@ fn create_boundary_names_and_relative_cwd() {
 }
 
 #[test]
-fn exec_args_env_and_tags_pass_through_verbatim() {
+fn env_and_tags_pass_through_verbatim() {
     if !has_tmux() {
         return;
     }
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
+    let cwd = cli.repository("w");
     let id = cli.capture_session(
         "p",
         &cwd,
@@ -515,36 +549,7 @@ fn exec_args_env_and_tags_pass_through_verbatim() {
             "--tag", "", "--tag", "t=1", "--env", "EMPTY=", "--env", "EQ=a=b=c", "--env", "SP=a b",
         ],
     );
-    // Flags that look like txc's own are handed to the program untouched, in order.
-    let args = [
-        "create",
-        "q",
-        "--cwd",
-        cwd.to_str().unwrap(),
-        "--exec",
-        "sh",
-        "-c",
-        "printf '%s\\n' \"$@\" > args2.txt; cat > /dev/null",
-        "argv0",
-        "--state-dir",
-        "/nope",
-        "--",
-        "-",
-        "",
-        "--cwd",
-        "--exec",
-        "--env",
-        "K=V",
-        "żółć",
-    ];
-    cli.ok(&args);
-    let got = wait_for(&cwd.join("args2.txt"), Duration::from_secs(5));
-    assert_eq!(
-        got,
-        "--state-dir\n/nope\n--\n-\n\n--cwd\n--exec\n--env\nK=V\nżółć\n"
-    );
-
-    let env = wait_for(&cwd.join("env.txt"), Duration::from_secs(5));
+    let env = wait_for(&cli.cwd_of("p").join("env.txt"), Duration::from_secs(5));
     let lines: Vec<&str> = env.lines().collect();
     assert!(lines.contains(&"EMPTY="), "{env}");
     assert!(lines.contains(&"EQ=a=b=c"), "{env}");
@@ -565,6 +570,7 @@ fn exec_args_env_and_tags_pass_through_verbatim() {
     assert_eq!(cli.ok(&["ls", "--tag", ""]).lines().count(), 1);
     assert_eq!(cli.ok(&["ls", "--tag", "t=1"]).lines().count(), 1);
     // Global --env is visible too; the per-session value wins on a clash.
+    let path = cli.capture_path();
     let output = cli.run_env(
         &[
             "--env",
@@ -577,15 +583,15 @@ fn exec_args_env_and_tags_pass_through_verbatim() {
             cwd.to_str().unwrap(),
             "--env",
             "C=session",
-            "--exec",
-            "sh",
-            "-c",
-            "env > env3.txt; cat > /dev/null",
+            "--engine",
+            "claude",
+            "--prompt",
+            "start",
         ],
-        &[],
+        &[("PATH", path.as_str())],
     );
     assert!(output.status.success(), "{}", stderr(&output));
-    let env = wait_for(&cwd.join("env3.txt"), Duration::from_secs(5));
+    let env = wait_for(&cli.cwd_of("r").join("env.txt"), Duration::from_secs(5));
     let lines: Vec<&str> = env.lines().collect();
     assert!(lines.contains(&"G=global"), "{env}");
     assert!(lines.contains(&"C=session"), "{env}");
@@ -602,8 +608,9 @@ fn send_text_edge_cases_arrive_verbatim_inside_the_envelope() {
         return;
     }
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
+    let cwd = cli.repository("w");
     cli.capture_session("s", &cwd, &[]);
+    let input = cli.cwd_of("s").join("input.txt");
     let nine_hundred = "x".repeat(900);
     let cases: Vec<(Vec<&str>, String)> = vec![
         (vec!["-x", "-y"], "-x -y".into()),
@@ -627,7 +634,7 @@ fn send_text_edge_cases_arrive_verbatim_inside_the_envelope() {
         let out = cli.ok(&args);
         assert!(out.trim().ends_with("%0"), "{out}");
     }
-    let typed = wait_for_lines(&cwd.join("input.txt"), cases.len(), Duration::from_secs(10));
+    let typed = wait_for_lines(&input, cases.len(), Duration::from_secs(10));
     let expected: String = cases
         .iter()
         .map(|(_, text)| format!("<from-user>{text}</from-user>\n"))
@@ -652,8 +659,9 @@ fn sender_from_env_matrix() {
         return;
     }
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
+    let cwd = cli.repository("w");
     let id = cli.capture_session("agent-1", &cwd, &[]);
+    let input = cli.cwd_of("agent-1").join("input.txt");
     let socket = cli.state().join("tmux.sock");
     let here = format!("{},1234,0", socket.display());
     let here_bare = socket.to_str().unwrap().to_owned();
@@ -691,11 +699,7 @@ fn sender_from_env_matrix() {
     let output = cli.run_env(&["send", "agent-1", "unset"], &[("TMUX", &here)]);
     assert!(output.status.success());
 
-    let typed = wait_for_lines(
-        &cwd.join("input.txt"),
-        cases.len() + 2,
-        Duration::from_secs(10),
-    );
+    let typed = wait_for_lines(&input, cases.len() + 2, Duration::from_secs(10));
     let lines: Vec<&str> = typed.lines().collect();
     assert_eq!(lines.len(), cases.len() + 2, "{typed}");
     for ((tmux, sid, prefix), line) in cases.iter().zip(&lines) {
@@ -739,16 +743,17 @@ fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
     if !has_tmux() {
         return;
     }
-    let cwd = cli.workdir("w");
+    let cwd = cli.repository("w");
     let id = cli
         .ok(&[
             "create",
             "a",
             "--cwd",
             cwd.to_str().unwrap(),
-            "--exec",
-            "sleep",
-            "30",
+            "--engine",
+            "claude",
+            "--prompt",
+            "start",
         ])
         .trim()
         .to_owned();
@@ -761,9 +766,10 @@ fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
         "b",
         "--cwd",
         cwd.to_str().unwrap(),
-        "--exec",
-        "sleep",
-        "30",
+        "--engine",
+        "claude",
+        "--prompt",
+        "start",
     ]);
     assert!(cli.tmux(&["kill-session", "-t", "=b"]).status.success());
     let output = cli.run(&["attach", "b"]);
@@ -783,8 +789,8 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
     if !has_tmux() {
         return;
     }
-    let spaced = cli.workdir("my dir/with  two spaces/and-żółć");
-    let plain = cli.workdir("plain");
+    let spaced = cli.repository("my dir/with  two spaces/and-żółć");
+    let plain = cli.repository("plain");
     let names = ["a", "B_2", "-dash", "x-y-z", "9", "_"];
     let mut ids = Vec::new();
     for (index, name) in names.iter().enumerate() {
@@ -796,9 +802,10 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
             cwd.to_str().unwrap(),
             "--tag",
             "k",
-            "--exec",
-            "sleep",
-            "30",
+            "--engine",
+            "claude",
+            "--prompt",
+            "start",
         ]);
         ids.push(id.trim().to_owned());
     }
@@ -1026,9 +1033,10 @@ fn spawn_creates(cli: &Cli, cwd: &Path, names: &[String]) -> Vec<Output> {
                     name,
                     "--cwd",
                     cwd.to_str().unwrap(),
-                    "--exec",
-                    "sleep",
-                    "30",
+                    "--engine",
+                    "claude",
+                    "--prompt",
+                    "start",
                 ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -1047,7 +1055,7 @@ fn six_concurrent_creates_with_distinct_names_all_succeed() {
         return;
     }
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
+    let cwd = cli.repository("w");
     let names: Vec<String> = (0..6).map(|i| format!("c{i}")).collect();
     let outputs = spawn_creates(&cli, &cwd, &names);
     let mut ids = Vec::new();
@@ -1073,46 +1081,62 @@ fn six_concurrent_creates_with_distinct_names_all_succeed() {
     }
 }
 
+/// A requested name that is taken is suffixed (`same`, `same-2`, …), never refused: six racing
+/// creates all succeed, with distinct names, records, tmux sessions and worktrees.
 #[test]
-fn six_concurrent_creates_with_the_same_name_let_exactly_one_win() {
+fn six_concurrent_creates_with_the_same_name_get_distinct_suffixed_names() {
     if !has_tmux() {
         return;
     }
     let cli = Cli::new();
-    let cwd = cli.workdir("w");
+    let cwd = cli.repository("w");
     let names: Vec<String> = vec!["same".to_owned(); 6];
     let outputs = spawn_creates(&cli, &cwd, &names);
-    let winners = outputs.iter().filter(|o| o.status.success()).count();
-    assert_eq!(
-        winners,
-        1,
-        "{:?}",
-        outputs.iter().map(stderr).collect::<Vec<_>>()
-    );
-    for output in outputs.iter().filter(|o| !o.status.success()) {
-        assert_eq!(output.status.code(), Some(1));
-        assert_eq!(
-            stderr(output),
-            "txc: another session is already named \"same\"\n"
-        );
-        assert!(output.stdout.is_empty());
+    for output in &outputs {
+        assert!(output.status.success(), "{}", stderr(output));
+        assert!(stderr(output).is_empty(), "{}", stderr(output));
     }
-    assert_eq!(cli.ok(&["ls"]).lines().count(), 1);
+    let mut ids: Vec<String> = outputs
+        .iter()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 6, "ids must be distinct");
+    let expected: Vec<String> = std::iter::once("same".to_owned())
+        .chain((2..=6).map(|n| format!("same-{n}")))
+        .collect();
+    let ls = cli.ok(&["ls", "--lifecycle", "running"]);
+    let mut listed: Vec<&str> = ls.lines().map(|l| l.split('\t').nth(1).unwrap()).collect();
+    listed.sort_unstable();
+    assert_eq!(listed, expected, "{ls}");
+    let mut worktrees: Vec<&str> = ls.lines().map(|l| l.split('\t').nth(3).unwrap()).collect();
+    worktrees.sort_unstable();
+    worktrees.dedup();
+    assert_eq!(worktrees.len(), 6, "worktrees must be distinct: {ls}");
     let sessions = cli.tmux(&["list-sessions", "-F", "#{session_name}"]);
-    assert_eq!(String::from_utf8_lossy(&sessions.stdout).trim(), "same");
-    // Once archived, the name is free again, and a losing record never lingers.
+    let mut sessions: Vec<&str> = std::str::from_utf8(&sessions.stdout)
+        .unwrap()
+        .lines()
+        .collect();
+    sessions.sort_unstable();
+    assert_eq!(sessions, expected);
+    // Once archived, the bare name is free again.
     cli.ok(&["archive", "same"]);
-    cli.ok(&[
+    let id = cli.ok(&[
         "create",
         "same",
         "--cwd",
         cwd.to_str().unwrap(),
-        "--exec",
-        "sleep",
-        "30",
+        "--engine",
+        "claude",
+        "--prompt",
+        "start",
     ]);
-    assert_eq!(cli.ok(&["ls", "--lifecycle", "running"]).lines().count(), 1);
-    assert_eq!(cli.ok(&["ls"]).lines().count(), 1);
+    let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", id.trim()])).unwrap();
+    assert_eq!(shown["name"], "same");
+    assert_eq!(cli.ok(&["ls", "--lifecycle", "running"]).lines().count(), 6);
+    assert_eq!(cli.ok(&["ls"]).lines().count(), 6);
     assert_eq!(cli.ok(&["ls", "--archived"]).lines().count(), 1);
 }
 

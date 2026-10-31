@@ -5,7 +5,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Harness, STUB_ID, agent, cwd_of, process, typed, wait_for};
+use common::{Harness, STUB_ID, agent, cwd_of, typed, wait_for};
 use tx_core::{
     CoreError, LaunchOptions, Lifecycle, ListFilter, LlmEngineState, RefreshResult, SendOptions,
     Sender, SessionId, TmuxError,
@@ -32,12 +32,12 @@ fn process_exists(pid: u32) -> bool {
 fn rename_updates_tmux_and_record() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
+    let core = h.open_with_engine();
     let id = core
-        .create_session(process("old", &h.workdir("a")))
+        .create_session(agent("old", &h.repository("a")))
         .unwrap();
     let other = core
-        .create_session(process("taken", &h.workdir("b")))
+        .create_session(agent("taken", &h.repository("b")))
         .unwrap();
     let session = core.rename_session(&id, "new").unwrap();
     assert_eq!(session.name, "new");
@@ -99,8 +99,8 @@ fn rename_updates_tmux_and_record() {
 fn tags_are_replaced_wholesale() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let mut opts = process("t", &h.workdir("a"));
+    let core = h.open_with_engine();
+    let mut opts = agent("t", &h.repository("a"));
     opts.tags = vec!["a".into()];
     let id = core.create_session(opts).unwrap();
     let session = core
@@ -121,9 +121,9 @@ fn tags_are_replaced_wholesale() {
 fn refresh_marks_a_vanished_session_exited_once() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let id = core.create_session(process("v", &h.workdir("a"))).unwrap();
-    let keep = core.create_session(process("k", &h.workdir("b"))).unwrap();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("v", &h.repository("a"))).unwrap();
+    let keep = core.create_session(agent("k", &h.repository("b"))).unwrap();
     assert!(matches!(
         core.refresh_session(&id).unwrap(),
         RefreshResult::Unchanged(_)
@@ -156,10 +156,10 @@ fn refresh_marks_a_vanished_session_exited_once() {
 fn refresh_all_returns_only_changed_records() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let a = core.create_session(process("a", &h.workdir("a"))).unwrap();
-    let b = core.create_session(process("b", &h.workdir("b"))).unwrap();
-    let c = core.create_session(process("c", &h.workdir("c"))).unwrap();
+    let core = h.open_with_engine();
+    let a = core.create_session(agent("a", &h.repository("a"))).unwrap();
+    let b = core.create_session(agent("b", &h.repository("b"))).unwrap();
+    let c = core.create_session(agent("c", &h.repository("c"))).unwrap();
     core.stop_session(&c).unwrap();
     assert!(core.refresh_all().unwrap().is_empty());
     h.tmux_ok(&["kill-session", "-t", "=a"]);
@@ -184,9 +184,9 @@ fn refresh_all_returns_only_changed_records() {
 fn stop_kills_and_keeps_the_record() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let id = core.create_session(process("s", &h.workdir("a"))).unwrap();
-    let other = core.create_session(process("o", &h.workdir("b"))).unwrap();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("s", &h.repository("a"))).unwrap();
+    let other = core.create_session(agent("o", &h.repository("b"))).unwrap();
     let session = core.stop_session(&id).unwrap();
     assert_eq!(session.lifecycle, Lifecycle::Stopped);
     assert!(session.ended_at.is_some());
@@ -216,13 +216,15 @@ fn stop_kills_and_keeps_the_record() {
 }
 
 #[test]
-fn stop_waits_for_a_process_that_survives_the_pane_and_then_kills_it() {
+fn stop_waits_for_an_agent_that_survives_the_pane_and_then_kills_it() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let mut opts = process("tough", &h.workdir("t"));
+    let core = h.open_with_engine();
+    let mut opts = agent("tough", &h.repository("t"));
     // Ignores the hang-up the closed pane sends, as a CLI busy with its exit hooks might.
-    opts.launch = LaunchOptions::process("sh", ["-c", "trap '' HUP TERM; sleep 120"]);
+    opts.launch = LaunchOptions::agent(STUB_ID)
+        .initial_prompt("start")
+        .option("model", "tough");
     let id = core.create_session(opts).unwrap();
     let pid: u32 = h
         .tmux_ok(&["list-panes", "-t", "tough", "-F", "#{pane_pid}"])
@@ -269,7 +271,7 @@ fn respawn_brings_an_ended_agent_back_in_place() {
     assert_eq!(session.cwd, before.cwd, "the same worktree");
     assert_eq!(session.created_at, before.created_at);
     assert_eq!(session.lifecycle, Lifecycle::Running);
-    assert_eq!(session.state, Some(LlmEngineState::Starting));
+    assert_eq!(session.state, LlmEngineState::Starting);
     assert_eq!(session.ended_at, None);
     assert_eq!(session.ext.get(STUB_ID), before.ext.get(STUB_ID));
     assert_eq!(core.get_session(&id).unwrap(), session);
@@ -338,12 +340,6 @@ fn respawn_refusals_change_nothing() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let shell = core.create_session(process("p", &h.workdir("p"))).unwrap();
-    core.stop_session(&shell).unwrap();
-    assert!(matches!(
-        core.respawn_session(&shell).unwrap_err(),
-        CoreError::NotAnAgent(_)
-    ));
     assert!(matches!(
         core.respawn_session(&"zz".parse::<SessionId>().unwrap())
             .unwrap_err(),
@@ -408,8 +404,8 @@ fn respawn_refusals_change_nothing() {
     assert_eq!(
         types,
         [
-            "created", "stopped", "created", "stopped", "created", "stopped", "archived",
-            "archived", "created", "renamed"
+            "created", "stopped", "created", "stopped", "archived", "archived", "created",
+            "renamed"
         ]
     );
 }
@@ -506,7 +502,7 @@ fn messages_arrive_whole_with_the_right_envelope() {
         .unwrap();
     let cwd_a = cwd_of(&core, &a);
     let b = core
-        .create_session(process("bob", &h.workdir("b")))
+        .create_session(agent("bob", &h.repository("b")))
         .unwrap();
     assert!(wait_for(Duration::from_secs(5), || cwd_a
         .join("env.txt")
@@ -579,9 +575,11 @@ fn messages_arrive_whole_with_the_right_envelope() {
 fn a_session_renamed_behind_cores_back_is_still_reachable() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let cwd = h.workdir("a");
-    let id = core.create_session(process("orig", &cwd)).unwrap();
+    let core = h.open_with_engine();
+    let id = core
+        .create_session(agent("orig", &h.repository("a")))
+        .unwrap();
+    let cwd = cwd_of(&core, &id);
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
@@ -608,8 +606,8 @@ fn a_session_renamed_behind_cores_back_is_still_reachable() {
 fn inspection_failure_writes_nothing() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let id = core.create_session(process("i", &h.workdir("a"))).unwrap();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("i", &h.repository("a"))).unwrap();
     let before = h.record_bytes(&id);
     // Make the socket unusable: replace it with a directory.
     h.tmux(&["kill-server"]);
@@ -636,8 +634,8 @@ fn inspection_failure_writes_nothing() {
 fn location_of_a_terminal_record_is_not_running_even_if_tmux_has_its_id() {
     require_tmux!();
     let h = Harness::new();
-    let core = h.open();
-    let id = core.create_session(process("t", &h.workdir("a"))).unwrap();
+    let core = h.open_with_engine();
+    let id = core.create_session(agent("t", &h.repository("a"))).unwrap();
     core.stop_session(&id).unwrap();
     h.tmux_ok(&["new-session", "-d", "-s", "ghost", "sleep", "30"]);
     h.tmux_ok(&["set-option", "-t", "=ghost:", "@tx-id", id.as_str()]);

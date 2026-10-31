@@ -341,7 +341,7 @@ fn a_malformed_ext_is_reported_and_never_breaks_ls_or_show() {
     let path = cli.state().join("sessions").join(format!("{id}.json"));
     let mut json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    json["ext"] = serde_json::json!({"artifacts": {"bound": 5}});
+    json["ext"] = serde_json::json!({"artifacts": {"group": 5}});
     std::fs::write(&path, json.to_string()).unwrap();
 
     assert!(cli.ok(&["ls"]).contains("worker"));

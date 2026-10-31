@@ -16,7 +16,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
-use tx_core::{Launch, Lifecycle, Session};
+use tx_core::{Lifecycle, Session};
 
 use crate::engines::BUNDLE_TRANSCRIPT_NAME;
 use crate::ext::history_ext;
@@ -499,15 +499,13 @@ fn activity_at(session: &Session) -> f64 {
     session.last_modified_at
 }
 
-/// name → role of the most recently active record of that name (names are reusable).
+/// name → role of the most recently active record of that name (names are reusable). Every
+/// core record is an agent.
 fn role_resolver(sessions: &[Session]) -> HashMap<String, SenderRole> {
     let mut best: HashMap<&str, (f64, SenderRole)> = HashMap::new();
     for session in sessions {
         let activity = activity_at(session);
-        let role = match session.launch {
-            Launch::Agent { .. } => SenderRole::Agent,
-            Launch::Process { .. } => SenderRole::Shell,
-        };
+        let role = SenderRole::Agent;
         let replace = best
             .get(session.name.as_str())
             .is_none_or(|(current, _)| activity > *current);

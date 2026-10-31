@@ -108,23 +108,19 @@ pub fn history_ext(s: &Session) -> Result<HistoryExt, ChatError> {
     read_ext(s, HISTORY_ID)
 }
 
-/// The record's own agent launch, else the one `ext.chat` remembers.
-pub fn agent_launch(s: &Session, ext: &ChatExt) -> Option<AgentLaunch> {
-    match &s.launch {
-        Launch::Agent {
-            engine, profile, ..
-        } => {
-            // Model and effort are engine data (PR 12a); the engine's `ext` key is its id.
-            let option = |key: &str| s.ext.get(engine)?.get(key)?.as_str().map(str::to_owned);
-            Some(AgentLaunch {
-                engine: engine.clone(),
-                profile: profile.clone(),
-                model: option("model"),
-                effort: option("effort"),
-                rest: Map::new(),
-            })
-        }
-        Launch::Process { .. } => ext.launch.clone(),
+/// The record's agent launch.
+pub fn agent_launch(s: &Session) -> AgentLaunch {
+    let Launch::Agent {
+        engine, profile, ..
+    } = &s.launch;
+    // Model and effort are engine data (PR 12a); the engine's `ext` key is its id.
+    let option = |key: &str| s.ext.get(engine)?.get(key)?.as_str().map(str::to_owned);
+    AgentLaunch {
+        engine: engine.clone(),
+        profile: profile.clone(),
+        model: option("model"),
+        effort: option("effort"),
+        rest: Map::new(),
     }
 }
 
@@ -177,8 +173,8 @@ mod tests {
         serde_json::from_value(json!({
             "id": id, "name": name, "parent": null, "tags": [], "cwd": "/tmp",
             "created_at": 1.0, "ended_at": null, "last_modified_at": 1.0, "lifecycle": "running",
-            "launch": {"kind": "process", "program": "sh", "args": []},
-            "ext": ext,
+            "launch": {"kind": "agent", "engine": "claude", "profile": ["r"]},
+            "state": "idle", "ext": ext,
         }))
         .unwrap()
     }
@@ -248,37 +244,18 @@ mod tests {
     }
 
     #[test]
-    fn agent_launch_prefers_the_record() {
-        let ext = ChatExt {
-            launch: Some(AgentLaunch {
-                engine: "codex".into(),
-                profile: vec![],
-                model: None,
-                effort: None,
-                rest: Map::new(),
-            }),
-            ..ChatExt::default()
-        };
-        let process = session("a", "a", json!({}));
-        assert_eq!(agent_launch(&process, &ext).unwrap().engine, "codex");
-        assert!(agent_launch(&process, &ChatExt::default()).is_none());
-        let mut agent = process;
-        agent.launch = Launch::Agent {
-            engine: "claude".into(),
-            profile: vec!["r".into()],
-            model: None,
-            effort: None,
-            resume: None,
-        };
-        let launch = agent_launch(&agent, &ext).unwrap();
+    fn agent_launch_reads_the_record_and_its_engine_data() {
+        let mut agent = session("a", "a", json!({}));
+        let launch = agent_launch(&agent);
         assert_eq!(launch.engine, "claude");
+        assert_eq!(launch.profile, ["r"]);
         assert_eq!(launch.model, None);
         assert_eq!(launch.effort, None);
         agent.ext.insert(
             "claude".into(),
             json!({"conversation_id": "c", "model": "opus", "effort": "low"}),
         );
-        let launch = agent_launch(&agent, &ext).unwrap();
+        let launch = agent_launch(&agent);
         assert_eq!(launch.model.as_deref(), Some("opus"));
         assert_eq!(launch.effort.as_deref(), Some("low"));
     }

@@ -6,7 +6,7 @@ mod common;
 use std::process::Command;
 use std::time::Duration;
 
-use common::{Harness, agent, cwd_of, process, typed, wait_for};
+use common::{Harness, agent, cwd_of, typed, wait_for};
 use tx_core::{CoreConfig, Directories, Lifecycle, ListFilter, SendOptions, TxCore};
 
 #[test]
@@ -29,8 +29,7 @@ fn child_lists_running_sessions() {
 fn swarm_outlives_its_core_and_targets_reach_the_right_pane() {
     require_tmux!();
     let h = Harness::new();
-    let tool_dir = h.workdir("tool");
-    let (alice, bob, tool, alice_dir, bob_dir) = {
+    let (alice, bob, tool, alice_dir, bob_dir, tool_dir) = {
         let core = h.open_with_engine();
         let alice = core
             .create_session(agent("alice", &h.repository("alice")))
@@ -38,8 +37,14 @@ fn swarm_outlives_its_core_and_targets_reach_the_right_pane() {
         let bob = core
             .create_session(agent("bob", &h.repository("bob")))
             .unwrap();
-        let tool = core.create_session(process("tool", &tool_dir)).unwrap();
-        let (alice_dir, bob_dir) = (cwd_of(&core, &alice), cwd_of(&core, &bob));
+        let tool = core
+            .create_session(agent("tool", &h.repository("tool")))
+            .unwrap();
+        let (alice_dir, bob_dir, tool_dir) = (
+            cwd_of(&core, &alice),
+            cwd_of(&core, &bob),
+            cwd_of(&core, &tool),
+        );
         for dir in [&alice_dir, &bob_dir, &tool_dir] {
             assert!(wait_for(Duration::from_secs(5), || dir
                 .join("env.txt")
@@ -51,7 +56,7 @@ fn swarm_outlives_its_core_and_targets_reach_the_right_pane() {
             .unwrap();
         core.send_message(&tool, "run", SendOptions::default())
             .unwrap();
-        (alice, bob, tool, alice_dir, bob_dir)
+        (alice, bob, tool, alice_dir, bob_dir, tool_dir)
     };
     // The launching core is gone; the sessions are not.
     assert_eq!(h.live_names().len(), 3);

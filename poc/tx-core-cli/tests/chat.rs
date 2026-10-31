@@ -352,14 +352,6 @@ fn fork_launches_the_source_conversation_forked_in_a_new_worktree() {
 fn fork_refusals() {
     require_tmux!();
     let cli = Cli::new();
-    let process = cli.create("p");
-    let output = cli.op(&["fork", "p", "--prompt", "go"], &[]);
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        format!("txc: session {process} is not an agent\n")
-    );
-    assert!(cli.records_named("p-fork").is_empty());
     let missing = cli.op(&["fork", "nope", "--prompt", "go"], &[]);
     assert_eq!(missing.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&missing.stderr).contains("no session \"nope\""));

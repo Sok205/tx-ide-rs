@@ -1,18 +1,17 @@
 //! Adversarial / property tests for the public API surface: builder ⇔ field equivalence, chaining
-//! order, append-vs-replace on repeated calls, the `Process`-ignores-agent-setters edge, the
-//! empty-program path through `create_session`, compile-time auto traits, `EventType::ALL`, and
+//! order, append-vs-replace on repeated calls, compile-time auto traits, `EventType::ALL`, and
 //! `CoreConfig` round trips with the socket-length boundary.
 //!
 //! Tests marked `#[ignore = "BUG: …"]` document real failures; none were needed in this suite.
 
 use std::collections::BTreeSet;
 use std::panic::{RefUnwindSafe, UnwindSafe};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use proptest::prelude::*;
 use tx_core::{
     CoreConfig, CoreError, CreateOptions, Directories, EventType, Launch, LaunchMode,
-    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine,
+    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState,
     MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId,
     TxCore, WorkspaceAction,
 };
@@ -120,12 +119,15 @@ fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecyc
         archived_at: None,
         last_modified_at: 1.0,
         lifecycle,
-        launch: Launch::Process {
-            program: "sh".into(),
-            args: vec![],
+        launch: Launch::Agent {
+            engine: "e".into(),
+            profile: vec![],
+            model: None,
+            effort: None,
+            resume: None,
         },
         ext: std::collections::BTreeMap::new(),
-        state: None,
+        state: LlmEngineState::Idle,
     }
 }
 
@@ -271,21 +273,6 @@ proptest! {
         prop_assert!(profile.is_empty() && options.as_object().is_some_and(|o| o.is_empty()) && initial_prompt.is_empty());
     }
 
-    /// Sharp edge (documented, not a failure): every agent-only setter on a `Process` launch is a
-    /// silent no-op. A plugin author who writes `process(..).model("x")` gets no compile error,
-    /// no runtime error, and no model.
-    #[test]
-    fn launch_options_process_silently_ignores_agent_setters(
-        program in text(), args in texts(),
-        roles in texts(), m in text(), e in text(), p in text(),
-    ) {
-        let plain = LaunchOptions::process(&program, args.clone());
-        let decorated = LaunchOptions::process(&program, args.clone()).profile(roles).option("model", m.as_str()).options(serde_json::json!({"effort": e})).initial_prompt(&p);
-        prop_assert_eq!(&decorated, &plain);
-        let is_process = matches!(&decorated, LaunchOptions::Process { program: pr, args: ar, .. } if *pr == program && *ar == args);
-        prop_assert!(is_process, "Process payload drifted");
-    }
-
     /// `ListFilter`: each setter replaces its own field; `matches` is the conjunction.
     #[test]
     fn list_filter_builder_and_matches(
@@ -317,75 +304,6 @@ proptest! {
         prop_assert_eq!(SendOptions::from_agent(id.clone()).sender, Sender::Agent { id });
         prop_assert_eq!(SendOptions::default().sender, Sender::User { via: None });
     }
-}
-
-// ---------------------------------------------------------------------------------------------
-// 2. Empty program: accepted by the builder, refused by `create_session`, no state touched
-// ---------------------------------------------------------------------------------------------
-
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
-
-    #[test]
-    fn empty_program_is_rejected_by_create_session_without_panic_or_state(
-        args in texts(), name in bare_name(), tags in texts(),
-    ) {
-        let dir = short_tempdir();
-        let state = dir.path().join("state");
-        let core = TxCore::open(CoreConfig::new(Directories::under(&state))).unwrap();
-        let before = snapshot(&state);
-
-        let launch = LaunchOptions::process("", args.clone());
-        let is_process = matches!(&launch, LaunchOptions::Process { program, args: a, .. } if program.is_empty() && *a == args);
-        prop_assert!(is_process, "builder must accept an empty program");
-
-        let opts = CreateOptions::new(&name, dir.path(), launch).tags(tags);
-        let error = core.create_session(opts).unwrap_err();
-        let is_invalid_name = matches!(&error, CoreError::InvalidName(p) if p.is_empty());
-        prop_assert!(is_invalid_name, "expected InvalidName(\"\"), got {}", kind(&error));
-        prop_assert!(error.to_string().contains("invalid session name"), "{}", error.to_string());
-
-        // Nothing was recorded, logged, or locked.
-        prop_assert_eq!(snapshot(&state), before);
-        prop_assert!(core.list_sessions(&ListFilter::new()).unwrap().is_empty());
-    }
-
-    /// Order of checks: an invalid *name* wins over an empty program; a missing cwd wins over an
-    /// empty program; all before any lock or server contact.
-    #[test]
-    fn empty_program_loses_to_earlier_checks(args in texts()) {
-        let dir = short_tempdir();
-        let state = dir.path().join("state");
-        let core = TxCore::open(CoreConfig::new(Directories::under(&state))).unwrap();
-
-        let bad_name = CreateOptions::new("", dir.path(), LaunchOptions::process("", args.clone()));
-        prop_assert_eq!(kind(&core.create_session(bad_name).unwrap_err()), "InvalidName");
-
-        let bad_cwd = CreateOptions::new("ok", dir.path().join("missing"), LaunchOptions::process("", args.clone()));
-        prop_assert_eq!(kind(&core.create_session(bad_cwd).unwrap_err()), "NotADirectory");
-
-        let bad_env = CreateOptions::new("ok", dir.path(), LaunchOptions::process("", args)).env("A=B", "v");
-        prop_assert_eq!(kind(&core.create_session(bad_env).unwrap_err()), "InvalidEnvKey");
-    }
-}
-
-/// Every file under `state` with its size, sorted.
-fn snapshot(state: &Path) -> Vec<(PathBuf, u64)> {
-    fn walk(dir: &Path, out: &mut Vec<(PathBuf, u64)>) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else {
-                out.push((path, entry.metadata().unwrap().len()));
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(state, &mut out);
-    out.sort();
-    out
 }
 
 // ---------------------------------------------------------------------------------------------

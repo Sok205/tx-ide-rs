@@ -35,8 +35,6 @@
     {"id": "10000000-0000-4000-8000-000000000010", "name": "tmp", "engine": "claude", "state": "idle",
      "tags": ["temporary"], "created_at": 1791716400.0, "activity": 1791716400.0,
      "transcripts": [{"chat": "c-hub", "file": "hub.jsonl"}]},
-    {"id": "11000000-0000-4000-8000-000000000011", "name": "shell", "engine": null, "state": "idle",
-     "tags": [], "created_at": 1791716400.0, "activity": 1791716400.0, "transcripts": []},
     {"id": "12000000-0000-4000-8000-000000000012", "name": "ancient", "engine": "claude", "state": "exited",
      "tags": [], "created_at": 1790841600.0, "ended_at": 1790845200.0, "activity": 1790845200.0,
      "transcripts": [{"chat": "c-ancient", "file": "scratch.jsonl"}]}

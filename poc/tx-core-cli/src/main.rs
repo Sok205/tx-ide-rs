@@ -11,7 +11,7 @@ use tx_core::{
     CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, RefreshResult, SendOptions,
     Sender, SessionId, TxCore,
 };
-use tx_core_cli::args::{self, Invocation, LaunchSpec, Verb};
+use tx_core_cli::args::{self, Invocation, Verb};
 
 use tx_core_cli::setup::{
     Failure, VERSION_ONE_HOME, VERSION_ONE_HOME_ENV, absolute, core_config, open, open_with,
@@ -133,29 +133,21 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             parent,
             tags,
             env,
-            launch,
+            engine,
+            roles,
+            options,
+            prompt,
         } => {
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
                 None => None,
             };
-            let launch = match launch {
-                LaunchSpec::Agent {
-                    engine,
-                    roles,
-                    options,
-                    prompt,
-                } => {
-                    let mut launch = LaunchOptions::agent(engine)
-                        .profile(roles)
-                        .initial_prompt(prompt);
-                    for (key, value) in options {
-                        launch = launch.option(key, value);
-                    }
-                    launch
-                }
-                LaunchSpec::Process { program, args } => LaunchOptions::process(program, args),
-            };
+            let mut launch = LaunchOptions::agent(engine)
+                .profile(roles)
+                .initial_prompt(prompt);
+            for (key, value) in options {
+                launch = launch.option(key, value);
+            }
             let mut opts = CreateOptions::new(name, cwd, launch).tags(tags);
             if let Some(parent) = parent {
                 opts = opts.parent(parent);

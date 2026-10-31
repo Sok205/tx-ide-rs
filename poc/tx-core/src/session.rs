@@ -121,8 +121,9 @@ impl FromStr for Lifecycle {
     }
 }
 
-/// How the session's process was started. Engine ids are strings, so a new engine needs no
-/// change here.
+/// How the agent was started. Engine ids are strings, so a new engine needs no change here.
+/// One variant: core holds agents only (the `process` kind went with PR 11; Storage PR 14
+/// removes the enum).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Launch {
@@ -139,10 +140,6 @@ pub enum Launch {
         effort: Option<String>,
         #[serde(default)]
         resume: Option<String>,
-    },
-    Process {
-        program: String,
-        args: Vec<String>,
     },
 }
 
@@ -167,10 +164,9 @@ pub struct Session {
     pub last_modified_at: f64,
     pub lifecycle: Lifecycle,
     pub launch: Launch,
-    /// The agent's state as its engine adapter reported it. Core-owned. `None` for process
-    /// sessions and for records written before this field existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state: Option<LlmEngineState>,
+    /// The agent's state as its engine adapter reported it. Core-owned. A record written
+    /// before this field existed loads as `idle` while running and `ended` once ended.
+    pub state: LlmEngineState,
     /// Plugin-owned data keyed by plugin id; written through `TxCore::update_ext`. Core never
     /// reads it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -189,6 +185,10 @@ pub enum RecordError {
     MissingVersion,
     #[error("{0} is not a finite number")]
     NonFiniteTime(&'static str),
+    /// A `"kind": "process"` record, written before PR 11. The store skips it until Storage
+    /// PR 14 migrates it.
+    #[error("a process record, written before core held agents only")]
+    ProcessRecord,
 }
 
 #[derive(Serialize)]
@@ -245,9 +245,24 @@ impl Session {
             }
             Some(other) => return Err(RecordError::InvalidVersion(other.to_string())),
         }
+        if value.get("launch").and_then(|launch| launch.get("kind"))
+            == Some(&serde_json::Value::String("process".to_owned()))
+        {
+            return Err(RecordError::ProcessRecord);
+        }
         // Written before `last_modified_at` existed: the last write is unknown, creation stands in.
         if let Some(created_at) = value.get("created_at").cloned() {
             value.entry("last_modified_at").or_insert(created_at);
+        }
+        // Written before `state` existed: a running agent is taken as idle, an ended one as ended.
+        if !value.contains_key("state") {
+            let state = match value.get("lifecycle") {
+                Some(serde_json::Value::String(lifecycle)) if lifecycle == "running" => {
+                    LlmEngineState::Idle
+                }
+                _ => LlmEngineState::Ended,
+            };
+            value.insert("state".to_owned(), serde_json::to_value(state)?);
         }
         let record: RecordIn = serde_json::from_value(serde_json::Value::Object(value))?;
         let _ = record.version;
@@ -304,14 +319,15 @@ mod tests {
                 resume: Some("chat-1".into()),
             },
             ext: std::collections::BTreeMap::new(),
-            state: None,
+            state: LlmEngineState::Working,
         }
     }
 
-    fn process() -> Session {
+    /// An agent that was stopped.
+    fn ended() -> Session {
         Session {
             id: sid("x"),
-            name: "shell".into(),
+            name: "done".into(),
             parent: None,
             tags: vec![],
             cwd: PathBuf::from("/"),
@@ -320,12 +336,15 @@ mod tests {
             archived_at: None,
             last_modified_at: 1.0,
             lifecycle: Lifecycle::Stopped,
-            launch: Launch::Process {
-                program: "sh".into(),
-                args: vec!["-c".into(), "sleep 1".into()],
+            launch: Launch::Agent {
+                engine: "codex".into(),
+                profile: vec![],
+                model: None,
+                effort: None,
+                resume: None,
             },
             ext: std::collections::BTreeMap::new(),
-            state: None,
+            state: LlmEngineState::Ended,
         }
     }
 
@@ -336,9 +355,9 @@ mod tests {
     }
 
     #[test]
-    fn process_round_trips_through_json() {
-        let text = process().to_json().unwrap();
-        assert_eq!(Session::from_json(&text).unwrap(), process());
+    fn an_ended_agent_round_trips_through_json() {
+        let text = ended().to_json().unwrap();
+        assert_eq!(Session::from_json(&text).unwrap(), ended());
     }
 
     #[test]
@@ -352,15 +371,17 @@ mod tests {
         assert_eq!(value["launch"].get("effort"), None);
         assert_eq!(value["parent"], "p");
         assert_eq!(value["ended_at"], serde_json::Value::Null);
-        let value: serde_json::Value = serde_json::from_str(&process().to_json().unwrap()).unwrap();
-        assert_eq!(value["launch"]["kind"], "process");
+        assert_eq!(value["state"], "working");
+        let value: serde_json::Value = serde_json::from_str(&ended().to_json().unwrap()).unwrap();
+        assert_eq!(value["launch"]["kind"], "agent");
         assert_eq!(value["lifecycle"], "stopped");
         assert_eq!(value["ended_at"], 2.0);
+        assert_eq!(value["state"], "ended");
     }
 
     #[test]
     fn json_is_pretty_and_newline_terminated() {
-        let text = process().to_json().unwrap();
+        let text = ended().to_json().unwrap();
         assert!(text.ends_with("}\n"), "{text:?}");
         assert!(text.contains("\n  \"id\""), "{text:?}");
     }
@@ -396,7 +417,7 @@ mod tests {
 
     #[test]
     fn a_record_without_last_modified_at_loads_with_its_creation() {
-        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":7.5,"ended_at":null,"lifecycle":"running","launch":{"kind":"process","program":"sh","args":[]}}"#;
+        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":7.5,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"e","profile":[]}}"#;
         assert_eq!(Session::from_json(text).unwrap().last_modified_at, 7.5);
         let stamped = text.replace(
             r#""created_at":7.5,"#,
@@ -405,16 +426,50 @@ mod tests {
         assert_eq!(Session::from_json(&stamped).unwrap().last_modified_at, 9.0);
     }
 
+    /// A record written before agent state existed carries no `state`: running reads as idle,
+    /// ended as ended.
+    #[test]
+    fn a_record_without_state_loads_as_idle_or_ended() {
+        let running = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"e","profile":[]}}"#;
+        assert_eq!(
+            Session::from_json(running).unwrap().state,
+            LlmEngineState::Idle
+        );
+        for lifecycle in ["exited", "stopped"] {
+            let text = running.replace("\"running\"", &format!("\"{lifecycle}\""));
+            assert_eq!(
+                Session::from_json(&text).unwrap().state,
+                LlmEngineState::Ended
+            );
+        }
+        let stated = running.replace(r#""lifecycle""#, r#""state":"working","lifecycle""#);
+        assert_eq!(
+            Session::from_json(&stated).unwrap().state,
+            LlmEngineState::Working
+        );
+    }
+
+    /// A `process` record (written before PR 11) is named as such, so the store can skip it
+    /// instead of failing on an unknown launch kind.
+    #[test]
+    fn a_process_record_is_refused_by_name() {
+        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{"kind":"process","program":"sh","args":[]}}"#;
+        assert!(matches!(
+            Session::from_json(text),
+            Err(RecordError::ProcessRecord)
+        ));
+    }
+
     #[test]
     fn unknown_keys_are_ignored_for_forward_compatibility() {
-        let mut text = process().to_json().unwrap();
+        let mut text = ended().to_json().unwrap();
         text.insert_str(text.find("\"id\"").unwrap(), "\"future\": {\"x\": 1},\n  ");
-        assert_eq!(Session::from_json(&text).unwrap(), process());
+        assert_eq!(Session::from_json(&text).unwrap(), ended());
     }
 
     #[test]
     fn newer_version_is_refused() {
-        let text = process()
+        let text = ended()
             .to_json()
             .unwrap()
             .replace("\"version\": 1", "\"version\": 2");
@@ -426,10 +481,7 @@ mod tests {
 
     #[test]
     fn missing_version_is_refused() {
-        let text = process()
-            .to_json()
-            .unwrap()
-            .replace("\"version\": 1,\n", "");
+        let text = ended().to_json().unwrap().replace("\"version\": 1,\n", "");
         assert!(matches!(
             Session::from_json(&text),
             Err(RecordError::MissingVersion)
@@ -452,7 +504,7 @@ mod tests {
     #[test]
     fn to_json_refuses_a_non_utf8_cwd_instead_of_panicking() {
         use std::os::unix::ffi::OsStrExt;
-        let mut session = process();
+        let mut session = ended();
         session.cwd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/\xff\xfe"));
         assert!(matches!(session.to_json(), Err(RecordError::Json(_))));
     }
@@ -460,20 +512,20 @@ mod tests {
     #[test]
     fn to_json_refuses_non_finite_timestamps() {
         for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let mut session = process();
+            let mut session = ended();
             session.created_at = bad;
             assert!(matches!(
                 session.to_json(),
                 Err(RecordError::NonFiniteTime("created_at"))
             ));
-            let mut session = process();
+            let mut session = ended();
             session.ended_at = Some(bad);
             assert!(matches!(
                 session.to_json(),
                 Err(RecordError::NonFiniteTime("ended_at"))
             ));
         }
-        let mut session = process();
+        let mut session = ended();
         session.created_at = -0.0;
         session.ended_at = Some(f64::MIN_POSITIVE / 2.0);
         assert_eq!(
@@ -485,7 +537,7 @@ mod tests {
     #[test]
     fn non_integer_version_is_invalid_not_missing() {
         for version in ["-1", "1.0", "\"1\"", "true", "null", "[1]", "1e300"] {
-            let text = process()
+            let text = ended()
                 .to_json()
                 .unwrap()
                 .replace("\"version\": 1", &format!("\"version\": {version}"));
@@ -546,7 +598,7 @@ mod tests {
     #[test]
     fn from_json_rejects_ids_outside_the_grammar() {
         for bad in ["\"\"", "\"a/b\"", "\"..\"", "\"a b\""] {
-            let text = process()
+            let text = ended()
                 .to_json()
                 .unwrap()
                 .replace("\"id\": \"x\"", &format!("\"id\": {bad}"));
@@ -620,13 +672,13 @@ mod tests {
 
     #[test]
     fn ext_absent_is_none() {
-        let session = process();
+        let session = ended();
         assert_eq!(session.ext::<serde_json::Value>("views").unwrap(), None);
     }
 
     #[test]
     fn ext_present_deserializes() {
-        let mut session = process();
+        let mut session = ended();
         session
             .ext
             .insert("views".into(), serde_json::json!({"kind": "nvim"}));
@@ -640,7 +692,7 @@ mod tests {
 
     #[test]
     fn ext_wrong_shape_is_err() {
-        let mut session = process();
+        let mut session = ended();
         session.ext.insert("views".into(), serde_json::json!(5));
         assert!(session.ext::<Kind>("views").is_err());
     }

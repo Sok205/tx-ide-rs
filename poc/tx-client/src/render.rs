@@ -292,7 +292,7 @@ mod tests {
                 resume: None,
             },
             ext: Default::default(),
-            state: None,
+            state: tx_core::LlmEngineState::Idle,
         }
     }
 

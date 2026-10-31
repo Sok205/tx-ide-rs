@@ -172,16 +172,6 @@ fn not_ours_exits_zero_and_writes_nothing() {
 }
 
 #[test]
-fn process_sessions_have_no_state() {
-    require_tmux!();
-    let cli = Cli::new();
-    let id = cli.create("p");
-    assert!(cli.show("p").get("state").is_none());
-    assert!(cli.txi_hook("SessionStart", &id, "{}").status.success());
-    assert!(cli.show("p").get("state").is_none());
-}
-
-#[test]
 fn hooks_are_internal_to_txi() {
     let cli = Cli::new();
     let help = cli.ok(&["help"]);

@@ -78,21 +78,34 @@ fn pane_label_shows_nested_session() {
     let cli = Cli::new();
     cli.create("inner");
     cli.ok(&["tag", "inner", "t1"]);
+    // An interactive shell that reads none of the operator's rc files.
     let shell = if Command::new("zsh").arg("-c").arg(":").output().is_ok() {
-        "zsh"
+        "zsh -f"
     } else {
         "sh"
     };
-    let cwd = cli.dir.path().join("outer");
-    std::fs::create_dir_all(&cwd).unwrap();
-    cli.ok(&[
-        "create",
-        "outer",
-        "--cwd",
-        cwd.to_str().unwrap(),
-        "--exec",
-        shell,
-    ]);
+    // An agent whose `claude` is that shell: a pane a nested attach can be typed into.
+    let cwd = cli.repository("outer");
+    let path = cli.shim_path(&[("claude", &format!("exec {shell}"))]);
+    let output = cli.run(
+        &[
+            "create",
+            "outer",
+            "--cwd",
+            cwd.to_str().unwrap(),
+            "--engine",
+            "claude",
+            "--prompt",
+            "start",
+        ],
+        &[("PATH", path.as_str())],
+        "",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let pane = pane_id_of(&cli, "outer");
     let attach = format!(
         "TMUX= tmux -S {} attach -t '=inner'",
