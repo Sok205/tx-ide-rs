@@ -34,9 +34,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Conversation, EngineError, Input, Key, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
-    LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
-    mirror_file, mirror_file_exact,
+    Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
+    LlmEngineChange, LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data,
+    hook_shell_command, mirror_file, mirror_file_exact,
 };
 
 pub const CODEX_BIN: &str = "codex";
@@ -235,8 +235,8 @@ fn archived_rollout(archive_directory: &Path, conversation: &str) -> PathBuf {
 }
 
 impl LlmEngine for CodexAdapter {
-    fn id(&self) -> &str {
-        "codex"
+    fn kind(&self) -> EngineKind {
+        EngineKind::Codex
     }
 
     fn ext_key(&self) -> &'static str {
@@ -519,7 +519,7 @@ mod tests {
             last_modified_at: 1.0,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
-                engine: adapter().id().to_owned(),
+                engine: adapter().kind(),
                 profile: Vec::new(),
                 model: None,
                 effort: None,
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn id_is_codex() {
-        assert_eq!(adapter().id(), "codex");
+        assert_eq!(adapter().kind(), EngineKind::Codex);
     }
 
     #[test]
@@ -1012,7 +1012,7 @@ mod tests {
         assert_eq!(CodexPlugin.id(), "engine-codex");
         core.plug(vec![Box::new(CodexPlugin)], &PluginConfig::default())
             .unwrap();
-        assert_eq!(core.engine_ids(), vec!["codex"]);
+        assert_eq!(core.engine_kinds(), vec![EngineKind::Codex]);
     }
 
     fn write(path: &Path, data: &[u8]) {

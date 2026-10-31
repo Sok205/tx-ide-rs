@@ -7,15 +7,17 @@ use std::path::{Component, Path, PathBuf};
 use proptest::prelude::*;
 use tx_core::engine::{apply_workspace, resolve_in};
 use tx_core::{
-    CoreError, EngineError, EngineRegistry, Launch, LaunchPlan, LaunchRequest, Lifecycle,
-    LlmEngine, LlmEngineState, Profile, ResolvedProfile, Session, SessionId, WorkspaceAction,
+    CoreError, EngineError, EngineKind, EngineRegistry, Launch, LaunchPlan, LaunchRequest,
+    Lifecycle, LlmEngine, LlmEngineState, Profile, ResolvedProfile, Session, SessionId,
+    WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------------------------
 
-struct Stub(String);
+/// An engine of the kind, owning the ext key of the same name.
+struct Stub(EngineKind);
 
 impl LlmEngine for Stub {
     fn on_hook(
@@ -26,14 +28,12 @@ impl LlmEngine for Stub {
         tx_core::LlmEngineChange::NONE
     }
 
-    fn id(&self) -> &str {
-        &self.0
+    fn kind(&self) -> EngineKind {
+        self.0
     }
 
-    /// Ids under test are arbitrary bare names; the key is their hex, so distinct ids never
-    /// share one (leaked: a test stub).
     fn ext_key(&self) -> &'static str {
-        String::leak(self.0.bytes().map(|byte| format!("{byte:02x}")).collect())
+        self.0.as_str()
     }
 
     fn configure(
@@ -57,8 +57,8 @@ impl LlmEngine for Stub {
     }
 }
 
-fn stub(id: &str) -> Box<dyn LlmEngine> {
-    Box::new(Stub(id.to_owned()))
+fn stub(kind: EngineKind) -> Box<dyn LlmEngine> {
+    Box::new(Stub(kind))
 }
 
 fn tmp() -> tempfile::TempDir {
@@ -77,13 +77,6 @@ fn link(src: impl Into<PathBuf>, dst: &str) -> WorkspaceAction {
         src: src.into(),
         dst: dst.into(),
     }
-}
-
-fn is_bare_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 128
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 fn has_dot_component(path: &Path) -> bool {
@@ -771,119 +764,58 @@ proptest! {
 // 6. Registry
 // ---------------------------------------------------------------------------------------------
 
+/// Registration order does not matter: `kinds()` is sorted; a kind registered twice is
+/// `EngineTaken`; a kind nobody registered is absent.
+#[test]
+fn registry_is_keyed_by_kind_in_any_order() {
+    for order in [
+        vec![EngineKind::Claude, EngineKind::Codex],
+        vec![EngineKind::Codex, EngineKind::Claude],
+    ] {
+        let mut registry = EngineRegistry::new();
+        for kind in &order {
+            registry.register(stub(*kind)).unwrap();
+        }
+        assert_eq!(registry.kinds(), EngineKind::ALL);
+        for kind in EngineKind::ALL {
+            assert_eq!(registry.get(kind).unwrap().kind(), kind);
+            let error = registry.register(stub(kind)).unwrap_err();
+            assert!(
+                matches!(error, CoreError::EngineTaken(taken) if taken == kind),
+                "{error:?}"
+            );
+        }
+        assert_eq!(registry.kinds(), EngineKind::ALL);
+    }
+    let mut registry = EngineRegistry::new();
+    assert!(registry.kinds().is_empty());
+    registry.register(stub(EngineKind::Codex)).unwrap();
+    assert_eq!(registry.kinds(), [EngineKind::Codex]);
+    assert!(registry.get(EngineKind::Claude).is_none());
+}
+
+/// The kind's name is its only spelling: `EngineKind::from_str` and serde agree, and anything
+/// else, including case variants and padding, is refused without a panic.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
     #[test]
-    fn register_accepts_exactly_bare_names(id in "[A-Za-z0-9_\\-]{0,130}") {
-        let mut registry = EngineRegistry::new();
-        let result = registry.register(stub(&id));
-        let accepted = result.is_ok();
-        prop_assert_eq!(accepted, is_bare_name(&id), "{:?}", id);
-        if accepted {
-            prop_assert_eq!(registry.get(&id).unwrap().id(), id.as_str());
-            prop_assert_eq!(registry.ids(), vec![id.as_str()]);
-            let dup = registry.register(stub(&id));
-            let taken = matches!(dup, Err(CoreError::EngineTaken(ref t)) if *t == id);
-            prop_assert!(taken, "{:?}", dup);
-            prop_assert_eq!(registry.ids().len(), 1);
-        } else {
-            let invalid = matches!(result, Err(CoreError::InvalidName(ref n)) if *n == id);
-            prop_assert!(invalid, "{:?}", result);
-            prop_assert!(registry.get(&id).is_none());
-            prop_assert!(registry.ids().is_empty());
-        }
-    }
-
-    #[test]
-    fn register_rejects_any_non_bare_name(id in "[^A-Za-z0-9_\\-]{1,8}|.*[^A-Za-z0-9_\\-].*") {
-        prop_assume!(!is_bare_name(&id));
-        let mut registry = EngineRegistry::new();
-        let result = registry.register(stub(&id));
-        let invalid = matches!(result, Err(CoreError::InvalidName(_)));
-        prop_assert!(invalid, "{:?}", id);
-    }
-
-    #[test]
-    fn ids_are_sorted_and_unique_and_get_matches(
-        ids in prop::collection::vec("[A-Za-z0-9_\\-]{1,12}", 0..40)
-    ) {
-        let mut registry = EngineRegistry::new();
-        let mut expected = std::collections::BTreeSet::new();
-        for id in &ids {
-            let r = registry.register(stub(id));
-            if expected.insert(id.clone()) {
-                prop_assert!(r.is_ok());
-            } else {
-                prop_assert!(r.is_err());
+    fn engine_kind_parses_exactly_its_lowercase_names(text in "[A-Za-z _\\-]{0,8}|claude|codex") {
+        let known = EngineKind::ALL.into_iter().find(|kind| kind.as_str() == text);
+        let parsed = text.parse::<EngineKind>();
+        match known {
+            Some(kind) => {
+                prop_assert_eq!(parsed.unwrap(), kind);
+                prop_assert_eq!(serde_json::from_str::<EngineKind>(&format!("{:?}", text)).unwrap(), kind);
+                prop_assert_eq!(serde_json::to_string(&kind).unwrap(), format!("{:?}", text));
+            }
+            None => {
+                let refused = matches!(parsed, Err(CoreError::InvalidEngineKind(ref t)) if *t == text);
+                prop_assert!(refused, "{:?}", text);
+                prop_assert!(serde_json::from_str::<EngineKind>(&format!("{:?}", text)).is_err());
             }
         }
-        let got = registry.ids();
-        let want: Vec<&str> = expected.iter().map(String::as_str).collect();
-        prop_assert_eq!(&got, &want);
-        let mut sorted = got.clone();
-        sorted.sort_unstable();
-        prop_assert_eq!(&got, &sorted);
-        for id in &expected {
-            prop_assert_eq!(registry.get(id).unwrap().id(), id.as_str());
-        }
-        prop_assert!(registry.get("").is_none());
     }
-}
-
-#[test]
-fn registry_handles_a_thousand_registrations() {
-    let mut registry = EngineRegistry::new();
-    for i in 0..1000 {
-        registry.register(stub(&format!("e{i:04}"))).unwrap();
-    }
-    assert_eq!(registry.ids().len(), 1000);
-    assert_eq!(registry.ids()[0], "e0000");
-    assert_eq!(registry.ids()[999], "e0999");
-    assert_eq!(registry.get("e0500").unwrap().id(), "e0500");
-    let error = registry.register(stub("e0500")).unwrap_err();
-    let taken = matches!(error, CoreError::EngineTaken(ref t) if t == "e0500");
-    assert!(taken, "{error:?}");
-}
-
-#[test]
-fn registry_ids_are_byte_sorted_not_case_folded() {
-    // Sharp edge (fine): BTreeMap ordering is bytewise, so uppercase sorts before lowercase.
-    let mut registry = EngineRegistry::new();
-    for id in ["b", "B", "a", "A", "_", "-", "0"] {
-        registry.register(stub(id)).unwrap();
-    }
-    assert_eq!(registry.ids(), ["-", "0", "A", "B", "_", "a", "b"]);
-}
-
-#[test]
-fn registry_id_at_128_bytes_ok_129_refused() {
-    let mut registry = EngineRegistry::new();
-    assert!(registry.register(stub(&"x".repeat(128))).is_ok());
-    let error = registry.register(stub(&"y".repeat(129))).unwrap_err();
-    let invalid = matches!(error, CoreError::InvalidName(_));
-    assert!(invalid, "{error:?}");
-}
-
-#[test]
-fn registry_rejects_unicode_lookalikes_and_whitespace() {
-    let mut registry = EngineRegistry::new();
-    for bad in [
-        "ａ",
-        "a\u{200b}",
-        "a\n",
-        " a",
-        "a ",
-        "a/b",
-        "a.b",
-        "a:b",
-        "é",
-    ] {
-        let error = registry.register(stub(bad)).unwrap_err();
-        let invalid = matches!(error, CoreError::InvalidName(ref n) if n == bad);
-        assert!(invalid, "{bad:?}: {error:?}");
-    }
-    assert!(registry.ids().is_empty());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -914,7 +846,7 @@ fn core_accepts_a_plan_with_empty_program() {
         last_modified_at: 0.0,
         lifecycle: Lifecycle::Running,
         launch: Launch::Agent {
-            engine: "empty".into(),
+            engine: EngineKind::Claude,
             profile: Vec::new(),
             model: None,
             effort: None,
@@ -925,8 +857,12 @@ fn core_accepts_a_plan_with_empty_program() {
     };
     let request = LaunchRequest::new(&session, &profile);
     let mut registry = EngineRegistry::new();
-    registry.register(stub("empty")).unwrap();
-    let plan = registry.get("empty").unwrap().start(&request, "").unwrap();
+    registry.register(stub(EngineKind::Claude)).unwrap();
+    let plan = registry
+        .get(EngineKind::Claude)
+        .unwrap()
+        .start(&request, "")
+        .unwrap();
     assert_eq!(plan.program, "");
     assert_eq!(plan, LaunchPlan::default());
     apply_workspace(dir.path(), &plan.workspace).unwrap();

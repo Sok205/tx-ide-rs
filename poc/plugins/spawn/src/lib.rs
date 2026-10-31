@@ -17,7 +17,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tx_client::tmux::Ui;
 use tx_core::{
-    CreateOptions, LaunchOptions, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo,
+    CreateOptions, EngineKind, LaunchOptions, Plugin, PluginError, Registry, TxCore, Verb,
+    VerbError, VerbIo,
 };
 
 pub const PLUGIN_ID: &str = "spawn";
@@ -110,7 +111,7 @@ impl Plugin for SpawnPlugin {
 pub struct Reply {
     pub name: String,
     pub prompt: String,
-    pub engine: String,
+    pub engine: EngineKind,
     pub model: String,
     pub effort: String,
     pub role: String,
@@ -230,11 +231,11 @@ pub fn create_options(reply: &Reply) -> CreateOptions {
     if reply.role != NO_ROLE {
         roles.push(reply.role.clone());
     }
-    let mut launch = LaunchOptions::agent(&reply.engine)
+    let mut launch = LaunchOptions::agent(reply.engine)
         .profile(roles)
         .option("effort", reply.effort.as_str())
         .initial_prompt(&reply.prompt);
-    if reply.model != default_model(&reply.engine) {
+    if reply.model != default_model(reply.engine.as_str()) {
         launch = launch.option("model", reply.model.as_str());
     }
     CreateOptions::new(&reply.name, &reply.cwd, launch).tags(tags_of(&reply.tags))
@@ -307,7 +308,8 @@ impl Verb for NewAgent {
             })
             .unwrap_or_else(|| "/".to_owned());
         let (project_name, project_path) = pane_project(&path);
-        let engines = core.engine_ids();
+        let kinds = core.engine_kinds();
+        let engines: Vec<&str> = kinds.iter().map(|kind| kind.as_str()).collect();
         if engines.is_empty() {
             ui.display_status(client, "prefix+n: no engine plugin is active");
             return Ok(1);
@@ -350,7 +352,7 @@ mod tests {
         Reply {
             name: "health".into(),
             prompt: "add GET /health".into(),
-            engine: "codex".into(),
+            engine: EngineKind::Codex,
             model: "gpt-6-sol".into(),
             effort: "xhigh".into(),
             role: "DEVELOPER".into(),
@@ -452,7 +454,7 @@ mod tests {
         else {
             panic!("an agent launch");
         };
-        assert_eq!(engine, "codex");
+        assert_eq!(engine, EngineKind::Codex);
         assert_eq!(profile, ["COMMON", "DEVELOPER"]);
         assert_eq!(options, json!({"effort": "xhigh", "model": "gpt-6-sol"}));
         assert_eq!(initial_prompt, "add GET /health");

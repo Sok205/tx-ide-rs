@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use proptest::prelude::*;
 use tx_core::{
-    Launch, Lifecycle, LlmEngineState, ReadError, RecordError, Session, SessionId, StoreError,
+    EngineKind, Launch, Lifecycle, LlmEngineState, ReadError, RecordError, Session, SessionId,
+    StoreError,
 };
 
 fn store() -> (tempfile::TempDir, tx_core::SessionStore) {
@@ -35,7 +36,7 @@ fn session(id: &str, created_at: f64) -> Session {
         last_modified_at: created_at,
         lifecycle: Lifecycle::Running,
         launch: Launch::Agent {
-            engine: "e".into(),
+            engine: EngineKind::Claude,
             profile: vec![],
             model: None,
             effort: None,
@@ -97,13 +98,13 @@ fn text() -> impl Strategy<Value = String> {
 
 fn launch() -> impl Strategy<Value = Launch> {
     (
-        text(),
+        0..EngineKind::ALL.len(),
         prop::collection::vec(text(), 0..4),
         prop::option::of(text()),
         prop::option::of(text()),
     )
         .prop_map(|(engine, profile, model, effort)| Launch::Agent {
-            engine,
+            engine: EngineKind::ALL[engine],
             profile,
             model,
             effort,
@@ -629,7 +630,13 @@ fn process_records_are_skipped_and_named() {
     let odd = "{\"version\": 1, \"id\": \"q\", \"name\": \"n\", \"created_at\": \"1\", \"lifecycle\": \"Running\", \"launch\": {\"kind\": \"process\"}}";
     std::fs::write(store.path(&sid("q")), odd).unwrap();
     assert_eq!(ids(&store.all().unwrap()), ["a"]);
-    assert_eq!(store.skipped().unwrap(), [sid("p"), sid("q")]);
+    let skipped: Vec<_> = store
+        .skipped()
+        .unwrap()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(skipped, [sid("p"), sid("q")]);
     assert_eq!(store.load(&sid("p")).unwrap(), None);
     assert_eq!(store.load(&sid("q")).unwrap(), None);
 }

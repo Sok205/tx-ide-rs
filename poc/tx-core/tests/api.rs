@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, EventType, Input, Key, Launch, LaunchOptions,
-    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState, Profile,
-    ResolvedProfile, SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
+    CoreConfig, CreateOptions, Directories, EngineKind, EventType, Input, Key, Launch,
+    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState,
+    Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -83,7 +83,7 @@ fn record(cwd: &Path) -> Session {
         last_modified_at: 0.0,
         lifecycle: Lifecycle::Running,
         launch: Launch::Agent {
-            engine: "e".into(),
+            engine: EngineKind::Claude,
             profile: Vec::new(),
             model: None,
             effort: None,
@@ -100,7 +100,7 @@ fn create_options_and_launch_options_builders() {
     let opts = CreateOptions::new(
         "w",
         "/w",
-        LaunchOptions::agent("claude")
+        LaunchOptions::agent(EngineKind::Claude)
             .profile(["dev", "ops"])
             .option("model", "opus")
             .option("effort", "max")
@@ -125,21 +125,21 @@ fn create_options_and_launch_options_builders() {
     else {
         panic!("{:?}", opts.launch)
     };
-    assert_eq!(engine, "claude");
+    assert_eq!(*engine, EngineKind::Claude);
     assert_eq!(profile, &["dev", "ops"]);
     // A repeated key replaces; `options(..)` replaces the whole object.
     assert_eq!(
         *options,
         serde_json::json!({"model": "sonnet", "effort": "max"})
     );
-    let replaced = LaunchOptions::agent("claude")
+    let replaced = LaunchOptions::agent(EngineKind::Claude)
         .option("model", "opus")
         .options(serde_json::json!({"effort": "low"}));
     assert!(matches!(
         &replaced,
         LaunchOptions::Agent { options, .. } if *options == serde_json::json!({"effort": "low"})
     ));
-    let bare = LaunchOptions::agent("claude");
+    let bare = LaunchOptions::agent(EngineKind::Claude);
     assert!(matches!(
         &bare,
         LaunchOptions::Agent { options, .. } if *options == serde_json::json!({})

@@ -4,11 +4,13 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Harness, STUB_ID, agent, cwd_of, exiting, git, git_ok, git_worktrees, wait_for};
+use common::{
+    Harness, STUB_ID, STUB_KIND, agent, cwd_of, exiting, git, git_ok, git_worktrees, wait_for,
+};
 use tx_core::worktree::repository_key;
 use tx_core::{
-    CoreError, CreateOptions, Launch, LaunchOptions, Lifecycle, ListFilter, Session, SessionId,
-    WorktreeError,
+    CoreError, CreateOptions, EngineKind, Launch, LaunchOptions, Lifecycle, ListFilter, Session,
+    SessionId, WorktreeError,
 };
 
 fn env_of(cwd: &std::path::Path) -> Vec<(String, String)> {
@@ -43,7 +45,7 @@ fn an_agent_runs_detached_with_the_tx_environment() {
         "runs in a worktree of the checkout"
     );
     assert!(session.ended_at.is_none());
-    assert!(matches!(session.launch, Launch::Agent { ref engine, .. } if engine == STUB_ID));
+    assert!(matches!(session.launch, Launch::Agent { engine, .. } if engine == STUB_KIND));
     assert_eq!(h.live_names(), ["agent-1"]);
     assert_eq!(
         h.tmux_ok(&["show-options", "-v", "-t", "=agent-1:", "@tx-id"])
@@ -127,7 +129,7 @@ fn agent_session_gets_profile_plan_and_workspace() {
             CreateOptions::new(
                 "agent-1",
                 repository.clone(),
-                LaunchOptions::agent(STUB_ID)
+                LaunchOptions::agent(STUB_KIND)
                     .profile(["dev"])
                     .option("model", "m")
                     .option("effort", "max")
@@ -169,7 +171,7 @@ fn agent_session_gets_profile_plan_and_workspace() {
     assert!(matches!(
         session.launch,
         Launch::Agent { ref engine, ref profile, model: None, effort: None, .. }
-            if engine == STUB_ID && *profile == ["dev"]
+            if *engine == STUB_KIND && *profile == ["dev"]
     ));
     assert_eq!(
         session.ext.get(STUB_ID),
@@ -186,7 +188,7 @@ fn the_engine_sees_the_record_and_its_data_lands_in_ext() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let mut opts = agent("named", &h.repository("d"));
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .option("model", "data")
         .initial_prompt("start");
     let id = core.create_session(opts).unwrap();
@@ -217,13 +219,14 @@ fn failures_before_launch_leave_nothing_behind() {
     let cwd = h.repository("a");
 
     let mut opts = agent("x", &cwd);
-    opts.launch = LaunchOptions::agent("ghost");
-    assert!(
-        matches!(core.create_session(opts).unwrap_err(), CoreError::UnknownEngine(e) if e == "ghost")
-    );
+    opts.launch = LaunchOptions::agent(EngineKind::Codex);
+    assert!(matches!(
+        core.create_session(opts).unwrap_err(),
+        CoreError::EngineDisabled(EngineKind::Codex)
+    ));
 
     let mut opts = agent("x", &cwd);
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .initial_prompt("start")
         .profile(["missing"]);
     assert!(matches!(
@@ -232,9 +235,9 @@ fn failures_before_launch_leave_nothing_behind() {
     ));
 
     for launch in [
-        LaunchOptions::agent(STUB_ID),
-        LaunchOptions::agent(STUB_ID).initial_prompt(""),
-        LaunchOptions::agent(STUB_ID).initial_prompt(" \n "),
+        LaunchOptions::agent(STUB_KIND),
+        LaunchOptions::agent(STUB_KIND).initial_prompt(""),
+        LaunchOptions::agent(STUB_KIND).initial_prompt(" \n "),
     ] {
         let mut opts = agent("x", &cwd);
         opts.launch = launch;
@@ -246,7 +249,7 @@ fn failures_before_launch_leave_nothing_behind() {
 
     // The engine refuses after the worktree was made: the worktree goes with the failure.
     let mut opts = agent("x", &cwd);
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .initial_prompt("start")
         .option("model", "refuse");
     assert!(matches!(
@@ -616,7 +619,7 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
     let core = h.open_with_engine();
     let repository = h.repository("repo");
     let mut opts = agent("src", &repository);
-    opts.launch = LaunchOptions::agent(STUB_ID)
+    opts.launch = LaunchOptions::agent(STUB_KIND)
         .option("effort", "high")
         .initial_prompt("start");
     opts.tags = vec!["t1".into()];
@@ -638,7 +641,7 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
     assert_eq!(fork.state, tx_core::LlmEngineState::Starting);
     assert!(matches!(
         fork.launch,
-        Launch::Agent { ref engine, ref resume, .. } if engine == STUB_ID && resume.is_none()
+        Launch::Agent { engine, ref resume, .. } if engine == STUB_KIND && resume.is_none()
     ));
     assert_ne!(fork.cwd, source.cwd);
     assert_eq!(git_ok(&fork.cwd, &["rev-parse", "HEAD"]), head);

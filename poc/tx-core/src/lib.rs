@@ -31,12 +31,12 @@ pub use core::{
     CreateOptions, DeliveryReceipt, ExecutionLocation, ForkOptions, LaunchOptions, ListFilter,
     RefreshResult, SendOptions, Sender, TxCore,
 };
-#[doc(hidden)]
-pub use engine::EngineRegistry;
 pub use engine::{
     Conversation, EngineError, Input, Key, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction,
     engine_data, hook_shell_command,
 };
+#[doc(hidden)]
+pub use engine::{EngineKind, EngineRegistry};
 pub use error::CoreError;
 #[doc(hidden)]
 pub use events::EventLog;
@@ -57,7 +57,7 @@ pub use state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 #[doc(hidden)]
 pub use store::SessionStore;
 /// Stable: they are the payload of `CoreError::Store`.
-pub use store::{ReadError, StoreError};
+pub use store::{ReadError, SkippedRecord, StoreError};
 /// Stable: it is the payload of `CoreError::Tmux`.
 pub use tmux::TmuxError;
 #[doc(hidden)]

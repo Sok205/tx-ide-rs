@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest,
-    LlmEngine, LlmEngineChange, LlmEngineHook, Session, SessionId, TxCore,
+    CoreConfig, CoreError, CreateOptions, EngineError, EngineKind, LaunchOptions, LaunchPlan,
+    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, Session, SessionId, TxCore,
 };
 use tx_edit::{Ext, apply_edit};
 
@@ -13,8 +13,8 @@ use tx_edit::{Ext, apply_edit};
 struct SleepStub;
 
 impl LlmEngine for SleepStub {
-    fn id(&self) -> &str {
-        "stub"
+    fn kind(&self) -> EngineKind {
+        EngineKind::Claude
     }
 
     fn ext_key(&self) -> &'static str {
@@ -111,7 +111,7 @@ impl Harness {
         core.create_session(CreateOptions::new(
             name,
             cwd,
-            LaunchOptions::agent("stub").initial_prompt("start"),
+            LaunchOptions::agent(EngineKind::Claude).initial_prompt("start"),
         ))
         .unwrap()
     }

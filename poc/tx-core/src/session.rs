@@ -7,6 +7,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::engine::EngineKind;
 use crate::error::CoreError;
 use crate::state::LlmEngineState;
 
@@ -121,14 +122,14 @@ impl FromStr for Lifecycle {
     }
 }
 
-/// How the agent was started. Engine ids are strings, so a new engine needs no change here.
-/// One variant: core holds agents only (the `process` kind went with PR 11; Storage PR 14
+/// How the agent was started. The engine is one of the closed [`EngineKind`]s; a record naming
+/// any other string fails to load. One variant: core holds agents only (the `process` kind went with PR 11; Storage PR 14
 /// removes the enum).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Launch {
     Agent {
-        engine: String,
+        engine: EngineKind,
         profile: Vec<String>,
         /// Written by builds before PR 12a; the model is engine data (`ext.<engine>.model`)
         /// now. Kept only so an old record round-trips until Storage PR 14 migrates it. Never
@@ -189,6 +190,11 @@ pub enum RecordError {
     /// PR 14 migrates it.
     #[error("a process record, written before core held agents only")]
     ProcessRecord,
+    /// The record names an engine that is not an [`EngineKind`]: written by hand or by a build
+    /// with another engine set. The store skips it, as it does a process record, until Storage
+    /// PR 14 migrates it.
+    #[error("names engine {0:?}, which this build does not know (known: {known})", known = EngineKind::names())]
+    UnknownEngine(String),
 }
 
 #[derive(Serialize)]
@@ -249,6 +255,12 @@ impl Session {
             == Some(&serde_json::Value::String("process".to_owned()))
         {
             return Err(RecordError::ProcessRecord);
+        }
+        if let Some(serde_json::Value::String(engine)) =
+            value.get("launch").and_then(|launch| launch.get("engine"))
+            && engine.parse::<EngineKind>().is_err()
+        {
+            return Err(RecordError::UnknownEngine(engine.clone()));
         }
         // Written before `last_modified_at` existed: the last write is unknown, creation stands in.
         if let Some(created_at) = value.get("created_at").cloned() {
@@ -312,7 +324,7 @@ mod tests {
             last_modified_at: 1727000000.5,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
-                engine: "claude".into(),
+                engine: EngineKind::Claude,
                 profile: vec!["COMMON".into(), "dev".into()],
                 model: None,
                 effort: None,
@@ -337,7 +349,7 @@ mod tests {
             last_modified_at: 1.0,
             lifecycle: Lifecycle::Stopped,
             launch: Launch::Agent {
-                engine: "codex".into(),
+                engine: EngineKind::Codex,
                 profile: vec![],
                 model: None,
                 effort: None,
@@ -388,7 +400,7 @@ mod tests {
 
     #[test]
     fn optional_fields_may_be_null() {
-        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{"kind":"agent","engine":"e","profile":[],"model":null,"effort":null}}"#;
+        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{"kind":"agent","engine":"claude","profile":[],"model":null,"effort":null}}"#;
         let session = Session::from_json(text).unwrap();
         assert_eq!(session.parent, None);
         assert_eq!(session.ended_at, None);
@@ -403,7 +415,7 @@ mod tests {
     /// migrates them, so a hook re-saving the record loses nothing.
     #[test]
     fn launch_model_and_effort_of_an_old_record_round_trip() {
-        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{"kind":"agent","engine":"e","profile":[],"model":"opus","effort":"xhigh"}}"#;
+        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{"kind":"agent","engine":"claude","profile":[],"model":"opus","effort":"xhigh"}}"#;
         let session = Session::from_json(text).unwrap();
         assert!(matches!(
             session.launch,
@@ -417,7 +429,7 @@ mod tests {
 
     #[test]
     fn a_record_without_last_modified_at_loads_with_its_creation() {
-        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":7.5,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"e","profile":[]}}"#;
+        let text = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":7.5,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"claude","profile":[]}}"#;
         assert_eq!(Session::from_json(text).unwrap().last_modified_at, 7.5);
         let stamped = text.replace(
             r#""created_at":7.5,"#,
@@ -430,7 +442,7 @@ mod tests {
     /// ended as ended.
     #[test]
     fn a_record_without_state_loads_as_idle_or_ended() {
-        let running = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"e","profile":[]}}"#;
+        let running = r#"{"version":1,"id":"i","name":"n","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"running","launch":{"kind":"agent","engine":"claude","profile":[]}}"#;
         assert_eq!(
             Session::from_json(running).unwrap().state,
             LlmEngineState::Idle

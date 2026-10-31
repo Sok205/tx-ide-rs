@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use crate::config::CoreConfig;
 use crate::engine::{
-    Conversation, EngineError, EngineRegistry, Input, LaunchRequest, LlmEngine, apply_workspace,
+    Conversation, EngineError, EngineKind, EngineRegistry, Input, LaunchRequest, LlmEngine,
+    apply_workspace,
 };
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
@@ -15,7 +16,7 @@ use crate::messaging::{DELIVERY_PAUSE, EnvelopeSender, build_envelope, deliver};
 use crate::profile::{Profile, Profiles, ResolvedProfile};
 use crate::session::{Launch, Lifecycle, Session, SessionId, validate_name};
 use crate::state::{LlmEngineHook, LlmEngineState};
-use crate::store::{SessionStore, StoreError};
+use crate::store::{SessionStore, SkippedRecord, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 use crate::worktree::WorktreeManager;
 
@@ -145,7 +146,7 @@ impl ForkOptions {
 #[non_exhaustive]
 pub enum LaunchOptions {
     Agent {
-        engine: String,
+        engine: EngineKind,
         profile: Vec<String>,
         /// Engine options as a JSON object (`{"model": "fable", "effort": "high"}`): the engine
         /// validates them (`LlmEngine::configure`) and they land in `ext[ext_key]` before the
@@ -157,9 +158,9 @@ pub enum LaunchOptions {
 }
 
 impl LaunchOptions {
-    pub fn agent(engine: impl Into<String>) -> Self {
+    pub fn agent(engine: EngineKind) -> Self {
         Self::Agent {
-            engine: engine.into(),
+            engine,
             profile: Vec::new(),
             options: serde_json::Value::Object(serde_json::Map::new()),
             initial_prompt: String::new(),
@@ -501,7 +502,7 @@ impl std::fmt::Debug for TxCore {
         f.debug_struct("TxCore")
             .field("directories", &self.config.directories)
             .field("socket", &self.tmux.socket())
-            .field("engines", &self.engines.ids())
+            .field("engines", &self.engines.kinds())
             .finish_non_exhaustive()
     }
 }
@@ -562,8 +563,9 @@ impl TxCore {
         self.engines.register(adapter)
     }
 
-    pub fn engine_ids(&self) -> Vec<&str> {
-        self.engines.ids()
+    /// The kinds with an adapter registered, sorted: every enabled engine plugin's.
+    pub fn engine_kinds(&self) -> Vec<EngineKind> {
+        self.engines.kinds()
     }
 
     /// Registers an in-process listener for every event this core emits. See [`EventSink`].
@@ -602,7 +604,7 @@ impl TxCore {
     /// The ids of the process records in the store: written before PR 11, when core still
     /// held non-LLM sessions. Every read skips them (a front end reports them at startup);
     /// Storage PR 14's migration moves them out.
-    pub fn skipped_records(&self) -> Result<Vec<SessionId>, CoreError> {
+    pub fn skipped_records(&self) -> Result<Vec<SkippedRecord>, CoreError> {
         Ok(self.store.skipped()?)
     }
 
@@ -613,14 +615,14 @@ impl TxCore {
     }
 
     /// The session's current conversation, asked from its engine. `None`: not known yet.
-    /// `UnknownEngine` when the record's engine is not registered (its plugin disabled).
+    /// `EngineDisabled` when the record's engine is not registered (its plugin disabled).
     pub fn conversation(&self, id: &SessionId) -> Result<Option<Conversation>, CoreError> {
         let session = self.get_session(id)?;
         let Launch::Agent { engine, .. } = &session.launch;
         let adapter = self
             .engines
-            .get(engine)
-            .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+            .get(*engine)
+            .ok_or(CoreError::EngineDisabled(*engine))?;
         Ok(adapter.conversation(&session))
     }
 
@@ -705,7 +707,7 @@ impl TxCore {
             .name
             .unwrap_or_else(|| format!("{}-fork", source.name));
         let launch = LaunchOptions::Agent {
-            engine: engine.clone(),
+            engine: *engine,
             profile: profile.clone(),
             options: options.options,
             initial_prompt: options.prompt,
@@ -747,8 +749,8 @@ impl TxCore {
         } = &opts.launch;
         let adapter = self
             .engines
-            .get(engine)
-            .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+            .get(*engine)
+            .ok_or(CoreError::EngineDisabled(*engine))?;
         if initial_prompt.trim().is_empty() {
             return Err(CoreError::PromptRequired);
         }
@@ -969,8 +971,8 @@ impl TxCore {
         } = &session.launch;
         let adapter = self
             .engines
-            .get(engine)
-            .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+            .get(*engine)
+            .ok_or(CoreError::EngineDisabled(*engine))?;
         let resolved = self.profiles.resolve(profile)?;
         if session.lifecycle == Lifecycle::Running || self.tmux.is_live(id)?.is_some() {
             return Err(CoreError::StillRunning(id.clone()));
@@ -1147,7 +1149,7 @@ impl TxCore {
                 return Ok(None);
             }
             let Launch::Agent { engine, .. } = &session.launch;
-            let Some(adapter) = self.engines.get(engine) else {
+            let Some(adapter) = self.engines.get(*engine) else {
                 return Ok(None);
             };
             let current = session.state;
@@ -1186,7 +1188,7 @@ impl TxCore {
     /// unregistered engine archives nothing.
     fn archive_conversation(&self, session: &Session) {
         let Launch::Agent { engine, .. } = &session.launch;
-        let Some(adapter) = self.engines.get(engine) else {
+        let Some(adapter) = self.engines.get(*engine) else {
             return;
         };
         let directory = self.config.archive_directory(&session.id);
@@ -1294,7 +1296,7 @@ impl TxCore {
     /// agent whose engine this core does not know gets the default envelope, submitted.
     fn input_for(&self, recipient: &Session, sender: &EnvelopeSender<'_>, text: &str) -> Input {
         let Launch::Agent { engine, .. } = &recipient.launch;
-        match self.engines.get(engine) {
+        match self.engines.get(*engine) {
             Some(adapter) => adapter.receive_message(sender, text),
             None => Input::line(build_envelope(sender, text)),
         }
@@ -1314,8 +1316,8 @@ impl TxCore {
             let Launch::Agent { engine, .. } = &session.launch;
             let adapter = self
                 .engines
-                .get(engine)
-                .ok_or_else(|| CoreError::UnknownEngine(engine.clone()))?;
+                .get(*engine)
+                .ok_or(CoreError::EngineDisabled(*engine))?;
             let (input, state) = adapter.interrupt(&session).ok_or_else(|| {
                 EngineError::Refused(format!("{engine} has no way to interrupt a turn"))
             })?;
@@ -1373,7 +1375,7 @@ impl TxCore {
             let Launch::Agent { engine, .. } = &session.launch;
             let stop = self
                 .engines
-                .get(engine)
+                .get(*engine)
                 .and_then(|adapter| adapter.stop(&session));
             let pid = self.tmux.pane_pid(&live.pane_target)?;
             match &stop {
@@ -1526,7 +1528,7 @@ mod tests {
         assert_eq!(core.config().directories, directories);
         assert!(!directories.config.exists());
         assert!(!directories.cache.exists());
-        assert!(core.engine_ids().is_empty());
+        assert!(core.engine_kinds().is_empty());
     }
 
     #[test]
@@ -1575,8 +1577,8 @@ mod tests {
             crate::LlmEngineChange::NONE
         }
 
-        fn id(&self) -> &str {
-            "stub"
+        fn kind(&self) -> EngineKind {
+            EngineKind::Claude
         }
 
         fn ext_key(&self) -> &'static str {
@@ -1619,7 +1621,7 @@ mod tests {
             core.register_engine(Box::new(Stub)).unwrap_err(),
             CoreError::EngineTaken(_)
         ));
-        assert_eq!(core.engine_ids(), ["stub"]);
+        assert_eq!(core.engine_kinds(), [EngineKind::Claude]);
     }
 
     #[test]
@@ -1669,7 +1671,8 @@ mod tests {
         let core = TxCore::open(config).unwrap();
         let cwd = dir.path().to_path_buf();
         let opts = |launch: LaunchOptions| CreateOptions::new("n", cwd.clone(), launch);
-        let agent = || LaunchOptions::agent("ghost").initial_prompt("go");
+        // No engine is registered on this core: every kind is "disabled".
+        let agent = || LaunchOptions::agent(EngineKind::Codex).initial_prompt("go");
         let mut bad = opts(agent());
         bad.name = "no spaces".into();
         assert!(matches!(
@@ -1689,9 +1692,10 @@ mod tests {
             CoreError::NotADirectory(_)
         ));
         let bad = opts(agent());
-        assert!(
-            matches!(core.create_session(bad).unwrap_err(), CoreError::UnknownEngine(e) if e == "ghost")
-        );
+        assert!(matches!(
+            core.create_session(bad).unwrap_err(),
+            CoreError::EngineDisabled(EngineKind::Codex)
+        ));
         assert!(
             std::fs::read_dir(directories.data.join("sessions"))
                 .unwrap()
@@ -1740,7 +1744,7 @@ mod tests {
             last_modified_at: 1.0,
             lifecycle,
             launch: Launch::Agent {
-                engine: "e".into(),
+                engine: EngineKind::Claude,
                 profile: vec![],
                 model: None,
                 effort: None,

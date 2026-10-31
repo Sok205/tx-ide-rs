@@ -37,9 +37,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Conversation, EngineError, Input, Key, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange,
-    LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
-    mirror_file, mirror_file_exact, mirror_tree,
+    Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
+    LlmEngineChange, LlmEngineHook, LlmEngineState, Session, WorkspaceAction, engine_data,
+    hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -262,8 +262,8 @@ impl ClaudeAdapter {
 }
 
 impl LlmEngine for ClaudeAdapter {
-    fn id(&self) -> &str {
-        "claude"
+    fn kind(&self) -> EngineKind {
+        EngineKind::Claude
     }
 
     fn ext_key(&self) -> &'static str {
@@ -570,7 +570,7 @@ mod tests {
             last_modified_at: 1.0,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
-                engine: adapter().id().to_owned(),
+                engine: adapter().kind(),
                 profile: Vec::new(),
                 model: None,
                 effort: None,
@@ -827,7 +827,7 @@ mod tests {
 
     #[test]
     fn id_is_claude() {
-        assert_eq!(adapter().id(), "claude");
+        assert_eq!(adapter().kind(), EngineKind::Claude);
     }
 
     /// The adapter under test, with a fixed Claude home.
@@ -1175,7 +1175,7 @@ mod tests {
         assert_eq!(ClaudePlugin.id(), "engine-claude");
         core.plug(vec![Box::new(ClaudePlugin)], &PluginConfig::default())
             .unwrap();
-        assert_eq!(core.engine_ids(), vec!["claude"]);
+        assert_eq!(core.engine_kinds(), vec![EngineKind::Claude]);
     }
 
     /// A record whose conversation `conversation` lives at `transcript`.

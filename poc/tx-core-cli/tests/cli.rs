@@ -32,7 +32,18 @@ fn usage_errors_exit_2_without_touching_state() {
     assert!(cli.fails(&["create", "x"], 2).contains("--cwd"));
     assert!(
         cli.fails(&["create", "x", "--cwd", "/"], 2)
-            .contains("create needs --engine ID")
+            .contains("create needs --engine ENGINE")
+    );
+    // An engine outside the closed set is a misuse that names the set.
+    let stderr = cli.fails(
+        &[
+            "create", "x", "--cwd", "/", "--engine", "kodex", "--prompt", "go",
+        ],
+        2,
+    );
+    assert!(
+        stderr.contains("--engine: no engine named \"kodex\" (known: claude, codex)"),
+        "{stderr}"
     );
     assert!(cli.fails(&["bogus"], 2).contains("bogus"));
     assert!(!cli.state().exists());
@@ -52,6 +63,8 @@ fn core_errors_exit_1() {
     let cwd = cli.repository("w");
     let stderr = cli.fails(&["show", "nope"], 1);
     assert_eq!(stderr, "txc: no session \"nope\"\n");
+    // The engine's plugin is disabled: its kind has no adapter, so the create is refused.
+    cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
     let stderr = cli.fails(
         &[
             "create",
@@ -59,13 +72,47 @@ fn core_errors_exit_1() {
             "--cwd",
             cwd.to_str().unwrap(),
             "--engine",
-            "ghost",
+            "codex",
             "--prompt",
             "start",
         ],
         1,
     );
-    assert!(stderr.contains("ghost"), "{stderr}");
+    assert_eq!(stderr, "txc: engine codex is disabled\n");
+}
+
+/// `plugins.yaml: engine-codex: { enabled: false }` leaves `codex` unregistered: `engines` omits
+/// it, a create and a respawn of that kind are refused with the same message, and an existing
+/// Codex record still lists and shows. Re-enabled, the respawn gets past the engine check.
+#[test]
+fn a_disabled_engine_plugin_leaves_its_kind_unregistered_but_its_records_listed() {
+    let cli = Cli::new();
+    let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f2";
+    let sessions = cli.state().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join(format!("{id}.json")),
+        format!(
+            r#"{{"version":1,"id":"{id}","name":"old-codex","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":2.0,"lifecycle":"exited","launch":{{"kind":"agent","engine":"codex","profile":[]}},"state":"ended"}}"#
+        ),
+    )
+    .unwrap();
+    cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
+    assert_eq!(cli.ok(&["engines"]), "claude\n");
+    assert!(cli.ok(&["plugins"]).contains("engine-codex\tdisabled"));
+    let listed = cli.ok(&["ls"]);
+    assert!(listed.contains("old-codex"), "{listed}");
+    assert!(cli.ok(&["show", "old-codex"]).contains("\"codex\""));
+    assert_eq!(
+        cli.fails(&["respawn", "old-codex"], 1),
+        "txc: engine codex is disabled\n"
+    );
+    // Re-enabled, the engine check passes and the Codex adapter itself answers: this record
+    // never got a conversation to resume.
+    cli.write_yaml("plugins:\n  engine-codex: { enabled: true }\n");
+    assert_eq!(cli.ok(&["engines"]), "claude\ncodex\n");
+    let stderr = cli.fails(&["respawn", "old-codex"], 1);
+    assert!(stderr.contains("codex cannot resume old-codex"), "{stderr}");
 }
 
 /// A `"kind": "process"` record left by a build before core held agents only is skipped by every
@@ -87,12 +134,51 @@ fn process_records_on_disk_are_skipped_and_named_on_stderr() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
-    assert!(stderr.contains("skipped 1 process record"), "{stderr}");
-    assert!(stderr.contains(id), "{stderr}");
+    assert!(
+        stderr.contains(&format!("skipped record {id}: a process record")),
+        "{stderr}"
+    );
     assert_eq!(stderr.lines().count(), 1, "{stderr}");
     assert!(
         cli.fails(&["show", "old-shell"], 1)
             .ends_with("no session \"old-shell\"\n")
+    );
+    assert!(
+        sessions.join(format!("{id}.json")).is_file(),
+        "nothing is deleted"
+    );
+}
+
+/// A record naming an engine this build does not know (hand-edited, or another build's) is
+/// skipped like a process record: the other records list, stderr names it with the known
+/// engines, nothing is deleted.
+#[test]
+fn records_with_an_unknown_engine_are_skipped_and_named_on_stderr() {
+    let cli = Cli::new();
+    let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f1";
+    let sessions = cli.state().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join(format!("{id}.json")),
+        format!(
+            r#"{{"version":1,"id":"{id}","name":"odd","parent":null,"tags":[],"cwd":"/","created_at":1.0,"ended_at":null,"lifecycle":"exited","launch":{{"kind":"agent","engine":"kodex","profile":[]}},"state":"ended"}}"#
+        ),
+    )
+    .unwrap();
+    let output = cli.run(&["ls"], &[], "");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert!(
+        stderr.contains(&format!(
+            "skipped record {id}: names engine \"kodex\", which this build does not know (known: claude, codex)"
+        )),
+        "{stderr}"
+    );
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert!(
+        cli.fails(&["show", "odd"], 1)
+            .ends_with("no session \"odd\"\n")
     );
     assert!(
         sessions.join(format!("{id}.json")).is_file(),

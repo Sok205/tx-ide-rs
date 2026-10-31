@@ -3,14 +3,14 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use tx_core::Lifecycle;
+use tx_core::{CoreError, EngineKind, Lifecycle};
 
 pub const USAGE: &str = "\
 usage: txc [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR] [--run-dir DIR] [--socket PATH]
            [--plugins FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
 
 verbs:
-  create NAME --cwd DIR --engine ID --prompt T [--role R]... [--option KEY=VALUE]... [--model M]
+  create NAME --cwd DIR --engine ENGINE --prompt T [--role R]... [--option KEY=VALUE]... [--model M]
                 [--effort E] [--parent ID] [--tag T]... [--env KEY=VALUE]...
                                                                     start an agent; prints its id. It runs in its own
                                                                     worktree of the checkout DIR (name NAME, else NAME-2 …).
@@ -44,7 +44,7 @@ verbs:
                                                                     and conversation; prints its id and name
   archive TARGET                                                    stop it if running, then hide it from ls; nothing
                                                                     is deleted, and respawn brings it back
-  engines                                                           registered engine ids
+  engines                                                           the engines whose plugin is enabled (claude, codex)
   plugins                                                           id and active|disabled per plugin
   migrate [--from DIR]                                              move a version-1 home (default
                                                                     $TX_CORE_HOME, else ~/.tx-core) into
@@ -94,7 +94,7 @@ pub enum Verb {
         parent: Option<String>,
         tags: Vec<String>,
         env: Vec<(String, String)>,
-        engine: String,
+        engine: EngineKind,
         roles: Vec<String>,
         /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
         /// a repeated key is settled by the engine's options object, last one wins.
@@ -175,6 +175,13 @@ pub struct Invocation {
 
 fn usage(text: impl Into<String>) -> UsageError {
     UsageError(text.into())
+}
+
+/// `--engine ENGINE`: one of the kinds this build knows; anything else is a misuse that names
+/// them.
+fn engine_kind(text: &str) -> Result<EngineKind, UsageError> {
+    text.parse()
+        .map_err(|error: CoreError| usage(format!("--engine: {error}")))
 }
 
 /// `--model M` / `--effort E` as the engine option they stand for; an empty value is a misuse
@@ -414,7 +421,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut parent = None;
     let mut tags = Vec::new();
     let mut env = Vec::new();
-    let mut engine: Option<String> = None;
+    let mut engine: Option<EngineKind> = None;
     let mut roles = Vec::new();
     let mut options = Vec::new();
     let mut prompt = None;
@@ -424,7 +431,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             "--parent" => parent = Some(cursor.value(flag)?.to_owned()),
             "--tag" => tags.push(cursor.value(flag)?.to_owned()),
             "--env" => env.push(env_pair(cursor.value(flag)?)?),
-            "--engine" => engine = Some(cursor.value(flag)?.to_owned()),
+            "--engine" => engine = Some(engine_kind(cursor.value(flag)?)?),
             "--role" => roles.push(cursor.value(flag)?.to_owned()),
             "--model" => options.push(option_value("model", flag, cursor.value(flag)?)?),
             "--effort" => options.push(option_value("effort", flag, cursor.value(flag)?)?),
@@ -434,7 +441,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         }
     }
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
-    let engine = engine.ok_or_else(|| usage("create needs --engine ID"))?;
+    let engine = engine.ok_or_else(|| usage("create needs --engine ENGINE (claude or codex)"))?;
     let prompt = prompt.ok_or_else(|| usage("--prompt is required with --engine"))?;
     Ok(Verb::Create {
         name,
@@ -616,7 +623,7 @@ mod tests {
         assert_eq!(parent.as_deref(), Some("p-1"));
         assert_eq!(tags, ["a", "b"]);
         assert_eq!(env, [("K".to_owned(), "V".to_owned())]);
-        assert_eq!(engine, "claude");
+        assert_eq!(engine, EngineKind::Claude);
         assert_eq!(roles, ["dev", "ops"]);
         assert_eq!(
             options,
@@ -636,7 +643,7 @@ mod tests {
             ("--effort", "--effort needs a non-empty value"),
             ("--model", "--model needs a non-empty value"),
         ] {
-            let args: Vec<String> = ["create", "n", "--cwd", "/w", "--engine", "e", flag, ""]
+            let args: Vec<String> = ["create", "n", "--cwd", "/w", "--engine", "claude", flag, ""]
                 .iter()
                 .map(|s| (*s).to_owned())
                 .collect();
@@ -698,27 +705,33 @@ mod tests {
             ("create n", "--cwd"),
             ("create n --cwd /w", "--engine"),
             ("create n --cwd /w --prompt go", "--engine"),
-            ("create n --cwd /w --engine e --option model", "KEY=VALUE"),
-            ("create n --cwd /w --engine e --option =x", "bare name"),
-            ("create n --cwd /w --engine e --option a.b=x", "bare name"),
             (
-                "create n --cwd /w --engine e --option model=",
+                "create n --cwd /w --engine claude --option model",
+                "KEY=VALUE",
+            ),
+            ("create n --cwd /w --engine claude --option =x", "bare name"),
+            (
+                "create n --cwd /w --engine claude --option a.b=x",
+                "bare name",
+            ),
+            (
+                "create n --cwd /w --engine claude --option model=",
                 "needs a non-empty value",
             ),
             (
-                "create n --cwd /w --engine e --role",
+                "create n --cwd /w --engine claude --role",
                 "--role needs a value",
             ),
             (
-                "create n --cwd /w --engine e --prompt go --resume x",
+                "create n --cwd /w --engine claude --prompt go --resume x",
                 "--resume",
             ),
             (
-                "create n --cwd /w --engine e --model m",
+                "create n --cwd /w --engine claude --model m",
                 "--prompt is required with --engine",
             ),
-            ("create n --cwd /w --bogus --engine e", "--bogus"),
-            ("create n extra --cwd /w --engine e", "extra"),
+            ("create n --cwd /w --bogus --engine claude", "--bogus"),
+            ("create n extra --cwd /w --engine claude", "extra"),
         ] {
             let error = parse_str(line).unwrap_err();
             assert!(error.0.contains(needle), "{line}: {error}");

@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use proptest::prelude::*;
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Directories, EventType, Launch, LaunchOptions,
-    LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState,
+    CoreConfig, CoreError, CreateOptions, Directories, EngineKind, EventType, Launch,
+    LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, LlmEngineState,
     MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId,
     TxCore, WorkspaceAction,
 };
@@ -34,7 +34,7 @@ fn kind(error: &CoreError) -> &'static str {
         CoreError::InvalidEnvKey(_) => "InvalidEnvKey",
         CoreError::NotADirectory(_) => "NotADirectory",
         CoreError::NotRunning(_) => "NotRunning",
-        CoreError::UnknownEngine(_) => "UnknownEngine",
+        CoreError::EngineDisabled(_) => "EngineDisabled",
         CoreError::EngineTaken(_) => "EngineTaken",
         CoreError::SocketPathTooLong(_) => "SocketPathTooLong",
         CoreError::Profile(_) => "Profile",
@@ -44,6 +44,10 @@ fn kind(error: &CoreError) -> &'static str {
         CoreError::Lock(_) => "Lock",
         _ => "Other",
     }
+}
+
+fn kind() -> impl Strategy<Value = EngineKind> {
+    prop::sample::select(EngineKind::ALL.to_vec())
 }
 
 fn bare_name() -> impl Strategy<Value = String> {
@@ -120,7 +124,7 @@ fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecyc
         last_modified_at: 1.0,
         lifecycle,
         launch: Launch::Agent {
-            engine: "e".into(),
+            engine: EngineKind::Claude,
             profile: vec![],
             model: None,
             effort: None,
@@ -211,9 +215,9 @@ proptest! {
         p1 in session_id(), p2 in session_id(),
         tags1 in texts(), tags2 in texts(),
         env in pairs(),
-        engine in bare_name(),
+        engine in kind(),
     ) {
-        let launch = LaunchOptions::agent(&engine);
+        let launch = LaunchOptions::agent(engine);
         let mut expected = CreateOptions::new(&name, &cwd, launch.clone());
         expected.parent = Some(p2.clone());
         expected.tags = tags1.iter().chain(&tags2).cloned().collect();
@@ -243,24 +247,24 @@ proptest! {
     /// key, order is irrelevant.
     #[test]
     fn launch_options_agent_builder_sets_named_field_only(
-        engine in text(),
+        engine in kind(),
         roles1 in texts(), roles2 in texts(),
         m1 in text(), m2 in text(), e in text(), p in text(),
     ) {
-        let a = LaunchOptions::agent(&engine).profile(roles1.clone()).option("model", m1.as_str()).option("model", m2.as_str()).option("effort", e.as_str()).initial_prompt(&p).profile(roles2.clone());
-        let b = LaunchOptions::agent(&engine).initial_prompt(&p).option("effort", e.as_str()).option("model", m2.as_str()).profile(roles1.clone()).profile(roles2.clone());
+        let a = LaunchOptions::agent(engine).profile(roles1.clone()).option("model", m1.as_str()).option("model", m2.as_str()).option("effort", e.as_str()).initial_prompt(&p).profile(roles2.clone());
+        let b = LaunchOptions::agent(engine).initial_prompt(&p).option("effort", e.as_str()).option("model", m2.as_str()).profile(roles1.clone()).profile(roles2.clone());
         prop_assert_eq!(&a, &b);
         let LaunchOptions::Agent { engine: eng, profile, options, initial_prompt, .. } = &a else {
             prop_assert!(false, "agent() did not build an Agent");
             unreachable!()
         };
         let roles: Vec<String> = roles1.iter().chain(&roles2).cloned().collect();
-        prop_assert_eq!(eng, &engine);
+        prop_assert_eq!(*eng, engine);
         prop_assert_eq!(profile, &roles);
         prop_assert_eq!(options, &serde_json::json!({"model": m2, "effort": e}));
         prop_assert_eq!(initial_prompt, &p);
 
-        let bare = LaunchOptions::agent(&engine);
+        let bare = LaunchOptions::agent(engine);
         let LaunchOptions::Agent { profile, options, initial_prompt, .. } = &bare else {
             prop_assert!(false, "agent() did not build an Agent");
             unreachable!()
@@ -356,8 +360,8 @@ fn engine_adapter_object_is_usable_from_another_thread() {
             tx_core::LlmEngineChange::NONE
         }
 
-        fn id(&self) -> &str {
-            "stub"
+        fn kind(&self) -> EngineKind {
+            EngineKind::Claude
         }
 
         fn ext_key(&self) -> &'static str {
@@ -553,5 +557,5 @@ fn open_keeps_the_config_verbatim() {
     let core = TxCore::open(config.clone()).unwrap();
     assert_eq!(core.config(), &config);
     assert_eq!(core.socket_path(), dir.path().join("k.sock"));
-    assert!(core.engine_ids().is_empty());
+    assert!(core.engine_kinds().is_empty());
 }

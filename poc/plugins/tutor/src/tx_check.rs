@@ -17,7 +17,7 @@ fn role_matches(_: &Session, role: &str) -> bool {
 
 fn engine_of(session: &Session) -> &str {
     let Launch::Agent { engine, .. } = &session.launch;
-    engine
+    engine.as_str()
 }
 
 /// Every state name the record answers to.

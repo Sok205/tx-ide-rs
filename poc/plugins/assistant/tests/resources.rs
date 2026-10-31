@@ -63,7 +63,7 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
     else {
         panic!("an agent launch");
     };
-    assert_eq!(engine, "claude");
+    assert_eq!(engine, tx_core::EngineKind::Claude);
     assert_eq!(profile, ["COMMON", "TX-ASSISTANT"]);
     assert_eq!(
         options,
