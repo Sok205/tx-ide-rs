@@ -557,6 +557,7 @@ fn ui_attach_lands_in_a_view_home() {
     );
     let option = |name: &str| cli.tmux_out(&["show-options", "-vt", "=home:", name]);
     assert_eq!(option("@tx-view"), "1");
+    assert_eq!(option("@tx-view-kind"), "home");
     assert_eq!(option("status"), "on");
     assert_eq!(
         cli.tmux_out(&["show-window-options", "-vt", "=home:", "pane-border-status"]),

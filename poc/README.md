@@ -36,7 +36,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`), `txc group` (effort groups), prefix+a | tx-core, tx-client |
 | `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-client, tx-chat (message parser), ratatui |
 | `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `txc menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-client, ratatui, tempfile |
-| `tx-client` | library: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins; also plugin `ide`: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core |
+| `tx-client` | library: the socket-bound `tmux::Ui` helper, the `views` store (the non-LLM tmux sessions the client owns, kept in tmux session options), the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins; also plugin `ide`: `txc ui install\|attach\|view`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core |
 | `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins. `txi`: the internal binary the engines' wired hooks run (`txi hook <Event>`) | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
@@ -276,7 +276,7 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | plugin | contributes |
 |---|---|
 | `engine-claude`, `engine-codex` | one engine each |
-| `ide` | `txc ui install\|attach` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, status line, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
+| `ide` | `txc ui install\|attach`, `txc ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> …]\|ls\|close <name>` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, status line, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
 | `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label, the after-new-window hook) |
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
@@ -347,8 +347,8 @@ options and hooks it declared, and prints `reloaded`. When it finds no previous
 `keys/.installed` on a running server (a server set up by an older `ui install`), it also prints
 `legacy bindings may remain; restart the server to drop them`.
 
-`ui attach` creates `home` on first use as a view (status bar and pane-border labels on) and
-attaches to it. When the `assistant` plugin is active it first runs `assistant warm`, every
+`ui attach` creates `home` on first use as a view of kind `home` (status bar and pane-border
+labels on) and attaches to it. When the `assistant` plugin is active it first runs `assistant warm`, every
 time, so the assistant is up whenever the IDE is; a new `home` starts with its pane
 nest-attached to `tx-assistant`, so the IDE opens on the assistant. An existing `home` is left
 as it is (reach the assistant with prefix+t). A failed warm (no `claude`, roles not installed)
@@ -359,6 +359,17 @@ start a session by hand and press the picker key:
 txc create demo --cwd ~/code/project --exec zsh
 txc ui attach     # then prefix+t
 ```
+
+**Views.** Every non-LLM tmux session on the core's server is a tx-client *view*: the `home`
+base, the `tutor-<lang>`, `mockup-<agent>` and `tx-timeline` viewers, and the shells and editors
+`txc ui view open` starts. A view has no core record and never shows in `txc ls`; its fields live
+in tmux session options only (`@tx-view 1`, `@tx-view-kind home|editor|shell|timeline|tutor|mockup`,
+`@tx-view-parent <agent id>`, `@tx-view-bound`, `@tx-view-tags`, `@tx-view-created`), so nothing
+goes stale when the server dies. `txc ui view ls` first closes the views whose parent agent is
+gone (forgotten or no longer running), then lists the rest. Closing and renaming go through the
+`views` guard, which refuses any session core marked with `@tx-id`: an agent is stopped only
+through `txc kill`. prefix+X closes a shell, editor, timeline, tutor or mockup view after a
+confirmation, keeps refusing the home base, and kills an agent through `txc kill` as before.
 
 The prefix is `C-a`.
 
