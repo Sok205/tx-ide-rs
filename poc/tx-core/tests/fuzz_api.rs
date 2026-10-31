@@ -127,7 +127,7 @@ fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecyc
             args: vec![],
         },
         ext: std::collections::BTreeMap::new(),
-        status: None,
+        state: None,
     }
 }
 
@@ -441,9 +441,9 @@ fn engine_adapter_object_is_usable_from_another_thread() {
     impl LlmEngine for Stub {
         fn on_hook(
             &self,
-            _: &tx_core::LlmEngineStatus,
+            _: tx_core::LlmEngineState,
             _: &tx_core::LlmEngineHook,
-        ) -> Option<tx_core::LlmEngineStateTransition> {
+        ) -> Option<tx_core::LlmEngineState> {
             None
         }
 

@@ -74,7 +74,7 @@ and `<state_dir>/user-agents` (yours, never pruned), with skills under each one'
 
 | home | what |
 |---|---|
-| disk (`sessions/<id>.json`) | the record: id, name, parent, tags, cwd, timestamps, lifecycle, launch, and an agent's `status`. The snapshot every read returns. |
+| disk (`sessions/<id>.json`) | the record: id, name, parent, tags, cwd, timestamps (`last_modified_at` is stamped on every write), lifecycle, launch, and an agent's `state`. The snapshot every read returns. |
 | tmux | the link only: session option `@tx-id` = record id |
 | looked up on demand | `#{session_id}` (`$N`) and `#{pane_id}` (`%N`) found by `@tx-id`, so a rename in tmux cannot break them |
 
@@ -83,21 +83,21 @@ states are final: nothing in core moves a record out of them.
 
 ### Agent state: the engine adapter decides, core applies
 
-An agent record carries `status` (an `LlmEngineStatus`: `{state, since, note?}`), with `state`
-one of `starting`, `idle`, `working` and `ended`. Idle means it is the operator's move; when a
-turn stopped on an approval or a question rather than finishing, the note says why
-("approval: Bash"), and the next tool hook moves it back to `working`. The vocabulary is core's;
-when to move between states is the adapter's.
+An agent record carries `state` (an `LlmEngineState`): `starting`, `idle`, `working` or
+`ended`. Idle means it is the operator's move, whether the turn finished or stopped on an approval
+or a question; the next tool hook moves it back to `working`. The vocabulary is core's; when to
+move between states is the adapter's. How long ago anything happened is the record-wide
+`last_modified_at`.
 
 At launch the adapter wires the hooks it needs into the CLI's own command line (Claude
 `--settings '{"hooks":…}'`, Codex `-c hooks.<Event>=…`), each running `CoreConfig::hook_command`
 plus the CLI's event name. For `txc` that is `txi hook <Event>`: `txi` is a second binary of
 `tx-core-cli`, installed next to `txc`, the internal entry point machines run (nothing in it is
 listed in `txc help`). It hands the payload to `TxCore::hook`, which asks
-`LlmEngine::on_hook(&status, &hook)` for an optional `LlmEngineStateTransition` (`None`: nothing
-changes) and applies it under the session lock, logging `state-changed` when the state moved.
+`LlmEngine::on_hook(state, &hook)` for the new state (`None`: nothing changes) and writes it
+under the session lock, logging `state-changed` (`from → to`) when the state moved.
 Core owns what the adapter cannot see: a new agent starts `starting`, and an exited or stopped one
-reads `ended`. Process sessions have no status.
+reads `ended`. Process sessions have no state.
 
 Because the hooks are `-c` overrides, every Codex session runs without Codex's shared background
 server (Codex warns: "command-line configuration overrides … requires embedded mode"). Sessions
@@ -159,8 +159,8 @@ Lock order is always `create.lock` before `<id>.lock`. Locks are `std::fs::File:
 
 ```rust
 use tx_core::{
-    EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineStateTransition,
-    LlmEngineStatus, WorkspaceAction,
+    EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
+    WorkspaceAction,
 };
 
 pub struct Aider;
@@ -169,7 +169,7 @@ impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
 
     // No hooks wired: the session stays `starting`. See the bundled adapters for real rules.
-    fn on_hook(&self, _: &LlmEngineStatus, _: &LlmEngineHook) -> Option<LlmEngineStateTransition> { None }
+    fn on_hook(&self, _: LlmEngineState, _: &LlmEngineHook) -> Option<LlmEngineState> { None }
 
     fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         let mut args = vec!["--read".into(), r.profile.file().display().to_string()];

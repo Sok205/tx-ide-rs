@@ -13,7 +13,7 @@ impl Cli {
         serde_json::from_str(&self.ok(&["show", name])).unwrap()
     }
     fn state_of(&self, name: &str) -> Value {
-        self.show(name)["status"]["state"].clone()
+        self.show(name)["state"].clone()
     }
     fn txi_hook(&self, event: &str, id: &str, stdin: &str) -> Output {
         self.txi(&["hook", event], &[("TX_SESSION_ID", id)], stdin)
@@ -128,22 +128,18 @@ fn the_wired_hooks_move_a_claude_session() {
         .status
         .success()
     );
-    let status = cli.show("a")["status"].clone();
-    assert_eq!(status["state"], "idle");
-    assert_eq!(status["note"], "needs Bash");
+    assert_eq!(cli.state_of("a"), "idle", "stopped on the operator");
     assert!(cli.txi_hook("PostToolUse", &id, "{}").status.success());
     assert_eq!(cli.state_of("a"), "working");
     assert!(cli.txi_hook("Stop", &id, "not json").status.success());
-    let status = cli.show("a")["status"].clone();
-    assert_eq!(status["state"], "idle");
-    assert!(status.get("note").is_none(), "{status}");
+    assert_eq!(cli.state_of("a"), "idle");
 
     assert_eq!(
         cli.state_log(),
         [
             "starting → idle",
             "idle → working",
-            "working → idle: needs Bash",
+            "working → idle",
             "idle → working",
             "working → idle"
         ]
@@ -175,13 +171,13 @@ fn not_ours_exits_zero_and_writes_nothing() {
 }
 
 #[test]
-fn process_sessions_have_no_status() {
+fn process_sessions_have_no_state() {
     require_tmux!();
     let cli = Cli::new();
     let id = cli.create("p");
-    assert!(cli.show("p").get("status").is_none());
+    assert!(cli.show("p").get("state").is_none());
     assert!(cli.txi_hook("SessionStart", &id, "{}").status.success());
-    assert!(cli.show("p").get("status").is_none());
+    assert!(cli.show("p").get("state").is_none());
 }
 
 #[test]

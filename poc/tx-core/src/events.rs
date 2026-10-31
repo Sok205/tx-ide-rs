@@ -26,7 +26,7 @@ pub enum EventType {
     Renamed,
     Tagged,
     MessageSent,
-    /// The agent's `status.state` moved; detail is "<from> → <to>[: note]".
+    /// The agent's `state` moved; detail is "<from> → <to>".
     StateChanged,
     Exited,
     Stopped,

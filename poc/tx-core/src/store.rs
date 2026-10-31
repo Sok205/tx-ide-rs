@@ -229,7 +229,7 @@ mod tests {
                 args: vec![],
             },
             ext: std::collections::BTreeMap::new(),
-            status: None,
+            state: None,
         }
     }
 

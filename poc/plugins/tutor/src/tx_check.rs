@@ -30,8 +30,8 @@ pub fn states(session: &Session) -> Vec<String> {
     match session.lifecycle {
         Lifecycle::Running => {
             let mut names = vec!["alive".to_owned(), "running".to_owned()];
-            if let Some(status) = &session.status {
-                names.push(status.state.as_str().to_owned());
+            if let Some(state) = session.state {
+                names.push(state.as_str().to_owned());
             }
             names
         }
@@ -191,10 +191,7 @@ mod tests {
     fn the_agent_state_adds_a_state_name() {
         let mut worker = agent("w", "running", &[], None);
         assert_eq!(states(&worker), ["alive", "running"]);
-        worker.status = Some(tx_core::LlmEngineStatus::new(
-            tx_core::LlmEngineState::Working,
-            1.0,
-        ));
+        worker.state = Some(tx_core::LlmEngineState::Working);
         assert_eq!(states(&worker), ["alive", "running", "working"]);
         assert_eq!(
             states(&agent("x", "stopped", &[], None)),

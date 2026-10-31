@@ -101,8 +101,8 @@ fn a_malformed_ext_never_fails_the_view_and_health_reports_it() {
         .join("sessions/a0000000-0000-4000-8000-00000000000a.json");
     let mut record: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     record["ext"]["chat"] = Value::from("not an object");
-    // A record without a status (written before agent state existed) reads as idle.
-    record.as_object_mut().unwrap().remove("status");
+    // A record without a state (written before agent state existed) reads as idle.
+    record.as_object_mut().unwrap().remove("state");
     std::fs::write(&path, record.to_string()).unwrap();
     let out = stdout(&utc(
         &cli,

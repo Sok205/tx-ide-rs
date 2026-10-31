@@ -412,9 +412,8 @@ pub fn activity_at(session: &Session) -> f64 {
 /// The agent's state as its engine adapter last reported it; `idle` for a record without one.
 pub fn agent_state(session: &Session) -> String {
     session
-        .status
-        .as_ref()
-        .map_or("idle", |status| status.state.as_str())
+        .state
+        .map_or("idle", tx_core::LlmEngineState::as_str)
         .to_owned()
 }
 

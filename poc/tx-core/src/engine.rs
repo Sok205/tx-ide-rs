@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::CoreError;
 use crate::profile::Profile;
 use crate::session::{Effort, validate_name};
-use crate::state::{LlmEngineHook, LlmEngineStateTransition, LlmEngineStatus};
+use crate::state::{LlmEngineHook, LlmEngineState};
 
 /// An adapter could not honor a request, or a workspace action could not be applied.
 #[derive(Debug, thiserror::Error)]
@@ -167,15 +167,11 @@ pub trait LlmEngine: Send + Sync {
         crate::messaging::build_envelope(sender, text)
     }
 
-    /// A hook this adapter wired fired inside the session. Given the current status, say what
-    /// changes; `None` when nothing does. Pure: core applies the result under the session's
-    /// lock. Required, because an engine that wires no hooks never leaves `Starting`; returning
-    /// `None` says so.
-    fn on_hook(
-        &self,
-        current: &LlmEngineStatus,
-        hook: &LlmEngineHook,
-    ) -> Option<LlmEngineStateTransition>;
+    /// A hook this adapter wired fired inside the session. Given the current state, say which
+    /// state the agent moves to; `None` when the hook changes nothing. Pure: core applies the
+    /// result under the session's lock. Required, because an engine that wires no hooks never
+    /// leaves `Starting`; returning `None` says so.
+    fn on_hook(&self, current: LlmEngineState, hook: &LlmEngineHook) -> Option<LlmEngineState>;
 }
 
 /// id → adapter. Ids are unique; registration order does not matter.
@@ -306,9 +302,9 @@ mod tests {
     impl LlmEngine for Stub {
         fn on_hook(
             &self,
-            _: &crate::LlmEngineStatus,
+            _: crate::LlmEngineState,
             _: &crate::LlmEngineHook,
-        ) -> Option<crate::LlmEngineStateTransition> {
+        ) -> Option<crate::LlmEngineState> {
             None
         }
 

@@ -1,4 +1,4 @@
-//! `TxCore::hook`: the adapter decides, core applies, stamps and logs; core alone ends it.
+//! `TxCore::hook`: the adapter decides, core writes and logs; core alone ends it.
 
 mod common;
 
@@ -28,70 +28,33 @@ fn hooks_move_an_agent_and_core_ends_it() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core.create_session(agent("a", &h.workdir("a"))).unwrap();
-    let status = core.get_session(&id).unwrap().status.unwrap();
-    assert_eq!(status.state, LlmEngineState::Starting);
+    let state = |core: &tx_core::TxCore| core.get_session(&id).unwrap().state;
+    assert_eq!(state(&core), Some(LlmEngineState::Starting));
 
-    let status = core
-        .hook(&id, hook("idle", json!({}), 10.0))
-        .unwrap()
-        .unwrap();
-    assert_eq!((status.state, status.since), (LlmEngineState::Idle, 10.0));
-
+    let moved = core.hook(&id, hook("idle", json!({}), 10.0)).unwrap();
+    assert_eq!(moved, Some(LlmEngineState::Idle));
     // Unknown to the adapter: nothing changes, nothing is logged.
-    let status = core
-        .hook(&id, hook("bogus", json!({}), 11.0))
-        .unwrap()
-        .unwrap();
-    assert_eq!((status.state, status.since), (LlmEngineState::Idle, 10.0));
-
-    core.hook(&id, hook("working", json!({}), 12.0)).unwrap();
-    let status = core
-        .hook(&id, hook("idle", json!({"note": "approval: Bash"}), 13.0))
-        .unwrap()
-        .unwrap();
-    assert_eq!(status.note.as_deref(), Some("approval: Bash"));
-    // Same state: the note is replaced, `since` kept, no event.
-    let status = core
-        .hook(&id, hook("idle", json!({"note": "approval: Edit"}), 14.0))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        (status.state, status.since, status.note.as_deref()),
-        (LlmEngineState::Idle, 13.0, Some("approval: Edit"))
-    );
-    let status = core
-        .hook(&id, hook("working", json!({}), 15.0))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        (status.state, status.note.as_deref()),
-        (LlmEngineState::Working, None)
-    );
-    assert_eq!(core.get_session(&id).unwrap().status.unwrap(), status);
+    let unchanged = core.hook(&id, hook("bogus", json!({}), 11.0)).unwrap();
+    assert_eq!(unchanged, Some(LlmEngineState::Idle));
+    // The same state again: nothing is written or logged.
+    core.hook(&id, hook("idle", json!({}), 12.0)).unwrap();
+    core.hook(&id, hook("working", json!({}), 13.0)).unwrap();
+    core.hook(&id, hook("idle", json!({}), 14.0)).unwrap();
+    assert_eq!(state(&core), Some(LlmEngineState::Idle));
 
     assert_eq!(
         state_lines(&h),
-        [
-            "starting → idle",
-            "idle → working",
-            "working → idle: approval: Bash",
-            "idle → working"
-        ]
+        ["starting → idle", "idle → working", "working → idle"]
     );
 
     let stopped = core.stop_session(&id).unwrap();
-    let ended = stopped.status.unwrap();
-    assert_eq!(ended.state, LlmEngineState::Ended);
-    assert_eq!(Some(ended.since), stopped.ended_at);
+    assert_eq!(stopped.state, Some(LlmEngineState::Ended));
     // A stale hook after the end is ignored.
     assert_eq!(core.hook(&id, hook("idle", json!({}), 20.0)).unwrap(), None);
-    assert_eq!(
-        core.get_session(&id).unwrap().status.unwrap().state,
-        LlmEngineState::Ended
-    );
+    assert_eq!(state(&core), Some(LlmEngineState::Ended));
     assert_eq!(
         state_lines(&h).len(),
-        4,
+        3,
         "stop logs `stopped`, not a state change"
     );
 }
@@ -107,7 +70,7 @@ fn an_exited_agent_reads_ended() {
     h.tmux_ok(&["kill-session", "-t", &live.session_target]);
     core.refresh_all().unwrap();
     let session = core.get_session(&id).unwrap();
-    assert_eq!(session.status.unwrap().state, LlmEngineState::Ended);
+    assert_eq!(session.state, Some(LlmEngineState::Ended));
 }
 
 #[test]
@@ -116,9 +79,9 @@ fn process_sessions_have_no_state_and_ignore_hooks() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core.create_session(process("p", &h.workdir("p"))).unwrap();
-    assert_eq!(core.get_session(&id).unwrap().status, None);
+    assert_eq!(core.get_session(&id).unwrap().state, None);
     assert_eq!(core.hook(&id, hook("idle", json!({}), 1.0)).unwrap(), None);
-    assert_eq!(core.get_session(&id).unwrap().status, None);
+    assert_eq!(core.get_session(&id).unwrap().state, None);
 }
 
 #[test]
@@ -132,8 +95,8 @@ fn a_hook_for_an_unregistered_engine_is_ignored() {
     let bare = h.open();
     assert_eq!(bare.hook(&id, hook("idle", json!({}), 1.0)).unwrap(), None);
     assert_eq!(
-        bare.get_session(&id).unwrap().status.unwrap().state,
-        LlmEngineState::Starting
+        bare.get_session(&id).unwrap().state,
+        Some(LlmEngineState::Starting)
     );
 }
 

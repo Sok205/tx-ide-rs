@@ -159,7 +159,7 @@ mod tests {
             ext: ext
                 .map(|chat| [("chat".to_owned(), chat)].into())
                 .unwrap_or_default(),
-            status: None,
+            state: None,
         }
     }
 

@@ -36,7 +36,7 @@ fn session(id: &str, created_at: f64) -> Session {
             args: vec![],
         },
         ext: std::collections::BTreeMap::new(),
-        status: None,
+        state: None,
     }
 }
 
@@ -134,7 +134,7 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Sessi
                 lifecycle,
                 launch,
                 ext: std::collections::BTreeMap::new(),
-                status: None,
+                state: None,
             },
         )
 }

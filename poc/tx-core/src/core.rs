@@ -10,7 +10,7 @@ use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
 use crate::profile::{Profile, Profiles};
 use crate::session::{Effort, Launch, Lifecycle, Session, SessionId, validate_name};
-use crate::state::{LlmEngineHook, LlmEngineState, LlmEngineStateTransition, LlmEngineStatus};
+use crate::state::{LlmEngineHook, LlmEngineState};
 use crate::store::{SessionStore, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 
@@ -322,11 +322,8 @@ fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
     let ended_at = now();
     session.lifecycle = lifecycle;
     session.ended_at = Some(ended_at);
-    if let Some(status) = &mut session.status {
-        status.apply(
-            LlmEngineStateTransition::to(LlmEngineState::Ended),
-            ended_at,
-        );
+    if session.state.is_some() {
+        session.state = Some(LlmEngineState::Ended);
     }
 }
 
@@ -623,15 +620,9 @@ impl TxCore {
             },
             // An agent starts in `Starting` until its adapter's first change; a process has
             // no engine and so no state.
-            status: match &launch {
-                Launch::Agent { .. } => Some(LlmEngineStatus::new(
-                    if exited_at_once {
-                        LlmEngineState::Ended
-                    } else {
-                        LlmEngineState::Starting
-                    },
-                    created_at,
-                )),
+            state: match &launch {
+                Launch::Agent { .. } if exited_at_once => Some(LlmEngineState::Ended),
+                Launch::Agent { .. } => Some(LlmEngineState::Starting),
                 Launch::Process { .. } => None,
             },
             launch,
@@ -744,17 +735,17 @@ impl TxCore {
         Ok(true)
     }
 
-    /// A hook the session's engine wired fired inside it: the engine decides the change, core
-    /// applies it under the session lock (see [`LlmEngineStatus::apply`]) and emits `StateChanged` when
-    /// the state moved. Returns the status after the hook; `None` when the hook is not for a
-    /// live agent this core can read: the session is no longer `Running` (a stale hook), is a
-    /// process session, or its engine is not registered here.
+    /// A hook the session's engine wired fired inside it: the engine decides the new state, core
+    /// writes it under the session lock and emits `StateChanged` (`from → to`) when it moved.
+    /// Returns the state after the hook; `None` when the hook is not for a live agent this core
+    /// can read: the session is no longer `Running` (a stale hook), is a process session, or its
+    /// engine is not registered here.
     pub fn hook(
         &self,
         id: &SessionId,
         hook: LlmEngineHook,
-    ) -> Result<Option<LlmEngineStatus>, CoreError> {
-        let (status, events) = {
+    ) -> Result<Option<LlmEngineState>, CoreError> {
+        let (state, changed) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
             if session.lifecycle != Lifecycle::Running {
@@ -766,35 +757,22 @@ impl TxCore {
             let Some(adapter) = self.engines.get(engine) else {
                 return Ok(None);
             };
-            let status = session
-                .status
-                .as_mut()
-                .expect("agent sessions carry a status");
-            let Some(transition) = adapter.on_hook(status, &hook) else {
-                return Ok(Some(status.clone()));
-            };
-            let before = status.clone();
-            let from = status.apply(transition, hook.at);
-            let after = status.clone();
-            if after == before {
-                return Ok(Some(after));
-            }
-            self.save(&mut session)?;
-            let events = match from {
-                Some(from) => {
-                    let mut detail = format!("{} → {}", from.as_str(), after.state.as_str());
-                    if let Some(note) = &after.note {
-                        detail.push_str(": ");
-                        detail.push_str(note);
-                    }
-                    vec![event(EventType::StateChanged, &session, None, detail)]
+            let current = session.state.expect("agent sessions carry a state");
+            match adapter.on_hook(current, &hook) {
+                Some(to) if to != current => {
+                    session.state = Some(to);
+                    self.save(&mut session)?;
+                    let detail = format!("{} → {}", current.as_str(), to.as_str());
+                    (
+                        to,
+                        vec![event(EventType::StateChanged, &session, None, detail)],
+                    )
                 }
-                None => Vec::new(),
-            };
-            (after, events)
+                _ => (current, Vec::new()),
+            }
         };
-        self.emit(events);
-        Ok(Some(status))
+        self.emit(changed);
+        Ok(Some(state))
     }
 
     pub fn set_session_tags(
@@ -1071,9 +1049,9 @@ mod tests {
     impl LlmEngine for Stub {
         fn on_hook(
             &self,
-            _: &crate::LlmEngineStatus,
+            _: crate::LlmEngineState,
             _: &crate::LlmEngineHook,
-        ) -> Option<crate::LlmEngineStateTransition> {
+        ) -> Option<crate::LlmEngineState> {
             None
         }
 
@@ -1223,7 +1201,7 @@ mod tests {
                 args: vec![],
             },
             ext: std::collections::BTreeMap::new(),
-            status: None,
+            state: None,
         };
         let filter = ListFilter::new()
             .parent("p".parse().unwrap())

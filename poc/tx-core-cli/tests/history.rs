@@ -82,7 +82,7 @@ fn stop_hook_mirrors_the_claude_transcript_byte_for_byte() {
         cli.show("a")["ext"]["history"]["chats"]["c1"]["bundle"] == bundle.to_str().unwrap()
     }));
     let shown = cli.show("a");
-    assert_eq!(shown["status"]["state"], "idle");
+    assert_eq!(shown["state"], "idle");
     assert_eq!(
         shown["ext"]["history"]["chats"]["c1"]["transcript"],
         src.to_str().unwrap()

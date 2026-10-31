@@ -84,7 +84,7 @@ pub fn record(session: &Value, transcripts: &Path) -> Value {
         "last_modified_at": last_modified_at,
         "lifecycle": if state == "exited" { "exited" } else { "running" },
         "launch": launch, "ext": ext,
-        "status": {"state": if state == "exited" { "ended" } else { state }, "since": session["activity"]},
+        "state": if state == "exited" { "ended" } else { state },
     })
 }
 

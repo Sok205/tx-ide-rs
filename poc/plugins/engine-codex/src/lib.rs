@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use tx_core::{
     Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
-    LlmEngineStateTransition, LlmEngineStatus, WorkspaceAction, hook_shell_command,
+    WorkspaceAction, hook_shell_command,
 };
 
 pub const CODEX_BIN: &str = "codex";
@@ -80,31 +80,16 @@ impl LlmEngine for CodexAdapter {
         Ok(plan)
     }
 
-    /// An approval stops the turn on the operator: `Idle` with the tool as the note; the next
-    /// `PostToolUse` means they answered.
-    /// `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the process
-    /// lives, and its payload cannot tell the two apart; core ends the session when the
+    /// An approval stops the turn on the operator (`Idle`); the next `PostToolUse` means they
+    /// answered. `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the
+    /// process lives, and its payload cannot tell the two apart; core ends the session when the
     /// process is gone.
-    fn on_hook(
-        &self,
-        current: &LlmEngineStatus,
-        hook: &LlmEngineHook,
-    ) -> Option<LlmEngineStateTransition> {
-        let to = |state| Some(LlmEngineStateTransition::to(state));
+    fn on_hook(&self, _current: LlmEngineState, hook: &LlmEngineHook) -> Option<LlmEngineState> {
         match hook.name.as_str() {
-            "SessionStart" | "Stop" | "Interrupt" => to(LlmEngineState::Idle),
-            "UserPromptSubmit" => to(LlmEngineState::Working),
-            "PermissionRequest" => Some(LlmEngineStateTransition {
-                to: LlmEngineState::Idle,
-                note: hook
-                    .payload
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .map(|tool| format!("approval: {tool}")),
-            }),
-            "PostToolUse" if current.state == LlmEngineState::Idle && current.note.is_some() => {
-                to(LlmEngineState::Working)
+            "SessionStart" | "Stop" | "Interrupt" | "PermissionRequest" => {
+                Some(LlmEngineState::Idle)
             }
+            "UserPromptSubmit" | "PostToolUse" => Some(LlmEngineState::Working),
             _ => None,
         }
     }
@@ -176,69 +161,48 @@ mod tests {
         }
     }
 
-    /// (current state, current note, hook name, payload) → the adapter's transition.
+    /// (current state, hook name, payload) → the state the adapter moves to.
     type Row = (
         LlmEngineState,
-        Option<&'static str>,
         &'static str,
         serde_json::Value,
-        Option<LlmEngineStateTransition>,
+        Option<LlmEngineState>,
     );
 
     fn check(adapter: &dyn LlmEngine, table: Vec<Row>) {
-        for (state, note, name, payload, expected) in table {
-            let current = LlmEngineStatus {
-                note: note.map(str::to_owned),
-                ..LlmEngineStatus::new(state, 1.0)
-            };
+        for (current, name, payload, expected) in table {
             assert_eq!(
-                adapter.on_hook(&current, &hook(name, payload.clone())),
+                adapter.on_hook(current, &hook(name, payload.clone())),
                 expected,
-                "{state:?} {note:?} {name} {payload}"
+                "{current:?} {name} {payload}"
             );
         }
     }
 
-    fn to(state: LlmEngineState) -> Option<LlmEngineStateTransition> {
-        Some(LlmEngineStateTransition::to(state))
-    }
-
-    fn to_noted(state: LlmEngineState, note: &str) -> Option<LlmEngineStateTransition> {
-        Some(LlmEngineStateTransition::to(state).note(note))
-    }
-
     #[test]
-    fn hooks_to_transitions() {
+    fn hooks_to_states() {
         use LlmEngineState::*;
         use serde_json::json;
         let none = json!({});
         check(
             &CodexAdapter,
             vec![
-                (Starting, None, "SessionStart", none.clone(), to(Idle)),
-                (Idle, None, "UserPromptSubmit", none.clone(), to(Working)),
+                (Starting, "SessionStart", none.clone(), Some(Idle)),
+                (Idle, "UserPromptSubmit", none.clone(), Some(Working)),
                 (
                     Working,
-                    None,
                     "PermissionRequest",
                     json!({"tool_name": "shell"}),
-                    to_noted(Idle, "approval: shell"),
+                    Some(Idle),
                 ),
-                (Working, None, "PermissionRequest", none.clone(), to(Idle)),
-                (
-                    Idle,
-                    Some("approval: shell"),
-                    "PostToolUse",
-                    none.clone(),
-                    to(Working),
-                ),
-                (Idle, None, "PostToolUse", none.clone(), None),
-                (Working, None, "PostToolUse", none.clone(), None),
-                (Working, None, "Stop", none.clone(), to(Idle)),
-                (Working, None, "Interrupt", none.clone(), to(Idle)),
-                (Idle, None, "SessionEnd", json!({"reason": "other"}), None),
-                (Idle, None, "PreToolUse", none.clone(), None),
-                (Idle, None, "Notification", none.clone(), None),
+                // The operator answered: a tool ran.
+                (Idle, "PostToolUse", none.clone(), Some(Working)),
+                (Working, "PostToolUse", none.clone(), Some(Working)),
+                (Working, "Stop", none.clone(), Some(Idle)),
+                (Working, "Interrupt", none.clone(), Some(Idle)),
+                (Idle, "SessionEnd", json!({"reason": "other"}), None),
+                (Idle, "PreToolUse", none.clone(), None),
+                (Idle, "Notification", none.clone(), None),
             ],
         );
     }

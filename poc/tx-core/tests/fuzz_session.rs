@@ -117,7 +117,7 @@ fn arb_session_with(
                 lifecycle,
                 launch,
                 ext,
-                status: None,
+                state: None,
             },
         )
 }
@@ -282,7 +282,7 @@ fn sample() -> Session {
             args: vec![],
         },
         ext: std::collections::BTreeMap::new(),
-        status: None,
+        state: None,
     }
 }
 

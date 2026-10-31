@@ -251,7 +251,7 @@ mod tests {
                 resume: None,
             },
             ext: Default::default(),
-            status: None,
+            state: None,
         }
     }
 

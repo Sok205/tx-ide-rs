@@ -20,9 +20,9 @@ struct Stub(String);
 impl LlmEngine for Stub {
     fn on_hook(
         &self,
-        _: &tx_core::LlmEngineStatus,
+        _: tx_core::LlmEngineState,
         _: &tx_core::LlmEngineHook,
-    ) -> Option<tx_core::LlmEngineStateTransition> {
+    ) -> Option<tx_core::LlmEngineState> {
         None
     }
 
