@@ -342,8 +342,8 @@ impl Verb for NewAgent {
         };
         // The agent may get `<name>-2` when the name is taken: say what it is really called.
         let created = core
-            .create_session(create_options(&reply))
-            .and_then(|id| core.get_session(&id));
+            .create_agent(create_options(&reply))
+            .and_then(|id| core.get_agent(&id));
         match created {
             Ok(session) => {
                 ui.display_status(client, &format!("spawned {}", session.name));

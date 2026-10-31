@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use proptest::prelude::*;
 use tx_core::{
-    DELIVERY_PAUSE, EnvelopeSender, Live, SessionId, Tmux, TmuxError, build_envelope, validate_name,
+    AgentId, DELIVERY_PAUSE, EnvelopeSender, Live, Tmux, TmuxError, build_envelope, validate_name,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -89,7 +89,7 @@ macro_rules! server {
     };
 }
 
-fn sid(s: &str) -> SessionId {
+fn sid(s: &str) -> AgentId {
     s.parse().unwrap()
 }
 

@@ -16,10 +16,10 @@ fn child_lists_running_sessions() {
     };
     let core = TxCore::open(CoreConfig::new(Directories::under(home))).unwrap();
     let mut names: Vec<String> = core
-        .list_sessions(&ListFilter::new().running())
+        .list_agents(&ListFilter::new().running())
         .unwrap()
         .iter()
-        .map(|id| core.get_session(id).unwrap().name)
+        .map(|id| core.get_agent(id).unwrap().name)
         .collect();
     names.sort();
     println!("\nTXC-SWARM {}", names.join(","));
@@ -32,13 +32,13 @@ fn swarm_outlives_its_core_and_targets_reach_the_right_pane() {
     let (alice, bob, tool, alice_dir, bob_dir, tool_dir) = {
         let core = h.open_with_engine();
         let alice = core
-            .create_session(agent("alice", &h.repository("alice")))
+            .create_agent(agent("alice", &h.repository("alice")))
             .unwrap();
         let bob = core
-            .create_session(agent("bob", &h.repository("bob")))
+            .create_agent(agent("bob", &h.repository("bob")))
             .unwrap();
         let tool = core
-            .create_session(agent("tool", &h.repository("tool")))
+            .create_agent(agent("tool", &h.repository("tool")))
             .unwrap();
         let (alice_dir, bob_dir, tool_dir) = (
             cwd_of(&core, &alice),

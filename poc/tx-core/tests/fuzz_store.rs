@@ -1,4 +1,4 @@
-//! Property-based and adversarial tests for `SessionStore`: `<dir>/<id>/agent.json`.
+//! Property-based and adversarial tests for `AgentStore`: `<dir>/<id>/agent.json`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::fs::PermissionsExt;
@@ -9,20 +9,20 @@ use std::time::Duration;
 
 use proptest::prelude::*;
 use tx_core::store::RECORD_FILE;
-use tx_core::{EngineKind, LlmEngineState, ReadError, RecordError, Session, SessionId, StoreError};
+use tx_core::{Agent, AgentId, EngineKind, LlmEngineState, ReadError, RecordError, StoreError};
 
-fn store() -> (tempfile::TempDir, tx_core::SessionStore) {
+fn store() -> (tempfile::TempDir, tx_core::AgentStore) {
     let dir = tempfile::tempdir().unwrap();
-    let store = tx_core::SessionStore::new(dir.path().join("agents"));
+    let store = tx_core::AgentStore::new(dir.path().join("agents"));
     (dir, store)
 }
 
-fn sid(id: &str) -> SessionId {
+fn sid(id: &str) -> AgentId {
     id.parse().unwrap()
 }
 
-fn session(id: &str, created_at: f64) -> Session {
-    Session {
+fn session(id: &str, created_at: f64) -> Agent {
+    Agent {
         id: sid(id),
         name: format!("n-{id}"),
         engine: EngineKind::Claude,
@@ -49,7 +49,7 @@ fn record_name(id: &str) -> String {
 }
 
 /// Writes `text` where the record of `id` belongs, creating the agent's directory.
-fn plant(store: &tx_core::SessionStore, id: &str, text: impl AsRef<[u8]>) {
+fn plant(store: &tx_core::AgentStore, id: &str, text: impl AsRef<[u8]>) {
     std::fs::create_dir_all(store.agent_dir(&sid(id))).unwrap();
     std::fs::write(store.path(&sid(id)), text).unwrap();
 }
@@ -64,7 +64,7 @@ fn entries(dir: &Path) -> BTreeSet<String> {
     }
 }
 
-fn ids(sessions: &[Session]) -> Vec<String> {
+fn ids(sessions: &[Agent]) -> Vec<String> {
     sessions.iter().map(|s| s.id.to_string()).collect()
 }
 
@@ -112,7 +112,7 @@ fn state() -> impl Strategy<Value = LlmEngineState> {
     prop::sample::select(LlmEngineState::ALL.to_vec())
 }
 
-fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Session> {
+fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Agent> {
     (
         id,
         text(),
@@ -126,28 +126,26 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Sessi
         state(),
     )
         .prop_map(
-            |(id, name, parent, tags, cwd, created_at, archived_at, engine, roles, state)| {
-                Session {
-                    id: sid(&id),
-                    name,
-                    engine,
-                    working_directory: PathBuf::from(cwd),
-                    roles,
-                    state,
-                    created_at,
-                    last_modified_at: created_at,
-                    archived_at,
-                    tags,
-                    parent_id: parent.map(|p| sid(&p)),
-                    ext: std::collections::BTreeMap::new(),
-                    other: serde_json::Map::new(),
-                }
+            |(id, name, parent, tags, cwd, created_at, archived_at, engine, roles, state)| Agent {
+                id: sid(&id),
+                name,
+                engine,
+                working_directory: PathBuf::from(cwd),
+                roles,
+                state,
+                created_at,
+                last_modified_at: created_at,
+                archived_at,
+                tags,
+                parent_id: parent.map(|p| sid(&p)),
+                ext: std::collections::BTreeMap::new(),
+                other: serde_json::Map::new(),
             },
         )
 }
 
 /// Bitwise equality so `-0.0` vs `0.0` and the exact subnormal are checked, not just `==`.
-fn assert_bitwise_eq(a: &Session, b: &Session) {
+fn assert_bitwise_eq(a: &Agent, b: &Agent) {
     assert_eq!(a, b);
     assert_eq!(
         a.created_at.to_bits(),
@@ -161,8 +159,8 @@ fn assert_bitwise_eq(a: &Session, b: &Session) {
     );
 }
 
-fn expected_order(sessions: &BTreeMap<String, Session>) -> Vec<String> {
-    let mut v: Vec<&Session> = sessions.values().collect();
+fn expected_order(sessions: &BTreeMap<String, Agent>) -> Vec<String> {
+    let mut v: Vec<&Agent> = sessions.values().collect();
     v.sort_by(|a, b| {
         a.created_at
             .total_cmp(&b.created_at)
@@ -300,7 +298,7 @@ proptest! {
     #[test]
     fn all_is_the_saved_set_in_total_order(ops in ops()) {
         let (_dir, store) = store();
-        let mut model: BTreeMap<String, Session> = BTreeMap::new();
+        let mut model: BTreeMap<String, Agent> = BTreeMap::new();
         let mut touched: BTreeSet<String> = BTreeSet::new();
         for op in ops {
             match op {
@@ -485,17 +483,14 @@ fn ids_outside_the_grammar_cannot_be_built() {
         &"a".repeat(300),
     ];
     for id in bad {
+        assert!(id.parse::<AgentId>().is_err(), "{id:?} should be rejected");
         assert!(
-            id.parse::<SessionId>().is_err(),
-            "{id:?} should be rejected"
-        );
-        assert!(
-            SessionId::try_from(id.to_owned()).is_err(),
+            AgentId::try_from(id.to_owned()).is_err(),
             "{id:?} should be rejected"
         );
     }
     for ok in ["a", "-", "_", "A-b_0", &"z".repeat(64)] {
-        assert_eq!(ok.parse::<SessionId>().unwrap().as_str(), ok);
+        assert_eq!(ok.parse::<AgentId>().unwrap().as_str(), ok);
     }
 }
 
@@ -505,7 +500,7 @@ proptest! {
         let valid = !id.is_empty()
             && id.len() <= 64
             && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-        prop_assert_eq!(id.parse::<SessionId>().is_ok(), valid, "{:?}", id);
+        prop_assert_eq!(id.parse::<AgentId>().is_ok(), valid, "{:?}", id);
     }
 }
 
@@ -564,7 +559,7 @@ fn case_variant_ids_may_collide_on_case_insensitive_fs() {
 
 // ---- 5. corrupt / foreign files --------------------------------------------------------------
 
-fn unreadable_named(result: Result<Vec<Session>, StoreError>, name: &str) -> ReadError {
+fn unreadable_named(result: Result<Vec<Agent>, StoreError>, name: &str) -> ReadError {
     match result {
         Err(StoreError::Unreadable { file, source }) if file == name => source,
         other => panic!("expected Unreadable {name}, got {other:?}"),
@@ -854,7 +849,7 @@ fn unlistable_dir_fails_all_with_io_naming_the_dir() {
 #[test]
 fn save_creates_missing_parent_directories() {
     let dir = tempfile::tempdir().unwrap();
-    let store = tx_core::SessionStore::new(dir.path().join("a/b/c"));
+    let store = tx_core::AgentStore::new(dir.path().join("a/b/c"));
     assert!(store.all().unwrap().is_empty());
     assert_eq!(store.load(&sid("x")).unwrap(), None);
     assert!(!store.delete(&sid("x")).unwrap());

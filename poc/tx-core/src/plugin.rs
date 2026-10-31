@@ -17,7 +17,7 @@ use crate::events::EventSink;
 
 pub trait Plugin: Send + Sync {
     /// `[a-z0-9-]+`, unique across the manifest; the key in the front end's config and in
-    /// `Session.ext`.
+    /// `Agent.ext`.
     fn id(&self) -> &'static str;
     fn register(&self, r: &mut Registry) -> Result<(), PluginError>;
 }

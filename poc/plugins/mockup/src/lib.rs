@@ -12,8 +12,8 @@ use serde_json::json;
 use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{
-    CoreError, Plugin, PluginError, Registry, SendOptions, Session, SessionId, TxCore, Verb,
-    VerbError, VerbIo,
+    Agent, AgentId, CoreError, Plugin, PluginError, Registry, SendOptions, TxCore, Verb, VerbError,
+    VerbIo,
 };
 
 pub mod markup;
@@ -25,7 +25,7 @@ pub const PLUGIN_ID: &str = "mockup";
 pub const VIEW_VERB: &str = "_mockup-view";
 /// Views are `mockup-<agent name>`.
 pub const VIEW_PREFIX: &str = "mockup-";
-/// Session dirs are `<project>/.superpowers/mockup/<agent id>`.
+/// Agent dirs are `<project>/.superpowers/mockup/<agent id>`.
 pub const SESSION_DIRS: &str = ".superpowers/mockup";
 
 const DIR_OPTION: &str = "@tx-mockup-dir";
@@ -95,14 +95,14 @@ fn parse_args(argv: &[String]) -> Option<Args> {
 
 /// `--for`, else the caller's own session: `$TX_SESSION_ID`, only when `$TMUX` names the
 /// core's own server (the rule `txc send` uses for its sender).
-fn resolve_agent(core: &TxCore, token: Option<&str>) -> Result<Option<SessionId>, CoreError> {
+fn resolve_agent(core: &TxCore, token: Option<&str>) -> Result<Option<AgentId>, CoreError> {
     match token {
         Some(token) => core.resolve(token).map(Some),
         None => Ok(agent_from_env(core)),
     }
 }
 
-fn agent_from_env(core: &TxCore) -> Option<SessionId> {
+fn agent_from_env(core: &TxCore) -> Option<AgentId> {
     let tmux = std::env::var("TMUX").ok()?;
     let socket = tmux.split(',').next()?;
     if Path::new(socket) != core.socket_path() {
@@ -120,7 +120,7 @@ fn write_failed(error: std::io::Error) -> VerbError {
 }
 
 /// The session dir `start` recorded in `ext["mockup"].dir`.
-fn session_dir(session: &Session) -> Option<PathBuf> {
+fn session_dir(session: &Agent) -> Option<PathBuf> {
     session
         .ext
         .get(PLUGIN_ID)?
@@ -130,7 +130,7 @@ fn session_dir(session: &Session) -> Option<PathBuf> {
 }
 
 /// The agent a session dir belongs to: its last path component.
-fn agent_of(dir: &Path) -> Option<SessionId> {
+fn agent_of(dir: &Path) -> Option<AgentId> {
     dir.file_name()?.to_str()?.parse().ok()
 }
 
@@ -260,7 +260,7 @@ fn start(
     core: &TxCore,
     ui: &Ui,
     io: &mut VerbIo<'_>,
-    id: &SessionId,
+    id: &AgentId,
     view: &str,
     project: &Path,
 ) -> Result<i32, VerbError> {
@@ -289,7 +289,7 @@ fn show(
     core: &TxCore,
     ui: &Ui,
     io: &mut VerbIo<'_>,
-    session: &Session,
+    session: &Agent,
     view: &str,
 ) -> Result<i32, VerbError> {
     let Some(dir) = session_dir(session) else {
@@ -317,7 +317,7 @@ fn show(
     Ok(0)
 }
 
-fn wait(io: &mut VerbIo<'_>, session: &Session) -> Result<i32, VerbError> {
+fn wait(io: &mut VerbIo<'_>, session: &Agent) -> Result<i32, VerbError> {
     let Some(dir) = session_dir(session) else {
         let _ = writeln!(io.stderr, "txc mockup: run 'txc mockup start' first");
         return Ok(1);
@@ -353,7 +353,7 @@ impl Verb for MockupVerb {
             let _ = writeln!(io.stderr, "txc mockup: no agent session (use --for)");
             return Ok(2);
         };
-        let session = core.get_session(&id)?;
+        let session = core.get_agent(&id)?;
         let view = view_name(&session.name);
         let ui = Ui::from_core(core);
         match args.sub {

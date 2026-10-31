@@ -12,9 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tx_core::events::now;
-use tx_core::{
-    ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
-};
+use tx_core::{Agent, ListFilter, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo};
 
 use tx_client::render::{
     ACCENT_ANSI, BOLD, FG_ANSI, LOCATION_W, NESTED_MARK, PickerEntry, RESET, ROLE_W, Row,
@@ -174,7 +172,7 @@ pub fn fzf_args(
 /// What the picker lists: reconciled with tmux and with the views whose agent is gone closed,
 /// the running agents and every view.
 struct Listing {
-    agents: Vec<Session>,
+    agents: Vec<Agent>,
     views: Vec<View>,
 }
 
@@ -182,10 +180,10 @@ impl Listing {
     fn gather(core: &TxCore, ui: &Ui) -> Result<Self, VerbError> {
         core.refresh_all()?;
         views::close_orphans(ui, core).map_err(ui_failed)?;
-        let ids = core.list_sessions(&ListFilter::new().running())?;
+        let ids = core.list_agents(&ListFilter::new().running())?;
         let agents = ids
             .iter()
-            .map(|id| core.get_session(id).map_err(VerbError::from))
+            .map(|id| core.get_agent(id).map_err(VerbError::from))
             .collect::<Result<_, _>>()?;
         let views = views::list(ui).map_err(ui_failed)?;
         Ok(Listing { agents, views })

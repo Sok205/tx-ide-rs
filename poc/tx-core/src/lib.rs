@@ -1,6 +1,7 @@
 //! tx-core: run and manage a swarm of interactive agents, each a process in a detached session
 //! on tx's own tmux server. See `docs/superpowers/specs/2026-10-15-tx-core-design.md`.
 
+pub mod agent;
 pub mod config;
 pub mod core;
 pub mod engine;
@@ -16,7 +17,6 @@ pub mod migrate;
 pub mod mirror;
 pub mod plugin;
 pub mod profile;
-pub mod session;
 pub mod state;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
@@ -26,6 +26,7 @@ pub mod store;
 pub mod tmux;
 pub mod worktree;
 
+pub use agent::{Agent, AgentId, RecordError, validate_name};
 pub use config::{CoreConfig, Directories, MAX_SOCKET_PATH_BYTES};
 pub use core::{
     CreateOptions, DeliveryReceipt, ExecutionLocation, ForkOptions, LaunchOptions, ListFilter,
@@ -52,10 +53,9 @@ pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
-pub use session::{RecordError, Session, SessionId, validate_name};
 pub use state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 #[doc(hidden)]
-pub use store::SessionStore;
+pub use store::AgentStore;
 /// Stable: they are the payload of `CoreError::Store`.
 pub use store::{ReadError, SkippedRecord, StoreError};
 /// Stable: it is the payload of `CoreError::Tmux`.

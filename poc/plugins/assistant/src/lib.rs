@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use tx_client::tmux::Ui;
 use tx_core::{
-    CoreError, CreateOptions, EngineKind, LaunchOptions, ListFilter, LlmEngineState, Plugin,
-    PluginError, Registry, SendOptions, Sender, Session, SessionId, TxCore, Verb, VerbError,
+    Agent, AgentId, CoreError, CreateOptions, EngineKind, LaunchOptions, ListFilter,
+    LlmEngineState, Plugin, PluginError, Registry, SendOptions, Sender, TxCore, Verb, VerbError,
     VerbIo,
 };
 
@@ -125,17 +125,17 @@ pub fn create_options(core: &TxCore) -> Result<CreateOptions, CoreError> {
 }
 
 /// An agent launched with the TX-ASSISTANT role, whatever its name ended up as.
-fn is_assistant(session: &Session) -> bool {
+fn is_assistant(session: &Agent) -> bool {
     session.roles.iter().any(|role| role == ROLE)
 }
 
 /// The running assistant's id, after a liveness check; `None` when there is none. Found by its
 /// tag and role, not its name: a restart after a stop is `tx-assistant-2`, the stopped one
 /// keeping its name and its worktree.
-pub fn running(core: &TxCore) -> Result<Option<SessionId>, CoreError> {
+pub fn running(core: &TxCore) -> Result<Option<AgentId>, CoreError> {
     let filter = ListFilter::new().tag(TAG).running();
-    for id in core.list_sessions(&filter)? {
-        let session = core.refresh_session(&id)?.session().clone();
+    for id in core.list_agents(&filter)? {
+        let session = core.refresh_agent(&id)?.agent().clone();
         if session.state != LlmEngineState::Ended && is_assistant(&session) {
             return Ok(Some(id));
         }
@@ -145,20 +145,20 @@ pub fn running(core: &TxCore) -> Result<Option<SessionId>, CoreError> {
 
 /// The running assistant, started when there is none. Nothing is removed: a new assistant is a
 /// new agent, with its own worktree (respawn in place will reuse the stopped one's instead).
-pub fn warm(core: &TxCore) -> Result<SessionId, CoreError> {
+pub fn warm(core: &TxCore) -> Result<AgentId, CoreError> {
     match running(core)? {
         Some(id) => Ok(id),
-        None => core.create_session(create_options(core)?),
+        None => core.create_agent(create_options(core)?),
     }
 }
 
 /// Delivers `text` to the running assistant (started when there is none) as the operator, via
 /// `via`. A new assistant is given `START_TIMEOUT` to report a state past `starting`; the line
 /// goes out either way, since the engine queues input typed while it works.
-pub fn ask(core: &TxCore, text: &str, via: &str) -> Result<SessionId, CoreError> {
+pub fn ask(core: &TxCore, text: &str, via: &str) -> Result<AgentId, CoreError> {
     let id = warm(core)?;
     let deadline = Instant::now() + START_TIMEOUT;
-    while core.get_session(&id)?.state == LlmEngineState::Starting && Instant::now() < deadline {
+    while core.get_agent(&id)?.state == LlmEngineState::Starting && Instant::now() < deadline {
         std::thread::sleep(START_POLL);
     }
     let options = SendOptions::from(Sender::User {
@@ -197,7 +197,7 @@ impl Verb for Assistant {
         match argv {
             [sub] if sub == "warm" => {
                 let id = warm(core)?;
-                let name = core.get_session(&id)?.name;
+                let name = core.get_agent(&id)?.name;
                 writeln!(io.stdout, "{name}")
                     .map_err(|error| VerbError::Failed(format!("write: {error}")))?;
                 Ok(0)

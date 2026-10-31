@@ -7,8 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use proptest::prelude::*;
 use tx_core::engine::{apply_workspace, resolve_in};
 use tx_core::{
-    CoreError, EngineError, EngineKind, EngineRegistry, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineState, Profile, ResolvedProfile, Session, SessionId, WorkspaceAction,
+    Agent, AgentId, CoreError, EngineError, EngineKind, EngineRegistry, LaunchPlan, LaunchRequest,
+    LlmEngine, LlmEngineState, Profile, ResolvedProfile, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -19,11 +19,7 @@ use tx_core::{
 struct Stub(EngineKind);
 
 impl LlmEngine for Stub {
-    fn on_hook(
-        &self,
-        _: &tx_core::Session,
-        _: &tx_core::LlmEngineHook,
-    ) -> tx_core::LlmEngineChange {
+    fn on_hook(&self, _: &tx_core::Agent, _: &tx_core::LlmEngineHook) -> tx_core::LlmEngineChange {
         tx_core::LlmEngineChange::NONE
     }
 
@@ -37,7 +33,7 @@ impl LlmEngine for Stub {
 
     fn configure(
         &self,
-        _: &tx_core::Session,
+        _: &tx_core::Agent,
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, EngineError> {
         Ok(options.clone())
@@ -51,7 +47,7 @@ impl LlmEngine for Stub {
         Ok(LaunchPlan::default())
     }
 
-    fn fork(&self, _: &LaunchRequest<'_>, _: &Session, _: &str) -> Result<LaunchPlan, EngineError> {
+    fn fork(&self, _: &LaunchRequest<'_>, _: &Agent, _: &str) -> Result<LaunchPlan, EngineError> {
         Ok(LaunchPlan::default())
     }
 }
@@ -833,8 +829,8 @@ fn core_accepts_a_plan_with_empty_program() {
         &dir.path().join("p.md"),
     )
     .unwrap();
-    let session = Session {
-        id: SessionId::mint(),
+    let session = Agent {
+        id: AgentId::mint(),
         name: "s".into(),
         engine: EngineKind::Claude,
         working_directory: dir.path().to_owned(),

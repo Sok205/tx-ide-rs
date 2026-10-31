@@ -8,8 +8,8 @@ use std::process::{Command, ExitCode};
 use std::path::PathBuf;
 use tx_client::tmux::Ui;
 use tx_core::{
-    CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, RefreshResult, SendOptions,
-    Sender, SessionId, TxCore,
+    AgentId, CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, RefreshResult,
+    SendOptions, Sender, TxCore,
 };
 use tx_core_cli::args::{self, Invocation, Verb};
 
@@ -47,7 +47,7 @@ fn main() -> ExitCode {
 }
 
 /// Who `send` speaks as. Inside tx's tmux server (`$TMUX` names its socket): the agent whose
-/// `$TX_SESSION_ID` `create_session` set, when core knows it; else the user from the view this
+/// `$TX_SESSION_ID` `create_agent` set, when core knows it; else the user from the view this
 /// pane belongs to. Otherwise the user, from `--via` when given.
 fn sender_from_env(core: &TxCore, via: Option<String>) -> Result<Sender, CoreError> {
     let ui = Ui::from_core(core);
@@ -56,9 +56,9 @@ fn sender_from_env(core: &TxCore, via: Option<String>) -> Result<Sender, CoreErr
     }
     if let Some(id) = std::env::var("TX_SESSION_ID")
         .ok()
-        .and_then(|id| id.parse::<SessionId>().ok())
+        .and_then(|id| id.parse::<AgentId>().ok())
     {
-        match core.get_session(&id) {
+        match core.get_agent(&id) {
             Ok(_) => return Ok(Sender::Agent { id }),
             Err(CoreError::NotFound(_)) => {}
             Err(error) => return Err(error),
@@ -155,7 +155,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             for (key, value) in env {
                 opts = opts.env(key, value);
             }
-            let id = core.create_session(opts)?;
+            let id = core.create_agent(opts)?;
             writeln!(out, "{id}").ok();
         }
         Verb::Fork {
@@ -175,7 +175,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             for (key, value) in engine_options {
                 options = options.option(key, value);
             }
-            let id = core.fork_session(&core.resolve(&source)?, options)?;
+            let id = core.fork_agent(&core.resolve(&source)?, options)?;
             writeln!(out, "{id}").ok();
         }
         Verb::Ls {
@@ -204,11 +204,11 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             if archived {
                 filter = filter.archived();
             }
-            let ids = core.list_sessions(&filter)?;
+            let ids = core.list_agents(&filter)?;
             if json {
                 let mut entries = Vec::with_capacity(ids.len());
                 for id in ids {
-                    let session = core.get_session(&id)?;
+                    let session = core.get_agent(&id)?;
                     entries.push(serde_json::json!({
                         "id": session.id.as_str(),
                         "name": session.name,
@@ -220,7 +220,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 writeln!(out, "{}", serde_json::Value::Array(entries)).ok();
             } else {
                 for id in ids {
-                    let session = core.get_session(&id)?;
+                    let session = core.get_agent(&id)?;
                     writeln!(
                         out,
                         "{}\t{}\t{}\t{}",
@@ -234,7 +234,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
         }
         Verb::Show { target } => {
-            let session = core.get_session(&core.resolve(&target)?)?;
+            let session = core.get_agent(&core.resolve(&target)?)?;
             let text = session.to_json().map_err(|error| {
                 CoreError::Store(tx_core::StoreError::Encode {
                     id: session.id.clone(),
@@ -244,11 +244,11 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             write!(out, "{text}").ok();
         }
         Verb::Rename { target, name } => {
-            let session = core.rename_session(&core.resolve(&target)?, &name)?;
+            let session = core.rename_agent(&core.resolve(&target)?, &name)?;
             writeln!(out, "{}\t{}", session.id, session.name).ok();
         }
         Verb::Tag { target, tags } => {
-            let session = core.set_session_tags(&core.resolve(&target)?, tags)?;
+            let session = core.set_agent_tags(&core.resolve(&target)?, tags)?;
             writeln!(out, "{}\t{}", session.id, session.tags.join(",")).ok();
         }
         Verb::Send { target, text, via } => {
@@ -258,7 +258,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         }
         Verb::Refresh { target } => {
             let changed = match target {
-                Some(target) => match core.refresh_session(&core.resolve(&target)?)? {
+                Some(target) => match core.refresh_agent(&core.resolve(&target)?)? {
                     RefreshResult::Exited(session) => vec![session],
                     _ => vec![],
                 },
@@ -303,20 +303,20 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             })));
         }
         Verb::Stop { target } => {
-            let session = core.stop_session(&core.resolve(&target)?)?;
+            let session = core.stop_agent(&core.resolve(&target)?)?;
             writeln!(out, "{}\t{}", session.id, session.state.as_str()).ok();
         }
         Verb::Interrupt { target } => {
             let id = core.resolve(&target)?;
-            core.interrupt_session(&id)?;
+            core.interrupt_agent(&id)?;
             writeln!(out, "{id}\tinterrupted").ok();
         }
         Verb::Respawn { target } => {
-            let session = core.respawn_session(&core.resolve(&target)?)?;
+            let session = core.respawn_agent(&core.resolve(&target)?)?;
             writeln!(out, "{}\t{}", session.id, session.name).ok();
         }
         Verb::Archive { target } => {
-            let session = core.archive_session(&core.resolve(&target)?)?;
+            let session = core.archive_agent(&core.resolve(&target)?)?;
             writeln!(out, "{}\tarchived", session.id).ok();
         }
     }

@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, EngineKind, EventType, Input, Key, LaunchOptions,
-    LaunchPlan, LaunchRequest, ListFilter, LlmEngine, LlmEngineState, Profile, ResolvedProfile,
-    SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
+    Agent, AgentId, CoreConfig, CreateOptions, Directories, EngineKind, EventType, Input, Key,
+    LaunchOptions, LaunchPlan, LaunchRequest, ListFilter, LlmEngine, LlmEngineState, Profile,
+    ResolvedProfile, SendOptions, Sender, TxCore, WorkspaceAction,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -70,9 +70,9 @@ fn input_is_a_line_or_a_key() {
 }
 
 /// A minimal agent record in `cwd`.
-fn record(cwd: &Path) -> Session {
-    Session {
-        id: SessionId::mint(),
+fn record(cwd: &Path) -> Agent {
+    Agent {
+        id: AgentId::mint(),
         name: "s".into(),
         engine: EngineKind::Claude,
         working_directory: cwd.to_owned(),
@@ -90,7 +90,7 @@ fn record(cwd: &Path) -> Session {
 
 #[test]
 fn create_options_and_launch_options_builders() {
-    let parent: SessionId = "p".parse().unwrap();
+    let parent: AgentId = "p".parse().unwrap();
     let opts = CreateOptions::new(
         "w",
         "/w",
@@ -155,7 +155,7 @@ fn config_filter_and_send_builders() {
         [PathBuf::from("/p1"), PathBuf::from("/p2")]
     );
     assert_eq!(config.skill_dirs, [PathBuf::from("/sk")]);
-    let id: SessionId = "x".parse().unwrap();
+    let id: AgentId = "x".parse().unwrap();
     let filter = ListFilter::new().parent(id.clone()).tag("t").ended();
     assert_eq!(filter.parent, Some(id.clone()));
     assert_eq!(filter.tag.as_deref(), Some("t"));

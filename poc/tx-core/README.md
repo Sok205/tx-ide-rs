@@ -50,7 +50,7 @@ let mut core = TxCore::open(CoreConfig::new(Directories {
     run: "/tmp/tx-ide.me".into(),
 }))?;
 core.register_engine(Box::new(tx_engine_claude::Claude))?;
-let id = core.create_session(CreateOptions::new(
+let id = core.create_agent(CreateOptions::new(
     "worker-1",
     "/repo",
     LaunchOptions::agent(EngineKind::Claude)
@@ -78,7 +78,7 @@ impl LlmEngine for Aider {
     }
     // Aider keeps no conversation to come back to: a resume starts afresh, a fork likewise.
     fn resume(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> { self.start(r, "") }
-    fn fork(&self, r: &LaunchRequest<'_>, _: &Session, prompt: &str) -> Result<LaunchPlan, EngineError> { self.start(r, prompt) }
+    fn fork(&self, r: &LaunchRequest<'_>, _: &Agent, prompt: &str) -> Result<LaunchPlan, EngineError> { self.start(r, prompt) }
     // Optional: `stop` / `interrupt` (default `None`: core kills / cannot interrupt) and
     // `receive_message` (default: the `<from-…>` envelope, submitted).
 }
@@ -99,14 +99,14 @@ to `cwd`, refusing anything that escapes it), then starts `program args…` with
   (a new create gets `<name>-2`), an archived one frees it. A tmux session that still holds the
   name also yields `NameTaken`. A respawn whose name an unarchived record took meanwhile fails
   with `NameHeld`; nothing is renamed automatically.
-- `archive_session` stops a running session, then hides it from `list_sessions` (unless the
+- `archive_agent` stops a running session, then hides it from `list_agents` (unless the
   filter asks for `archived()`); the record, worktree and profile stay, and a respawn clears it.
 - `Exited` and `Stopped` are terminal. Reads never touch tmux. `list-sessions` is the only
   liveness signal; any failure of it other than "no server" is `InspectionFailed`, and the
   operation writes nothing.
 - Messages are typed verbatim (`send-keys -l`, trailing `;` handled), then `Enter` after a
   300 ms pause. The whole delivery holds `<id>.lock`, so concurrent senders never interleave.
-- A corrupt, misnamed or non-UTF-8 record file fails `list_sessions` by file name instead of
+- A corrupt, misnamed or non-UTF-8 record file fails `list_agents` by file name instead of
   being hidden. FIFOs, directories and sockets named `*.json` are ignored.
 
 ## Known limits

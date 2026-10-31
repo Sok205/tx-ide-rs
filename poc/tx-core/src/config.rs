@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::session::SessionId;
+use crate::agent::AgentId;
 
 use crate::error::CoreError;
 
@@ -149,13 +149,13 @@ impl CoreConfig {
     }
 
     /// The data directory of one agent: `<data>/agents/<id>/`.
-    pub fn agent_dir(&self, id: &SessionId) -> PathBuf {
+    pub fn agent_dir(&self, id: &AgentId) -> PathBuf {
         self.directories.data.join(AGENTS_DIR).join(id.to_string())
     }
 
     /// Where the engine archives one agent's conversations: `<data>/agents/<id>/archive/`.
     /// Nothing is created.
-    pub fn archive_directory(&self, id: &SessionId) -> PathBuf {
+    pub fn archive_directory(&self, id: &AgentId) -> PathBuf {
         self.agent_dir(id).join(ARCHIVE_DIR)
     }
 
@@ -223,7 +223,7 @@ mod tests {
             config.worktrees_dir(),
             PathBuf::from("/tmp/txc/data/worktrees")
         );
-        let id = SessionId::mint();
+        let id = AgentId::mint();
         assert_eq!(
             config.agent_dir(&id),
             PathBuf::from(format!("/tmp/txc/data/agents/{id}"))

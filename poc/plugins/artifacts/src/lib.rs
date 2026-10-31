@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tx_core::{CoreConfig, Plugin, PluginError, Registry, SessionId, TxCore};
+use tx_core::{AgentId, CoreConfig, Plugin, PluginError, Registry, TxCore};
 
 pub mod artifact;
 pub mod difflib;
@@ -41,7 +41,7 @@ pub fn data_dir(config: &CoreConfig) -> PathBuf {
 pub fn actor() -> String {
     std::env::var("TX_SESSION_ID")
         .ok()
-        .and_then(|id| id.parse::<SessionId>().ok())
+        .and_then(|id| id.parse::<AgentId>().ok())
         .map_or_else(|| artifact::USER_ACTOR.to_owned(), |id| id.to_string())
 }
 

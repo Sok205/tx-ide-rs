@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Number, Value, json};
 
-use crate::session::SessionId;
+use crate::agent::AgentId;
 
 /// The smallest `PIPE_BUF` among supported platforms (macOS); a line at most this long is
 /// appended in one atomic write. The newline counts.
@@ -85,10 +85,10 @@ impl EventType {
 pub struct Event {
     pub ts: f64,
     pub type_: EventType,
-    pub id: SessionId,
+    pub id: AgentId,
     pub name: String,
     /// The sending session for `message-sent`; `None` means the user or core itself.
-    pub actor: Option<SessionId>,
+    pub actor: Option<AgentId>,
     /// Human-readable detail (the old name on a rename, the tag list, …). Not a contract.
     pub detail: String,
 }
@@ -96,9 +96,9 @@ pub struct Event {
 impl Event {
     pub fn new(
         type_: EventType,
-        id: SessionId,
+        id: AgentId,
         name: impl Into<String>,
-        actor: Option<SessionId>,
+        actor: Option<AgentId>,
         detail: impl Into<String>,
     ) -> Self {
         Self {
@@ -164,7 +164,7 @@ impl EventLog {
             event.id.as_str(),
             &event.name,
             &event.detail,
-            event.actor.as_ref().map_or("", SessionId::as_str),
+            event.actor.as_ref().map_or("", AgentId::as_str),
         )
     }
 

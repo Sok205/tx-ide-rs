@@ -13,9 +13,7 @@ use std::time::Duration;
 
 use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::{self, ViewKind, ViewRequest, default_shell};
-use tx_core::{
-    ListFilter, Plugin, PluginError, Registry, Session, TxCore, Verb, VerbError, VerbIo,
-};
+use tx_core::{Agent, ListFilter, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo};
 
 pub mod bundle;
 pub mod checks;
@@ -555,11 +553,11 @@ impl<'a> Tutor<'a> {
 
 /// Every record after a refresh, so lifecycles are current. `refresh_all` returns only the
 /// records it changed; the check needs all of them.
-fn all_sessions(core: &TxCore) -> Result<Vec<Session>, tx_core::CoreError> {
+fn all_sessions(core: &TxCore) -> Result<Vec<Agent>, tx_core::CoreError> {
     core.refresh_all()?;
-    core.list_sessions(&ListFilter::new())?
+    core.list_agents(&ListFilter::new())?
         .iter()
-        .map(|id| core.get_session(id))
+        .map(|id| core.get_agent(id))
         .collect()
 }
 

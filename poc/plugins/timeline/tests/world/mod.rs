@@ -102,7 +102,7 @@ pub fn records(dir: &Path) -> Vec<Value> {
 
 /// What `TxCore::conversation` answers for these records: each engine's recorded
 /// `transcript_path` (both engines name it the same way).
-pub fn transcripts(sessions: &[tx_core::Session]) -> tx_timeline::model::Transcripts {
+pub fn transcripts(sessions: &[tx_core::Agent]) -> tx_timeline::model::Transcripts {
     sessions
         .iter()
         .filter_map(|session| {

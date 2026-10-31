@@ -65,7 +65,7 @@ impl Verb for Chat {
             }
             Err(error) => return Err(error.into()),
         };
-        let session = core.get_session(&id)?;
+        let session = core.get_agent(&id)?;
         let conversation = core.conversation(&id)?;
         say(
             io.stdout,

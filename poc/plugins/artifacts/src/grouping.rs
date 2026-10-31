@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_client::views::View;
-use tx_core::Session;
+use tx_core::Agent;
 
 use crate::PLUGIN_ID;
 use crate::artifact::{Artifact, USER_ACTOR};
@@ -47,7 +47,7 @@ pub struct Ext {
 }
 
 /// The session's `ext["artifacts"]`; `Err` names what is wrong with a malformed one.
-pub fn ext_of(session: &Session) -> Result<Ext, String> {
+pub fn ext_of(session: &Agent) -> Result<Ext, String> {
     session
         .ext::<Ext>(PLUGIN_ID)
         .map(Option::unwrap_or_default)
@@ -64,7 +64,7 @@ fn non_empty(value: Option<&Value>) -> Option<&str> {
 }
 
 /// The session's own override: the prefix+e editor's, else `txc group`'s.
-pub fn own_group(session: &Session) -> Option<String> {
+pub fn own_group(session: &Agent) -> Option<String> {
     let edit = session
         .ext
         .get(EDIT_PLUGIN)
@@ -77,7 +77,7 @@ pub fn own_group(session: &Session) -> Option<String> {
     non_empty(edit).or(non_empty(ours)).map(str::to_owned)
 }
 
-fn is_hub(session: &Session) -> bool {
+fn is_hub(session: &Agent) -> bool {
     HUB_SESSION_NAMES.contains(&session.name.as_str())
 }
 
@@ -86,12 +86,12 @@ fn set(group: &Option<String>) -> Option<&str> {
 }
 
 pub struct GroupResolver<'a> {
-    sessions_by_id: HashMap<&'a str, &'a Session>,
+    sessions_by_id: HashMap<&'a str, &'a Agent>,
     artifacts_by_id: HashMap<&'a str, &'a Artifact>,
 }
 
 impl<'a> GroupResolver<'a> {
-    pub fn new(sessions: &'a [Session], artifacts: &'a [Artifact]) -> Self {
+    pub fn new(sessions: &'a [Agent], artifacts: &'a [Artifact]) -> Self {
         Self {
             sessions_by_id: sessions.iter().map(|s| (s.id.as_str(), s)).collect(),
             artifacts_by_id: artifacts.iter().map(|a| (a.id.as_str(), a)).collect(),
@@ -99,7 +99,7 @@ impl<'a> GroupResolver<'a> {
     }
 
     /// The session's effective group; the name is the floor.
-    pub fn session_group(&self, session: &Session) -> String {
+    pub fn session_group(&self, session: &Agent) -> String {
         if let Some(derived) = self.session_override(session) {
             return derived;
         }
@@ -112,7 +112,7 @@ impl<'a> GroupResolver<'a> {
             .unwrap_or_else(|| UNGROUPED.into())
     }
 
-    fn parent(&self, session: &Session) -> Option<&'a Session> {
+    fn parent(&self, session: &Agent) -> Option<&'a Agent> {
         let parent = session.parent_id.as_ref()?;
         self.sessions_by_id.get(parent.as_str()).copied()
     }
@@ -130,7 +130,7 @@ impl<'a> GroupResolver<'a> {
 
     /// Own override, else the first override up the parent chain. Only overrides inherit; an
     /// ancestor's tags never leak down.
-    fn session_override(&self, session: &Session) -> Option<String> {
+    fn session_override(&self, session: &Agent) -> Option<String> {
         if let Some(group) = own_group(session) {
             return Some(group);
         }
@@ -146,7 +146,7 @@ impl<'a> GroupResolver<'a> {
     /// The first override from `ancestor` up the parent chain; stops after a hub and at a cycle.
     fn ancestor_override<'s>(
         &self,
-        mut ancestor: Option<&'a Session>,
+        mut ancestor: Option<&'a Agent>,
         mut visited: HashSet<&'s str>,
     ) -> Option<String>
     where
@@ -199,7 +199,7 @@ mod tests {
 
     use super::*;
 
-    fn session(id: &str, name: &str, extra: Value) -> Session {
+    fn session(id: &str, name: &str, extra: Value) -> Agent {
         let mut record = json!({
             "version": 2, "id": id, "name": name, "engine": "claude", "working_directory": "/r",
             "roles": [], "state": "idle", "created_at": 1.0, "last_modified_at": 1.0,
@@ -208,7 +208,7 @@ mod tests {
         for (key, value) in extra.as_object().unwrap() {
             record[key] = value.clone();
         }
-        Session::from_json(&record.to_string()).unwrap()
+        Agent::from_json(&record.to_string()).unwrap()
     }
 
     fn group(name: &str) -> Value {
@@ -230,7 +230,7 @@ mod tests {
 
     /// Main's fixture G: assist(a1) ← worker(b1, tags feat-x,extra) ← child(c1); hub
     /// tx-assistant(h1) ← up(x1, group upgrp).
-    fn fixture_g(a1_parent: Option<&str>, hub_group: Option<&str>) -> Vec<Session> {
+    fn fixture_g(a1_parent: Option<&str>, hub_group: Option<&str>) -> Vec<Agent> {
         let hub_ext = hub_group.map_or(json!({}), group);
         vec![
             session("a1", "assist", json!({"parent_id": a1_parent})),
@@ -249,7 +249,7 @@ mod tests {
         ]
     }
 
-    fn group_of(sessions: &[Session], artifacts: &[Artifact], id: &str) -> String {
+    fn group_of(sessions: &[Agent], artifacts: &[Artifact], id: &str) -> String {
         let resolver = GroupResolver::new(sessions, artifacts);
         let session = sessions.iter().find(|s| s.id.as_str() == id).unwrap();
         resolver.session_group(session)

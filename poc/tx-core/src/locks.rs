@@ -6,7 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::session::SessionId;
+use crate::agent::AgentId;
 
 pub const CREATE_LOCK: &str = "create.lock";
 const LOCK_SUFFIX: &str = ".lock";
@@ -60,7 +60,7 @@ impl Locks {
     }
 
     /// Serializes record writes and keystroke delivery for one session.
-    pub fn session(&self, id: &SessionId) -> io::Result<LockGuard> {
+    pub fn agent(&self, id: &AgentId) -> io::Result<LockGuard> {
         self.acquire(&self.dir.join(format!("{id}{LOCK_SUFFIX}")))
     }
 
@@ -96,7 +96,7 @@ impl Locks {
 mod tests {
     use super::*;
 
-    fn sid(id: &str) -> SessionId {
+    fn sid(id: &str) -> AgentId {
         id.parse().unwrap()
     }
     use std::os::unix::fs::PermissionsExt;
@@ -108,7 +108,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let locks = Locks::new(dir.path().join("locks"));
         let _create = locks.create().unwrap();
-        let _session = locks.session(&sid("abc")).unwrap();
+        let _session = locks.agent(&sid("abc")).unwrap();
         assert!(dir.path().join("locks/create.lock").is_file());
         assert!(dir.path().join("locks/abc.lock").is_file());
     }
@@ -136,9 +136,9 @@ mod tests {
     fn different_session_locks_do_not_block() {
         let dir = tempfile::tempdir().unwrap();
         let locks = Locks::new(dir.path().join("locks"));
-        let _a = locks.session(&sid("a")).unwrap();
+        let _a = locks.agent(&sid("a")).unwrap();
         let started = Instant::now();
-        let _b = locks.session(&sid("b")).unwrap();
+        let _b = locks.agent(&sid("b")).unwrap();
         let _create = locks.create().unwrap();
         assert!(started.elapsed() < Duration::from_millis(100));
     }
@@ -147,9 +147,9 @@ mod tests {
     fn dropping_the_guard_releases_the_lock() {
         let dir = tempfile::tempdir().unwrap();
         let locks = Locks::new(dir.path().join("locks"));
-        drop(locks.session(&sid("a")).unwrap());
+        drop(locks.agent(&sid("a")).unwrap());
         let started = Instant::now();
-        let _again = locks.session(&sid("a")).unwrap();
+        let _again = locks.agent(&sid("a")).unwrap();
         assert!(started.elapsed() < Duration::from_millis(100));
     }
 
@@ -174,7 +174,7 @@ mod tests {
         std::fs::write(&file, "").unwrap();
         let locks = Locks::new(&file);
         assert!(locks.create().is_err());
-        assert!(locks.session(&sid("a")).is_err());
+        assert!(locks.agent(&sid("a")).is_err());
     }
 
     #[test]

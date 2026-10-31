@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use tx_core::{
-    CoreConfig, CreateOptions, Directories, EngineError, EngineKind, Input, Key, LaunchOptions,
-    LaunchPlan, LaunchRequest, LlmEngine, SessionId, TxCore, WorkspaceAction,
+    AgentId, CoreConfig, CreateOptions, Directories, EngineError, EngineKind, Input, Key,
+    LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine, TxCore, WorkspaceAction,
 };
 
 /// `None` when tmux is not installed; callers skip.
@@ -163,7 +163,7 @@ impl Harness {
             .collect()
     }
 
-    pub fn record_bytes(&self, id: &SessionId) -> Vec<u8> {
+    pub fn record_bytes(&self, id: &AgentId) -> Vec<u8> {
         std::fs::read(self.data_dir().join(format!("agents/{id}/agent.json"))).unwrap()
     }
 }
@@ -211,8 +211,8 @@ pub fn git_worktrees(directory: &Path) -> Vec<PathBuf> {
 }
 
 /// Where a session runs: its record's `cwd`, the agent's worktree.
-pub fn cwd_of(core: &TxCore, id: &SessionId) -> PathBuf {
-    core.get_session(id).unwrap().working_directory
+pub fn cwd_of(core: &TxCore, id: &AgentId) -> PathBuf {
+    core.get_agent(id).unwrap().working_directory
 }
 
 /// Waits up to `timeout` for `condition`.
@@ -244,7 +244,7 @@ impl LlmEngine for ShellStub {
     /// (`{}` clears nothing: it is the complete new value); any other name changes nothing.
     fn on_hook(
         &self,
-        _: &tx_core::Session,
+        _: &tx_core::Agent,
         hook: &tx_core::LlmEngineHook,
     ) -> tx_core::LlmEngineChange {
         if hook.name == "data" {
@@ -270,7 +270,7 @@ impl LlmEngine for ShellStub {
     /// bad option. The launch then reads `model` and `effort` from the data.
     fn configure(
         &self,
-        session: &tx_core::Session,
+        session: &tx_core::Agent,
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, EngineError> {
         if options["model"] == "refuse" {
@@ -299,7 +299,7 @@ impl LlmEngine for ShellStub {
     fn fork(
         &self,
         request: &LaunchRequest<'_>,
-        source: &tx_core::Session,
+        source: &tx_core::Agent,
         prompt: &str,
     ) -> Result<LaunchPlan, EngineError> {
         Ok(self.plan(request, prompt, "fork", source.id.as_str()))
@@ -307,13 +307,13 @@ impl LlmEngine for ShellStub {
 
     /// End of input: `cat` returns and the shell exits, as a CLI's own exit command would.
     /// The `tough` model ignores it, so core's kill fallback is what ends that one.
-    fn stop(&self, _: &tx_core::Session) -> Option<Input> {
+    fn stop(&self, _: &tx_core::Agent) -> Option<Input> {
         Some(Input::Key(Key::ControlD))
     }
 
     /// The stub has no turns; what core types is visible in `input.txt`, and it says it is idle
     /// afterwards, as the real engines do.
-    fn interrupt(&self, _: &tx_core::Session) -> Option<(Input, Option<tx_core::LlmEngineState>)> {
+    fn interrupt(&self, _: &tx_core::Agent) -> Option<(Input, Option<tx_core::LlmEngineState>)> {
         Some((
             Input::line("INTERRUPT"),
             Some(tx_core::LlmEngineState::Idle),
@@ -326,7 +326,7 @@ impl LlmEngine for ShellStub {
     /// would fail.
     fn archive(
         &self,
-        session: &tx_core::Session,
+        session: &tx_core::Agent,
         archive_directory: &Path,
     ) -> Result<(), EngineError> {
         let Some((conversation, transcript)) = stub_conversation(session) else {
@@ -349,7 +349,7 @@ impl LlmEngine for ShellStub {
     /// The archived transcript back to `transcript_path` when the live one is gone.
     fn restore(
         &self,
-        session: &tx_core::Session,
+        session: &tx_core::Agent,
         archive_directory: &Path,
     ) -> Result<bool, EngineError> {
         let Some((conversation, transcript)) = stub_conversation(session) else {
@@ -412,7 +412,7 @@ impl ShellStub {
 }
 
 /// The stub's `(conversation_id, transcript_path)` from its data, when both are set.
-fn stub_conversation(session: &tx_core::Session) -> Option<(String, PathBuf)> {
+fn stub_conversation(session: &tx_core::Agent) -> Option<(String, PathBuf)> {
     let data = tx_core::engine_data(&ShellStub, session);
     let conversation = data.get("conversation_id")?.as_str()?.to_owned();
     let transcript = PathBuf::from(data.get("transcript_path")?.as_str()?);

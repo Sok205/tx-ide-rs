@@ -1,4 +1,4 @@
-//! `SessionStore`: `<dir>/<id>/agent.json`, one directory per agent holding its record, written
+//! `AgentStore`: `<dir>/<id>/agent.json`, one directory per agent holding its record, written
 //! atomically (temp file in the same directory, then rename) so a reader never sees a
 //! half-written record. The directory is the agent's: its engine archive lives next to the
 //! record (`CoreConfig::archive_directory`).
@@ -6,7 +6,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::session::{RecordError, Session, SessionId};
+use crate::agent::{Agent, AgentId, RecordError};
 
 /// The record inside an agent's directory.
 pub const RECORD_FILE: &str = "agent.json";
@@ -48,14 +48,14 @@ pub enum StoreError {
     /// timestamp).
     #[error("cannot encode record {id}: {source}")]
     Encode {
-        id: SessionId,
+        id: AgentId,
         #[source]
         source: RecordError,
     },
 }
 
-/// A record every read skips, and why ([`SessionStore::skipped`]).
-pub type SkippedRecord = (SessionId, RecordError);
+/// A record every read skips, and why ([`AgentStore::skipped`]).
+pub type SkippedRecord = (AgentId, RecordError);
 
 fn io_error(path: &Path) -> impl FnOnce(io::Error) -> StoreError + '_ {
     move |source| StoreError::Io {
@@ -65,16 +65,16 @@ fn io_error(path: &Path) -> impl FnOnce(io::Error) -> StoreError + '_ {
 }
 
 /// `<id>/agent.json`: how an unreadable record is named.
-fn record_name(id: &SessionId) -> String {
+fn record_name(id: &AgentId) -> String {
     format!("{id}/{RECORD_FILE}")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SessionStore {
+pub struct AgentStore {
     dir: PathBuf,
 }
 
-impl SessionStore {
+impl AgentStore {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self { dir: dir.into() }
     }
@@ -85,18 +85,18 @@ impl SessionStore {
     }
 
     /// `<dir>/<id>`: the agent's directory.
-    pub fn agent_dir(&self, id: &SessionId) -> PathBuf {
+    pub fn agent_dir(&self, id: &AgentId) -> PathBuf {
         self.dir.join(id.to_string())
     }
 
     /// `<dir>/<id>/agent.json`: the record.
-    pub fn path(&self, id: &SessionId) -> PathBuf {
+    pub fn path(&self, id: &AgentId) -> PathBuf {
         self.agent_dir(id).join(RECORD_FILE)
     }
 
     /// Atomic write: `.agent.XXXXXXXX.tmp` in the agent's directory (mode 0600), then rename
     /// over `agent.json`. The temp file is removed if anything fails before the rename.
-    pub fn save(&self, session: &Session) -> Result<(), StoreError> {
+    pub fn save(&self, session: &Agent) -> Result<(), StoreError> {
         let payload = session.to_json().map_err(|source| StoreError::Encode {
             id: session.id.clone(),
             source,
@@ -123,8 +123,8 @@ impl SessionStore {
     }
 
     /// One record by id; `None` if there is no such file, or if the file is a record this build
-    /// skips (see [`SessionStore::skipped`]).
-    pub fn load(&self, id: &SessionId) -> Result<Option<Session>, StoreError> {
+    /// skips (see [`AgentStore::skipped`]).
+    pub fn load(&self, id: &AgentId) -> Result<Option<Agent>, StoreError> {
         match read(&self.path(id), id) {
             Ok(session) => Ok(Some(session)),
             Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -138,7 +138,7 @@ impl SessionStore {
 
     /// Removes the record file; the agent's directory and whatever else it holds (the archive)
     /// stay. `Ok(false)` when there was none.
-    pub fn delete(&self, id: &SessionId) -> Result<bool, StoreError> {
+    pub fn delete(&self, id: &AgentId) -> Result<bool, StoreError> {
         let path = self.path(id);
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(true),
@@ -149,11 +149,11 @@ impl SessionStore {
 
     /// Every record, sorted by `created_at` then id. A missing directory is an empty store. A
     /// record deleted between the directory scan and its read is skipped, and so is a record
-    /// this build does not hold ([`SessionStore::skipped`] names those); any other unreadable
+    /// this build does not hold ([`AgentStore::skipped`] names those); any other unreadable
     /// record fails the scan by name. Entries that are not `<id>/agent.json` regular files
     /// (temp files, hidden files, directories not named like an id, agent directories without
     /// a record) are ignored.
-    pub fn all(&self) -> Result<Vec<Session>, StoreError> {
+    pub fn all(&self) -> Result<Vec<Agent>, StoreError> {
         Ok(self.scan()?.0)
     }
 
@@ -164,7 +164,7 @@ impl SessionStore {
     }
 
     /// One pass over the directory: the readable records, and the skipped records with why.
-    fn scan(&self) -> Result<(Vec<Session>, Vec<SkippedRecord>), StoreError> {
+    fn scan(&self) -> Result<(Vec<Agent>, Vec<SkippedRecord>), StoreError> {
         let entries = match std::fs::read_dir(&self.dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -180,7 +180,7 @@ impl SessionStore {
             let Some(name) = name.to_str() else { continue };
             // Only an agent directory can hold a record: a file named like an id is skipped,
             // and so is a directory that vanished since the scan.
-            let Ok(id) = name.parse::<SessionId>() else {
+            let Ok(id) = name.parse::<AgentId>() else {
                 continue;
             };
             match std::fs::metadata(entry.path()) {
@@ -234,13 +234,13 @@ impl SessionStore {
 }
 
 /// Reads the record at `path`, which must be a regular file whose record carries `id`.
-fn read(path: &Path, id: &SessionId) -> Result<Session, ReadError> {
+fn read(path: &Path, id: &AgentId) -> Result<Agent, ReadError> {
     if !std::fs::metadata(path)?.is_file() {
         return Err(ReadError::NotAFile);
     }
     let bytes = std::fs::read(path)?;
     let text = std::str::from_utf8(&bytes).map_err(ReadError::Utf8)?;
-    let session = Session::from_json(text)?;
+    let session = Agent::from_json(text)?;
     if session.id != *id {
         return Err(ReadError::IdMismatch {
             found: session.id.to_string(),
@@ -253,7 +253,7 @@ fn read(path: &Path, id: &SessionId) -> Result<Session, ReadError> {
 mod tests {
     use super::*;
 
-    fn sid(id: &str) -> SessionId {
+    fn sid(id: &str) -> AgentId {
         id.parse().unwrap()
     }
     use crate::engine::EngineKind;
@@ -261,8 +261,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 
-    fn session(id: &str, created_at: f64) -> Session {
-        Session {
+    fn session(id: &str, created_at: f64) -> Agent {
+        Agent {
             id: sid(id),
             name: format!("n-{id}"),
             engine: EngineKind::Claude,
@@ -279,9 +279,9 @@ mod tests {
         }
     }
 
-    fn store() -> (tempfile::TempDir, SessionStore) {
+    fn store() -> (tempfile::TempDir, AgentStore) {
         let dir = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(dir.path().join("agents"));
+        let store = AgentStore::new(dir.path().join("agents"));
         (dir, store)
     }
 
@@ -304,13 +304,13 @@ mod tests {
 
     #[test]
     fn path_is_the_agent_directory_and_its_record() {
-        let store = SessionStore::new("/s");
+        let store = AgentStore::new("/s");
         assert_eq!(store.agent_dir(&sid("abc")), PathBuf::from("/s/abc"));
         assert_eq!(store.path(&sid("abc")), PathBuf::from("/s/abc/agent.json"));
         assert_eq!(store.dir(), Path::new("/s"));
     }
 
-    fn ids_of(skipped: &[SkippedRecord]) -> Vec<SessionId> {
+    fn ids_of(skipped: &[SkippedRecord]) -> Vec<AgentId> {
         skipped.iter().map(|(id, _)| id.clone()).collect()
     }
 
@@ -643,7 +643,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("agents");
         std::fs::write(&file, "").unwrap();
-        let store = SessionStore::new(&file);
+        let store = AgentStore::new(&file);
         let error = store.save(&session("a", 1.0)).unwrap_err();
         assert!(
             matches!(&error, StoreError::Io { path, .. } if path.starts_with(&file)),

@@ -111,7 +111,7 @@ mod tests {
             .unwrap();
         let tmux = Tmux::new("tmux", dir.path().join("tmux.sock"), "/dev/null");
         let out = dir.path().join("got.txt");
-        let id: crate::session::SessionId = "m".parse().unwrap();
+        let id: crate::agent::AgentId = "m".parse().unwrap();
         tmux.new_session(
             "m",
             Path::new("/"),

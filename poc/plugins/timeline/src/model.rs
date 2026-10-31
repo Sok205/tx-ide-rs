@@ -24,7 +24,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
-use tx_core::{CoreError, ListFilter, LlmEngineState, Session, SessionId, TxCore};
+use tx_core::{Agent, AgentId, CoreError, ListFilter, LlmEngineState, TxCore};
 
 use super::cache::TranscriptCache;
 use super::clock;
@@ -304,10 +304,10 @@ pub fn load_group_order(data_dir: &Path) -> Vec<String> {
 }
 
 /// Every record that loads; one vanishing between the listing and the read is skipped.
-pub fn load_sessions(core: &TxCore) -> Result<Vec<Session>, CoreError> {
+pub fn load_sessions(core: &TxCore) -> Result<Vec<Agent>, CoreError> {
     let mut sessions = Vec::new();
-    for id in core.list_sessions(&ListFilter::new())? {
-        match core.get_session(&id) {
+    for id in core.list_agents(&ListFilter::new())? {
+        match core.get_agent(&id) {
             Ok(session) => sessions.push(session),
             Err(CoreError::NotFound(_)) => {}
             Err(error) => return Err(error),
@@ -317,11 +317,11 @@ pub fn load_sessions(core: &TxCore) -> Result<Vec<Session>, CoreError> {
 }
 
 /// Each record's live transcript: the path of its current conversation, as its engine names it.
-pub type Transcripts = HashMap<SessionId, PathBuf>;
+pub type Transcripts = HashMap<AgentId, PathBuf>;
 
 /// Asks core for every record's conversation. A record whose conversation is not known yet, or
 /// whose engine is not registered (`timeline health` reports those), has no transcript.
-pub fn transcripts(core: &TxCore, sessions: &[Session]) -> Transcripts {
+pub fn transcripts(core: &TxCore, sessions: &[Agent]) -> Transcripts {
     sessions
         .iter()
         .filter_map(|session| {
@@ -332,12 +332,12 @@ pub fn transcripts(core: &TxCore, sessions: &[Session]) -> Transcripts {
 }
 
 /// The engine the record runs.
-pub fn engine_of(session: &Session) -> String {
+pub fn engine_of(session: &Agent) -> String {
     session.engine.to_string()
 }
 
 /// `(model, effort)` the record was launched with: its engine data (`ext.<engine>`, PR 12a).
-fn launch_options(session: &Session) -> (Option<String>, Option<String>) {
+fn launch_options(session: &Agent) -> (Option<String>, Option<String>) {
     let option = |key: &str| {
         session
             .ext
@@ -349,22 +349,22 @@ fn launch_options(session: &Session) -> (Option<String>, Option<String>) {
     (option("model"), option("effort"))
 }
 
-pub fn is_alive(session: &Session) -> bool {
+pub fn is_alive(session: &Agent) -> bool {
     session.state != LlmEngineState::Ended
 }
 
 /// The latest sign of life: the record's last write (creation, a state change, the end, a
 /// rename or a tag).
-pub fn activity_at(session: &Session) -> f64 {
+pub fn activity_at(session: &Agent) -> f64 {
     session.last_modified_at
 }
 
 /// The agent's state as its engine adapter last reported it.
-pub fn agent_state(session: &Session) -> String {
+pub fn agent_state(session: &Agent) -> String {
     session.state.as_str().to_owned()
 }
 
-fn group_override(session: &Session) -> Option<&str> {
+fn group_override(session: &Agent) -> Option<&str> {
     session
         .ext
         .get("edit")?
@@ -373,13 +373,13 @@ fn group_override(session: &Session) -> Option<&str> {
         .filter(|group| !group.is_empty())
 }
 
-fn is_hub(session: &Session) -> bool {
+fn is_hub(session: &Agent) -> bool {
     HUB_SESSION_NAMES.contains(&session.name.as_str())
 }
 
 /// Main's group cascade without artifacts: the record's own `ext.edit.group`, else the first
 /// override up the parent chain (stopping at hubs and cycles), else `tags[0]`, else the name.
-pub fn session_group(session: &Session, by_id: &HashMap<&str, &Session>) -> String {
+pub fn session_group(session: &Agent, by_id: &HashMap<&str, &Agent>) -> String {
     if let Some(group) = group_override(session) {
         return group.to_owned();
     }
@@ -410,7 +410,7 @@ pub fn session_group(session: &Session, by_id: &HashMap<&str, &Session>) -> Stri
 
 struct LaneSeed {
     name: String,
-    records: Vec<Session>,
+    records: Vec<Agent>,
     paths: HashSet<String>,
 }
 
@@ -428,7 +428,7 @@ pub struct Builder {
 }
 
 /// The record's transcript when it exists on disk.
-pub fn transcript_on_disk<'a>(transcripts: &'a Transcripts, session: &Session) -> Option<&'a Path> {
+pub fn transcript_on_disk<'a>(transcripts: &'a Transcripts, session: &Agent) -> Option<&'a Path> {
     transcripts
         .get(&session.id)
         .map(PathBuf::as_path)
@@ -446,13 +446,8 @@ impl Builder {
 
     /// Window-filtered records merged into lanes, same-name dead lanes disambiguated with a
     /// `@MonDD` suffix.
-    fn lane_seeds(
-        &self,
-        everyone: &[Session],
-        transcripts: &Transcripts,
-        cut: f64,
-    ) -> Vec<LaneSeed> {
-        let mut records: Vec<&Session> = everyone
+    fn lane_seeds(&self, everyone: &[Agent], transcripts: &Transcripts, cut: f64) -> Vec<LaneSeed> {
+        let mut records: Vec<&Agent> = everyone
             .iter()
             .filter(|session| !session.tags.iter().any(|tag| tag == "temporary"))
             .filter(|session| activity_at(session) >= cut || session.created_at >= cut)
@@ -522,7 +517,7 @@ impl Builder {
 
     pub fn build(
         &mut self,
-        everyone: &[Session],
+        everyone: &[Agent],
         transcripts: &Transcripts,
         days: f64,
         now: f64,
@@ -534,7 +529,7 @@ impl Builder {
             .iter()
             .map(|session| (session.id.as_str(), session.name.as_str()))
             .collect();
-        let by_id: HashMap<&str, &Session> = everyone
+        let by_id: HashMap<&str, &Agent> = everyone
             .iter()
             .map(|session| (session.id.as_str(), session))
             .collect();

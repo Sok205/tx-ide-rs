@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::http::{self, Server};
 use crate::pack::{Check, CommandCheck, FileCheck};
 use crate::tx_check;
-use tx_core::Session;
+use tx_core::Agent;
 
 const OUTPUT_TAIL: usize = 20;
 
@@ -19,7 +19,7 @@ pub struct Context<'a> {
     pub run: &'a [String],
     /// The `http` check's server-readiness timeout (pack.toml `ready_timeout_seconds`, default 5 s).
     pub ready_timeout: Duration,
-    pub sessions: &'a dyn Fn() -> Result<Vec<Session>, String>,
+    pub sessions: &'a dyn Fn() -> Result<Vec<Agent>, String>,
     pub confirm: &'a mut dyn FnMut(&str) -> bool,
 }
 
@@ -53,7 +53,7 @@ impl Report {
 
 pub fn run(checks: &[Check], ctx: &mut Context<'_>) -> Report {
     let mut server: Option<Result<Server, String>> = None;
-    let mut sessions: Option<Result<Vec<Session>, String>> = None;
+    let mut sessions: Option<Result<Vec<Agent>, String>> = None;
     let mut results = Vec::with_capacity(checks.len());
     for check in checks {
         let outcome = match check {
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn no_checks_pass() {
-        let sessions = || -> Result<Vec<Session>, String> { Ok(Vec::new()) };
+        let sessions = || -> Result<Vec<Agent>, String> { Ok(Vec::new()) };
         let mut confirm = |_: &str| false;
         let report = run(
             &[],
@@ -239,7 +239,7 @@ mod tests {
         )
         .map(Check::Http)
         .unwrap();
-        let sessions = || -> Result<Vec<Session>, String> { Ok(Vec::new()) };
+        let sessions = || -> Result<Vec<Agent>, String> { Ok(Vec::new()) };
         let mut confirm = |_: &str| true;
         let run_cmd = [
             "sh".to_owned(),

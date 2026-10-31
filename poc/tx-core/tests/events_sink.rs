@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, wait_for};
-use tx_core::{Event, EventSink, EventType, LlmEngineState, SendOptions, SessionId, TxCore};
+use tx_core::{AgentId, Event, EventSink, EventType, LlmEngineState, SendOptions, TxCore};
 
 #[derive(Default)]
 struct Recorder(Mutex<Vec<Event>>);
@@ -30,23 +30,21 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
     let a = core
-        .create_session(agent("alice", &h.repository("a")))
+        .create_agent(agent("alice", &h.repository("a")))
         .unwrap();
     let cwd = cwd_of(&core, &a);
-    let b = core
-        .create_session(agent("bob", &h.repository("b")))
-        .unwrap();
+    let b = core.create_agent(agent("bob", &h.repository("b"))).unwrap();
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
-    core.rename_session(&a, "alice2").unwrap();
-    core.set_session_tags(&a, vec!["t".into()]).unwrap();
+    core.rename_agent(&a, "alice2").unwrap();
+    core.set_agent_tags(&a, vec!["t".into()]).unwrap();
     core.send_message(&a, "hi", SendOptions::from_agent(b.clone()))
         .unwrap();
     h.tmux_ok(&["kill-session", "-t", "=bob"]);
     core.refresh_all().unwrap();
-    core.stop_session(&a).unwrap();
-    core.archive_session(&b).unwrap();
+    core.stop_agent(&a).unwrap();
+    core.archive_agent(&b).unwrap();
 
     let events = recorder.0.lock().unwrap().clone();
     assert_eq!(
@@ -96,10 +94,10 @@ struct Reentrant {
 
 impl EventSink for Reentrant {
     fn on_event(&self, event: &Event) {
-        let session = self.core.get_session(&event.id).ok();
+        let session = self.core.get_agent(&event.id).ok();
         if session.is_some() && event.type_ == EventType::Created {
             self.core
-                .set_session_tags(&event.id, vec!["seen".into()])
+                .set_agent_tags(&event.id, vec!["seen".into()])
                 .unwrap();
         }
         if let Some(session) = session {
@@ -118,8 +116,8 @@ fn sinks_run_after_the_record_is_saved_and_locks_are_released() {
     });
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&sink)));
-    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
-    core.stop_session(&id).unwrap();
+    let id = core.create_agent(agent("p", &h.repository("p"))).unwrap();
+    core.stop_agent(&id).unwrap();
     let seen = sink.seen.lock().unwrap().clone();
     // The sink's own core has no subscribers, so its `tagged` goes to the log only.
     assert_eq!(
@@ -129,7 +127,7 @@ fn sinks_run_after_the_record_is_saved_and_locks_are_released() {
             (EventType::Stopped, LlmEngineState::Ended),
         ]
     );
-    assert_eq!(core.get_session(&id).unwrap().tags, ["seen"]);
+    assert_eq!(core.get_agent(&id).unwrap().tags, ["seen"]);
     let types: Vec<String> = h
         .log_lines()
         .iter()
@@ -154,8 +152,8 @@ fn a_panicking_sink_never_fails_the_operation_and_later_sinks_still_run() {
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Panicky));
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
-    assert_ne!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
+    let id = core.create_agent(agent("p", &h.repository("p"))).unwrap();
+    assert_ne!(core.get_agent(&id).unwrap().state, LlmEngineState::Ended);
     assert_eq!(types(&recorder.0.lock().unwrap()), [EventType::Created]);
     assert_eq!(h.log_lines().len(), 1);
 }
@@ -174,10 +172,10 @@ fn closures_are_sinks_and_cores_stay_send_sync() {
     let worker = {
         let core = Arc::clone(&core);
         let cwd = h.repository("t");
-        std::thread::spawn(move || core.create_session(agent("threaded", &cwd)).unwrap())
+        std::thread::spawn(move || core.create_agent(agent("threaded", &cwd)).unwrap())
     };
-    let id: SessionId = worker.join().unwrap();
-    assert_eq!(core.get_session(&id).unwrap().name, "threaded");
+    let id: AgentId = worker.join().unwrap();
+    assert_eq!(core.get_agent(&id).unwrap().name, "threaded");
     assert_eq!(*names.lock().unwrap(), ["threaded"]);
 }
 
@@ -188,15 +186,15 @@ fn a_failed_operation_emits_nothing() {
     let recorder = Arc::new(Recorder::default());
     let mut core = h.open_with_engine();
     core.subscribe(Box::new(Arc::clone(&recorder)));
-    let id = core.create_session(agent("p", &h.repository("p"))).unwrap();
+    let id = core.create_agent(agent("p", &h.repository("p"))).unwrap();
     assert!(
-        core.create_session(agent("bad name", &h.repository("q")))
+        core.create_agent(agent("bad name", &h.repository("q")))
             .is_err()
     );
-    assert!(core.rename_session(&id, "bad name").is_err());
+    assert!(core.rename_agent(&id, "bad name").is_err());
     assert!(
         core.send_message(
-            &"zz".parse::<SessionId>().unwrap(),
+            &"zz".parse::<AgentId>().unwrap(),
             "x",
             SendOptions::default()
         )

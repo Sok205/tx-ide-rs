@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, typed, wait_for};
 use proptest::prelude::*;
-use tx_core::{CoreError, EngineKind, ListFilter, RefreshResult, SendOptions, SessionId, TxCore};
+use tx_core::{AgentId, CoreError, EngineKind, ListFilter, RefreshResult, SendOptions, TxCore};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -135,7 +135,7 @@ struct Rec {
     /// The record's `state` is `Ended`.
     ended: bool,
     tags: Vec<String>,
-    parent: Option<SessionId>,
+    parent: Option<AgentId>,
     /// The tmux session was killed behind core's back; the record still says running.
     killed: bool,
     /// Archived: hidden from the default listing, its name free; never deleted.
@@ -151,13 +151,13 @@ impl Rec {
 #[derive(Default)]
 struct Model {
     /// Every id ever minted, in creation order.
-    all_ids: Vec<SessionId>,
-    recs: BTreeMap<SessionId, Rec>,
+    all_ids: Vec<AgentId>,
+    recs: BTreeMap<AgentId, Rec>,
     log_len: usize,
 }
 
 impl Model {
-    fn id_for(&self, who: usize) -> SessionId {
+    fn id_for(&self, who: usize) -> AgentId {
         if who >= 8 || self.all_ids.is_empty() {
             format!("ghost-{who}").parse().unwrap()
         } else {
@@ -166,7 +166,7 @@ impl Model {
     }
 
     /// Whether an unarchived record other than `except`, running or not, holds `name`.
-    fn name_held(&self, name: &str, except: Option<&SessionId>) -> bool {
+    fn name_held(&self, name: &str, except: Option<&AgentId>) -> bool {
         self.recs
             .iter()
             .any(|(id, rec)| !rec.archived && rec.name == name && Some(id) != except)
@@ -188,8 +188,8 @@ impl Model {
     }
 
     /// The unarchived (`archived: false`) or archived records' ids passing `keep`, sorted.
-    fn listed(&self, archived: bool, keep: impl Fn(&Rec) -> bool) -> Vec<SessionId> {
-        let mut ids: Vec<SessionId> = self
+    fn listed(&self, archived: bool, keep: impl Fn(&Rec) -> bool) -> Vec<AgentId> {
+        let mut ids: Vec<AgentId> = self
             .recs
             .iter()
             .filter(|(_, rec)| rec.archived == archived && keep(rec))
@@ -212,8 +212,8 @@ impl Model {
 
     /// `resolve(name)`: the `Running` record, else the most recently created unarchived one,
     /// else the most recently created archived one.
-    fn expected_resolve(&self, name: &str) -> Option<SessionId> {
-        let named: Vec<&SessionId> = self
+    fn expected_resolve(&self, name: &str) -> Option<AgentId> {
+        let named: Vec<&AgentId> = self
             .all_ids
             .iter()
             .filter(|id| self.recs.get(*id).is_some_and(|rec| rec.name == name))
@@ -227,7 +227,7 @@ impl Model {
     }
 }
 
-fn snapshot(h: &Harness, model: &Model) -> BTreeMap<SessionId, Vec<u8>> {
+fn snapshot(h: &Harness, model: &Model) -> BTreeMap<AgentId, Vec<u8>> {
     model
         .recs
         .keys()
@@ -242,13 +242,13 @@ fn check_model(
     model: &mut Model,
     step: usize,
 ) -> Result<(), TestCaseError> {
-    let sorted = |mut ids: Vec<SessionId>| {
+    let sorted = |mut ids: Vec<AgentId>| {
         ids.sort();
         ids
     };
-    let listed = sorted(core.list_sessions(&ListFilter::default()).unwrap());
+    let listed = sorted(core.list_agents(&ListFilter::default()).unwrap());
     prop_assert_eq!(listed, model.listed(false, |_| true), "step {}: ids", step);
-    let archived = sorted(core.list_sessions(&ListFilter::new().archived()).unwrap());
+    let archived = sorted(core.list_agents(&ListFilter::new().archived()).unwrap());
     prop_assert_eq!(
         archived,
         model.listed(true, |_| true),
@@ -256,7 +256,7 @@ fn check_model(
         step
     );
 
-    let running = sorted(core.list_sessions(&ListFilter::new().running()).unwrap());
+    let running = sorted(core.list_agents(&ListFilter::new().running()).unwrap());
     prop_assert_eq!(
         running,
         model.listed(false, |rec| rec.state != LlmEngineState::Ended),
@@ -264,7 +264,7 @@ fn check_model(
         step
     );
 
-    let tagged = sorted(core.list_sessions(&ListFilter::new().tag("t1")).unwrap());
+    let tagged = sorted(core.list_agents(&ListFilter::new().tag("t1")).unwrap());
     prop_assert_eq!(
         tagged,
         model.listed(false, |rec| rec.tags.iter().any(|t| t == "t1")),
@@ -272,7 +272,7 @@ fn check_model(
         step
     );
     let tagged_archived = sorted(
-        core.list_sessions(&ListFilter::new().tag("t1").archived())
+        core.list_agents(&ListFilter::new().tag("t1").archived())
             .unwrap(),
     );
     prop_assert_eq!(
@@ -284,7 +284,7 @@ fn check_model(
 
     if let Some(first) = model.all_ids.first() {
         let children = sorted(
-            core.list_sessions(&ListFilter::new().parent(first.clone()))
+            core.list_agents(&ListFilter::new().parent(first.clone()))
                 .unwrap(),
         );
         prop_assert_eq!(
@@ -296,7 +296,7 @@ fn check_model(
     }
 
     for (id, rec) in &mut model.recs {
-        let session = core.get_session(id).unwrap();
+        let session = core.get_agent(id).unwrap();
         prop_assert_eq!(&session.name, &rec.name, "step {}: name of {}", step, id);
         prop_assert_eq!(
             session.state == LlmEngineState::Ended,
@@ -355,7 +355,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
     for (step, op) in ops.iter().enumerate() {
         let before = snapshot(h, &model);
         // Ids whose record may legitimately change in this step.
-        let mut touched: BTreeSet<SessionId> = BTreeSet::new();
+        let mut touched: BTreeSet<AgentId> = BTreeSet::new();
         match op {
             Op::Create { name, tags, parent } => {
                 let name = name_at(*name);
@@ -365,12 +365,12 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 let valid = !name.is_empty() && name.len() <= 128 && !name.contains(' ');
                 // A held name is never refused: the agent gets the next free one.
                 let expected = if valid { "Ok" } else { "InvalidName" };
-                let result = core.create_session(opts.clone());
+                let result = core.create_agent(opts.clone());
                 prop_assert_eq!(verdict(&result), expected, "step {}: create {}", step, name);
                 if let Ok(id) = result {
                     let name = model.free_name(&name);
                     prop_assert_eq!(
-                        &core.get_session(&id).unwrap().name,
+                        &core.get_agent(&id).unwrap().name,
                         &name,
                         "step {}: the name given",
                         step
@@ -407,7 +407,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 } else {
                     "NotFound"
                 };
-                let result = core.rename_session(&id, &name);
+                let result = core.rename_agent(&id, &name);
                 prop_assert_eq!(
                     verdict(&result),
                     expected,
@@ -434,7 +434,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 } else {
                     "NotFound"
                 };
-                let result = core.set_session_tags(&id, tags.clone());
+                let result = core.set_agent_tags(&id, tags.clone());
                 prop_assert_eq!(verdict(&result), expected, "step {}: tags of {}", step, id);
                 if let Ok(session) = result {
                     prop_assert_eq!(&session.tags, &tags);
@@ -450,7 +450,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                     Some(rec) if rec.ended => "NotRunning",
                     Some(_) => "Ok",
                 };
-                let result = core.stop_session(&id);
+                let result = core.stop_agent(&id);
                 prop_assert_eq!(verdict(&result), expected, "step {}: stop {}", step, id);
                 if let Ok(session) = result {
                     let rec = model.recs.get_mut(&id).unwrap();
@@ -473,7 +473,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                 } else {
                     "NotFound"
                 };
-                let result = core.archive_session(&id);
+                let result = core.archive_agent(&id);
                 prop_assert_eq!(verdict(&result), expected, "step {}: archive {}", step, id);
                 if let Ok(session) = result {
                     let rec = model.recs.get_mut(&id).unwrap();
@@ -500,7 +500,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
             }
             Op::Refresh(who) => {
                 let id = model.id_for(*who);
-                let result = core.refresh_session(&id);
+                let result = core.refresh_agent(&id);
                 match model.recs.get_mut(&id) {
                     None => prop_assert_eq!(
                         verdict(&result),
@@ -513,7 +513,7 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                         let exited = matches!(result, RefreshResult::Exited(_));
                         prop_assert_eq!(exited, rec.killed, "step {}: refresh {}", step, id);
                         prop_assert_eq!(
-                            result.session().state == LlmEngineState::Ended,
+                            result.agent().state == LlmEngineState::Ended,
                             rec.killed || rec.ended
                         );
                         if rec.killed {
@@ -527,9 +527,9 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
             }
             Op::RefreshAll => {
                 let changed = core.refresh_all().unwrap();
-                let mut got: Vec<SessionId> = changed.iter().map(|s| s.id.clone()).collect();
+                let mut got: Vec<AgentId> = changed.iter().map(|s| s.id.clone()).collect();
                 got.sort();
-                let mut expected: Vec<SessionId> = model
+                let mut expected: Vec<AgentId> = model
                     .recs
                     .iter()
                     .filter(|(_, rec)| rec.killed)
@@ -696,9 +696,9 @@ fn resolve_prefers_an_id_over_a_name_equal_to_it() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("a");
-    let a = core.create_session(agent("a", &repository)).unwrap();
+    let a = core.create_agent(agent("a", &repository)).unwrap();
     // A uuid is a valid name; a session *named* like another session's id.
-    let b = core.create_session(agent(a.as_str(), &repository)).unwrap();
+    let b = core.create_agent(agent(a.as_str(), &repository)).unwrap();
     assert_ne!(a, b);
     assert_eq!(
         core.resolve(a.as_str()).unwrap(),
@@ -708,7 +708,7 @@ fn resolve_prefers_an_id_over_a_name_equal_to_it() {
     assert_eq!(core.resolve(b.as_str()).unwrap(), b);
     assert_eq!(core.resolve("a").unwrap(), a);
     // Archived, the id record still exists, and the id still wins.
-    core.archive_session(&a).unwrap();
+    core.archive_agent(&a).unwrap();
     assert_eq!(
         core.resolve(a.as_str()).unwrap(),
         a,
@@ -722,7 +722,7 @@ fn resolve_prefers_an_id_over_a_name_equal_to_it() {
         "a missing id falls through to the name"
     );
     // Even when the named record is stopped, the id-looking name still resolves to it.
-    core.stop_session(&b).unwrap();
+    core.stop_agent(&b).unwrap();
     assert_eq!(core.resolve(a.as_str()).unwrap(), b);
 }
 
@@ -732,46 +732,43 @@ fn resolve_three_records_one_name() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("a");
-    let first = core.create_session(agent("n", &repository)).unwrap();
+    let first = core.create_agent(agent("n", &repository)).unwrap();
     // An ended, unarchived record keeps its name: only archiving frees it.
-    core.stop_session(&first).unwrap();
-    let held = core.create_session(agent("n", &repository)).unwrap();
-    assert_eq!(core.get_session(&held).unwrap().name, "n-2");
-    core.archive_session(&held).unwrap();
-    core.archive_session(&first).unwrap();
-    let second = core.create_session(agent("n", &repository)).unwrap();
-    assert_eq!(core.get_session(&second).unwrap().name, "n");
-    core.archive_session(&second).unwrap();
-    let third = core.create_session(agent("n", &repository)).unwrap();
+    core.stop_agent(&first).unwrap();
+    let held = core.create_agent(agent("n", &repository)).unwrap();
+    assert_eq!(core.get_agent(&held).unwrap().name, "n-2");
+    core.archive_agent(&held).unwrap();
+    core.archive_agent(&first).unwrap();
+    let second = core.create_agent(agent("n", &repository)).unwrap();
+    assert_eq!(core.get_agent(&second).unwrap().name, "n");
+    core.archive_agent(&second).unwrap();
+    let third = core.create_agent(agent("n", &repository)).unwrap();
     assert_eq!(core.resolve("n").unwrap(), third);
     // Kill behind the back: the record is still Running and still wins.
     h.tmux_ok(&["kill-session", "-t", "=n"]);
     assert_eq!(core.resolve("n").unwrap(), third);
-    core.stop_session(&third).unwrap();
-    assert_eq!(
-        core.get_session(&third).unwrap().state,
-        LlmEngineState::Ended
-    );
+    core.stop_agent(&third).unwrap();
+    assert_eq!(core.get_agent(&third).unwrap().state, LlmEngineState::Ended);
     assert_eq!(
         core.resolve("n").unwrap(),
         third,
         "the unarchived one, though ended, beats the archived ones"
     );
-    core.archive_session(&third).unwrap();
+    core.archive_agent(&third).unwrap();
     assert_eq!(
         core.resolve("n").unwrap(),
         third,
         "most recently created among the archived"
     );
     // Rename an older archived record away and back: still the most recent *created* wins.
-    core.rename_session(&first, "m").unwrap();
-    core.rename_session(&first, "n").unwrap();
+    core.rename_agent(&first, "m").unwrap();
+    core.rename_agent(&first, "n").unwrap();
     assert_eq!(core.resolve("n").unwrap(), third);
     // An older unarchived record beats a newer archived one.
-    let older = core.create_session(agent("o", &repository)).unwrap();
-    let newer = core.create_session(agent("p", &repository)).unwrap();
-    core.archive_session(&newer).unwrap();
-    core.rename_session(&older, "p").unwrap();
+    let older = core.create_agent(agent("o", &repository)).unwrap();
+    let newer = core.create_agent(agent("p", &repository)).unwrap();
+    core.archive_agent(&newer).unwrap();
+    core.rename_agent(&older, "p").unwrap();
     assert_eq!(core.resolve("p").unwrap(), older);
 }
 
@@ -784,7 +781,7 @@ fn parent_is_never_validated_and_tags_are_verbatim() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let ghost: SessionId = "no-such-parent".parse().unwrap();
+    let ghost: AgentId = "no-such-parent".parse().unwrap();
     let mut opts = agent("p", &h.repository("a"));
     opts.parent = Some(ghost.clone());
     let big = "T".repeat(10 * 1024);
@@ -797,8 +794,8 @@ fn parent_is_never_validated_and_tags_are_verbatim() {
         "\"quoted\"".into(),
         big.clone(),
     ];
-    let id = core.create_session(opts.clone()).unwrap();
-    let session = core.get_session(&id).unwrap();
+    let id = core.create_agent(opts.clone()).unwrap();
+    let session = core.get_agent(&id).unwrap();
     assert_eq!(
         session.parent_id,
         Some(ghost.clone()),
@@ -808,17 +805,15 @@ fn parent_is_never_validated_and_tags_are_verbatim() {
         session.tags, opts.tags,
         "tags kept verbatim: empty, duplicate, unicode, 10 kB"
     );
-    let by_parent = core
-        .list_sessions(&ListFilter::new().parent(ghost))
-        .unwrap();
+    let by_parent = core.list_agents(&ListFilter::new().parent(ghost)).unwrap();
     assert_eq!(by_parent, std::slice::from_ref(&id));
     for tag in ["", "dup", "ünïcödé 😀", "with\nnewline", big.as_str()] {
-        let found = core.list_sessions(&ListFilter::new().tag(tag)).unwrap();
+        let found = core.list_agents(&ListFilter::new().tag(tag)).unwrap();
         assert_eq!(found, std::slice::from_ref(&id), "tag {tag:?}");
     }
     // A session may even claim itself as parent via set_tags? No API; but rename/tags keep parent.
     let session = core
-        .set_session_tags(&id, vec![big.clone(), big.clone()])
+        .set_agent_tags(&id, vec![big.clone(), big.clone()])
         .unwrap();
     assert_eq!(session.tags, [big.clone(), big]);
     // The log line is bounded even though the tag text is not.
@@ -830,7 +825,7 @@ fn parent_is_never_validated_and_tags_are_verbatim() {
     );
     // Re-reading after the reopen path works with the huge record.
     let again = h.open();
-    assert_eq!(again.get_session(&id).unwrap().tags.len(), 2);
+    assert_eq!(again.get_agent(&id).unwrap().tags.len(), 2);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -860,7 +855,7 @@ fn env_values_with_equals_spaces_newline_and_8kb_reach_the_process() {
         ("TX_SESSION_ID".into(), "override".into()),
         ("CFG".into(), "opts".into()),
     ];
-    let id = core.create_session(opts).unwrap();
+    let id = core.create_agent(opts).unwrap();
     let text = env_text(&cwd_of(&core, &id));
     assert!(text.contains("\nEQ=a=b=c\n"), "{text}");
     assert!(text.contains("\nSP=  two  words  \n"), "{text}");
@@ -887,7 +882,7 @@ fn env_values_with_equals_spaces_newline_and_8kb_reach_the_process() {
     // Core's bookkeeping does not depend on the env: @tx-id still links the session.
     assert!(core.get_execution_location(&id).is_ok());
     assert!(matches!(
-        core.refresh_session(&id).unwrap(),
+        core.refresh_agent(&id).unwrap(),
         RefreshResult::Unchanged(_)
     ));
 }
@@ -901,22 +896,15 @@ fn env_keys_rejected_before_any_state() {
     for key in ["", "A=B", "A B", "A\nB", "A\0", "ä", "A$", "A/B"] {
         let mut opts = agent("k", &repository);
         opts.env = vec![(key.into(), "1".into())];
-        let error = core.create_session(opts).unwrap_err();
+        let error = core.create_agent(opts).unwrap_err();
         assert_eq!(kind(&error), "InvalidEnvKey", "{key:?}");
     }
     let mut opts = agent("k", &repository);
     opts.env = vec![("A".into(), "x\0y".into())];
-    assert_eq!(
-        kind(&core.create_session(opts).unwrap_err()),
-        "InvalidEnvKey"
-    );
+    assert_eq!(kind(&core.create_agent(opts).unwrap_err()), "InvalidEnvKey");
     assert!(h.live_names().is_empty());
     assert!(h.log_lines().is_empty());
-    assert!(
-        core.list_sessions(&ListFilter::default())
-            .unwrap()
-            .is_empty()
-    );
+    assert!(core.list_agents(&ListFilter::default()).unwrap().is_empty());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -938,7 +926,7 @@ fn eight_cores_create_distinct_names_in_parallel() {
                 let mut core = TxCore::open(config).unwrap();
                 core.register_engine(Box::new(common::ShellStub)).unwrap();
                 barrier.wait();
-                core.create_session(agent(&format!("par-{i}"), &repository))
+                core.create_agent(agent(&format!("par-{i}"), &repository))
             })
         })
         .collect();
@@ -946,13 +934,13 @@ fn eight_cores_create_distinct_names_in_parallel() {
     for handle in handles {
         ids.push(handle.join().unwrap().unwrap());
     }
-    let unique: BTreeSet<&SessionId> = ids.iter().collect();
+    let unique: BTreeSet<&AgentId> = ids.iter().collect();
     assert_eq!(unique.len(), 8);
     let live = sorted_live(&h);
     let expected: Vec<String> = (0..8).map(|i| format!("par-{i}")).collect();
     assert_eq!(live, expected);
     let core = h.open();
-    let mut listed = core.list_sessions(&ListFilter::default()).unwrap();
+    let mut listed = core.list_agents(&ListFilter::default()).unwrap();
     listed.sort();
     ids.sort();
     assert_eq!(listed, ids);
@@ -963,7 +951,7 @@ fn eight_cores_create_distinct_names_in_parallel() {
         .flat_map(|e| {
             let e = e.unwrap();
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.parse::<SessionId>().is_err() {
+            if name.parse::<AgentId>().is_err() {
                 return vec![name];
             }
             std::fs::read_dir(e.path())
@@ -992,21 +980,21 @@ fn archive_of_a_live_session_stops_it_and_frees_its_name() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("f", &h.repository("a"))).unwrap();
-    let archived = core.archive_session(&id).unwrap();
+    let id = core.create_agent(agent("f", &h.repository("a"))).unwrap();
+    let archived = core.archive_agent(&id).unwrap();
     assert_eq!(archived.state, LlmEngineState::Ended);
     assert!(
         h.live_names().is_empty(),
         "stopped first: no orphan in tmux"
     );
-    let again = core.create_session(agent("f", &h.repository("b"))).unwrap();
+    let again = core.create_agent(agent("f", &h.repository("b"))).unwrap();
     assert_ne!(again, id);
     assert_eq!(
-        core.list_sessions(&ListFilter::default()).unwrap(),
+        core.list_agents(&ListFilter::default()).unwrap(),
         std::slice::from_ref(&again)
     );
     assert_eq!(
-        core.list_sessions(&ListFilter::new().archived()).unwrap(),
+        core.list_agents(&ListFilter::new().archived()).unwrap(),
         std::slice::from_ref(&id)
     );
     assert!(
@@ -1014,7 +1002,7 @@ fn archive_of_a_live_session_stops_it_and_frees_its_name() {
         "an archived record has nothing to refresh"
     );
     assert!(matches!(
-        core.refresh_session(&id).unwrap(),
+        core.refresh_agent(&id).unwrap(),
         RefreshResult::Unchanged(_)
     ));
     assert_eq!(
@@ -1029,18 +1017,15 @@ fn archive_of_a_live_session_stops_it_and_frees_its_name() {
         ),
         "NotRunning"
     );
-    assert_eq!(kind(&core.stop_session(&id).unwrap_err()), "NotRunning");
+    assert_eq!(kind(&core.stop_agent(&id).unwrap_err()), "NotRunning");
     // An archived record still obeys the name rule, and may take a free name.
     assert_eq!(
-        core.rename_session(&id, "f").unwrap(),
+        core.rename_agent(&id, "f").unwrap(),
         archived,
         "renaming to its own name is a no-op"
     );
-    assert_eq!(core.rename_session(&id, "g").unwrap().name, "g");
-    assert_eq!(
-        kind(&core.rename_session(&id, "f").unwrap_err()),
-        "NameTaken"
-    );
+    assert_eq!(core.rename_agent(&id, "g").unwrap().name, "g");
+    assert_eq!(kind(&core.rename_agent(&id, "f").unwrap_err()), "NameTaken");
     assert!(
         h.state_dir()
             .join("profiles")
@@ -1065,9 +1050,9 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("a");
-    let a = core.create_session(agent("a", &repository)).unwrap();
+    let a = core.create_agent(agent("a", &repository)).unwrap();
     let cwd = cwd_of(&core, &a);
-    let b = core.create_session(agent("b", &h.repository("b"))).unwrap();
+    let b = core.create_agent(agent("b", &h.repository("b"))).unwrap();
     assert!(wait_for(Duration::from_secs(5), || cwd
         .join("env.txt")
         .exists()));
@@ -1078,11 +1063,7 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     // The record still says "a"; tmux says "sneaky". "sneaky" is free by records but taken by
     // tmux: NameTaken from tmux.
     assert_eq!(
-        kind(
-            &core
-                .create_session(agent("sneaky", &repository))
-                .unwrap_err()
-        ),
+        kind(&core.create_agent(agent("sneaky", &repository)).unwrap_err()),
         "NameTaken"
     );
     core.send_message(&a, "hi", SendOptions::default()).unwrap();
@@ -1116,13 +1097,13 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
     assert_eq!(h.record_bytes(&a), bytes_a);
     assert_eq!(h.record_bytes(&b), bytes_b);
     assert_eq!(h.log_lines().len(), log_before);
-    assert_ne!(core.get_session(&a).unwrap().state, LlmEngineState::Ended);
+    assert_ne!(core.get_agent(&a).unwrap().state, LlmEngineState::Ended);
 
     // A rename on a Running record with no live session is record-only.
-    assert_eq!(core.rename_session(&a, "renamed").unwrap().name, "renamed");
+    assert_eq!(core.rename_agent(&a, "renamed").unwrap().name, "renamed");
     assert!(h.live_names().is_empty());
     let changed = core.refresh_all().unwrap();
-    let mut ids: Vec<SessionId> = changed.iter().map(|s| s.id.clone()).collect();
+    let mut ids: Vec<AgentId> = changed.iter().map(|s| s.id.clone()).collect();
     ids.sort();
     let mut expected = vec![a.clone(), b.clone()];
     expected.sort();
@@ -1132,7 +1113,7 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
         h.live_names().is_empty(),
         "refresh did not restart the server"
     );
-    assert_eq!(kind(&core.stop_session(&a).unwrap_err()), "NotRunning");
+    assert_eq!(kind(&core.stop_agent(&a).unwrap_err()), "NotRunning");
     assert_eq!(
         kind(
             &core
@@ -1142,12 +1123,12 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
         "NotRunning"
     );
     assert!(core.refresh_all().unwrap().is_empty());
-    core.archive_session(&a).unwrap();
+    core.archive_agent(&a).unwrap();
     // Creating again starts a fresh server; old records stay Exited.
-    let c = core.create_session(agent("renamed", &repository)).unwrap();
+    let c = core.create_agent(agent("renamed", &repository)).unwrap();
     assert_eq!(h.live_names(), ["renamed"]);
     assert_eq!(core.resolve("renamed").unwrap(), c);
-    assert_eq!(core.get_session(&a).unwrap().state, LlmEngineState::Ended);
+    assert_eq!(core.get_agent(&a).unwrap().state, LlmEngineState::Ended);
 }
 
 #[test]
@@ -1155,9 +1136,9 @@ fn stop_after_server_death_reports_exited() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("s", &h.repository("a"))).unwrap();
+    let id = core.create_agent(agent("s", &h.repository("a"))).unwrap();
     h.tmux(&["kill-server"]);
-    let session = core.stop_session(&id).unwrap();
+    let session = core.stop_agent(&id).unwrap();
     assert_eq!(
         session.state,
         LlmEngineState::Ended,
@@ -1165,7 +1146,7 @@ fn stop_after_server_death_reports_exited() {
     );
     assert!(h.live_names().is_empty());
     assert_eq!(log_types(&h), ["created", "exited"]);
-    assert_eq!(kind(&core.stop_session(&id).unwrap_err()), "NotRunning");
+    assert_eq!(kind(&core.stop_agent(&id).unwrap_err()), "NotRunning");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1178,11 +1159,11 @@ fn terminal_records_never_revive() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("a");
-    let stopped = core.create_session(agent("s", &repository)).unwrap();
-    let exited = core.create_session(agent("e", &repository)).unwrap();
-    core.stop_session(&stopped).unwrap();
+    let stopped = core.create_agent(agent("s", &repository)).unwrap();
+    let exited = core.create_agent(agent("e", &repository)).unwrap();
+    core.stop_agent(&stopped).unwrap();
     h.tmux_ok(&["kill-session", "-t", "=e"]);
-    core.refresh_session(&exited).unwrap();
+    core.refresh_agent(&exited).unwrap();
     // A foreign tmux session with the record's name and even its @tx-id must not revive it.
     h.tmux_ok(&["new-session", "-d", "-s", "s", "sleep", "30"]);
     h.tmux_ok(&["set-option", "-t", "=s:", "@tx-id", stopped.as_str()]);
@@ -1191,16 +1172,16 @@ fn terminal_records_never_revive() {
     assert!(core.refresh_all().unwrap().is_empty());
     for (index, id) in [&stopped, &exited].into_iter().enumerate() {
         assert!(matches!(
-            core.refresh_session(id).unwrap(),
+            core.refresh_agent(id).unwrap(),
             RefreshResult::Unchanged(_)
         ));
         // Distinct names: an ended, unarchived record keeps holding the one it takes.
-        core.rename_session(id, &format!("zz{index}")).unwrap();
-        core.rename_session(id, &format!("back{index}")).unwrap();
-        core.set_session_tags(id, vec!["t".into()]).unwrap();
-        let session = core.get_session(id).unwrap();
+        core.rename_agent(id, &format!("zz{index}")).unwrap();
+        core.rename_agent(id, &format!("back{index}")).unwrap();
+        core.set_agent_tags(id, vec!["t".into()]).unwrap();
+        let session = core.get_agent(id).unwrap();
         assert_eq!(session.state, LlmEngineState::Ended);
-        assert_eq!(kind(&core.stop_session(id).unwrap_err()), "NotRunning");
+        assert_eq!(kind(&core.stop_agent(id).unwrap_err()), "NotRunning");
         assert_eq!(
             kind(
                 &core

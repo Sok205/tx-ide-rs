@@ -1,11 +1,11 @@
 //! Gathering the menu's [`Context`]: plugin status and the cheat sheet from the core's
 //! registry, past sessions from the records, the running agent and view counts, the fork check
 //! from tmux. Reads only; another
-//! plugin is seen through its status, its resources and `Session.ext` (D3).
+//! plugin is seen through its status, its resources and `Agent.ext` (D3).
 
 use tx_client::tmux::Ui;
 use tx_client::views;
-use tx_core::{CoreError, ListFilter, PluginStatus, Session, TxCore, VerbError};
+use tx_core::{Agent, CoreError, ListFilter, PluginStatus, TxCore, VerbError};
 
 use crate::model::{Context, KeyHint, Past};
 
@@ -56,21 +56,21 @@ pub fn key_hint(plugin: &str, text: &str) -> Option<KeyHint> {
 }
 
 /// When an ended record was last written: its end, or a later rename or tag.
-fn ended_at(session: &Session) -> f64 {
+fn ended_at(session: &Agent) -> f64 {
     session.last_modified_at
 }
 
 /// 1 when the record's engine knows its conversation, else 0 (the engine's plugin disabled
 /// counts as none).
-fn chat_count(core: &TxCore, session: &Session) -> usize {
+fn chat_count(core: &TxCore, session: &Agent) -> usize {
     usize::from(matches!(core.conversation(&session.id), Ok(Some(_))))
 }
 
 /// Ended sessions, newest end first.
 pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
     let mut sessions = Vec::new();
-    for id in core.list_sessions(&ListFilter::new().ended())? {
-        match core.get_session(&id) {
+    for id in core.list_agents(&ListFilter::new().ended())? {
+        match core.get_agent(&id) {
             Ok(session) => sessions.push(session),
             Err(CoreError::NotFound(_)) => {}
             Err(error) => return Err(error),
@@ -91,13 +91,13 @@ pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
 }
 
 /// The tx session `pane` shows: the session nested in it, else the pane's own, never a view.
-pub fn session_in_pane(core: &TxCore, ui: &Ui, pane: &str) -> Option<Session> {
+pub fn session_in_pane(core: &TxCore, ui: &Ui, pane: &str) -> Option<Agent> {
     let name = ui
         .inner_for_pane(pane)
         .or_else(|| ui.display_message("#{session_name}", Some(pane)))
         .filter(|name| !ui.is_view(name))?;
     let id = core.resolve(&name).ok()?;
-    core.get_session(&id).ok()
+    core.get_agent(&id).ok()
 }
 
 pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, VerbError> {
@@ -121,7 +121,7 @@ pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, VerbError>
         pane_session: session_in_pane(core, ui, pane).is_some(),
         history: past_sessions(core)?,
         keys,
-        agents: core.list_sessions(&ListFilter::new().running())?.len(),
+        agents: core.list_agents(&ListFilter::new().running())?.len(),
         views: views::list(ui)
             .map_err(|error| VerbError::Failed(error.to_string()))?
             .len(),

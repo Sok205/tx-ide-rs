@@ -86,7 +86,7 @@ fn child_create() {
     let (home, cwd) = spec.split_once(':').unwrap();
     let mut core = TxCore::open(CoreConfig::new(Directories::under(home))).unwrap();
     core.register_engine(Box::new(ShellStub)).unwrap();
-    core.create_session(agent("iso", std::path::Path::new(cwd)))
+    core.create_agent(agent("iso", std::path::Path::new(cwd)))
         .unwrap();
 }
 

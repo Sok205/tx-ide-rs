@@ -10,9 +10,9 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::agent::Agent;
 use crate::error::CoreError;
 use crate::profile::Profile;
-use crate::session::Session;
 use crate::state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 
 /// An adapter could not honor a request, or a workspace action could not be applied.
@@ -41,7 +41,7 @@ pub enum EngineError {
 pub struct LaunchRequest<'a> {
     /// The record being launched: the engine reads its id, `working_directory` and its own
     /// `ext[ext_key]`.
-    pub session: &'a Session,
+    pub session: &'a Agent,
     /// Combined role text, the file holding it, and the granted skill dirs.
     pub profile: &'a Profile,
     /// The argv prefix every hook the adapter wires runs, with the CLI's event name appended:
@@ -52,7 +52,7 @@ pub struct LaunchRequest<'a> {
 impl<'a> LaunchRequest<'a> {
     /// A launch of `session`. Options such as a model or an effort are not here: they are
     /// engine data, merged into `session.ext[ext_key]` by `LlmEngine::configure` beforehand.
-    pub fn new(session: &'a Session, profile: &'a Profile) -> Self {
+    pub fn new(session: &'a Agent, profile: &'a Profile) -> Self {
         Self {
             session,
             profile,
@@ -268,7 +268,7 @@ pub trait LlmEngine: Send + Sync {
     /// reads it. Pure.
     fn configure(
         &self,
-        session: &Session,
+        session: &Agent,
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, EngineError>;
 
@@ -285,7 +285,7 @@ pub trait LlmEngine: Send + Sync {
     fn fork(
         &self,
         request: &LaunchRequest<'_>,
-        source: &Session,
+        source: &Agent,
         prompt: &str,
     ) -> Result<LaunchPlan, EngineError>;
 
@@ -300,7 +300,7 @@ pub trait LlmEngine: Send + Sync {
     /// What to type so the CLI exits cleanly, closing its transcript; `None`: it has no such
     /// input, core kills the process. Core waits for the exit either way and kills what is
     /// still there after its grace period. Pure. The default knows none.
-    fn stop(&self, session: &Session) -> Option<Input> {
+    fn stop(&self, session: &Agent) -> Option<Input> {
         let _ = session;
         None
     }
@@ -309,7 +309,7 @@ pub trait LlmEngine: Send + Sync {
     /// (`Some(Idle)`: at its prompt; `None`: say nothing, a hook will), since an aborted turn
     /// need not fire the CLI's end-of-turn hook. Core applies the state as it does a hook's.
     /// `None` as a whole: not supported. Pure. The default knows none.
-    fn interrupt(&self, session: &Session) -> Option<(Input, Option<LlmEngineState>)> {
+    fn interrupt(&self, session: &Agent) -> Option<(Input, Option<LlmEngineState>)> {
         let _ = session;
         None
     }
@@ -320,7 +320,7 @@ pub trait LlmEngine: Send + Sync {
     /// when the hook changes nothing. Pure: core applies the result under the session's lock.
     /// Required, because an engine that wires no hooks never leaves `Starting`; returning
     /// `LlmEngineChange::NONE` says so.
-    fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange;
+    fn on_hook(&self, session: &Agent, hook: &LlmEngineHook) -> LlmEngineChange;
 
     /// Bring `archive_directory` up to date with this session's conversation: the transcript
     /// (append-by-offset, [`crate::mirror::mirror_file`]) and its sidecars (copy-if-absent,
@@ -331,7 +331,7 @@ pub trait LlmEngine: Send + Sync {
     /// gone, the transcript final, and the copy must be exact, so the engine compares it whole
     /// ([`crate::mirror::mirror_file_exact`]) rather than by its trailing window. Idempotent; a
     /// missing live transcript archives nothing. The default archives nothing.
-    fn archive(&self, session: &Session, archive_directory: &Path) -> Result<(), EngineError> {
+    fn archive(&self, session: &Agent, archive_directory: &Path) -> Result<(), EngineError> {
         let _ = (session, archive_directory);
         Ok(())
     }
@@ -339,7 +339,7 @@ pub trait LlmEngine: Send + Sync {
     /// Before a resume: if the CLI's own copy of the conversation is missing, put the archived
     /// one back where the CLI expects it. Never overwrites a live transcript. Returns whether
     /// anything was restored. The default restores nothing.
-    fn restore(&self, session: &Session, archive_directory: &Path) -> Result<bool, EngineError> {
+    fn restore(&self, session: &Agent, archive_directory: &Path) -> Result<bool, EngineError> {
         let _ = (session, archive_directory);
         Ok(false)
     }
@@ -347,7 +347,7 @@ pub trait LlmEngine: Send + Sync {
     /// The conversation this session's engine data names, for readers (the timeline, `chat
     /// ls`). `None` while it is not known yet (a Codex agent before its first `SessionStart`).
     /// Pure. The default knows none.
-    fn conversation(&self, session: &Session) -> Option<Conversation> {
+    fn conversation(&self, session: &Agent) -> Option<Conversation> {
         let _ = session;
         None
     }
@@ -371,7 +371,7 @@ pub trait LlmEngine: Send + Sync {
 
 /// This engine's data in a record: `ext[ext_key]`, `Null` when absent. A non-object value (a
 /// hand-edited record) counts as absent, so adapters can rely on `.get(..)` seeing an object.
-pub fn engine_data<'a>(engine: &dyn LlmEngine, session: &'a Session) -> &'a serde_json::Value {
+pub fn engine_data<'a>(engine: &dyn LlmEngine, session: &'a Agent) -> &'a serde_json::Value {
     const NULL: serde_json::Value = serde_json::Value::Null;
     match session.ext.get(engine.ext_key()) {
         Some(value @ serde_json::Value::Object(_)) => value,
@@ -521,14 +521,14 @@ pub fn apply_workspace(cwd: &Path, actions: &[WorkspaceAction]) -> Result<(), En
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentId;
     use crate::profile::{Profile, ResolvedProfile};
-    use crate::session::SessionId;
 
     /// An engine of the kind, owning the ext key of the same name.
     struct Stub(EngineKind);
 
     impl LlmEngine for Stub {
-        fn on_hook(&self, _: &Session, _: &crate::LlmEngineHook) -> LlmEngineChange {
+        fn on_hook(&self, _: &Agent, _: &crate::LlmEngineHook) -> LlmEngineChange {
             LlmEngineChange::NONE
         }
 
@@ -542,7 +542,7 @@ mod tests {
 
         fn configure(
             &self,
-            session: &Session,
+            session: &Agent,
             options: &serde_json::Value,
         ) -> Result<serde_json::Value, EngineError> {
             let mut data = engine_data(self, session)
@@ -575,7 +575,7 @@ mod tests {
         fn fork(
             &self,
             request: &LaunchRequest<'_>,
-            source: &Session,
+            source: &Agent,
             prompt: &str,
         ) -> Result<LaunchPlan, EngineError> {
             self.start(request, prompt)
@@ -633,7 +633,7 @@ mod tests {
     struct Keyed(EngineKind, &'static str);
 
     impl LlmEngine for Keyed {
-        fn on_hook(&self, _: &Session, _: &crate::LlmEngineHook) -> LlmEngineChange {
+        fn on_hook(&self, _: &Agent, _: &crate::LlmEngineHook) -> LlmEngineChange {
             LlmEngineChange::NONE
         }
 
@@ -647,7 +647,7 @@ mod tests {
 
         fn configure(
             &self,
-            _: &Session,
+            _: &Agent,
             options: &serde_json::Value,
         ) -> Result<serde_json::Value, EngineError> {
             Ok(options.clone())
@@ -664,7 +664,7 @@ mod tests {
         fn fork(
             &self,
             _: &LaunchRequest<'_>,
-            _: &Session,
+            _: &Agent,
             _: &str,
         ) -> Result<LaunchPlan, EngineError> {
             Ok(LaunchPlan::default())
@@ -696,9 +696,9 @@ mod tests {
         assert_eq!(registry.kinds(), [EngineKind::Claude]);
     }
 
-    fn record(cwd: &Path) -> Session {
-        Session {
-            id: SessionId::mint(),
+    fn record(cwd: &Path) -> Agent {
+        Agent {
+            id: AgentId::mint(),
             name: "n".into(),
             engine: EngineKind::Claude,
             working_directory: cwd.to_owned(),

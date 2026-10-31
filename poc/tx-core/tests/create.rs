@@ -1,4 +1,4 @@
-//! `TxCore::open`, `create_session` and the reads, against a private tmux server.
+//! `TxCore::open`, `create_agent` and the reads, against a private tmux server.
 
 mod common;
 
@@ -9,8 +9,8 @@ use common::{
 };
 use tx_core::worktree::repository_key;
 use tx_core::{
-    CoreError, CreateOptions, EngineKind, LaunchOptions, ListFilter, LlmEngineState, Session,
-    SessionId, WorktreeError,
+    Agent, AgentId, CoreError, CreateOptions, EngineKind, LaunchOptions, ListFilter,
+    LlmEngineState, WorktreeError,
 };
 
 fn env_of(cwd: &std::path::Path) -> Vec<(String, String)> {
@@ -35,8 +35,8 @@ fn an_agent_runs_detached_with_the_tx_environment() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("p");
-    let id = core.create_session(agent("agent-1", &repository)).unwrap();
-    let session = core.get_session(&id).unwrap();
+    let id = core.create_agent(agent("agent-1", &repository)).unwrap();
+    let session = core.get_agent(&id).unwrap();
     assert_ne!(session.state, LlmEngineState::Ended);
     assert_eq!(session.name, "agent-1");
     assert_ne!(
@@ -97,7 +97,7 @@ fn env_layers_later_wins() {
         ("B".into(), "opts".into()),
         ("TX_SESSION_ID".into(), "opts".into()),
     ];
-    let id = core.create_session(opts).unwrap();
+    let id = core.create_agent(opts).unwrap();
     let env = env_of(&cwd_of(&core, &id));
     assert_eq!(get(&env, "A"), Some("config"));
     assert_eq!(get(&env, "B"), Some("opts"));
@@ -124,7 +124,7 @@ fn agent_session_gets_profile_plan_and_workspace() {
     core.register_engine(Box::new(common::ShellStub)).unwrap();
     let repository = h.repository("a");
     let id = core
-        .create_session(
+        .create_agent(
             CreateOptions::new(
                 "agent-1",
                 repository.clone(),
@@ -165,7 +165,7 @@ fn agent_session_gets_profile_plan_and_workspace() {
     assert!(!repository.join("stub-marker.txt").exists());
     assert!(!repository.join("env.txt").exists());
     assert_eq!(git_ok(&repository, &["status", "--porcelain"]), "");
-    let session = core.get_session(&id).unwrap();
+    let session = core.get_agent(&id).unwrap();
     // The options are engine data, not record fields.
     assert_eq!(session.engine, STUB_KIND);
     assert_eq!(session.roles, ["dev"]);
@@ -187,11 +187,11 @@ fn the_engine_sees_the_record_and_its_data_lands_in_ext() {
     opts.launch = LaunchOptions::agent(STUB_KIND)
         .option("model", "data")
         .initial_prompt("start");
-    let id = core.create_session(opts).unwrap();
+    let id = core.create_agent(opts).unwrap();
     let env = env_of(&cwd_of(&core, &id));
     assert_eq!(get(&env, "STUB_MODE"), Some("start"));
     assert_eq!(get(&env, "STUB_SESSION_ID"), Some(id.as_str()));
-    let session = core.get_session(&id).unwrap();
+    let session = core.get_agent(&id).unwrap();
     assert_eq!(
         session.ext.get(STUB_ID),
         Some(&serde_json::json!({"conversation_id": id.as_str(), "model": "data"}))
@@ -199,10 +199,10 @@ fn the_engine_sees_the_record_and_its_data_lands_in_ext() {
     // No options and no data in the plan: the engine's key holds the empty object `configure`
     // returned.
     let plain = core
-        .create_session(agent("plain", &h.repository("p")))
+        .create_agent(agent("plain", &h.repository("p")))
         .unwrap();
     assert_eq!(
-        core.get_session(&plain).unwrap().ext.get(STUB_ID),
+        core.get_agent(&plain).unwrap().ext.get(STUB_ID),
         Some(&serde_json::json!({}))
     );
 }
@@ -217,7 +217,7 @@ fn failures_before_launch_leave_nothing_behind() {
     let mut opts = agent("x", &cwd);
     opts.launch = LaunchOptions::agent(EngineKind::Codex);
     assert!(matches!(
-        core.create_session(opts).unwrap_err(),
+        core.create_agent(opts).unwrap_err(),
         CoreError::EngineDisabled(EngineKind::Codex)
     ));
 
@@ -226,7 +226,7 @@ fn failures_before_launch_leave_nothing_behind() {
         .initial_prompt("start")
         .profile(["missing"]);
     assert!(matches!(
-        core.create_session(opts).unwrap_err(),
+        core.create_agent(opts).unwrap_err(),
         CoreError::Profile(_)
     ));
 
@@ -238,7 +238,7 @@ fn failures_before_launch_leave_nothing_behind() {
         let mut opts = agent("x", &cwd);
         opts.launch = launch;
         assert!(matches!(
-            core.create_session(opts).unwrap_err(),
+            core.create_agent(opts).unwrap_err(),
             CoreError::PromptRequired
         ));
     }
@@ -249,51 +249,47 @@ fn failures_before_launch_leave_nothing_behind() {
         .initial_prompt("start")
         .option("model", "refuse");
     assert!(matches!(
-        core.create_session(opts).unwrap_err(),
+        core.create_agent(opts).unwrap_err(),
         CoreError::Engine(tx_core::EngineError::Refused(ref text)) if text == "model refused"
     ));
-    assert!(core.list_sessions(&Default::default()).unwrap().is_empty());
+    assert!(core.list_agents(&Default::default()).unwrap().is_empty());
 
     // Not a checkout: git's own words, and nothing made.
     let plain = h.workdir("plain");
-    let error = core.create_session(agent("x", &plain)).unwrap_err();
+    let error = core.create_agent(agent("x", &plain)).unwrap_err();
     assert!(
         matches!(&error, CoreError::Worktree(WorktreeError::Git(message)) if message.starts_with("fatal: not a git repository")),
         "{error:?}"
     );
 
     assert!(matches!(
-        core.create_session(agent("bad name", &cwd)).unwrap_err(),
+        core.create_agent(agent("bad name", &cwd)).unwrap_err(),
         CoreError::InvalidName(_)
     ));
     let mut opts = agent("x", &cwd);
     opts.env = vec![("A=B".into(), "1".into())];
     assert!(
-        matches!(core.create_session(opts).unwrap_err(), CoreError::InvalidEnvKey(k) if k == "A=B")
+        matches!(core.create_agent(opts).unwrap_err(), CoreError::InvalidEnvKey(k) if k == "A=B")
     );
     let mut opts = agent("x", &cwd);
     opts.env = vec![(String::new(), "1".into())];
     assert!(matches!(
-        core.create_session(opts).unwrap_err(),
+        core.create_agent(opts).unwrap_err(),
         CoreError::InvalidEnvKey(_)
     ));
     let mut opts = agent("x", &cwd);
     opts.env = vec![("A".into(), "a\0b".into())];
     assert!(matches!(
-        core.create_session(opts).unwrap_err(),
+        core.create_agent(opts).unwrap_err(),
         CoreError::InvalidEnvKey(_)
     ));
     assert!(matches!(
-        core.create_session(agent("x", &h.dir.path().join("nope"))).unwrap_err(),
+        core.create_agent(agent("x", &h.dir.path().join("nope"))).unwrap_err(),
         CoreError::NotADirectory(p) if p == h.dir.path().join("nope")
     ));
 
     assert!(h.live_names().is_empty());
-    assert!(
-        core.list_sessions(&ListFilter::default())
-            .unwrap()
-            .is_empty()
-    );
+    assert!(core.list_agents(&ListFilter::default()).unwrap().is_empty());
     assert!(
         !h.state_dir()
             .join("profiles")
@@ -326,8 +322,8 @@ fn every_agent_gets_its_own_detached_worktree_under_a_free_name() {
             .unwrap()
     };
 
-    let first = core.create_session(agent("w", &repository)).unwrap();
-    let session = core.get_session(&first).unwrap();
+    let first = core.create_agent(agent("w", &repository)).unwrap();
+    let session = core.get_agent(&first).unwrap();
     assert_eq!(session.name, "w");
     assert_eq!(session.working_directory, expected("w"));
     assert_eq!(
@@ -344,8 +340,8 @@ fn every_agent_gets_its_own_detached_worktree_under_a_free_name() {
     assert_eq!(h.live_names(), ["w"]);
 
     // The same name while the first runs: the next free one, for the record and the tree.
-    let second = core.create_session(agent("w", &repository)).unwrap();
-    let session = core.get_session(&second).unwrap();
+    let second = core.create_agent(agent("w", &repository)).unwrap();
+    let session = core.get_agent(&second).unwrap();
     assert_eq!(session.name, "w-2");
     assert_eq!(session.working_directory, expected("w-2"));
     assert_eq!(
@@ -367,9 +363,9 @@ fn every_agent_gets_its_own_detached_worktree_under_a_free_name() {
     assert_eq!(core.resolve("w-2").unwrap(), second);
 
     // Stopped: the name is free again, but its tree is still on disk, so the next is `w-3`.
-    core.stop_session(&first).unwrap();
-    let third = core.create_session(agent("w", &repository)).unwrap();
-    assert_eq!(core.get_session(&third).unwrap().name, "w-3");
+    core.stop_agent(&first).unwrap();
+    let third = core.create_agent(agent("w", &repository)).unwrap();
+    assert_eq!(core.get_agent(&third).unwrap().name, "w-3");
     assert!(expected("w").is_dir(), "stop never removes a worktree");
 }
 
@@ -382,18 +378,14 @@ fn a_launch_that_fails_after_the_worktree_removes_it() {
     let before = git_worktrees(&repository);
     // The name is free among records, so the worktree is made; then tmux refuses the duplicate.
     h.tmux_ok(&["new-session", "-d", "-s", "w", "sleep", "30"]);
-    let error = core.create_session(agent("w", &repository)).unwrap_err();
+    let error = core.create_agent(agent("w", &repository)).unwrap_err();
     assert!(
         matches!(&error, CoreError::NameTaken(name) if name == "w"),
         "{error:?}"
     );
     assert_eq!(git_worktrees(&repository), before);
     assert_eq!(h.worktree_count(), 0);
-    assert!(
-        core.list_sessions(&ListFilter::default())
-            .unwrap()
-            .is_empty()
-    );
+    assert!(core.list_agents(&ListFilter::default()).unwrap().is_empty());
     assert_eq!(h.live_names(), ["w"], "the foreign session is left alone");
 }
 
@@ -404,21 +396,21 @@ fn a_program_that_exits_at_once_yields_an_exited_record() {
     let core = h.open_with_engine();
     // Not every run loses the race against tmux; whichever way it goes, the record is truthful.
     let id = core
-        .create_session(exiting("quick", &h.repository("q")))
+        .create_agent(exiting("quick", &h.repository("q")))
         .unwrap();
-    let session = core.refresh_session(&id).unwrap().session().clone();
+    let session = core.refresh_agent(&id).unwrap().agent().clone();
     assert!(session.state == LlmEngineState::Ended, "{session:?}");
     let repository = h.repository("q2");
-    let held = core.create_session(exiting("quick", &repository)).unwrap();
+    let held = core.create_agent(exiting("quick", &repository)).unwrap();
     assert_eq!(
-        core.get_session(&held).unwrap().name,
+        core.get_agent(&held).unwrap().name,
         "quick-2",
         "an exited record keeps its name"
     );
-    core.archive_session(&id).unwrap();
-    let freed = core.create_session(exiting("quick", &repository)).unwrap();
+    core.archive_agent(&id).unwrap();
+    let freed = core.create_agent(exiting("quick", &repository)).unwrap();
     assert_eq!(
-        core.get_session(&freed).unwrap().name,
+        core.get_agent(&freed).unwrap().name,
         "quick",
         "the name is free once archived"
     );
@@ -429,34 +421,26 @@ fn names_are_unique_among_unarchived_sessions() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let first = core
-        .create_session(agent("dup", &h.repository("a")))
-        .unwrap();
+    let first = core.create_agent(agent("dup", &h.repository("a"))).unwrap();
     // The same name asked from another checkout: the next free one, never a clash.
     let other_repository = h.repository("b");
-    let other = core
-        .create_session(agent("dup", &other_repository))
-        .unwrap();
-    assert_eq!(core.get_session(&other).unwrap().name, "dup-2");
+    let other = core.create_agent(agent("dup", &other_repository)).unwrap();
+    assert_eq!(core.get_agent(&other).unwrap().name, "dup-2");
     let mut names = h.live_names();
     names.sort();
     assert_eq!(names, ["dup", "dup-2"]);
-    core.stop_session(&first).unwrap();
-    let third = core
-        .create_session(agent("dup", &other_repository))
-        .unwrap();
+    core.stop_agent(&first).unwrap();
+    let third = core.create_agent(agent("dup", &other_repository)).unwrap();
     assert_eq!(
-        core.get_session(&third).unwrap().name,
+        core.get_agent(&third).unwrap().name,
         "dup-3",
         "a stopped record keeps its name"
     );
-    core.archive_session(&first).unwrap();
-    let second = core
-        .create_session(agent("dup", &other_repository))
-        .unwrap();
+    core.archive_agent(&first).unwrap();
+    let second = core.create_agent(agent("dup", &other_repository)).unwrap();
     assert_ne!(first, second);
     assert_eq!(
-        core.get_session(&second).unwrap().name,
+        core.get_agent(&second).unwrap().name,
         "dup",
         "archived, the name is free again"
     );
@@ -469,16 +453,16 @@ fn a_foreign_tmux_session_holding_the_name_is_name_taken() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("a");
-    core.create_session(agent("seed", &repository)).unwrap();
+    core.create_agent(agent("seed", &repository)).unwrap();
     h.tmux_ok(&["new-session", "-d", "-s", "foreign", "sleep", "30"]);
     let error = core
-        .create_session(agent("foreign", &repository))
+        .create_agent(agent("foreign", &repository))
         .unwrap_err();
     assert!(
         matches!(&error, CoreError::NameTaken(n) if n == "foreign"),
         "{error:?}"
     );
-    assert_eq!(core.list_sessions(&ListFilter::default()).unwrap().len(), 1);
+    assert_eq!(core.list_agents(&ListFilter::default()).unwrap().len(), 1);
 }
 
 #[test]
@@ -488,10 +472,10 @@ fn names_special_to_tmux_are_fine() {
     let core = h.open_with_engine();
     let repository = h.repository("r");
     for name in ["-x", "3", "--", "_"] {
-        let id = core.create_session(agent(name, &repository)).unwrap();
+        let id = core.create_agent(agent(name, &repository)).unwrap();
         assert_eq!(core.resolve(name).unwrap(), id);
         assert!(core.get_execution_location(&id).is_ok(), "{name}");
-        let renamed = core.rename_session(&id, &format!("{name}-r")).unwrap();
+        let renamed = core.rename_agent(&id, &format!("{name}-r")).unwrap();
         assert_eq!(renamed.name, format!("{name}-r"));
     }
     let mut names = h.live_names();
@@ -505,27 +489,27 @@ fn list_and_resolve() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("a");
-    let root = core.create_session(agent("root", &repository)).unwrap();
+    let root = core.create_agent(agent("root", &repository)).unwrap();
     let mut child = agent("child", &repository);
     child.parent = Some(root.clone());
     child.tags = vec!["t".into(), "u".into()];
-    let child = core.create_session(child).unwrap();
-    let other = core.create_session(agent("other", &repository)).unwrap();
-    core.stop_session(&other).unwrap();
+    let child = core.create_agent(child).unwrap();
+    let other = core.create_agent(agent("other", &repository)).unwrap();
+    core.stop_agent(&other).unwrap();
 
-    let all = core.list_sessions(&ListFilter::default()).unwrap();
+    let all = core.list_agents(&ListFilter::default()).unwrap();
     assert_eq!(all, [root.clone(), child.clone(), other.clone()]);
     let by_parent = core
-        .list_sessions(&ListFilter::new().parent(root.clone()))
+        .list_agents(&ListFilter::new().parent(root.clone()))
         .unwrap();
     assert_eq!(by_parent, std::slice::from_ref(&child));
-    let by_tag = core.list_sessions(&ListFilter::new().tag("u")).unwrap();
+    let by_tag = core.list_agents(&ListFilter::new().tag("u")).unwrap();
     assert_eq!(by_tag, std::slice::from_ref(&child));
-    let running = core.list_sessions(&ListFilter::new().running()).unwrap();
+    let running = core.list_agents(&ListFilter::new().running()).unwrap();
     assert_eq!(running, [root.clone(), child.clone()]);
-    let stopped = core.list_sessions(&ListFilter::new().ended()).unwrap();
+    let stopped = core.list_agents(&ListFilter::new().ended()).unwrap();
     assert_eq!(stopped, std::slice::from_ref(&other));
-    let none = core.list_sessions(&ListFilter::new().tag("zzz")).unwrap();
+    let none = core.list_agents(&ListFilter::new().tag("zzz")).unwrap();
     assert!(none.is_empty());
 
     assert_eq!(core.resolve(child.as_str()).unwrap(), child);
@@ -541,7 +525,7 @@ fn list_and_resolve() {
         CoreError::NotFound(_)
     ));
     assert!(matches!(
-        core.get_session(&"zzzz".parse::<SessionId>().unwrap())
+        core.get_agent(&"zzzz".parse::<AgentId>().unwrap())
             .unwrap_err(),
         CoreError::NotFound(_)
     ));
@@ -553,17 +537,17 @@ fn resolve_prefers_unarchived_then_most_recent_archived() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("a");
-    let first = core.create_session(agent("n", &repository)).unwrap();
-    core.archive_session(&first).unwrap();
-    let second = core.create_session(agent("n", &repository)).unwrap();
-    core.archive_session(&second).unwrap();
+    let first = core.create_agent(agent("n", &repository)).unwrap();
+    core.archive_agent(&first).unwrap();
+    let second = core.create_agent(agent("n", &repository)).unwrap();
+    core.archive_agent(&second).unwrap();
     assert_eq!(
         core.resolve("n").unwrap(),
         second,
         "the most recent archived one when none is unarchived"
     );
-    let third = core.create_session(agent("n", &repository)).unwrap();
-    core.stop_session(&third).unwrap();
+    let third = core.create_agent(agent("n", &repository)).unwrap();
+    core.stop_agent(&third).unwrap();
     assert_eq!(
         core.resolve("n").unwrap(),
         third,
@@ -576,19 +560,19 @@ fn reads_never_touch_tmux() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("r", &h.repository("a"))).unwrap();
+    let id = core.create_agent(agent("r", &h.repository("a"))).unwrap();
     h.tmux(&["kill-server"]);
-    assert_ne!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
+    assert_ne!(core.get_agent(&id).unwrap().state, LlmEngineState::Ended);
     assert_eq!(core.resolve("r").unwrap(), id);
     assert_eq!(
-        core.list_sessions(&ListFilter::default()).unwrap(),
+        core.list_agents(&ListFilter::default()).unwrap(),
         std::slice::from_ref(&id)
     );
     assert!(
         h.live_names().is_empty(),
         "reads did not restart the server"
     );
-    let _: Session = core.get_session(&id).unwrap();
+    let _: Agent = core.get_agent(&id).unwrap();
 }
 
 #[test]
@@ -597,11 +581,11 @@ fn reopen_sees_the_same_sessions() {
     let h = Harness::new();
     let id = {
         let core = h.open_with_engine();
-        core.create_session(agent("keep", &h.repository("k")))
+        core.create_agent(agent("keep", &h.repository("k")))
             .unwrap()
     };
     let core = h.open();
-    assert_ne!(core.get_session(&id).unwrap().state, LlmEngineState::Ended);
+    assert_ne!(core.get_agent(&id).unwrap().state, LlmEngineState::Ended);
     assert!(core.get_execution_location(&id).is_ok());
     assert_eq!(h.live_names(), ["keep"]);
 }
@@ -617,17 +601,17 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
         .option("effort", "high")
         .initial_prompt("start");
     opts.tags = vec!["t1".into()];
-    let source_id = core.create_session(opts).unwrap();
-    let source = core.get_session(&source_id).unwrap();
+    let source_id = core.create_agent(opts).unwrap();
+    let source = core.get_agent(&source_id).unwrap();
     let head = git_ok(&source.working_directory, &["rev-parse", "HEAD"]);
     // Uncommitted work in the source's worktree stays there.
     std::fs::write(source.working_directory.join("draft.txt"), "wip").unwrap();
 
     let fork_id = core
-        .fork_session(&source_id, tx_core::ForkOptions::new("go on"))
+        .fork_agent(&source_id, tx_core::ForkOptions::new("go on"))
         .unwrap();
     assert_ne!(fork_id, source_id);
-    let fork = core.get_session(&fork_id).unwrap();
+    let fork = core.get_agent(&fork_id).unwrap();
     assert_eq!(fork.name, "src-fork");
     assert_eq!(fork.parent_id, Some(source_id.clone()));
     assert_eq!(fork.tags, ["t1"]);
@@ -668,7 +652,7 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
         "go on\n"
     );
     // The source is untouched and both run.
-    assert_eq!(core.get_session(&source_id).unwrap(), source);
+    assert_eq!(core.get_agent(&source_id).unwrap(), source);
     let mut names = h.live_names();
     names.sort();
     assert_eq!(names, ["src", "src-fork"]);
@@ -686,7 +670,7 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
     // A chosen name, tags and an engine option; a taken name gets the next free one, like
     // create. The option goes through the engine's `configure` over the copied data.
     let second = core
-        .fork_session(
+        .fork_agent(
             &source_id,
             tx_core::ForkOptions::new("again")
                 .name("src-fork")
@@ -694,7 +678,7 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
                 .option("effort", "low"),
         )
         .unwrap();
-    let second = core.get_session(&second).unwrap();
+    let second = core.get_agent(&second).unwrap();
     assert_eq!(second.name, "src-fork-2");
     assert_eq!(second.tags, ["t2"]);
     assert_eq!(second.parent_id, Some(source_id.clone()));
@@ -705,7 +689,7 @@ fn fork_makes_a_new_agent_in_its_own_worktree_from_the_source() {
     assert_eq!(h.worktree_count(), 3);
     // An option the engine refuses: its answer, and nothing is left of the fork.
     let error = core
-        .fork_session(
+        .fork_agent(
             &source_id,
             tx_core::ForkOptions::new("no").option("model", "refuse"),
         )
@@ -720,23 +704,23 @@ fn fork_refuses_a_missing_prompt_and_an_unknown_source() {
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("repo");
-    let source_id = core.create_session(agent("src", &repository)).unwrap();
+    let source_id = core.create_agent(agent("src", &repository)).unwrap();
     let before = git_worktrees(&repository);
     for prompt in ["", "  \n"] {
         let error = core
-            .fork_session(&source_id, tx_core::ForkOptions::new(prompt))
+            .fork_agent(&source_id, tx_core::ForkOptions::new(prompt))
             .unwrap_err();
         assert!(matches!(error, CoreError::PromptRequired), "{error:?}");
     }
-    let ghost: SessionId = "no-such".parse().unwrap();
+    let ghost: AgentId = "no-such".parse().unwrap();
     assert!(matches!(
-        core.fork_session(&ghost, tx_core::ForkOptions::new("go"))
+        core.fork_agent(&ghost, tx_core::ForkOptions::new("go"))
             .unwrap_err(),
         CoreError::NotFound(_)
     ));
     assert_eq!(git_worktrees(&repository), before);
     assert_eq!(h.worktree_count(), 1);
-    assert_eq!(core.list_sessions(&ListFilter::default()).unwrap().len(), 1);
+    assert_eq!(core.list_agents(&ListFilter::default()).unwrap().len(), 1);
     assert_eq!(h.live_names(), ["src"]);
     let types: Vec<String> = h
         .log_lines()
