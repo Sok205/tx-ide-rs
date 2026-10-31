@@ -26,7 +26,9 @@ verbs:
   show TARGET                                                       the record as JSON
   rename TARGET NAME
   tag TARGET [TAG]...                                               replace the tag list
-  send TARGET [--] TEXT...                                          type a message into the session
+  send [--via NAME] TARGET [--] TEXT...                             type a message into the session; as the
+                                                                    agent this runs in, else as you from the
+                                                                    view this runs in, else as you from NAME
   refresh [TARGET]                                                  mark vanished sessions exited
   where TARGET                                                      socket, session target, pane target
   attach TARGET                                                     attach the terminal to the session
@@ -128,6 +130,8 @@ pub enum Verb {
     Send {
         target: String,
         text: String,
+        /// Where the operator typed, when the CLI cannot tell (an nvim buffer).
+        via: Option<String>,
     },
     Refresh {
         target: Option<String>,
@@ -201,6 +205,21 @@ fn env_pair(text: &str) -> Result<(String, String), UsageError> {
         .filter(|(key, _)| !key.is_empty())
         .map(|(key, value)| (key.to_owned(), value.to_owned()))
         .ok_or_else(|| usage(format!("--env expects KEY=VALUE, got {text:?}")))
+}
+
+/// `--via NAME` goes verbatim into the envelope's `session="…"` attribute, so it may not be
+/// empty or hold a character that would end or forge the attribute or the tag.
+fn via_name(text: &str) -> Result<String, UsageError> {
+    if text.is_empty()
+        || text
+            .chars()
+            .any(|character| matches!(character, '"' | '<' | '>' | '&') || character.is_control())
+    {
+        return Err(usage(format!(
+            "--via needs a name without quotes, <, >, & or control characters, got {text:?}"
+        )));
+    }
+    Ok(text.to_owned())
 }
 
 /// A cursor over argv with "flag needs a value" bookkeeping.
@@ -319,6 +338,13 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             }
         }
         Some("send") => {
+            let via = match cursor.peek() {
+                Some("--via") => {
+                    cursor.next();
+                    Some(via_name(cursor.value("--via")?)?)
+                }
+                _ => None,
+            };
             let target = target(&mut cursor, "send")?;
             if cursor.peek() == Some("--") {
                 cursor.next();
@@ -330,6 +356,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             Verb::Send {
                 target,
                 text: words.join(" "),
+                via,
             }
         }
         Some("refresh") => Verb::Refresh {
@@ -769,16 +796,45 @@ mod tests {
             parse_str("send x hello big world").unwrap().verb,
             Verb::Send {
                 target: "x".into(),
-                text: "hello big world".into()
+                text: "hello big world".into(),
+                via: None,
             }
         );
         assert_eq!(
             parse_str("send x -- --flag").unwrap().verb,
             Verb::Send {
                 target: "x".into(),
-                text: "--flag".into()
+                text: "--flag".into(),
+                via: None,
             }
         );
+        assert_eq!(
+            parse_str("send --via plan.md x hi").unwrap().verb,
+            Verb::Send {
+                target: "x".into(),
+                text: "hi".into(),
+                via: Some("plan.md".into()),
+            }
+        );
+        assert_eq!(
+            parse_str("send x --via plan.md").unwrap().verb,
+            Verb::Send {
+                target: "x".into(),
+                text: "--via plan.md".into(),
+                via: None,
+            }
+        );
+        assert!(parse_str("send --via").unwrap_err().0.contains("--via"));
+        for bad in ["", "a\"b", "<x>", "a&b", "a\nb"] {
+            let args = vec![
+                "send".to_owned(),
+                "--via".to_owned(),
+                bad.to_owned(),
+                "x".to_owned(),
+                "hi".to_owned(),
+            ];
+            assert!(parse(&args).unwrap_err().0.contains("--via"), "{bad:?}");
+        }
         assert_eq!(
             parse_str("refresh").unwrap().verb,
             Verb::Refresh { target: None }

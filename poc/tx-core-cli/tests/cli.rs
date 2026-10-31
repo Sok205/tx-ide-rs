@@ -219,15 +219,41 @@ fn process_session_round_trip() {
         &[("TMUX", "/tmp/other,0,0"), ("TX_SESSION_ID", &id)],
     );
     assert!(output.status.success());
+    // The operator names where they typed with `--via`; from inside a view the view names it.
+    cli.ok(&["send", "--via", "plan.md", "sh-2", "from a buffer"]);
+    cli.ok(&[
+        "ui", "view", "open", "notes", "--kind", "shell", "--", "sleep", "600",
+    ]);
+    let view_pane = cli.tmux(&["display-message", "-p", "-t", "=notes:", "#{pane_id}"]);
+    let view_pane = String::from_utf8_lossy(&view_pane.stdout).trim().to_owned();
+    let output = cli.run_env(
+        &["send", "--via", "ignored", "sh-2", "from notes"],
+        &[("TMUX", &fake_tmux), ("TMUX_PANE", &view_pane)],
+    );
+    assert!(output.status.success());
+    // An id core does not know is no agent: the view still names the sender.
+    let output = cli.run_env(
+        &["send", "sh-2", "unknown id"],
+        &[
+            ("TMUX", &fake_tmux),
+            ("TMUX_PANE", &view_pane),
+            ("TX_SESSION_ID", "unknown-id"),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let typed = loop {
         let text = wait_for(&cwd.join("input.txt"), Duration::from_secs(5));
-        if text.lines().count() >= 4 {
+        if text.lines().count() >= 7 {
             break text;
         }
     };
     assert_eq!(
         typed,
-        "<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"sh-2\">from me</from-agent>\n<from-user>not me</from-user>\n"
+        "<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"sh-2\">from me</from-agent>\n<from-user>not me</from-user>\n<from-user session=\"plan.md\">from a buffer</from-user>\n<from-user session=\"notes\">from notes</from-user>\n<from-user session=\"notes\">unknown id</from-user>\n"
     );
 
     assert_eq!(cli.ok(&["refresh"]), "");

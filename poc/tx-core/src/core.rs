@@ -8,7 +8,7 @@ use crate::engine::{EngineRegistry, LaunchMode, LaunchRequest, LlmEngine, apply_
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
-use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
+use crate::messaging::{DELIVERY_PAUSE, EnvelopeSender, build_envelope, deliver};
 use crate::profile::{Profile, Profiles, ResolvedProfile};
 use crate::session::{Launch, Lifecycle, Session, SessionId, validate_name};
 use crate::state::{LlmEngineHook, LlmEngineState};
@@ -273,18 +273,39 @@ impl ListFilter {
     }
 }
 
-/// `sender: None` is the user. Core never infers the sender.
+/// Who sends a message. Core never infers the sender.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Sender {
+    /// The operator; `via` names where they typed (a view, an nvim buffer).
+    User { via: Option<String> },
+    /// Another agent.
+    Agent { id: SessionId },
+}
+
+impl Default for Sender {
+    fn default() -> Self {
+        Self::User { via: None }
+    }
+}
+
+/// The default sender is the user, with nothing saying where from.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SendOptions {
-    pub sender: Option<SessionId>,
+    pub sender: Sender,
 }
 
 impl SendOptions {
-    pub fn from_agent(sender: SessionId) -> Self {
+    pub fn from_agent(id: SessionId) -> Self {
         Self {
-            sender: Some(sender),
+            sender: Sender::Agent { id },
         }
+    }
+}
+
+impl From<Sender> for SendOptions {
+    fn from(sender: Sender) -> Self {
+        Self { sender }
     }
 }
 
@@ -1110,7 +1131,7 @@ impl TxCore {
 
     /// The recipient's engine frames the message when it is registered here; a `Process`
     /// session, or an agent whose engine this core does not know, gets the default envelope.
-    fn envelope_for(&self, recipient: &Session, sender: Option<&str>, text: &str) -> String {
+    fn envelope_for(&self, recipient: &Session, sender: &EnvelopeSender<'_>, text: &str) -> String {
         let adapter = match &recipient.launch {
             Launch::Agent { engine, .. } => self.engines.get(engine),
             Launch::Process { .. } => None,
@@ -1186,9 +1207,26 @@ impl TxCore {
         text: &str,
         opts: SendOptions,
     ) -> Result<DeliveryReceipt, CoreError> {
-        let sender_name = match &opts.sender {
-            Some(sender) => Some(self.get_session(sender)?.name),
-            None => None,
+        let agent_name;
+        let (envelope_sender, from) = match &opts.sender {
+            Sender::User { via } => (
+                EnvelopeSender::User {
+                    via: via.as_deref(),
+                },
+                None,
+            ),
+            Sender::Agent { id } => {
+                agent_name = self.get_session(id)?.name;
+                (
+                    EnvelopeSender::Agent { name: &agent_name },
+                    Some(id.clone()),
+                )
+            }
+        };
+        let detail = match envelope_sender {
+            EnvelopeSender::User { via: None } => "from user".to_owned(),
+            EnvelopeSender::User { via: Some(via) } => format!("from user via {via}"),
+            EnvelopeSender::Agent { name } => format!("from {name}"),
         };
         let (receipt, sent) = {
             let _session = self.locks.session(to).map_err(CoreError::Lock)?;
@@ -1197,15 +1235,10 @@ impl TxCore {
                 return Err(CoreError::NotRunning(to.clone()));
             }
             let live = self.live_or_not_running(to)?;
-            let envelope = self.envelope_for(&recipient, sender_name.as_deref(), text);
+            let envelope = self.envelope_for(&recipient, &envelope_sender, text);
             deliver(&self.tmux, &live.pane_target, &envelope, DELIVERY_PAUSE)?;
             let submitted_at = now();
-            let sent = event(
-                EventType::MessageSent,
-                &recipient,
-                opts.sender.clone(),
-                format!("from {}", sender_name.as_deref().unwrap_or("user")),
-            );
+            let sent = event(EventType::MessageSent, &recipient, from, detail);
             (
                 DeliveryReceipt {
                     recipient: to.clone(),

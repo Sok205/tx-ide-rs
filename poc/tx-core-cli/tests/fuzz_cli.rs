@@ -681,24 +681,23 @@ fn sender_from_env_matrix() {
         );
         let _ = prefix;
     }
-    // Right socket but an unknown, well-formed id: exit 1 "no session", nothing typed.
+    // Right socket but an unknown, well-formed id, outside any view: the user.
     let output = cli.run_env(
         &["send", "agent-1", "ghost"],
         &[("TMUX", &here), ("TX_SESSION_ID", "unknown-id")],
     );
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(stderr(&output), "txc: no session \"unknown-id\"\n");
+    assert!(output.status.success(), "{}", stderr(&output));
     // TMUX pointing at the private socket but TX_SESSION_ID unset: user.
     let output = cli.run_env(&["send", "agent-1", "unset"], &[("TMUX", &here)]);
     assert!(output.status.success());
 
     let typed = wait_for_lines(
         &cwd.join("input.txt"),
-        cases.len() + 1,
+        cases.len() + 2,
         Duration::from_secs(10),
     );
     let lines: Vec<&str> = typed.lines().collect();
-    assert_eq!(lines.len(), cases.len() + 1, "{typed}");
+    assert_eq!(lines.len(), cases.len() + 2, "{typed}");
     for ((tmux, sid, prefix), line) in cases.iter().zip(&lines) {
         assert!(
             line.starts_with(prefix),
@@ -709,7 +708,8 @@ fn sender_from_env_matrix() {
             "{line}"
         );
     }
-    assert_eq!(lines[cases.len()], "<from-user>unset</from-user>");
+    assert_eq!(lines[cases.len()], "<from-user>ghost</from-user>");
+    assert_eq!(lines[cases.len() + 1], "<from-user>unset</from-user>");
 }
 
 // ---------------------------------------------------------------------------------------------

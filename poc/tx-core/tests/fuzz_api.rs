@@ -13,8 +13,8 @@ use proptest::prelude::*;
 use tx_core::{
     CoreConfig, CoreError, CreateOptions, Directories, EventType, Launch, LaunchMode,
     LaunchOptions, LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine,
-    MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Session, SessionId, TxCore,
-    WorkspaceAction,
+    MAX_SOCKET_PATH_BYTES, Profile, ResolvedProfile, SendOptions, Sender, Session, SessionId,
+    TxCore, WorkspaceAction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -314,8 +314,8 @@ proptest! {
 
     #[test]
     fn send_options_from_agent(id in session_id()) {
-        prop_assert_eq!(SendOptions::from_agent(id.clone()).sender, Some(id));
-        prop_assert_eq!(SendOptions::default().sender, None);
+        prop_assert_eq!(SendOptions::from_agent(id.clone()).sender, Sender::Agent { id });
+        prop_assert_eq!(SendOptions::default().sender, Sender::User { via: None });
     }
 }
 

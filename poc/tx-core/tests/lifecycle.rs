@@ -5,7 +5,9 @@ mod common;
 use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, process, typed, wait_for};
-use tx_core::{CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, SessionId, TmuxError};
+use tx_core::{
+    CoreError, Lifecycle, ListFilter, RefreshResult, SendOptions, Sender, SessionId, TmuxError,
+};
 
 #[test]
 fn rename_updates_tmux_and_record() {
@@ -243,18 +245,29 @@ fn messages_arrive_whole_with_the_right_envelope() {
     assert!(receipt.submitted_at > 1.7e9);
     core.send_message(&a, "from bob", SendOptions::from_agent(b.clone()))
         .unwrap();
+    core.send_message(
+        &a,
+        "from notes",
+        SendOptions::from(Sender::User {
+            via: Some("notes".into()),
+        }),
+    )
+    .unwrap();
     assert!(wait_for(Duration::from_secs(5), || typed(&cwd_a)
         .lines()
         .count()
-        == 2));
+        == 3));
     assert_eq!(
         typed(&cwd_a),
-        "<from-user>hello; -n <x></from-user>\n<from-agent session=\"bob\">from bob</from-agent>\n"
+        "<from-user>hello; -n <x></from-user>\n<from-agent session=\"bob\">from bob</from-agent>\n<from-user session=\"notes\">from notes</from-user>\n"
     );
     let log = h.log_lines();
     let sent: Vec<&serde_json::Value> =
         log.iter().filter(|l| l["type"] == "message-sent").collect();
-    assert_eq!(sent.len(), 2);
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[0]["msg"], "from user");
+    assert_eq!(sent[2]["actor"], "");
+    assert_eq!(sent[2]["msg"], "from user via notes");
     assert_eq!(sent[0]["actor"], "");
     assert_eq!(sent[1]["actor"], b.as_str());
     assert_eq!(sent[1]["name"], "alice");
