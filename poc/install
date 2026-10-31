@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+# poc/install — make the poc the daily driver. Idempotent, safe to re-run; --dry-run prints every
+# file change and changes nothing.
+#
+#   1. cargo install --path poc/tx-core-cli        txc and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin)
+#   2. txc ui install                               the IDE's tmux config from the plugins' resources
+#   3. the switch (once; a second run finds nothing to do):
+#      - the old install's `tx` (~/.local/bin/tx) becomes `tx-old`, and ~/.tx-ide/tmux.conf sets
+#        @tx-ide-bin tx-old so the old fragment's prefix+t / prefix+T popups keep working;
+#      - the old install's hook entries (commands under ~/.tx-ide/hooks/) leave
+#        ~/.claude/settings.json and ~/.codex/hooks.json, with the old Claude statusline; both
+#        files are backed up to <file>.bak.<stamp> first, everything else in them stays as it is;
+#      - txc doctor --fix-hooks removes what older txc versions wired.
+#   4. what is left for you to do, printed at the end.
+#
+# Honoured: $HOME, $CARGO_INSTALL_ROOT, $TX_APPNAME (txc's directories), $TX_IDE_HOME (the old
+# home, default ~/.tx-ide), $CLAUDE_CONFIG_DIR, $CODEX_HOME. Nothing here talks to a tmux server;
+# reload your old server yourself (the last section says how). Needs cargo, tmux and jq. A run
+# with a sandboxed $HOME (QA) also needs $RUSTUP_HOME and $CARGO_HOME, or rustup finds no toolchain.
+#
+# Not touched: ~/.tx-ide's data (sessions, history, artifacts), the repository's agents/, the hook
+# shims under ~/.tx-ide/hooks, the global tmux session-closed hook of the old server, the other
+# ~/.local/bin links of the old install (tx-assistant, tmux-pane-session-name,
+# tmux-system-resources: nothing in the poc wants those names).
+set -u -o pipefail
+
+POC="$(cd "$(dirname "$0")" && pwd)"
+HOME_DIR="${HOME%/}"
+LOCAL_BIN="$HOME_DIR/.local/bin"
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}"
+CODEX_DIR="${CODEX_HOME:-$HOME_DIR/.codex}"
+TX_IDE_DIR="${TX_IDE_HOME:-$HOME_DIR/.tx-ide}"
+TX_IDE_DIR="${TX_IDE_DIR/#\~/$HOME_DIR}"
+CARGO_BIN="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME_DIR/.cargo}}/bin"
+TXC="$CARGO_BIN/txc"
+STAMP=$(date +%Y%m%d%H%M%S)
+
+DRY_RUN=0
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) DRY_RUN=1 ;;
+    -h | --help) sed -n '2,20p' "$0"; exit 0 ;;
+    *) printf 'install: unknown argument: %s\n' "$argument" >&2; exit 2 ;;
+  esac
+done
+
+B=$'\e[1m'
+G=$'\e[32m'
+Y=$'\e[33m'
+RED=$'\e[31m'
+D=$'\e[2m'
+X=$'\e[0m'
+ok() { printf '  %s→%s %-52s %s%s%s\n' "$G" "$X" "$1" "$G" "${2:-ok}" "$X"; }
+warn() { printf '  %s→%s %-52s %s%s%s\n' "$Y" "$X" "$1" "$Y" "$2" "$X"; }
+fail() { printf '  %s→%s %-52s %s%s%s\n' "$RED" "$X" "$1" "$RED" "$2" "$X"; }
+info() { printf '  %s%s%s\n' "$D" "$*" "$X"; }
+would() { printf '  %s→%s %-52s %swould %s%s\n' "$Y" "$X" "$1" "$Y" "$2" "$X"; }
+header() { printf '\n%s%s%s\n' "$B" "$*" "$X"; }
+
+# The file behind a symlink (settings.json is usually a link into a dotfiles repository): edits
+# and backups land there, so the link survives and the repository sees the change.
+real_path() {
+  readlink -f "$1" 2>/dev/null || printf '%s' "$1"
+}
+
+cat <<EOF
+${B}=== tx-ide poc install ===${X}$( ((DRY_RUN)) && printf '  %s(dry run: nothing is changed)%s' "$Y" "$X")
+
+poc:        $POC
+binaries:   $CARGO_BIN/{txc,txi}
+old home:   $TX_IDE_DIR
+hook files: $CLAUDE_DIR/settings.json, $CODEX_DIR/hooks.json
+EOF
+
+# === 0: Dependencies ===
+header "Dependencies"
+missing=0
+for tool in cargo tmux jq; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    ok "$tool" "found"
+  else
+    fail "$tool" "missing"
+    missing=1
+  fi
+done
+((missing)) && exit 1
+for tool in claude nvim fzf; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    ok "$tool" "found"
+  else
+    warn "$tool" "missing — the IDE needs it (claude for the assistant, nvim for views, fzf for the picker)"
+  fi
+done
+
+# === 1: txc and txi ===
+header "txc and txi (cargo install --path $POC/tx-core-cli)"
+if ((DRY_RUN)); then
+  would "$CARGO_BIN/txc, $CARGO_BIN/txi" "run: cargo install --path $POC/tx-core-cli --force"
+else
+  if cargo install --path "$POC/tx-core-cli" --force 2>&1 | sed 's/^/    /'; then
+    ok "$CARGO_BIN/txc, $CARGO_BIN/txi" "installed"
+  else
+    fail "cargo install" "failed"
+    exit 1
+  fi
+fi
+case ":${PATH:-}:" in
+*":$CARGO_BIN:"*) ok "$CARGO_BIN" "on PATH" ;;
+*) warn "$CARGO_BIN" "not on PATH — add it to your shell rc" ;;
+esac
+
+# === 2: txc ui install ===
+header "txc ui install${TX_APPNAME:+ (TX_APPNAME=$TX_APPNAME)}"
+if ((DRY_RUN)); then
+  would "the IDE's tmux config and helper scripts" "run: $TXC ui install"
+elif "$TXC" ui install 2>&1 | sed 's/^/    /'; then
+  ok "txc ui install" "done"
+else
+  fail "txc ui install" "failed"
+  exit 1
+fi
+
+# === 3a: the old install becomes tx-old ===
+header "Rename the old install to tx-old"
+# The old installer links ~/.local/bin/tx to <repo>/bin/tx; only that entry is renamed (a
+# sandbox's stand-in sits there too, as a link or a file).
+OLD_REPO=""
+OLD_TX="$LOCAL_BIN/tx"
+NEW_TX="$LOCAL_BIN/tx-old"
+if [[ -L "$OLD_TX" ]]; then
+  target=$(readlink "$OLD_TX")
+  [[ "$target" == */bin/tx ]] && OLD_REPO="${target%/bin/tx}"
+fi
+if [[ -e "$NEW_TX" || -L "$NEW_TX" ]]; then
+  if [[ -e "$OLD_TX" || -L "$OLD_TX" ]]; then
+    fail "$OLD_TX" "both tx and tx-old exist here — resolve by hand"
+    exit 1
+  fi
+  ok "$NEW_TX" "already renamed"
+elif [[ -e "$OLD_TX" || -L "$OLD_TX" ]]; then
+  if ((DRY_RUN)); then
+    would "$OLD_TX" "move to $NEW_TX"
+  else
+    mv "$OLD_TX" "$NEW_TX"
+    ok "$NEW_TX" "moved from $OLD_TX"
+  fi
+else
+  info "no $OLD_TX — nothing to rename"
+fi
+
+# The old tmux shim runs the repository's fragment; `@tx-ide-bin tx-old` makes its prefix+t / T
+# popups run tx-old. The fragment must be new enough to read the option.
+OLD_TMUX_CONF="$TX_IDE_DIR/tmux.conf"
+BIN_LINE="set -g @tx-ide-bin tx-old"
+if [[ -f "$OLD_TMUX_CONF" ]]; then
+  fragment=$(sed -n "s/^run-shell '\(.*\)'$/\1/p" "$OLD_TMUX_CONF" | head -n 1)
+  [[ -z "$OLD_REPO" && -n "$fragment" ]] && OLD_REPO="${fragment%/tmux/tx-ide.tmux}"
+  if grep -qF "$BIN_LINE" "$OLD_TMUX_CONF"; then
+    ok "$OLD_TMUX_CONF" "already names tx-old"
+  elif ((DRY_RUN)); then
+    would "$OLD_TMUX_CONF" "insert \`$BIN_LINE\` before its run-shell line (backup: .bak.$STAMP)"
+  else
+    cp -p "$OLD_TMUX_CONF" "$OLD_TMUX_CONF.bak.$STAMP"
+    awk -v line="$BIN_LINE" '!done && /^run-shell / { print line; done=1 } { print }' \
+      "$OLD_TMUX_CONF.bak.$STAMP" >"$OLD_TMUX_CONF"
+    ok "$OLD_TMUX_CONF" "names tx-old (backup: $OLD_TMUX_CONF.bak.$STAMP)"
+  fi
+  if [[ -n "$fragment" && -f "$fragment" ]] && ! grep -q '@tx-ide-bin' "$fragment"; then
+    warn "$fragment" "predates @tx-ide-bin — update the old checkout (git pull) or its prefix+t runs \`tx\`"
+  fi
+else
+  info "no $OLD_TMUX_CONF — no old tmux bindings to rewrite"
+fi
+
+# === 3b: the old hook entries ===
+header "Remove the old install's hooks from the agents' settings"
+OLD_HOOKS_PREFIX="$TX_IDE_DIR/hooks/"
+OLD_STATUSLINE="$TX_IDE_DIR/statusline.sh"
+# jq: drop every hook command under the old home's hooks/ (the resolved directory, or any
+# `.tx-ide/hooks/`), then the blocks and events left empty. Other hook directories under
+# ~/.claude/hooks/ are not ours and stay. $statusline is "" for a file without one.
+JQ_STRIP='
+  def ours: type == "string" and (startswith($prefix) or test("/\\.tx-ide/hooks/"));
+  def strip_blocks:
+    map(.hooks |= ((. // []) | map(select(.command | ours | not))) | select(.hooks | length > 0));
+  (if (.hooks | type) == "object" then
+     .hooks |= with_entries(.value |= strip_blocks | select(.value | length > 0))
+   else . end)
+  | if $statusline != "" and (.statusLine.command // "" | . == "bash " + $statusline or test("/\\.tx-ide/statusline\\.sh$"))
+    then del(.statusLine) else . end
+'
+
+# strip_old_hooks <file> <statusline-path-or-empty>: rewrites the file behind <file> without the
+# old entries, backed up first; nothing is written when there is nothing to remove.
+strip_old_hooks() {
+  local file="$1" statusline="$2" real wanted current temporary mode
+  if [[ ! -f "$file" ]]; then
+    info "$file (absent)"
+    return 0
+  fi
+  real=$(real_path "$file")
+  if ! wanted=$(jq --arg prefix "$OLD_HOOKS_PREFIX" --arg statusline "$statusline" "$JQ_STRIP" "$real"); then
+    fail "$file" "not valid JSON — left alone"
+    return 1
+  fi
+  current=$(cat "$real")
+  if [[ "$wanted" == "$current" ]]; then
+    ok "$file" "no old entries"
+    return 0
+  fi
+  if ((DRY_RUN)); then
+    would "$file" "change as follows (backup: $real.bak.$STAMP)"
+    diff -u "$real" <(printf '%s\n' "$wanted") | sed 's/^/      /'
+    return 0
+  fi
+  cp -p "$real" "$real.bak.$STAMP"
+  temporary=$(mktemp "$real.XXXXXX")
+  printf '%s\n' "$wanted" >"$temporary"
+  mode=$(stat -f %Lp "$real" 2>/dev/null || stat -c %a "$real" 2>/dev/null)
+  [[ -n "$mode" ]] && chmod "$mode" "$temporary"
+  mv -f "$temporary" "$real"
+  ok "$file" "old entries removed (backup: $real.bak.$STAMP)"
+}
+
+strip_old_hooks "$CLAUDE_DIR/settings.json" "$OLD_STATUSLINE"
+strip_old_hooks "$CODEX_DIR/hooks.json" ""
+
+# === 3c: what older txc versions wired ===
+header "txc doctor --fix-hooks"
+if ((DRY_RUN)); then
+  would "the entries older txc versions added" "run: $TXC doctor --fix-hooks"
+elif "$TXC" doctor --fix-hooks 2>&1 | sed 's/^/    /'; then
+  ok "txc doctor --fix-hooks" "done"
+else
+  warn "txc doctor --fix-hooks" "failed; run it by hand"
+fi
+
+# === Final ===
+cat <<EOF
+
+${B}=== Done ===${X}$( ((DRY_RUN)) && printf ' %s(dry run)%s' "$Y" "$X")
+
+${B}Start the IDE:${X}
+  ${D}txc ui attach${X}             the home view, nested into the tx-assistant; prefix+/ asks it from any pane
+
+${B}The old install, as tx-old:${X}
+  ${D}tmux source-file ~/.tmux.conf${X}   in your old tmux server, so prefix+t / prefix+T there run tx-old
+  - \`tx-old ls\` and the rest still work; sessions it spawns are no longer state-tracked
+    (their hooks are gone), and its role texts still say \`tx\`.
+  - the old nvim config's \`tx whoami\` falls back to the tmux session name; its global
+    session-closed hook still runs the old binary by its repository path.
+  - the settings keys the old install set (disableWorkflows, skillOverrides, …) were left alone.
+
+${B}Your own config:${X}
+  - drop config.tx-ask and config.diffview-return from your nvim config; tx-client ships both.
+  - terminal profile: unchanged. The IDE's M-1..9 / Cmd-Opt-digit keys come from the keymap
+    the old setup/iterm.sh installed; nothing to redo.
+
+${B}Undo:${X}
+  ${D}mv $LOCAL_BIN/tx-old $LOCAL_BIN/tx${X}; remove the @tx-ide-bin line from $OLD_TMUX_CONF;
+  restore $CLAUDE_DIR/settings.json and $CODEX_DIR/hooks.json from their .bak.<stamp> copies.
+EOF

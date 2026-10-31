@@ -29,7 +29,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `chat ls` (the engine's conversation), `doctor --fix-hooks`, prefix+f (through core's fork); the peer-message parser the timeline uses | tx-core, tx-client |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-client |
 | `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n; ships the txc editions of the COMMON, DEVELOPER, ORCHESTRATOR and QA roles and their skills (`plugins/spawn/agents/`) | tx-core, tx-client |
-| `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm`, the `tx-assistant` session `ui attach` lands in; ships the TX-ASSISTANT role | tx-core, tx-client |
+| `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm\|ask`, the `tx-assistant` session `ui attach` lands in and prefix+/ asks from any pane; ships the TX-ASSISTANT role | tx-core, tx-client |
 | `plugins/mockup` (`tx-mockup`) | plugin: `txc mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-client, ratatui |
 | `plugins/tutor` (`tx-tutor`) | plugin: `txc tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships the repo's `tutor/` lesson packs | tx-core, tx-client, toml, libc |
 | `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|path\|archive\|unarchive\|close\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`, of kind `document`, `diff` or another plugin's), `txc group` (effort groups), prefix+a | tx-core, tx-client |
@@ -285,14 +285,14 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | plugin | contributes |
 |---|---|
 | `engine-claude`, `engine-codex` | one engine each |
-| `ide` | `txc ui install\|attach`, `txc ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> …]\|ls\|close <name>` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, status line, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
+| `ide` | `txc ui install\|attach`, `txc ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> …]\|ls\|close <name>` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme and the status line: the agents from `txc ls --json` counted by state, system resources, the clock), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, pane-border look), `bin/tmux-nav`, `bin/tmux-agents-status`, `bin/tmux-system-resources` |
 | `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label, the after-new-window hook) |
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
 | `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_session`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
 | `chat` | `chat ls <session>` (the current conversation, `TxCore::conversation`), `doctor --fix-hooks` (see "Upgrading" below), and the internal `_fork-pane` (prefix+f: `TxCore::fork_session` with the name from the popup); resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session` |
-| `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name); resource `agents/TX-ASSISTANT.md` |
+| `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name), `assistant ask --from-buffer` and `assistant ask TEXT…` (warm, wait up to 20 s for the assistant to leave `starting`, deliver the line as the operator via `prefix+/`: `<from-user session="prefix+/">`; `--from-buffer` reads and deletes the server's `tx-assistant-input` paste buffer, which the prefix+/ bind fills from a command prompt); resources `keys/assistant.tmux` (prefix+/) and `agents/TX-ASSISTANT.md` |
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
 | `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<data>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<data>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
 
@@ -353,6 +353,31 @@ txc ui install    # writes <data>/{bin,keys,conf,roles}/* and <data>/tmux.conf
 txc ui attach     # attaches this terminal to the core server's `home` session
 ```
 
+### Installing, and the switch from the old `tx`
+
+`poc/install` makes the poc the daily driver in one run; `poc/install --dry-run` prints every file
+change it would make and changes nothing. It is idempotent: a second run finds nothing to do.
+
+```
+poc/install             # cargo install --path poc/tx-core-cli (txc, txi); txc ui install; the switch
+poc/install --dry-run
+```
+
+The switch, run once, keeps the old install runnable as `tx-old` and stops its hooks from firing
+into the old store: `~/.local/bin/tx` becomes `~/.local/bin/tx-old` and `~/.tx-ide/tmux.conf`
+sets `@tx-ide-bin tx-old`, which the old tmux fragment reads for its prefix+t / prefix+T popups
+(the old `bin/` helpers and hook shims already run the binary by its repository path); the hook
+entries whose command lives under `~/.tx-ide/hooks/` leave `~/.claude/settings.json` and
+`~/.codex/hooks.json`, with the old Claude `statusLine`, after a `<file>.bak.<stamp>` copy of
+each; every other entry stays byte for byte (the old uninstall is not run: it would restore the
+pre-tx hooks its marker recorded). `txc doctor --fix-hooks` then removes what older txc versions
+wired. The script never touches a tmux server, `~/.tx-ide`'s data or the repository's `agents/`;
+it ends with what is left to do by hand (reload the old server's config, drop `config.tx-ask`
+and `config.diffview-return` from your own nvim config). `$HOME`, `$CARGO_INSTALL_ROOT`,
+`$TX_APPNAME`, `$TX_IDE_HOME`, `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honoured, so the whole
+run can be rehearsed against copies under a throwaway `HOME` (with `$RUSTUP_HOME` and
+`$CARGO_HOME` pointing at the real ones).
+
 `ui install` materialises each active plugin's resources under `<data>/{bin,keys,conf,roles}` and
 writes `<data>/tmux.conf`, which sets `@tx-bin`, `@tx-data` and `@tx-arguments` and runs
 `keys/ide.tmux` and then every other active plugin's `keys/<id>.tmux`. The key bindings and
@@ -410,6 +435,7 @@ The prefix is `C-a`.
 | prefix+s | refresh labels, then `choose-tree` |
 | prefix+a | in an agent: the artifacts it touched, its parent and children; Enter re-hosts the pane on the pick, f focuses the pane showing it, p pops it up. In an artifact's view: back to the agent |
 | prefix+T | the resident timeline in a popup; q detaches, Enter jumps to the lane's session |
+| prefix+/ | ask the tx-assistant from any pane: a prompt takes one line, delivered as the operator via `prefix+/` (the assistant is started when it is not running) |
 | prefix+m | the start menu (its keys mirror the prefix keys): n new, t attach, h history, f fork, T timeline, a artifacts, p plugins, K keys, ? tutor, / assistant, 1-3 resume a recent session, q quit; it also opens by itself on a fresh server's first attach |
 | C-h / C-j / C-k / C-l | move between panes; the move bubbles out of nested sessions |
 | C-u / C-d | page the agent's scrollback |
