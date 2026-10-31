@@ -190,26 +190,38 @@ JQ_STRIP='
     then del(.statusLine) else . end
 '
 
+# jq: the entries JQ_STRIP removes, one per line (`<event>: <command>`, `statusLine: <command>`).
+# Empty means the file is not touched at all, whatever its formatting.
+JQ_LIST='
+  def ours: type == "string" and (startswith($prefix) or test("/\\.tx-ide/hooks/"));
+  ([(if (.hooks | type) == "object" then .hooks else {} end) | to_entries[]
+    | .key as $event | (.value // [])[] | (.hooks // [])[] | select(.command | ours)
+    | "\($event): \(.command)"]
+   + (if $statusline != "" and (.statusLine.command // "" | . == "bash " + $statusline or test("/\\.tx-ide/statusline\\.sh$"))
+      then ["statusLine: \(.statusLine.command)"] else [] end))[]
+'
+
 # strip_old_hooks <file> <statusline-path-or-empty>: rewrites the file behind <file> without the
-# old entries, backed up first; nothing is written when there is nothing to remove.
+# old entries, backed up first, naming each entry removed; a file with none is not written.
 strip_old_hooks() {
-  local file="$1" statusline="$2" real wanted current temporary mode
+  local file="$1" statusline="$2" real removed wanted temporary mode
   if [[ ! -f "$file" ]]; then
     info "$file (absent)"
     return 0
   fi
   real=$(real_path "$file")
-  if ! wanted=$(jq --arg prefix "$OLD_HOOKS_PREFIX" --arg statusline "$statusline" "$JQ_STRIP" "$real"); then
+  if ! removed=$(jq -r --arg prefix "$OLD_HOOKS_PREFIX" --arg statusline "$statusline" "$JQ_LIST" "$real"); then
     fail "$file" "not valid JSON — left alone"
     return 1
   fi
-  current=$(cat "$real")
-  if [[ "$wanted" == "$current" ]]; then
-    ok "$file" "no old entries"
+  if [[ -z "$removed" ]]; then
+    ok "$file" "no old entries — not written"
     return 0
   fi
+  wanted=$(jq --arg prefix "$OLD_HOOKS_PREFIX" --arg statusline "$statusline" "$JQ_STRIP" "$real")
   if ((DRY_RUN)); then
-    would "$file" "change as follows (backup: $real.bak.$STAMP)"
+    would "$file" "remove these entries (backup: $real.bak.$STAMP)"
+    printf '%s\n' "$removed" | sed 's/^/      - /'
     diff -u "$real" <(printf '%s\n' "$wanted") | sed 's/^/      /'
     return 0
   fi
@@ -220,6 +232,7 @@ strip_old_hooks() {
   [[ -n "$mode" ]] && chmod "$mode" "$temporary"
   mv -f "$temporary" "$real"
   ok "$file" "old entries removed (backup: $real.bak.$STAMP)"
+  printf '%s\n' "$removed" | sed 's/^/      - /'
 }
 
 strip_old_hooks "$CLAUDE_DIR/settings.json" "$OLD_STATUSLINE"
