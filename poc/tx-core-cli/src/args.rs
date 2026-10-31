@@ -22,7 +22,9 @@ verbs:
                                                                     changes are not carried over); SOURCE's engine, roles and
                                                                     engine options unless an option says otherwise; name NAME,
                                                                     else SOURCE-fork; tags default to SOURCE's; prints its id
-  ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped]   id, name, lifecycle, cwd per line
+  ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped] [--archived]
+                                                                    id, name, lifecycle, cwd per line;
+                                                                    --archived: the archived sessions instead
   show TARGET                                                       the record as JSON
   rename TARGET NAME
   tag TARGET [TAG]...                                               replace the tag list
@@ -35,7 +37,8 @@ verbs:
   stop TARGET                                                       kill the session; waits for its process to exit
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
-  forget TARGET                                                     drop the record; leave tmux alone
+  archive TARGET                                                    stop it if running, then hide it from ls; nothing
+                                                                    is deleted, and respawn brings it back
   engines                                                           registered engine ids
   plugins                                                           id and active|disabled per plugin
   migrate [--from DIR]                                              move a version-1 home (default
@@ -116,6 +119,7 @@ pub enum Verb {
         parent: Option<String>,
         tag: Option<String>,
         lifecycle: Option<Lifecycle>,
+        archived: bool,
     },
     Show {
         target: String,
@@ -149,7 +153,7 @@ pub enum Verb {
     Respawn {
         target: String,
     },
-    Forget {
+    Archive {
         target: String,
     },
     Engines,
@@ -378,8 +382,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("respawn") => Verb::Respawn {
             target: target(&mut cursor, "respawn")?,
         },
-        Some("forget") => Verb::Forget {
-            target: target(&mut cursor, "forget")?,
+        Some("archive") => Verb::Archive {
+            target: target(&mut cursor, "archive")?,
         },
         Some(other) => Verb::Plugin {
             name: other.to_owned(),
@@ -501,6 +505,7 @@ fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut parent = None;
     let mut tag = None;
     let mut lifecycle = None;
+    let mut archived = false;
     while let Some(flag) = cursor.next() {
         match flag {
             "--parent" => parent = Some(cursor.value(flag)?.to_owned()),
@@ -512,6 +517,7 @@ fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
                         .map_err(|error| usage(error.to_string()))?,
                 );
             }
+            "--archived" => archived = true,
             other => return Err(usage(format!("ls: unexpected argument {other:?}"))),
         }
     }
@@ -519,6 +525,7 @@ fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         parent,
         tag,
         lifecycle,
+        archived,
     })
 }
 
@@ -762,9 +769,14 @@ mod tests {
             Verb::Ls {
                 parent: Some("p".into()),
                 tag: Some("t".into()),
-                lifecycle: Some(Lifecycle::Exited)
+                lifecycle: Some(Lifecycle::Exited),
+                archived: false
             }
         );
+        assert!(matches!(
+            parse_str("ls --archived").unwrap().verb,
+            Verb::Ls { archived: true, .. }
+        ));
         assert!(parse_str("ls --lifecycle gone").is_err());
         assert_eq!(
             parse_str("show x").unwrap().verb,
@@ -861,8 +873,8 @@ mod tests {
             Verb::Respawn { target: "x".into() }
         );
         assert_eq!(
-            parse_str("forget x").unwrap().verb,
-            Verb::Forget { target: "x".into() }
+            parse_str("archive x").unwrap().verb,
+            Verb::Archive { target: "x".into() }
         );
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
         assert_eq!(parse_str("help").unwrap().verb, Verb::Help);

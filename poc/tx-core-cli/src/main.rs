@@ -190,6 +190,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             parent,
             tag,
             lifecycle,
+            archived,
         } => {
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
@@ -204,6 +205,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
             if let Some(lifecycle) = lifecycle {
                 filter = filter.lifecycle(lifecycle);
+            }
+            if archived {
+                filter = filter.archived();
             }
             for id in core.list_sessions(&filter)? {
                 let session = core.get_session(&id)?;
@@ -295,16 +299,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             let session = core.respawn_session(&core.resolve(&target)?)?;
             writeln!(out, "{}\t{}", session.id, session.name).ok();
         }
-        Verb::Forget { target } => {
-            let id = core.resolve(&target)?;
-            let existed = core.forget_session(&id)?;
-            writeln!(
-                out,
-                "{}\t{}",
-                id,
-                if existed { "forgotten" } else { "absent" }
-            )
-            .ok();
+        Verb::Archive { target } => {
+            let session = core.archive_session(&core.resolve(&target)?)?;
+            writeln!(out, "{}\tarchived", session.id).ok();
         }
     }
     Ok(ExitCode::SUCCESS)

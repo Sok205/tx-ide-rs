@@ -117,6 +117,7 @@ fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecyc
         cwd: "/w".into(),
         created_at: 1.0,
         ended_at: None,
+        archived_at: None,
         last_modified_at: 1.0,
         lifecycle,
         launch: Launch::Process {

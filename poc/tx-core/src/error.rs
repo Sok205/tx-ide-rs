@@ -15,8 +15,13 @@ use crate::worktree::WorktreeError;
 pub enum CoreError {
     #[error("no session {0:?}")]
     NotFound(String),
-    #[error("a running session is already named {0:?}")]
+    #[error("another session is already named {0:?}")]
     NameTaken(String),
+    /// A respawn whose name an unarchived record took meanwhile; never renamed automatically.
+    #[error(
+        "cannot respawn: the name {name:?} is held by session {holder}; rename one of them first"
+    )]
+    NameHeld { name: String, holder: SessionId },
     #[error("invalid session name {0:?} (allowed: [A-Za-z0-9_-]+, at most {max} bytes)", max = crate::session::MAX_NAME_BYTES)]
     InvalidName(String),
     #[error("invalid environment key {0:?} (a name without '=' or NUL)")]

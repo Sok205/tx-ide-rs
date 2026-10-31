@@ -157,6 +157,11 @@ pub struct Session {
     pub cwd: PathBuf,
     pub created_at: f64,
     pub ended_at: Option<f64>,
+    /// When the agent was archived: hidden from listings and its name freed, with nothing
+    /// deleted. `None` for an unarchived record and for records written before this field
+    /// existed; a respawn clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<f64>,
     /// When the record was last written; core stamps it on every save. A record written before
     /// this field existed loads with `created_at`.
     pub last_modified_at: f64,
@@ -210,6 +215,9 @@ impl Session {
         }
         if self.ended_at.is_some_and(|at| !at.is_finite()) {
             return Err(RecordError::NonFiniteTime("ended_at"));
+        }
+        if self.archived_at.is_some_and(|at| !at.is_finite()) {
+            return Err(RecordError::NonFiniteTime("archived_at"));
         }
         if !self.last_modified_at.is_finite() {
             return Err(RecordError::NonFiniteTime("last_modified_at"));
@@ -285,6 +293,7 @@ mod tests {
             cwd: PathBuf::from("/tmp/w"),
             created_at: 1727000000.5,
             ended_at: None,
+            archived_at: None,
             last_modified_at: 1727000000.5,
             lifecycle: Lifecycle::Running,
             launch: Launch::Agent {
@@ -308,6 +317,7 @@ mod tests {
             cwd: PathBuf::from("/"),
             created_at: 1.0,
             ended_at: Some(2.0),
+            archived_at: None,
             last_modified_at: 1.0,
             lifecycle: Lifecycle::Stopped,
             launch: Launch::Process {

@@ -29,6 +29,7 @@ fn session(id: &str, created_at: f64) -> Session {
         cwd: PathBuf::from("/"),
         created_at,
         ended_at: None,
+        archived_at: None,
         last_modified_at: created_at,
         lifecycle: Lifecycle::Running,
         launch: Launch::Process {
@@ -130,6 +131,7 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Sessi
                 cwd: PathBuf::from(cwd),
                 created_at,
                 ended_at,
+                archived_at: None,
                 last_modified_at: created_at,
                 lifecycle,
                 launch,

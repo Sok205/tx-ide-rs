@@ -1,4 +1,4 @@
-//! rename / tags / refresh / stop / respawn / forget / location / send, against a private tmux
+//! rename / tags / refresh / stop / respawn / archive / location / send, against a private tmux
 //! server.
 
 mod common;
@@ -66,14 +66,18 @@ fn rename_updates_tmux_and_record() {
         core.get_execution_location(&id).unwrap().session_target,
         core.get_execution_location(&id).unwrap().session_target
     );
-    // Renaming to a name a stopped record holds is fine.
+    // A stopped record keeps its name.
     core.stop_session(&other).unwrap();
-    assert_eq!(core.rename_session(&id, "taken").unwrap().name, "taken");
-    // Renaming a stopped record is a record-only change.
+    assert!(matches!(
+        core.rename_session(&id, "taken").unwrap_err(),
+        CoreError::NameTaken(_)
+    ));
+    // Renaming a stopped record is a record-only change, and frees the old name.
     assert_eq!(
         core.rename_session(&other, "was-taken").unwrap().name,
         "was-taken"
     );
+    assert_eq!(core.rename_session(&id, "taken").unwrap().name, "taken");
     assert_eq!(
         core.get_session(&other).unwrap().lifecycle,
         Lifecycle::Stopped
@@ -353,14 +357,38 @@ fn respawn_refusals_change_nothing() {
         .initial_prompt("start");
     let a = core.create_session(opts).unwrap();
     core.stop_session(&a).unwrap();
-    // Another running agent took the name meanwhile: `a` cannot come back under it.
+    // A stopped agent keeps its name: a rename onto it is refused.
     let b = core.create_session(agent("b", &repository)).unwrap();
-    core.rename_session(&b, "a").unwrap();
     assert!(matches!(
-        core.respawn_session(&a).unwrap_err(),
+        core.rename_session(&b, "a").unwrap_err(),
         CoreError::NameTaken(ref name) if name == "a"
     ));
-    core.rename_session(&b, "b").unwrap();
+    core.stop_session(&b).unwrap();
+    core.archive_session(&b).unwrap();
+    // Archived, `a` frees its name; a new agent takes it, in a worktree of its own (the
+    // archived one keeps its directory). `a` cannot come back under the name, and is never
+    // renamed for it.
+    core.archive_session(&a).unwrap();
+    let c = core.create_session(agent("a", &repository)).unwrap();
+    assert_eq!(core.get_session(&c).unwrap().name, "a");
+    assert!(cwd_of(&core, &a).is_dir());
+    assert_ne!(cwd_of(&core, &c), cwd_of(&core, &a));
+    let error = core.respawn_session(&a).unwrap_err();
+    assert!(
+        error.to_string().contains("rename one of them first"),
+        "{error}"
+    );
+    assert!(matches!(
+        error,
+        CoreError::NameHeld { ref name, ref holder } if name == "a" && *holder == c
+    ));
+    let held = core.get_session(&a).unwrap();
+    assert_eq!(held.name, "a");
+    assert!(
+        held.archived_at.is_some(),
+        "a refused respawn leaves it archived"
+    );
+    core.rename_session(&c, "b").unwrap();
     // A worktree that is gone is never recreated.
     let worktree = cwd_of(&core, &a);
     std::fs::remove_dir_all(&worktree).unwrap();
@@ -380,39 +408,92 @@ fn respawn_refusals_change_nothing() {
     assert_eq!(
         types,
         [
-            "created", "stopped", "created", "stopped", "created", "renamed", "renamed"
+            "created", "stopped", "created", "stopped", "created", "stopped", "archived",
+            "archived", "created", "renamed"
         ]
     );
 }
 
 #[test]
-fn forget_drops_the_record_and_leaves_tmux_alone() {
+fn archive_stops_hides_and_keeps_everything_until_a_respawn() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
-    let id = core.create_session(agent("f", &h.repository("a"))).unwrap();
+    let repository = h.repository("a");
+    let mut opts = agent("f", &repository);
+    opts.launch = LaunchOptions::agent(STUB_ID)
+        .option("model", "data")
+        .initial_prompt("start");
+    let id = core.create_session(opts).unwrap();
+    let worktree = cwd_of(&core, &id);
     let profile = h.state_dir().join(format!("profiles/{id}.md"));
+    // Running: stopped first, then archived.
+    let archived = core.archive_session(&id).unwrap();
+    assert_eq!(archived.lifecycle, Lifecycle::Stopped);
+    assert!(archived.archived_at.is_some());
+    assert_eq!(core.get_session(&id).unwrap(), archived);
+    assert!(h.data_dir().join(format!("sessions/{id}.json")).exists());
     assert!(profile.exists());
-    assert!(core.forget_session(&id).unwrap());
-    assert!(!h.data_dir().join(format!("sessions/{id}.json")).exists());
-    assert!(!profile.exists());
-    assert_eq!(h.live_names(), ["f"], "the tmux session keeps running");
-    assert!(!core.forget_session(&id).unwrap());
-    assert!(matches!(
-        core.get_session(&id).unwrap_err(),
-        CoreError::NotFound(_)
-    ));
-    assert!(
-        core.list_sessions(&ListFilter::default())
-            .unwrap()
-            .is_empty()
+    assert!(worktree.is_dir());
+    assert!(h.live_names().is_empty());
+    assert!(core.list_sessions(&ListFilter::new()).unwrap().is_empty());
+    assert_eq!(
+        core.list_sessions(&ListFilter::new().archived()).unwrap(),
+        std::slice::from_ref(&id)
     );
+    assert_eq!(
+        core.resolve("f").unwrap(),
+        id,
+        "an archived agent resolves by name"
+    );
+    // Again: unchanged, no event.
+    assert_eq!(core.archive_session(&id).unwrap(), archived);
+    // Its name is free: a new agent gets it plainly, in another worktree directory.
+    let other = core.create_session(agent("f", &repository)).unwrap();
+    assert_eq!(core.get_session(&other).unwrap().name, "f");
+    assert_ne!(cwd_of(&core, &other), worktree);
+    assert_eq!(core.resolve("f").unwrap(), other, "the unarchived one wins");
+    core.archive_session(&other).unwrap();
+    // A respawn brings the first back in place and unarchives it.
+    let respawned = core.respawn_session(&id).unwrap();
+    assert_eq!(respawned.lifecycle, Lifecycle::Running);
+    assert_eq!(respawned.archived_at, None);
+    assert_eq!(respawned.cwd, worktree);
+    assert_eq!(
+        core.list_sessions(&ListFilter::new()).unwrap(),
+        std::slice::from_ref(&id)
+    );
+    assert_eq!(core.resolve("f").unwrap(), id);
+    assert_eq!(h.live_names(), ["f"]);
     let types: Vec<String> = h
         .log_lines()
         .iter()
         .map(|l| l["type"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(types, ["created", "forgotten"]);
+    assert_eq!(
+        types,
+        [
+            "created",
+            "stopped",
+            "archived",
+            "created",
+            "stopped",
+            "archived",
+            "respawned"
+        ]
+    );
+}
+
+#[test]
+fn a_stopped_agent_keeps_its_name_from_a_new_create() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let repository = h.repository("a");
+    let first = core.create_session(agent("n", &repository)).unwrap();
+    core.stop_session(&first).unwrap();
+    let second = core.create_session(agent("n", &repository)).unwrap();
+    assert_eq!(core.get_session(&second).unwrap().name, "n-2");
 }
 
 #[test]

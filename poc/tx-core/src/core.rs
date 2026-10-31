@@ -36,8 +36,9 @@ set -g history-limit 50000
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CreateOptions {
-    /// The name asked for. An agent may get `<name>-2` … `<name>-99` instead when the name is
-    /// taken by a running record or a worktree on disk; read it back from the record.
+    /// The name asked for. An agent may get `<name>-2` … `<name>-99` instead when an unarchived
+    /// record, running or not, holds the name; read it back from the record. Its worktree
+    /// directory is labelled separately, first free on disk.
     pub name: String,
     /// The starting directory. For an agent: a git checkout to branch from; the agent runs in
     /// its own detached worktree at that checkout's `HEAD`, and the record's `cwd` names the
@@ -220,13 +221,15 @@ impl LaunchOptions {
     }
 }
 
-/// Every field is a conjunct; `None` matches everything.
+/// Every field is a conjunct; `None` matches everything. `archived` picks a side: `false` (the
+/// default) lists only unarchived records, `true` only archived ones.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ListFilter {
     pub parent: Option<SessionId>,
     pub tag: Option<String>,
     pub lifecycle: Option<Lifecycle>,
+    pub archived: bool,
 }
 
 impl ListFilter {
@@ -249,6 +252,12 @@ impl ListFilter {
         self
     }
 
+    /// Lists the archived records instead of the unarchived ones.
+    pub fn archived(mut self) -> Self {
+        self.archived = true;
+        self
+    }
+
     pub fn matches(&self, session: &Session) -> bool {
         self.parent
             .as_ref()
@@ -260,6 +269,7 @@ impl ListFilter {
             && self
                 .lifecycle
                 .is_none_or(|lifecycle| session.lifecycle == lifecycle)
+            && session.archived_at.is_some() == self.archived
     }
 }
 
@@ -581,7 +591,9 @@ impl TxCore {
             .ok_or_else(|| CoreError::NotFound(id.to_string()))
     }
 
-    /// An id first, then a name: the `Running` record with it, else the most recently created.
+    /// An id first, then a name: the `Running` record with it, else the most recently created
+    /// unarchived one, else the most recently created archived one (so an archived agent can
+    /// still be shown and respawned by name).
     pub fn resolve(&self, name_or_id: &str) -> Result<SessionId, CoreError> {
         if let Ok(id) = name_or_id.parse::<SessionId>()
             && self.store.load(&id)?.is_some()
@@ -599,6 +611,13 @@ impl TxCore {
             .find(|session| session.lifecycle == Lifecycle::Running)
         {
             return Ok(running.id.clone());
+        }
+        if let Some(unarchived) = named
+            .iter()
+            .rev()
+            .find(|session| session.archived_at.is_none())
+        {
+            return Ok(unarchived.id.clone());
         }
         named
             .pop()
@@ -723,16 +742,17 @@ impl TxCore {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
         if engine.is_none() {
             // A process runs where it is asked to, under the name it is asked for.
-            if self.name_in_use(&opts.name, None)? {
+            if self.name_holder(&opts.name, None)?.is_some() {
                 return Err(CoreError::NameTaken(opts.name));
             }
             return self.launch_locked(opts, engine, roles, fork_of);
         }
         // An agent gets its own detached worktree at the starting checkout's `HEAD`, under the
-        // first name free among the running records and on disk (`name`, `name-2`, … `name-99`).
+        // first name free among the unarchived records (`name`, `name-2`, … `name-99`), in a
+        // directory free on disk.
         // A directory that is not a checkout fails here, with git's own words, before anything
         // else exists. Whatever fails after this point takes the worktree with it.
-        let unavailable_names = self.running_names()?;
+        let unavailable_names = self.unarchived_names()?;
         let (name, worktree) =
             self.worktrees
                 .create_unique(&opts.cwd, &opts.name, &unavailable_names)?;
@@ -798,6 +818,7 @@ impl TxCore {
             cwd: opts.cwd,
             created_at,
             ended_at: None,
+            archived_at: None,
             last_modified_at: created_at,
             lifecycle: Lifecycle::Running,
             // An agent starts in `Starting` until its adapter's first change; a process has
@@ -943,9 +964,9 @@ impl TxCore {
     /// conversation (the engine continues the one it recorded under its `ext` key, in
     /// `LaunchMode::Resume`). `StillRunning` while the record is `Running` or tmux still has the
     /// session; `WorktreeMissing` when `cwd` is gone, since a respawn never recreates one;
-    /// `NameTaken` when another running record holds the name; `NotAnAgent` for a process.
-    /// Comes back `Running` and `Starting`, with `ended_at` cleared, and announced as
-    /// `Respawned`.
+    /// `NameHeld` when an unarchived record took the name meanwhile; `NotAnAgent` for a process.
+    /// Comes back `Running` and `Starting`, with `ended_at` and `archived_at` cleared, and
+    /// announced as `Respawned`.
     pub fn respawn_session(&self, id: &SessionId) -> Result<Session, CoreError> {
         let (session, events) = self.respawn_locked(id)?;
         self.emit(events);
@@ -973,12 +994,16 @@ impl TxCore {
         if !session.cwd.is_dir() {
             return Err(CoreError::WorktreeMissing(session.cwd.clone()));
         }
-        if self.name_in_use(&session.name, Some(id))? {
-            return Err(CoreError::NameTaken(session.name.clone()));
+        if let Some(holder) = self.name_holder(&session.name, Some(id))? {
+            return Err(CoreError::NameHeld {
+                name: session.name.clone(),
+                holder,
+            });
         }
         let previous = session.lifecycle;
         session.lifecycle = Lifecycle::Running;
         session.ended_at = None;
+        session.archived_at = None;
         session.state = Some(LlmEngineState::Starting);
         // Engine PR 8a: the transcript restore goes here, right before the resume launch.
         let engine = EngineLaunch {
@@ -1006,24 +1031,32 @@ impl TxCore {
         self.store.save(session)
     }
 
-    /// The names of the `Running` records: what a new agent's name must not collide with.
-    fn running_names(&self) -> Result<std::collections::HashSet<String>, CoreError> {
+    /// The names of the unarchived records, running or not: what a new agent's name must not
+    /// collide with.
+    fn unarchived_names(&self) -> Result<std::collections::HashSet<String>, CoreError> {
         Ok(self
             .store
             .all()?
             .into_iter()
-            .filter(|session| session.lifecycle == Lifecycle::Running)
+            .filter(|session| session.archived_at.is_none())
             .map(|session| session.name)
             .collect())
     }
 
-    /// Whether a `Running` record other than `except` carries `name`.
-    fn name_in_use(&self, name: &str, except: Option<&SessionId>) -> Result<bool, CoreError> {
-        Ok(self.store.all()?.iter().any(|session| {
-            session.lifecycle == Lifecycle::Running
-                && session.name == name
-                && Some(&session.id) != except
-        }))
+    /// The unarchived record other than `except`, running or not, that carries `name`.
+    fn name_holder(
+        &self,
+        name: &str,
+        except: Option<&SessionId>,
+    ) -> Result<Option<SessionId>, CoreError> {
+        Ok(self
+            .store
+            .all()?
+            .into_iter()
+            .find(|session| {
+                session.archived_at.is_none() && session.name == name && Some(&session.id) != except
+            })
+            .map(|session| session.id))
     }
 
     // ----- mutations -------------------------------------------------------------------------
@@ -1046,7 +1079,7 @@ impl TxCore {
         if session.name == name {
             return Ok((session, Vec::new()));
         }
-        if self.name_in_use(name, Some(id))? {
+        if self.name_holder(name, Some(id))?.is_some() {
             return Err(CoreError::NameTaken(name.to_owned()));
         }
         if session.lifecycle == Lifecycle::Running
@@ -1268,6 +1301,15 @@ impl TxCore {
     /// happened, not what was asked).
     pub fn stop_session(&self, id: &SessionId) -> Result<Session, CoreError> {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
+        let (session, ended) = self.stop_locked(id)?;
+        drop(_create);
+        self.emit(vec![ended]);
+        Ok(session)
+    }
+
+    /// `stop_session` under the create lock the caller holds, the wait included; the caller
+    /// emits the returned event.
+    fn stop_locked(&self, id: &SessionId) -> Result<(Session, Event), CoreError> {
         let (session, ended, pid) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
@@ -1292,36 +1334,40 @@ impl TxCore {
         if let Some(pid) = pid {
             wait_or_kill(pid);
         }
-        drop(_create);
-        self.emit(vec![ended]);
-        Ok(session)
+        Ok((session, ended))
     }
 
-    /// Deletes the record (and its profile file). The tmux session, if any, keeps running and is
-    /// no longer managed. `Ok(false)` when there was no record.
-    pub fn forget_session(&self, id: &SessionId) -> Result<bool, CoreError> {
-        let (existed, name) = {
-            let _session = self.locks.session(id).map_err(CoreError::Lock)?;
-            let name = self
-                .store
-                .load(id)
-                .ok()
-                .flatten()
-                .map(|session| session.name);
-            let existed = self.store.delete(id)?;
-            let _ = std::fs::remove_file(self.profile_path(id));
-            (existed, name)
-        };
-        if existed {
-            self.emit(vec![Event::new(
-                EventType::Forgotten,
-                id.clone(),
-                name.unwrap_or_default(),
-                None,
-                "",
-            )]);
+    /// Hides the session from listings and frees its name; nothing is deleted (record,
+    /// worktree, profile and `ext` stay), and `respawn_session` brings it back. A running
+    /// session is stopped first, waiting as `stop_session` does. An already archived record
+    /// comes back unchanged, with no event. The create lock is held throughout, so no stop or
+    /// respawn slips in between the two steps.
+    pub fn archive_session(&self, id: &SessionId) -> Result<Session, CoreError> {
+        let _create = self.locks.create().map_err(CoreError::Lock)?;
+        let mut events = Vec::new();
+        if !self.get_session(id)?.lifecycle.is_terminal() {
+            let (_, ended) = self.stop_locked(id)?;
+            events.push(ended);
         }
-        Ok(existed)
+        let archived = self.archive_locked(id).map(|(session, archived)| {
+            events.extend(archived);
+            session
+        });
+        drop(_create);
+        self.emit(events);
+        archived
+    }
+
+    fn archive_locked(&self, id: &SessionId) -> Result<(Session, Vec<Event>), CoreError> {
+        let _session = self.locks.session(id).map_err(CoreError::Lock)?;
+        let mut session = self.get_session(id)?;
+        if session.archived_at.is_some() {
+            return Ok((session, Vec::new()));
+        }
+        session.archived_at = Some(now());
+        self.save(&mut session)?;
+        let archived = event(EventType::Archived, &session, None, "");
+        Ok((session, vec![archived]))
     }
 
     // ----- messaging ---------------------------------------------------------------------------
@@ -1614,6 +1660,7 @@ mod tests {
             cwd: "/".into(),
             created_at: 1.0,
             ended_at: None,
+            archived_at: None,
             last_modified_at: 1.0,
             lifecycle,
             launch: Launch::Process {

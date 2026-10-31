@@ -73,6 +73,7 @@ fn record(cwd: &Path) -> Session {
         cwd: cwd.to_owned(),
         created_at: 0.0,
         ended_at: None,
+        archived_at: None,
         last_modified_at: 0.0,
         lifecycle: Lifecycle::Running,
         launch: Launch::Agent {

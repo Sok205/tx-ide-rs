@@ -433,14 +433,22 @@ fn a_program_that_exits_at_once_yields_an_exited_record() {
     );
     assert!(session.ended_at.is_some());
     assert!(
+        matches!(
+            core.create_session(process("quick", &h.workdir("q2"))),
+            Err(CoreError::NameTaken(_))
+        ),
+        "an exited record keeps its name"
+    );
+    core.archive_session(&id).unwrap();
+    assert!(
         core.create_session(process("quick", &h.workdir("q2")))
             .is_ok(),
-        "the name is free again"
+        "the name is free once archived"
     );
 }
 
 #[test]
-fn names_are_unique_among_running_sessions_only() {
+fn names_are_unique_among_unarchived_sessions() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open();
@@ -455,6 +463,14 @@ fn names_are_unique_among_running_sessions_only() {
     );
     assert_eq!(h.live_names(), ["dup"]);
     core.stop_session(&first).unwrap();
+    assert!(
+        matches!(
+            core.create_session(process("dup", &h.workdir("b"))),
+            Err(CoreError::NameTaken(_))
+        ),
+        "a stopped record keeps its name"
+    );
+    core.archive_session(&first).unwrap();
     let second = core
         .create_session(process("dup", &h.workdir("b")))
         .unwrap();
@@ -550,22 +566,27 @@ fn list_and_resolve() {
 }
 
 #[test]
-fn resolve_prefers_running_then_most_recent() {
+fn resolve_prefers_unarchived_then_most_recent_archived() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open();
     let cwd = h.workdir("a");
     let first = core.create_session(process("n", &cwd)).unwrap();
-    core.stop_session(&first).unwrap();
+    core.archive_session(&first).unwrap();
     let second = core.create_session(process("n", &cwd)).unwrap();
-    core.stop_session(&second).unwrap();
+    core.archive_session(&second).unwrap();
     assert_eq!(
         core.resolve("n").unwrap(),
         second,
-        "most recent when none runs"
+        "the most recent archived one when none is unarchived"
     );
     let third = core.create_session(process("n", &cwd)).unwrap();
-    assert_eq!(core.resolve("n").unwrap(), third, "the running one wins");
+    core.stop_session(&third).unwrap();
+    assert_eq!(
+        core.resolve("n").unwrap(),
+        third,
+        "the unarchived one wins, running or not"
+    );
 }
 
 #[test]

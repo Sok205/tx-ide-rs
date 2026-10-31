@@ -46,7 +46,7 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
     h.tmux_ok(&["kill-session", "-t", "=bob"]);
     core.refresh_all().unwrap();
     core.stop_session(&a).unwrap();
-    core.forget_session(&b).unwrap();
+    core.archive_session(&b).unwrap();
 
     let events = recorder.0.lock().unwrap().clone();
     assert_eq!(
@@ -59,7 +59,7 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
             EventType::MessageSent,
             EventType::Exited,
             EventType::Stopped,
-            EventType::Forgotten,
+            EventType::Archived,
         ]
     );
     assert_eq!(events[0].id, a);

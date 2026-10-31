@@ -184,7 +184,7 @@ fn token_pool() -> Vec<String> {
         "where",
         "attach",
         "stop",
-        "forget",
+        "archive",
         "engines",
         "help",
         "--help",
@@ -1093,15 +1093,15 @@ fn six_concurrent_creates_with_the_same_name_let_exactly_one_win() {
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(
             stderr(output),
-            "txc: a running session is already named \"same\"\n"
+            "txc: another session is already named \"same\"\n"
         );
         assert!(output.stdout.is_empty());
     }
     assert_eq!(cli.ok(&["ls"]).lines().count(), 1);
     let sessions = cli.tmux(&["list-sessions", "-F", "#{session_name}"]);
     assert_eq!(String::from_utf8_lossy(&sessions.stdout).trim(), "same");
-    // Once stopped, the name is free again, and a losing record never lingers.
-    cli.ok(&["stop", "same"]);
+    // Once archived, the name is free again, and a losing record never lingers.
+    cli.ok(&["archive", "same"]);
     cli.ok(&[
         "create",
         "same",
@@ -1112,7 +1112,8 @@ fn six_concurrent_creates_with_the_same_name_let_exactly_one_win() {
         "30",
     ]);
     assert_eq!(cli.ok(&["ls", "--lifecycle", "running"]).lines().count(), 1);
-    assert_eq!(cli.ok(&["ls"]).lines().count(), 2);
+    assert_eq!(cli.ok(&["ls"]).lines().count(), 1);
+    assert_eq!(cli.ok(&["ls", "--archived"]).lines().count(), 1);
 }
 
 /// Every directory flag naming `dir`: the suites keep the five directories in one place, so

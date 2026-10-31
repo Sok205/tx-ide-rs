@@ -902,6 +902,7 @@ fn core_accepts_a_plan_with_empty_program() {
         cwd: dir.path().to_owned(),
         created_at: 0.0,
         ended_at: None,
+        archived_at: None,
         last_modified_at: 0.0,
         lifecycle: Lifecycle::Running,
         launch: Launch::Process {

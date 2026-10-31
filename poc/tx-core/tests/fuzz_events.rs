@@ -370,6 +370,7 @@ fn event_type_names_unique_and_stable() {
         [
             "created",
             "forked",
+            "respawned",
             "renamed",
             "tagged",
             "message-sent",
@@ -377,7 +378,7 @@ fn event_type_names_unique_and_stable() {
             "engine-data-changed",
             "exited",
             "stopped",
-            "forgotten"
+            "archived"
         ]
     );
     let variants: HashSet<EventType> = EventType::ALL.iter().copied().collect();
