@@ -12,7 +12,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use proptest::prelude::*;
-use tx_core::{DELIVERY_PAUSE, Live, SessionId, Tmux, TmuxError, build_envelope, validate_name};
+use tx_core::{
+    DELIVERY_PAUSE, EnvelopeSender, Live, SessionId, Tmux, TmuxError, build_envelope, validate_name,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Private server helper
@@ -128,12 +130,18 @@ fn arb_name() -> impl Strategy<Value = String> {
     "[A-Za-z0-9_-]{1,64}"
 }
 
+const USER: EnvelopeSender<'static> = EnvelopeSender::User { via: None };
+
+fn agent(name: &str) -> EnvelopeSender<'_> {
+    EnvelopeSender::Agent { name }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
     #[test]
     fn user_envelope_wraps_text_verbatim(text in any::<String>()) {
-        let env = build_envelope(None, &text);
+        let env = build_envelope(&USER, &text);
         prop_assert_eq!(&env, &format!("<from-user>{}</from-user>", text));
         let inner = &env["<from-user>".len()..env.len() - "</from-user>".len()];
         prop_assert_eq!(inner, text.as_str());
@@ -141,7 +149,7 @@ proptest! {
 
     #[test]
     fn agent_envelope_names_sender_and_wraps_text(name in arb_name(), text in any::<String>()) {
-        let env = build_envelope(Some(&name), &text);
+        let env = build_envelope(&agent(&name), &text);
         prop_assert_eq!(
             &env,
             &format!("<from-agent session=\"{}\">{}</from-agent>", name, text)
@@ -150,12 +158,21 @@ proptest! {
     }
 
     #[test]
-    fn envelope_is_exact_length_no_escaping(name in arb_name(), text in any::<String>()) {
-        let user = build_envelope(None, &text);
-        prop_assert_eq!(user.len(), text.len() + "<from-user></from-user>".len());
-        let agent = build_envelope(Some(&name), &text);
+    fn user_envelope_with_via_names_where_and_wraps_text(via in "[A-Za-z0-9_.-]{1,64}", text in any::<String>()) {
+        let env = build_envelope(&EnvelopeSender::User { via: Some(&via) }, &text);
         prop_assert_eq!(
-            agent.len(),
+            &env,
+            &format!("<from-user session=\"{}\">{}</from-user>", via, text)
+        );
+    }
+
+    #[test]
+    fn envelope_is_exact_length_no_escaping(name in arb_name(), text in any::<String>()) {
+        let user = build_envelope(&USER, &text);
+        prop_assert_eq!(user.len(), text.len() + "<from-user></from-user>".len());
+        let from_agent = build_envelope(&agent(&name), &text);
+        prop_assert_eq!(
+            from_agent.len(),
             text.len() + name.len() + "<from-agent session=\"\"></from-agent>".len()
         );
     }
@@ -167,7 +184,7 @@ proptest! {
 #[test]
 fn sharp_edge_unvalidated_sender_name_breaks_tag_shape() {
     for name in ["a\"b", "a>b", "a b", "a\n", "</from-agent>", ""] {
-        let env = build_envelope(Some(name), "x");
+        let env = build_envelope(&agent(name), "x");
         assert_eq!(
             env,
             format!("<from-agent session=\"{name}\">x</from-agent>")
@@ -186,7 +203,7 @@ fn delivery_pause_is_a_sane_bound() {
 fn text_that_looks_like_an_envelope_is_not_escaped() {
     let text = "<from-user>nested</from-user><from-agent session=\"x\">";
     assert_eq!(
-        build_envelope(None, text),
+        build_envelope(&USER, text),
         format!("<from-user>{text}</from-user>")
     );
 }
@@ -247,7 +264,7 @@ fn envelopes_arrive_verbatim_and_in_order() {
     });
     let strategy = (arb_sender(), arb_text());
     let result = runner.run(&strategy, |(sender, text)| {
-        let envelope = build_envelope(sender.as_deref(), &text);
+        let envelope = build_envelope(&sender.as_deref().map_or(USER, agent), &text);
         let before = already.load(Ordering::SeqCst);
         let got = deliver_and_read(&server, &live, &out, before, &envelope);
         already.store(before + envelope.len() + 1, Ordering::SeqCst);
@@ -272,7 +289,7 @@ fn sequence_of_envelopes_is_whole_and_ordered() {
     let messages: Vec<String> = (0..10)
         .map(|i| {
             build_envelope(
-                if i % 2 == 0 { None } else { Some("worker-1") },
+                &if i % 2 == 0 { USER } else { agent("worker-1") },
                 &format!("msg {i}; żółć #{{x}} \\; tail;"),
             )
         })
@@ -303,7 +320,7 @@ fn trailing_semicolon_forms_arrive_verbatim() {
     ];
     let mut already = 0;
     for text in cases {
-        let envelope = build_envelope(None, text);
+        let envelope = build_envelope(&USER, text);
         let got = deliver_and_read(&server, &live, &out, already, &envelope);
         already += envelope.len() + 1;
         assert_eq!(
@@ -335,7 +352,7 @@ fn empty_text_sends_nothing_and_enter_still_submits() {
     server.tmux.send_enter(&live.pane_target).unwrap();
     let got = wait_for(&out, |b| !b.is_empty());
     assert_eq!(got, b"\n");
-    let env = build_envelope(None, "");
+    let env = build_envelope(&USER, "");
     assert_eq!(env, "<from-user></from-user>");
     let got = deliver_and_read(&server, &live, &out, 1, &env);
     assert_eq!(String::from_utf8_lossy(&got), "<from-user></from-user>\n");
@@ -353,7 +370,12 @@ fn unserialized_senders_can_tear_lines() {
     const N: usize = 20;
     let envelopes = |tag: char| -> Vec<String> {
         (0..N)
-            .map(|i| build_envelope(None, &format!("{tag}{i:02} {}", tag.to_string().repeat(24))))
+            .map(|i| {
+                build_envelope(
+                    &USER,
+                    &format!("{tag}{i:02} {}", tag.to_string().repeat(24)),
+                )
+            })
             .collect()
     };
     let a = envelopes('A');

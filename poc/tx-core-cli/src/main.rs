@@ -6,9 +6,10 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
 
 use std::path::PathBuf;
+use tx_client::tmux::Ui;
 use tx_core::{
     CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, RefreshResult, SendOptions,
-    SessionId, TxCore,
+    Sender, SessionId, TxCore,
 };
 use tx_core_cli::args::{self, Invocation, LaunchSpec, Verb};
 
@@ -45,16 +46,29 @@ fn main() -> ExitCode {
     }
 }
 
-/// The caller's own session id, only when this process runs inside tx's tmux server: `$TMUX`
-/// names the server socket, and `$TX_SESSION_ID` was set by `create_session`. Anywhere else the
-/// sender is the user.
-fn sender_from_env(core: &TxCore) -> Option<SessionId> {
-    let tmux = std::env::var("TMUX").ok()?;
-    let socket = tmux.split(',').next()?;
-    if std::path::Path::new(socket) != core.socket_path() {
-        return None;
+/// Who `send` speaks as. Inside tx's tmux server (`$TMUX` names its socket): the agent whose
+/// `$TX_SESSION_ID` `create_session` set, when core knows it; else the user from the view this
+/// pane belongs to. Otherwise the user, from `--via` when given.
+fn sender_from_env(core: &TxCore, via: Option<String>) -> Result<Sender, CoreError> {
+    let ui = Ui::from_core(core);
+    if !ui.inside() {
+        return Ok(Sender::User { via });
     }
-    std::env::var("TX_SESSION_ID").ok()?.parse().ok()
+    if let Some(id) = std::env::var("TX_SESSION_ID")
+        .ok()
+        .and_then(|id| id.parse::<SessionId>().ok())
+    {
+        match core.get_session(&id) {
+            Ok(_) => return Ok(Sender::Agent { id }),
+            Err(CoreError::NotFound(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let view = std::env::var("TMUX_PANE")
+        .ok()
+        .and_then(|pane| ui.display_message("#S", Some(&pane)))
+        .filter(|session| ui.is_view(session));
+    Ok(Sender::User { via: view.or(via) })
 }
 
 fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
@@ -227,9 +241,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             let session = core.set_session_tags(&core.resolve(&target)?, tags)?;
             writeln!(out, "{}\t{}", session.id, session.tags.join(",")).ok();
         }
-        Verb::Send { target, text } => {
-            let sender = sender_from_env(&core);
-            let options = sender.map_or_else(SendOptions::default, SendOptions::from_agent);
+        Verb::Send { target, text, via } => {
+            let options = SendOptions::from(sender_from_env(&core, via)?);
             let receipt = core.send_message(&core.resolve(&target)?, &text, options)?;
             writeln!(out, "{}\t{}", receipt.recipient, receipt.pane).ok();
         }

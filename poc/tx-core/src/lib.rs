@@ -28,7 +28,7 @@ pub mod worktree;
 pub use config::{CoreConfig, Directories, MAX_SOCKET_PATH_BYTES};
 pub use core::{
     CreateOptions, DeliveryReceipt, ExecutionLocation, ForkOptions, LaunchOptions, ListFilter,
-    RefreshResult, SendOptions, TxCore,
+    RefreshResult, SendOptions, Sender, TxCore,
 };
 #[doc(hidden)]
 pub use engine::EngineRegistry;
@@ -45,7 +45,7 @@ pub use locks::{LockGuard, Locks};
 #[doc(hidden)]
 pub use messaging::DELIVERY_PAUSE;
 /// The default envelope; an `LlmEngine::envelope` override may wrap it.
-pub use messaging::build_envelope;
+pub use messaging::{EnvelopeSender, build_envelope};
 pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };

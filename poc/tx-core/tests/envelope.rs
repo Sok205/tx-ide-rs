@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use common::{Harness, STUB_ID, agent, cwd_of, process, typed, wait_for};
 use tx_core::{
-    CreateOptions, EngineError, LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine, SendOptions,
+    CreateOptions, EngineError, EnvelopeSender, LaunchOptions, LaunchPlan, LaunchRequest,
+    LlmEngine, SendOptions, Sender,
 };
 
 struct Shout;
@@ -41,8 +42,12 @@ impl LlmEngine for Shout {
         Ok(LaunchPlan::new("sh").args(["-c", "env > env.txt; cat > input.txt"]))
     }
 
-    fn envelope(&self, sender: Option<&str>, text: &str) -> String {
-        format!("[{}] {}", sender.unwrap_or("USER"), text.to_uppercase())
+    fn envelope(&self, sender: &EnvelopeSender<'_>, text: &str) -> String {
+        let from = match sender {
+            EnvelopeSender::User { via } => via.unwrap_or("USER"),
+            EnvelopeSender::Agent { name } => name,
+        };
+        format!("[{from}] {}", text.to_uppercase())
     }
 }
 
@@ -81,13 +86,24 @@ fn the_recipients_engine_frames_the_message() {
     .unwrap();
     core.send_message(&plain, "hi", SendOptions::from_agent(shouter.clone()))
         .unwrap();
+    core.send_message(
+        &shouter,
+        "from notes",
+        SendOptions::from(Sender::User {
+            via: Some("notes".into()),
+        }),
+    )
+    .unwrap();
     core.send_message(&stub, "hi", SendOptions::default())
         .unwrap();
     assert!(wait_for(Duration::from_secs(5), || typed(&cwd)
         .lines()
         .count()
-        == 2));
-    assert_eq!(typed(&cwd), "[USER] HELLO\n[plain] FROM PLAIN\n");
+        == 3));
+    assert_eq!(
+        typed(&cwd),
+        "[USER] HELLO\n[plain] FROM PLAIN\n[notes] FROM NOTES\n"
+    );
     assert!(wait_for(Duration::from_secs(5), || !typed(&plain_dir).is_empty()));
     assert_eq!(
         typed(&plain_dir),
@@ -108,7 +124,7 @@ fn the_recipients_engine_frames_the_message() {
     assert!(wait_for(Duration::from_secs(5), || typed(&cwd)
         .lines()
         .count()
-        == 3));
+        == 4));
     assert!(
         typed(&cwd).ends_with("<from-user>fallback</from-user>\n"),
         "{}",

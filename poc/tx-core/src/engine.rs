@@ -186,9 +186,10 @@ pub trait LlmEngine: Send + Sync {
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError>;
 
     /// How a message is framed before it is typed into one of this engine's sessions.
-    /// `sender` is the sending session's name, `None` for the user. Pure; the default is the
-    /// `<from-user>` / `<from-agent session="…">` envelope.
-    fn envelope(&self, sender: Option<&str>, text: &str) -> String {
+    /// `sender` is the operator (with where they typed, if known) or the sending agent's name.
+    /// Pure; the default is the `<from-user>` / `<from-user session="…">` /
+    /// `<from-agent session="…">` envelope.
+    fn envelope(&self, sender: &crate::messaging::EnvelopeSender<'_>, text: &str) -> String {
         crate::messaging::build_envelope(sender, text)
     }
 

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tx_core::{
     CoreConfig, CreateOptions, Directories, EventType, Launch, LaunchMode, LaunchOptions,
     LaunchPlan, LaunchRequest, Lifecycle, ListFilter, LlmEngine, Profile, ResolvedProfile,
-    SendOptions, Session, SessionId, TxCore, WorkspaceAction,
+    SendOptions, Sender, Session, SessionId, TxCore, WorkspaceAction,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -171,8 +171,20 @@ fn config_filter_and_send_builders() {
     assert_eq!(filter.tag.as_deref(), Some("t"));
     assert_eq!(filter.lifecycle, Some(Lifecycle::Exited));
     assert_eq!(ListFilter::new(), ListFilter::default());
-    assert_eq!(SendOptions::from_agent(id.clone()).sender, Some(id));
-    assert_eq!(SendOptions::default().sender, None);
+    assert_eq!(
+        SendOptions::from_agent(id.clone()).sender,
+        Sender::Agent { id }
+    );
+    assert_eq!(SendOptions::default().sender, Sender::User { via: None });
+    assert_eq!(
+        SendOptions::from(Sender::User {
+            via: Some("notes".into())
+        })
+        .sender,
+        Sender::User {
+            via: Some("notes".into())
+        }
+    );
 }
 
 #[test]

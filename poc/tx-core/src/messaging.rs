@@ -10,11 +10,24 @@ use crate::tmux::{Tmux, TmuxError};
 /// register pasted-looking input as text rather than a shortcut.
 pub const DELIVERY_PAUSE: Duration = Duration::from_millis(300);
 
-/// `sender: None` is the user; `Some(name)` is another agent, named by its session name.
-pub fn build_envelope(sender: Option<&str>, text: &str) -> String {
+/// Who a message is framed as coming from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvelopeSender<'a> {
+    /// The operator; `via` names where they typed (a view, an nvim buffer).
+    User { via: Option<&'a str> },
+    /// Another agent, named by its session name.
+    Agent { name: &'a str },
+}
+
+pub fn build_envelope(sender: &EnvelopeSender<'_>, text: &str) -> String {
     match sender {
-        None => format!("<from-user>{text}</from-user>"),
-        Some(name) => format!("<from-agent session=\"{name}\">{text}</from-agent>"),
+        EnvelopeSender::User { via: None } => format!("<from-user>{text}</from-user>"),
+        EnvelopeSender::User { via: Some(via) } => {
+            format!("<from-user session=\"{via}\">{text}</from-user>")
+        }
+        EnvelopeSender::Agent { name } => {
+            format!("<from-agent session=\"{name}\">{text}</from-agent>")
+        }
     }
 }
 
@@ -30,15 +43,30 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    const USER: EnvelopeSender<'static> = EnvelopeSender::User { via: None };
+
     #[test]
     fn user_envelope() {
-        assert_eq!(build_envelope(None, "hi"), "<from-user>hi</from-user>");
+        assert_eq!(build_envelope(&USER, "hi"), "<from-user>hi</from-user>");
+    }
+
+    #[test]
+    fn user_envelope_names_where_the_operator_typed() {
+        assert_eq!(
+            build_envelope(
+                &EnvelopeSender::User {
+                    via: Some("plan.md")
+                },
+                "hi"
+            ),
+            "<from-user session=\"plan.md\">hi</from-user>"
+        );
     }
 
     #[test]
     fn agent_envelope_names_the_sender() {
         assert_eq!(
-            build_envelope(Some("worker-1"), "hi"),
+            build_envelope(&EnvelopeSender::Agent { name: "worker-1" }, "hi"),
             "<from-agent session=\"worker-1\">hi</from-agent>"
         );
     }
@@ -47,10 +75,10 @@ mod tests {
     fn text_is_kept_verbatim() {
         let text = "line one\nline two; <tag> \"q\" ; é 😀";
         assert_eq!(
-            build_envelope(None, text),
+            build_envelope(&USER, text),
             format!("<from-user>{text}</from-user>")
         );
-        assert_eq!(build_envelope(None, ""), "<from-user></from-user>");
+        assert_eq!(build_envelope(&USER, ""), "<from-user></from-user>");
     }
 
     #[test]
