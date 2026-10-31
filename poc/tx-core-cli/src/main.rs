@@ -183,6 +183,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             tag,
             lifecycle,
             archived,
+            json,
         } => {
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
@@ -201,17 +202,33 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             if archived {
                 filter = filter.archived();
             }
-            for id in core.list_sessions(&filter)? {
-                let session = core.get_session(&id)?;
-                writeln!(
-                    out,
-                    "{}\t{}\t{}\t{}",
-                    session.id,
-                    session.name,
-                    session.lifecycle.as_str(),
-                    session.cwd.display()
-                )
-                .ok();
+            let ids = core.list_sessions(&filter)?;
+            if json {
+                let mut entries = Vec::with_capacity(ids.len());
+                for id in ids {
+                    let session = core.get_session(&id)?;
+                    entries.push(serde_json::json!({
+                        "id": session.id.as_str(),
+                        "name": session.name,
+                        "state": session.state.as_str(),
+                        "working_directory": session.cwd,
+                        "tags": session.tags,
+                    }));
+                }
+                writeln!(out, "{}", serde_json::Value::Array(entries)).ok();
+            } else {
+                for id in ids {
+                    let session = core.get_session(&id)?;
+                    writeln!(
+                        out,
+                        "{}\t{}\t{}\t{}",
+                        session.id,
+                        session.name,
+                        session.lifecycle.as_str(),
+                        session.cwd.display()
+                    )
+                    .ok();
+                }
             }
         }
         Verb::Show { target } => {

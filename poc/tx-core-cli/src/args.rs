@@ -22,9 +22,12 @@ verbs:
                                                                     changes are not carried over); SOURCE's engine, roles and
                                                                     engine options unless an option says otherwise; name NAME,
                                                                     else SOURCE-fork; tags default to SOURCE's; prints its id
-  ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped] [--archived]
+  ls [--parent ID] [--tag T] [--lifecycle running|exited|stopped] [--archived] [--json]
                                                                     id, name, lifecycle, cwd per line;
-                                                                    --archived: the archived sessions instead
+                                                                    --archived: the archived sessions instead;
+                                                                    --json: one array of {id, name, state,
+                                                                    working_directory, tags}, running only
+                                                                    unless --lifecycle says otherwise
   show TARGET                                                       the record as JSON
   rename TARGET NAME
   tag TARGET [TAG]...                                               replace the tag list
@@ -109,6 +112,7 @@ pub enum Verb {
         tag: Option<String>,
         lifecycle: Option<Lifecycle>,
         archived: bool,
+        json: bool,
     },
     Show {
         target: String,
@@ -473,6 +477,7 @@ fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut tag = None;
     let mut lifecycle = None;
     let mut archived = false;
+    let mut json = false;
     while let Some(flag) = cursor.next() {
         match flag {
             "--parent" => parent = Some(cursor.value(flag)?.to_owned()),
@@ -485,14 +490,20 @@ fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
                 );
             }
             "--archived" => archived = true,
+            "--json" => json = true,
             other => return Err(usage(format!("ls: unexpected argument {other:?}"))),
         }
+    }
+    // The JSON listing is for pickers of live agents (nvim's tx-ask).
+    if json && lifecycle.is_none() {
+        lifecycle = Some(Lifecycle::Running);
     }
     Ok(Verb::Ls {
         parent,
         tag,
         lifecycle,
         archived,
+        json,
     })
 }
 
@@ -716,12 +727,29 @@ mod tests {
                 parent: Some("p".into()),
                 tag: Some("t".into()),
                 lifecycle: Some(Lifecycle::Exited),
-                archived: false
+                archived: false,
+                json: false
             }
         );
         assert!(matches!(
             parse_str("ls --archived").unwrap().verb,
             Verb::Ls { archived: true, .. }
+        ));
+        assert!(matches!(
+            parse_str("ls --json").unwrap().verb,
+            Verb::Ls {
+                lifecycle: Some(Lifecycle::Running),
+                json: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse_str("ls --json --lifecycle stopped").unwrap().verb,
+            Verb::Ls {
+                lifecycle: Some(Lifecycle::Stopped),
+                json: true,
+                ..
+            }
         ));
         assert!(parse_str("ls --lifecycle gone").is_err());
         assert_eq!(
