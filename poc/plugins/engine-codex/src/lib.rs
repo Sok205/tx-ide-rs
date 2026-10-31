@@ -16,9 +16,11 @@
 //! before a launch reads them.
 //!
 //! A resume continues `conversation_id`; a fork branches the source's `conversation_id`; both are
-//! refused when there is none yet. Codex picks its own id, so a launch plan carries no engine
-//! data: both keys come from the `SessionStart` payload, which Codex fires once the first prompt
-//! is submitted. The data is rewritten only when the id differs; other keys of
+//! refused when there is none yet. Codex picks its own id, so both keys come from the
+//! `SessionStart` payload, which Codex fires once the first prompt is submitted. A Start or
+//! Resume plan carries no engine data; a Fork plan returns the record's data without them, so the
+//! fork never shows the source's conversation while it waits for its own. A fork runs in the
+//! current directory (the fork's worktree) without asking: `-c tui.resume_cwd=current`. The data is rewritten only when the id differs; other keys of
 //! the object survive. Paths Codex reports are resolved (`/private/tmp/…` for `/tmp/…`).
 
 use std::path::PathBuf;
@@ -36,6 +38,10 @@ pub const SKILLS_DIR: &str = ".agents/skills";
 pub const MODEL_FLAG: &str = "-m";
 pub const RESUME_SUBCOMMAND: &str = "resume";
 pub const FORK_SUBCOMMAND: &str = "fork";
+/// Answers the "Working directory · fork" prompt `codex fork` shows when the current directory
+/// differs from the session's: always the current one. What option 4 ("Always use current
+/// directory") saves under `[tui]` in `config.toml` (codex-cli 0.164.0); passed per launch.
+pub const FORK_CWD_OVERRIDE: &str = "tui.resume_cwd=current";
 pub const REASONING_EFFORT_KEY: &str = "model_reasoning_effort";
 pub const DEVELOPER_INSTRUCTIONS_KEY: &str = "developer_instructions";
 pub const BYPASS_APPROVALS_FLAG: &str = "--dangerously-bypass-approvals-and-sandbox";
@@ -196,16 +202,22 @@ impl LlmEngine for CodexAdapter {
         let option = |key: &str| data.get(key).and_then(Value::as_str);
         let effort = option(EFFORT_KEY).unwrap_or(DEFAULT_EFFORT.as_str());
         let mut args = Vec::new();
+        let mut fork_data = None;
         match req.mode {
             LaunchMode::Start => {}
             LaunchMode::Resume => args.extend([
                 RESUME_SUBCOMMAND.to_owned(),
                 self.conversation_of(req.session, "resume")?.to_owned(),
             ]),
-            LaunchMode::Fork { source } => args.extend([
-                FORK_SUBCOMMAND.to_owned(),
-                self.conversation_of(source, "fork")?.to_owned(),
-            ]),
+            LaunchMode::Fork { source } => {
+                args.extend([
+                    FORK_SUBCOMMAND.to_owned(),
+                    self.conversation_of(source, "fork")?.to_owned(),
+                    "-c".to_owned(),
+                    FORK_CWD_OVERRIDE.to_owned(),
+                ]);
+                fork_data = Some(without_conversation(data));
+            }
         }
         if let Some(model) = option(MODEL_KEY) {
             args.extend([MODEL_FLAG.to_owned(), model.to_owned()]);
@@ -230,6 +242,7 @@ impl LlmEngine for CodexAdapter {
             args.push(prompt.to_owned());
         }
         let mut plan = LaunchPlan::new(CODEX_BIN).args(args);
+        plan.engine_data = fork_data;
         for link in skill_links(SKILLS_DIR, req.profile.skill_dirs()) {
             plan = plan.workspace(link);
         }
@@ -272,6 +285,15 @@ pub fn conversation_started(current: &Value, payload: &Value) -> Option<Value> {
     data.insert(CONVERSATION_ID_KEY.into(), conversation_id.into());
     data.insert(TRANSCRIPT_PATH_KEY.into(), transcript_path.into());
     Some(Value::Object(data))
+}
+
+/// `data` without `conversation_id` and `transcript_path`: a fork keeps its launch options and
+/// waits for its own conversation on `SessionStart`.
+pub fn without_conversation(data: &Value) -> Value {
+    let mut data = data.as_object().cloned().unwrap_or_default();
+    data.remove(CONVERSATION_ID_KEY);
+    data.remove(TRANSCRIPT_PATH_KEY);
+    Value::Object(data)
 }
 
 /// `hooks.<event>=[{matcher="",hooks=[{type="command",command="…"}]}]`, TOML inline. The
@@ -659,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn fork_is_the_subcommand_on_the_source_conversation() {
+    fn fork_is_the_subcommand_on_the_source_conversation_in_the_current_directory() {
         let (_dir, profile) = profile("", &[]);
         let source = record(serde_json::json!({"conversation_id": "sess-7"}));
         let session = record(serde_json::Value::Null);
@@ -670,9 +692,69 @@ mod tests {
                     .initial_prompt("go"),
             )
             .unwrap();
-        assert_eq!(plan.args[..2], argv(&["fork", "sess-7"]));
-        assert_eq!(plan.args.last().map(String::as_str), Some("go"));
-        assert_eq!(plan.engine_data, None);
+        assert_eq!(
+            plan.args,
+            argv(&[
+                "fork",
+                "sess-7",
+                "-c",
+                "tui.resume_cwd=current",
+                "-c",
+                "model_reasoning_effort=high",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--dangerously-bypass-hook-trust",
+                "go",
+            ])
+        );
+        assert_eq!(plan.engine_data, Some(serde_json::json!({})));
+    }
+
+    #[test]
+    fn a_fork_drops_the_source_conversation_and_keeps_its_options() {
+        use serde_json::json;
+        let (_dir, profile) = profile("", &[]);
+        let source_data = json!({
+            "conversation_id": "sess-7",
+            "transcript_path": "/h/sessions/rollout-sess-7.jsonl",
+            "model": "gpt-6.1-sol",
+            "effort": "low",
+        });
+        let source = record(source_data.clone());
+        // Core starts the fork's record as a copy of the source's data; `configure` merged the
+        // fork's own options into it.
+        let mut fork_data = source_data;
+        fork_data["effort"] = json!("medium");
+        let session = record(fork_data);
+        let plan = adapter()
+            .launch(
+                &LaunchRequest::new(&session, &profile)
+                    .mode(LaunchMode::Fork { source: &source })
+                    .initial_prompt("go"),
+            )
+            .unwrap();
+        assert_eq!(
+            plan.args[..4],
+            argv(&["fork", "sess-7", "-c", "tui.resume_cwd=current"])
+        );
+        assert_eq!(
+            plan.engine_data,
+            Some(json!({"model": "gpt-6.1-sol", "effort": "medium"}))
+        );
+    }
+
+    #[test]
+    fn only_a_fork_overrides_the_working_directory_prompt() {
+        let (_dir, profile) = profile("", &[]);
+        let session = record(serde_json::json!({"conversation_id": "sess-7"}));
+        for mode in [LaunchMode::Start, LaunchMode::Resume] {
+            let plan = adapter()
+                .launch(&LaunchRequest::new(&session, &profile).mode(mode))
+                .unwrap();
+            assert!(
+                !plan.args.contains(&FORK_CWD_OVERRIDE.to_owned()),
+                "{mode:?}"
+            );
+        }
     }
 
     #[test]
