@@ -15,8 +15,6 @@ use crate::{CHAT_ID, ChatError, HISTORY_ID};
 pub enum Role {
     Primary,
     Fork,
-    Handover,
-    Rollover,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

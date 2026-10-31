@@ -76,14 +76,6 @@ pub enum ChatError {
     NotAnAgent(String),
     #[error("no engine adapter for '{0}'")]
     EngineUnknown(String),
-    #[error("op {op_id}: cannot read {}: {source}", path.display())]
-    SpecUnreadable {
-        op_id: String,
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("op {op_id}: invalid spec: {reason}")]
-    SpecInvalid { op_id: String, reason: String },
     #[error("ext.{plugin} of '{name}' is malformed: {reason}")]
     Malformed {
         plugin: String,
@@ -94,10 +86,6 @@ pub enum ChatError {
     LiveName(String),
     #[error("resume: cwd '{cwd}' does not exist — {remedy} (C8)")]
     CwdMissing { cwd: String, remedy: String },
-    #[error("no pane for {0}")]
-    NoPane(String),
-    #[error("not inside tmux (TMUX_PANE is unset)")]
-    NotInsideTmux,
     #[error(transparent)]
     Ui(#[from] UiError),
 }
@@ -171,7 +159,7 @@ mod tests {
 
     #[test]
     fn chat_error_maps_to_verb_error() {
-        let failed: VerbError = ChatError::NotInsideTmux.into();
+        let failed: VerbError = ChatError::LiveName("x".into()).into();
         assert!(matches!(failed, VerbError::Failed(_)));
         let core: VerbError = ChatError::Core(CoreError::NotFound("x".into())).into();
         assert!(matches!(core, VerbError::Core(CoreError::NotFound(_))));

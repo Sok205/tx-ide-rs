@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tx_core::{Effort, EngineAdapter, LaunchPlan, LaunchRequest, Profile, Profiles, TxCore};
+use tx_core::{EngineAdapter, LaunchPlan, LaunchRequest, Profile, Profiles, TxCore};
 
 use crate::ChatError;
 use crate::ext::AgentLaunch;
@@ -293,14 +293,6 @@ pub fn fork_args(engine: &str, args: &mut Vec<String>) {
             }
         }
         _ => {}
-    }
-}
-
-/// The model and effort a handover / rollover distiller runs with.
-pub fn distiller(engine: &str) -> (Option<&'static str>, Option<Effort>) {
-    match engine {
-        "claude" => (Some("opus"), Some(Effort::Medium)),
-        _ => (None, None),
     }
 }
 
@@ -618,6 +610,7 @@ pub mod rollout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tx_core::Effort;
 
     fn write(path: &Path, data: &str) -> PathBuf {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -841,13 +834,6 @@ mod tests {
         let mut fresh = argv(&["-m", "gpt"]);
         fork_args("codex", &mut fresh);
         assert_eq!(fresh, argv(&["-m", "gpt"]));
-    }
-
-    #[test]
-    fn distiller_table() {
-        assert_eq!(distiller("claude"), (Some("opus"), Some(Effort::Medium)));
-        assert_eq!(distiller("codex"), (None, None));
-        assert_eq!(distiller("zzz"), (None, None));
     }
 
     #[test]

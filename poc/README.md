@@ -28,7 +28,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-ui |
 | `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-ui |
 | `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-ui |
-| `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `fork`, `handover`, `rollover`, `resume`, `chat ls\|hooks`, prefix+f; captures chat ids through its own agent hooks | tx-core, tx-ui, tx-engine-claude, tx-engine-codex |
+| `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `fork`, `resume`, `chat ls\|hooks`, prefix+f; captures chat ids through its own agent hooks | tx-core, tx-ui, tx-engine-claude, tx-engine-codex |
 | `plugins/chat` (`tx-chat`, plugin `history`) | plugin: the transcript mirror under `plugins/history/`, `history`, `history-hooks`; same crate as `chat` | tx-core, tx-ui |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-ui |
 | `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n; ships the COMMON and DEVELOPER roles and their skills | tx-core, tx-ui |
@@ -214,7 +214,7 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
 | `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_session`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
-| `chat` | `fork`, `handover`, `rollover`, `resume`, `chat ls <session>`, `chat hooks install\|uninstall`, and the internal `_fork-pane`, `_chat-hook`, `_chat-op-finish`, `_chat-op-watch`; resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session`; owns `ext.chat` |
+| `chat` | `fork`, `resume`, `chat ls <session>`, `chat hooks install\|uninstall`, and the internal `_fork-pane`, `_chat-hook`; resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session`; owns `ext.chat` |
 | `history` | `history` (the mirrored chats), `history-hooks install\|uninstall`, the internal `_history-ingest`; owns `ext.history` and `<state_dir>/plugins/history/` |
 | `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name); resource `agents/TX-ASSISTANT.md` |
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
@@ -244,17 +244,15 @@ Both plugins install their own agent hooks, next to the `hooks` plugin's and in 
 sidecars; none of them needs another. Run each once per machine:
 
 ```
-txc chat hooks install      # captures the agent's chat id into ext.chat (fork, resume, handover)
+txc chat hooks install      # captures the agent's chat id into ext.chat (fork, resume)
 txc history-hooks install   # mirrors transcripts byte for byte on every Stop
 ```
 
-`uninstall` reverses either, and `--dry-run` prints the change. Without the history hooks `chat`
-still works but has no mirrored bundle to hand over; without the chat hooks nothing records the
-chat id, so `fork` and `resume` report `has no chat`.
+`uninstall` reverses either, and `--dry-run` prints the change. Without the chat hooks nothing
+records the chat id, so `fork` and `resume` report `has no chat`.
 
 Data lives under the state dir: `plugins/history/<session>/<chat>/` (the mirrored transcript and
-its sidecar files), `plugins/chat/ops/<op>/` (in-flight handover and rollover ops, finished
-lazily by the next chat verb). Per-session state is `ext.chat` and `ext.history`. prefix+f forks
+its sidecar files). Per-session state is `ext.chat` and `ext.history`. prefix+f forks
 the session in the active pane through `_fork-pane`; the outcome is on the status line.
 
 ## Running the IDE

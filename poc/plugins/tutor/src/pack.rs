@@ -133,7 +133,7 @@ pub struct SessionFilter {
     pub state: Vec<String>,
     #[serde(default)]
     pub has_parent: Option<bool>,
-    /// Matches any chat's `origin.how` (`fork`, `handover`, `resume`, …).
+    /// Matches any chat's `origin.how` (`fork`, `resume`, …).
     #[serde(default)]
     pub chat_origin: Option<String>,
 }
