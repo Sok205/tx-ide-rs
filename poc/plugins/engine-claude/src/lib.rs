@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use tx_core::{
     Change, Effort, EngineError, Hook, LaunchPlan, LaunchRequest, LlmEngine, State, Status,
-    WorkspaceAction,
+    WorkspaceAction, hook_shell_command,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -18,6 +18,21 @@ pub const EFFORT_FLAG: &str = "--effort";
 pub const NO_CHROME_FLAG: &str = "--no-chrome";
 pub const APPEND_SYSTEM_PROMPT_FLAG: &str = "--append-system-prompt";
 pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
+pub const SETTINGS_FLAG: &str = "--settings";
+/// The hooks wired per launch; each runs `<hook_command> <Event>`, so `on_hook` sees Claude's
+/// own event names.
+pub const HOOK_EVENTS: [&str; 8] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Notification",
+    "Stop",
+    "StopFailure",
+    "SessionEnd",
+];
+/// Seconds Claude waits for one hook before moving on.
+pub const HOOK_TIMEOUT_SECONDS: u64 = 10;
 pub const DEFAULT_EFFORT: Effort = Effort::High;
 /// `Notification` types that mean "blocked on the operator mid-turn". Not `idle_prompt`: Claude
 /// sends it about 60 s after every finished turn, which is already `Idle`.
@@ -52,6 +67,9 @@ impl LlmEngine for ClaudeAdapter {
                 APPEND_SYSTEM_PROMPT_FLAG.to_owned(),
                 req.profile.text().to_owned(),
             ]);
+        }
+        if !req.hook_command.is_empty() {
+            args.extend([SETTINGS_FLAG.to_owned(), hook_settings(req.hook_command)]);
         }
         args.push(SKIP_PERMISSIONS_FLAG.to_owned());
         if let Some(prompt) = req.initial_prompt.filter(|prompt| !prompt.is_empty()) {
@@ -95,6 +113,26 @@ impl LlmEngine for ClaudeAdapter {
             _ => Change::default(),
         }
     }
+}
+
+/// `--settings` JSON wiring every [`HOOK_EVENTS`] entry to `hook_command`. Inline settings
+/// add to the user's own hooks rather than replacing them.
+pub fn hook_settings(hook_command: &[String]) -> String {
+    let hooks: serde_json::Map<String, Value> = HOOK_EVENTS
+        .iter()
+        .map(|event| {
+            let entry = serde_json::json!([{
+                "matcher": "",
+                "hooks": [{
+                    "type": "command",
+                    "command": hook_shell_command(hook_command, event),
+                    "timeout": HOOK_TIMEOUT_SECONDS,
+                }],
+            }]);
+            ((*event).to_owned(), entry)
+        })
+        .collect();
+    serde_json::json!({ "hooks": hooks }).to_string()
 }
 
 /// One symlink per granted skill dir: `<engine dir>/<skill name>` → the skill dir.
@@ -352,6 +390,35 @@ mod tests {
         assert!(
             !plan.args.iter().any(|a| a == "--resume"),
             "empty resume is absent"
+        );
+    }
+
+    #[test]
+    fn hook_command_wires_every_event_through_settings() {
+        let (dir, profile) = profile("", &[]);
+        let hook_command = ["/x y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
+        let plan = ClaudeAdapter
+            .launch(&LaunchRequest::new(dir.path(), &profile).hook_command(&hook_command))
+            .unwrap();
+        let at = plan
+            .args
+            .iter()
+            .position(|arg| arg == "--settings")
+            .unwrap();
+        assert_eq!(plan.args[at + 2], "--dangerously-skip-permissions");
+        let settings: Value = serde_json::from_str(&plan.args[at + 1]).unwrap();
+        let hooks = settings["hooks"].as_object().unwrap();
+        assert_eq!(
+            hooks.keys().map(String::as_str).collect::<Vec<_>>(),
+            HOOK_EVENTS
+        );
+        assert_eq!(
+            settings["hooks"]["Stop"],
+            serde_json::json!([{"matcher": "", "hooks": [{
+                "type": "command",
+                "command": "'/x y/txc' 'chat' 'hook' 'Stop' || exit 1",
+                "timeout": 10,
+            }]}])
         );
     }
 

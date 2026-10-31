@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use tx_core::{
     Change, Effort, EngineError, Hook, LaunchPlan, LaunchRequest, LlmEngine, State, Status,
-    WorkspaceAction,
+    WorkspaceAction, hook_shell_command,
 };
 
 pub const CODEX_BIN: &str = "codex";
@@ -19,6 +19,17 @@ pub const DEVELOPER_INSTRUCTIONS_KEY: &str = "developer_instructions";
 pub const BYPASS_APPROVALS_FLAG: &str = "--dangerously-bypass-approvals-and-sandbox";
 pub const BYPASS_HOOK_TRUST_FLAG: &str = "--dangerously-bypass-hook-trust";
 pub const DEFAULT_EFFORT: Effort = Effort::High;
+/// The hooks wired per launch, one `-c hooks.<Event>=…` each; each runs
+/// `<hook_command> <Event>`. Codex skips them without `--dangerously-bypass-hook-trust`.
+pub const HOOK_EVENTS: [&str; 7] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PermissionRequest",
+    "PostToolUse",
+    "Stop",
+    "Interrupt",
+    "SessionEnd",
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CodexAdapter;
@@ -49,6 +60,11 @@ impl LlmEngine for CodexAdapter {
                 "-c".to_owned(),
                 format!("{DEVELOPER_INSTRUCTIONS_KEY}={}", req.profile.text()),
             ]);
+        }
+        if !req.hook_command.is_empty() {
+            for event in HOOK_EVENTS {
+                args.extend(["-c".to_owned(), hook_override(req.hook_command, event)]);
+            }
         }
         args.extend([
             BYPASS_APPROVALS_FLAG.to_owned(),
@@ -84,6 +100,13 @@ impl LlmEngine for CodexAdapter {
             _ => Change::default(),
         }
     }
+}
+
+/// `hooks.<event>=[{matcher="",hooks=[{type="command",command="…"}]}]`, TOML inline. The
+/// command is a TOML basic string; JSON string escapes are valid TOML escapes.
+pub fn hook_override(hook_command: &[String], event: &str) -> String {
+    let command = Value::from(hook_shell_command(hook_command, event)).to_string();
+    format!("hooks.{event}=[{{matcher=\"\",hooks=[{{type=\"command\",command={command}}}]}}]")
 }
 
 /// One symlink per granted skill dir: `<engine dir>/<skill name>` → the skill dir.
@@ -289,6 +312,30 @@ mod tests {
             .unwrap();
         assert_eq!(plan.args[1], "gpt-5.6-sol");
         assert_eq!(plan.args.len(), 6);
+    }
+
+    #[test]
+    fn hook_command_wires_every_event_as_a_config_override() {
+        let (dir, profile) = profile("", &[]);
+        let hook_command = ["/x\"y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
+        let plan = CodexAdapter
+            .launch(&LaunchRequest::new(dir.path(), &profile).hook_command(&hook_command))
+            .unwrap();
+        let overrides: Vec<&str> = plan
+            .args
+            .windows(2)
+            .filter(|pair| pair[0] == "-c" && pair[1].starts_with("hooks."))
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(overrides.len(), HOOK_EVENTS.len());
+        assert_eq!(
+            overrides[4],
+            r#"hooks.Stop=[{matcher="",hooks=[{type="command",command="'/x\"y/txc' 'chat' 'hook' 'Stop' || exit 1"}]}]"#
+        );
+        assert_eq!(
+            &plan.args[plan.args.len() - 2..],
+            [BYPASS_APPROVALS_FLAG, BYPASS_HOOK_TRUST_FLAG]
+        );
     }
 
     #[test]

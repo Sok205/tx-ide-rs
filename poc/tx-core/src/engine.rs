@@ -35,6 +35,9 @@ pub struct LaunchRequest<'a> {
     /// An engine-specific conversation id to continue instead of starting fresh. Core never
     /// interprets it.
     pub resume: Option<&'a str>,
+    /// The argv prefix every hook the adapter wires runs, with the CLI's event name appended:
+    /// `["/abs/txc", "chat", "hook"]`. Empty: wire no hooks.
+    pub hook_command: &'a [String],
 }
 
 impl<'a> LaunchRequest<'a> {
@@ -46,6 +49,7 @@ impl<'a> LaunchRequest<'a> {
             effort: None,
             initial_prompt: None,
             resume: None,
+            hook_command: &[],
         }
     }
 
@@ -68,6 +72,28 @@ impl<'a> LaunchRequest<'a> {
         self.resume = Some(resume);
         self
     }
+
+    pub fn hook_command(mut self, hook_command: &'a [String]) -> Self {
+        self.hook_command = hook_command;
+        self
+    }
+}
+
+/// The shell command a wired hook runs: every word of `hook_command` single-quoted, then
+/// `event`, then `|| exit 1`. Claude reads exit 2 as "block the agent", so a `txc` that fails
+/// to even start must never block a prompt or a stop.
+pub fn hook_shell_command(hook_command: &[String], event: &str) -> String {
+    let words: Vec<String> = hook_command
+        .iter()
+        .map(|word| shell_quote(word))
+        .chain(std::iter::once(shell_quote(event)))
+        .collect();
+    format!("{} || exit 1", words.join(" "))
+}
+
+/// POSIX single-quoting: safe for any word (spaces, `$`, embedded `'`).
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 /// Filesystem preparation core performs before starting the process. Relative paths resolve
@@ -498,6 +524,19 @@ mod tests {
             "{error:?}"
         );
         assert!(error.to_string().contains("inner.txt"), "{error}");
+    }
+
+    #[test]
+    fn hook_shell_command_quotes_every_word_and_never_exits_2() {
+        let prefix = [
+            "/a b/it's/txc".to_owned(),
+            "chat".to_owned(),
+            "hook".to_owned(),
+        ];
+        assert_eq!(
+            hook_shell_command(&prefix, "Stop"),
+            "'/a b/it'\\''s/txc' 'chat' 'hook' 'Stop' || exit 1"
+        );
     }
 
     #[test]

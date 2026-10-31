@@ -531,6 +531,7 @@ impl TxCore {
                     effort: *effort,
                     initial_prompt: initial_prompt.as_deref(),
                     resume: resume.as_deref(),
+                    hook_command: &self.config.hook_command,
                 };
                 let plan = adapter
                     .launch(&request)

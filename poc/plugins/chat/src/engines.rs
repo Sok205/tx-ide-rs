@@ -245,7 +245,8 @@ pub fn adapter(engine: &str) -> Option<&'static dyn LlmEngine> {
 }
 
 /// The argv `launch` would run for a new, resumed or primed chat: the profile is resolved and
-/// written to `profile_file`, then the adapter turns the request into a plan.
+/// written to `profile_file`, then the adapter turns the request into a plan. No state hooks
+/// are wired: the plan runs as a process session, which has no engine to read them.
 pub fn agent_plan(
     core: &TxCore,
     launch: &AgentLaunch,

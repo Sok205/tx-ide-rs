@@ -30,7 +30,9 @@ pub use core::{
 };
 #[doc(hidden)]
 pub use engine::EngineRegistry;
-pub use engine::{EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction};
+pub use engine::{
+    EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction, hook_shell_command,
+};
 pub use error::CoreError;
 #[doc(hidden)]
 pub use events::EventLog;

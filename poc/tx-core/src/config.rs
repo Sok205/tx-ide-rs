@@ -25,6 +25,8 @@ pub struct CoreConfig {
     pub profile_dirs: Vec<PathBuf>,
     /// Skill search dirs, in order; a later dir overrides an earlier one.
     pub skill_dirs: Vec<PathBuf>,
+    /// The argv prefix the hooks an engine wires run (`[txc, "chat", "hook"]`). Empty: none.
+    pub hook_command: Vec<String>,
 }
 
 impl CoreConfig {
@@ -35,6 +37,7 @@ impl CoreConfig {
             env: Vec::new(),
             profile_dirs: Vec::new(),
             skill_dirs: Vec::new(),
+            hook_command: Vec::new(),
         }
     }
 
@@ -63,6 +66,15 @@ impl CoreConfig {
         P: Into<PathBuf>,
     {
         self.skill_dirs.extend(dirs.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn hook_command<I, S>(mut self, words: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.hook_command = words.into_iter().map(Into::into).collect();
         self
     }
 
@@ -117,6 +129,7 @@ mod tests {
         assert!(config.env.is_empty());
         assert!(config.profile_dirs.is_empty());
         assert!(config.skill_dirs.is_empty());
+        assert!(config.hook_command.is_empty());
         assert_eq!(config.state_dir, Path::new("/x"));
     }
 
