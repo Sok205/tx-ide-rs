@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use args::{Invocation, LaunchSpec, Verb};
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, LaunchOptions, ListFilter, PluginConfig, RefreshResult,
-    SendOptions, SessionId, TxCore,
+    CoreConfig, CoreError, CreateOptions, Hook, LaunchOptions, ListFilter, PluginConfig,
+    RefreshResult, SendOptions, SessionId, TxCore,
 };
 
 const HOME_ENV: &str = "TX_CORE_HOME";
@@ -134,6 +134,15 @@ fn core_config(invocation: &Invocation) -> CoreConfig {
     let mut config = CoreConfig::new(state)
         .profile_dirs(profile_dirs)
         .skill_dirs(skill_dirs);
+    // The hooks a session's engine wires call back into this txc. Without a path to it the
+    // session still launches; it just stays `starting`.
+    if let Ok(exe) = std::env::current_exe() {
+        config = config.hook_command([
+            exe.to_string_lossy().into_owned(),
+            "chat".into(),
+            "hook".into(),
+        ]);
+    }
     for (key, value) in &global.env {
         config = config.env(key, value);
     }
@@ -193,6 +202,19 @@ fn sender_from_env(core: &TxCore) -> Option<SessionId> {
     std::env::var("TX_SESSION_ID").ok()?.parse().ok()
 }
 
+/// A hook's payload, tolerantly: `{}` for none, unreadable, bad JSON or a non-object. The hook
+/// must never fail the agent over its own input.
+fn read_payload(stdin: &mut dyn std::io::Read) -> serde_json::Value {
+    let mut text = String::new();
+    if stdin.read_to_string(&mut text).is_err() {
+        return serde_json::json!({});
+    }
+    match serde_json::from_str(&text) {
+        Ok(value @ serde_json::Value::Object(_)) => value,
+        _ => serde_json::json!({}),
+    }
+}
+
 fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     if invocation.verb == Verb::Help {
         print!("{}", args::USAGE);
@@ -245,6 +267,24 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             };
             let code = verb.run(&core, &mut io, &argv).map_err(Failure::Verb)?;
             return Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)));
+        }
+        Verb::ChatHook { name } => {
+            // Not ours (outside a session, a malformed id, no such record): a silent success.
+            let Some(id) = std::env::var(tx_core::core::SESSION_ID_ENV)
+                .ok()
+                .and_then(|raw| raw.parse::<SessionId>().ok())
+            else {
+                return Ok(ExitCode::SUCCESS);
+            };
+            let hook = Hook {
+                name,
+                payload: read_payload(&mut std::io::stdin().lock()),
+                at: tx_core::events::now(),
+            };
+            match core.hook(&id, hook) {
+                Ok(_) | Err(CoreError::NotFound(_)) => {}
+                Err(error) => return Err(error.into()),
+            }
         }
         Verb::Create {
             name,

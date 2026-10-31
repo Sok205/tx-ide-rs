@@ -23,6 +23,7 @@ verbs:
   forget TARGET                                                     drop the record; leave tmux alone
   engines                                                           registered engine ids
   plugins                                                           id and active|disabled per plugin
+  chat hook EVENT                                                   run by an engine's hooks: feed $TX_SESSION_ID's state
 
 TARGET is a session id or name. State lives in $TX_CORE_HOME, else ~/.tx-core.
 Roles resolve from --profile-dir, else <state-dir>/agents (written by `ui install`) and
@@ -112,6 +113,11 @@ pub enum Verb {
     },
     Engines,
     Plugins,
+    /// `chat hook <Name>`: run by the hooks an engine wires; feeds `TxCore::hook`. Built in so
+    /// state does not depend on the chat plugin; every other `chat …` is the plugin's.
+    ChatHook {
+        name: String,
+    },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
     Plugin {
         name: String,
@@ -254,6 +260,14 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("forget") => Verb::Forget {
             target: target(&mut cursor, "forget")?,
         },
+        Some("chat") if cursor.peek() == Some("hook") => {
+            cursor.next();
+            let name = cursor.next().unwrap_or_default().to_owned();
+            // Extra arguments are ignored, not refused: a hook must never fail the agent over
+            // its own command line.
+            cursor.rest();
+            Verb::ChatHook { name }
+        }
         Some(other) => Verb::Plugin {
             name: other.to_owned(),
             argv: cursor.rest(),
@@ -406,6 +420,33 @@ mod tests {
             }
         );
         assert_eq!(parse_str("plugins").unwrap().verb, Verb::Plugins);
+    }
+
+    #[test]
+    fn chat_hook_is_built_in_and_tolerant() {
+        assert_eq!(
+            parse_str("chat hook Stop").unwrap().verb,
+            Verb::ChatHook {
+                name: "Stop".into()
+            }
+        );
+        assert_eq!(
+            parse_str("chat hook Stop extra --flag").unwrap().verb,
+            Verb::ChatHook {
+                name: "Stop".into()
+            }
+        );
+        assert_eq!(
+            parse_str("chat hook").unwrap().verb,
+            Verb::ChatHook { name: "".into() }
+        );
+        assert_eq!(
+            parse_str("chat ls").unwrap().verb,
+            Verb::Plugin {
+                name: "chat".into(),
+                argv: vec!["ls".into()]
+            }
+        );
     }
 
     #[test]
