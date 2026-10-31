@@ -288,7 +288,7 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
 | `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<data>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<data>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
 
-| `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"bound": artifact id, "group": …}`) and the store `<data>/plugins/artifacts/` (`<id>.json`, `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl` and `.locks/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
+| `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"group": …}`; a legacy `bound` on records written before artifact views is read until the process launch leaves core); an artifact's nvim is a tx-client view of kind `editor` bound to the artifact (`@tx-view-bound`), found again by that binding, so `artifact open` and prefix+a on an artifact already open show its view instead of starting another (`artifact open` switches the client to it when run inside the server, else prints its name); `group <view>` prints a view's resolved group (its parent agent's override, else its artifact's) and refuses to set one; and the store `<data>/plugins/artifacts/` (`<id>.json`, `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl` and `.locks/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
 | `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads `ext.chat` / `ext.history` (transcripts), `status` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
 | `menu` | `menu` and the internal `_menu-open <pane> <client>` (the menu in an 80% popup; after it closes, runs the choice through `txc` / tmux: `_new-agent`, `pick`, `_fork-pane`, `_timeline-attach`, `_artifact-menu`, `tutor start`, `assistant warm` + `switch-client`, `resume`), `_menu-first` (the client-attached hook: test-and-sets the server option `@tx-menu-shown`, skips clients nested in the server's own panes) and `_menu-tui`; items of disabled plugins are hidden; reads `ext.chat` (chat counts) and the other plugins' `keys/*.tmux` (the cheat sheet); resource `keys/menu.tmux` (prefix+m, hook `client-attached`) |
 
@@ -355,16 +355,20 @@ time, so the assistant is up whenever the IDE is; a new `home` starts with its p
 nest-attached to `tx-assistant`, so the IDE opens on the assistant. An existing `home` is left
 as it is (reach the assistant with prefix+t). A failed warm (no `claude`, roles not installed)
 is printed to stderr and `home` opens as a plain view. To try the IDE, press prefix+n in it, or
-start a session by hand and press the picker key:
+open a shell (or any program) as a view and attach:
 
 ```
-txc create demo --cwd ~/code/project --exec zsh
+txc ui view open demo --kind shell --cwd ~/code/project -- zsh
 txc ui attach     # then prefix+t
 ```
 
+`txc ui view open … -- PROGRAM` is the way to start a shell or any other non-LLM program on the
+core's server; `txc create … --exec PROGRAM` still works until the process launch leaves core.
+
 **Views.** Every non-LLM tmux session on the core's server is a tx-client *view*: the `home`
-base, the `tutor-<lang>`, `mockup-<agent>` and `tx-timeline` viewers, and the shells and editors
-`txc ui view open` starts. A view has no core record and never shows in `txc ls`; its fields live
+base, the `tutor-<lang>`, `mockup-<agent>` and `tx-timeline` viewers, an artifact's nvim
+(`txc artifact open`, prefix+a: kind `editor`, `@tx-view-bound <artifact id>`, parent the opening
+agent), and the shells and editors `txc ui view open` starts. A view has no core record and never shows in `txc ls`; its fields live
 in tmux session options only (`@tx-view 1`, `@tx-view-kind home|editor|shell|timeline|tutor|mockup`,
 `@tx-view-parent <agent id>`, `@tx-view-bound`, `@tx-view-tags`, `@tx-view-created`), so nothing
 goes stale when the server dies. `txc ui view ls` first closes the views whose parent agent is
