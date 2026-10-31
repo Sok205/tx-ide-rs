@@ -1747,8 +1747,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tx-client",
  "tx-core",
- "tx-ui",
  "uuid",
 ]
 
@@ -1757,8 +1757,8 @@ name = "tx-assistant"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1770,11 +1770,23 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tx-client",
  "tx-core",
  "tx-engine-claude",
  "tx-engine-codex",
- "tx-ui",
  "uuid",
+]
+
+[[package]]
+name = "tx-client"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tx-core",
 ]
 
 [[package]]
@@ -1800,11 +1812,11 @@ dependencies = [
  "tx-artifacts",
  "tx-assistant",
  "tx-chat",
+ "tx-client",
  "tx-core",
  "tx-edit",
  "tx-engine-claude",
  "tx-engine-codex",
- "tx-ide",
  "tx-kill",
  "tx-labels",
  "tx-menu",
@@ -1822,8 +1834,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1845,20 +1857,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "tx-ide"
-version = "0.1.0"
-dependencies = [
- "tx-core",
- "tx-ui",
-]
-
-[[package]]
 name = "tx-kill"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1866,8 +1870,8 @@ name = "tx-labels"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1877,8 +1881,8 @@ dependencies = [
  "ratatui",
  "serde_json",
  "tempfile",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1890,8 +1894,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1900,8 +1904,8 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "tempfile",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1911,8 +1915,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1925,8 +1929,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tx-chat",
+ "tx-client",
  "tx-core",
- "tx-ui",
 ]
 
 [[package]]
@@ -1939,19 +1943,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml",
- "tx-core",
- "tx-ui",
-]
-
-[[package]]
-name = "tx-ui"
-version = "0.1.0"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
+ "tx-client",
  "tx-core",
 ]
 

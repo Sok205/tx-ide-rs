@@ -9,11 +9,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
+use tx_client::tmux::{Ui, UiError, shell_quote};
 use tx_core::{
     CoreError, Plugin, PluginError, Registry, SendOptions, Session, SessionId, TxCore, Verb,
     VerbError, VerbIo,
 };
-use tx_ui::tmux::{Ui, UiError, shell_quote};
 
 pub mod markup;
 pub mod model;

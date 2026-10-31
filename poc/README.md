@@ -23,21 +23,20 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `tx-core` | the library: `TxCore` and the public operations | serde, serde_json, thiserror, uuid, tempfile |
 | `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `LlmEngine` for Claude Code | tx-core |
 | `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `LlmEngine` for Codex | tx-core |
-| `plugins/ide` (`tx-ide`) | plugin: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core, tx-ui |
-| `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-ui |
-| `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-ui |
-| `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-ui |
-| `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `fork`, `resume`, `chat ls\|hooks`, prefix+f; captures chat ids through its own agent hooks | tx-core, tx-ui, tx-engine-claude, tx-engine-codex |
-| `plugins/chat` (`tx-chat`, plugin `history`) | plugin: the transcript mirror under `plugins/history/`, `history`, `history-hooks`; same crate as `chat` | tx-core, tx-ui |
-| `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-ui |
-| `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n; ships the COMMON and DEVELOPER roles and their skills | tx-core, tx-ui |
-| `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm`, the `tx-assistant` session `ui attach` lands in; ships the TX-ASSISTANT role | tx-core, tx-ui |
-| `plugins/mockup` (`tx-mockup`) | plugin: `txc mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-ui, ratatui |
-| `plugins/tutor` (`tx-tutor`) | plugin: `txc tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships the repo's `tutor/` lesson packs | tx-core, tx-ui, toml, libc |
-| `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`), `txc group` (effort groups), prefix+a | tx-core, tx-ui |
-| `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-ui, tx-chat (message parser), ratatui |
-| `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `txc menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-ui, ratatui, tempfile |
-| `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins | tx-core |
+| `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-client |
+| `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-client |
+| `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-client |
+| `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `fork`, `resume`, `chat ls\|hooks`, prefix+f; captures chat ids through its own agent hooks | tx-core, tx-client, tx-engine-claude, tx-engine-codex |
+| `plugins/chat` (`tx-chat`, plugin `history`) | plugin: the transcript mirror under `plugins/history/`, `history`, `history-hooks`; same crate as `chat` | tx-core, tx-client |
+| `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-client |
+| `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n; ships the COMMON and DEVELOPER roles and their skills | tx-core, tx-client |
+| `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm`, the `tx-assistant` session `ui attach` lands in; ships the TX-ASSISTANT role | tx-core, tx-client |
+| `plugins/mockup` (`tx-mockup`) | plugin: `txc mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-client, ratatui |
+| `plugins/tutor` (`tx-tutor`) | plugin: `txc tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships the repo's `tutor/` lesson packs | tx-core, tx-client, toml, libc |
+| `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`), `txc group` (effort groups), prefix+a | tx-core, tx-client |
+| `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-client, tx-chat (message parser), ratatui |
+| `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `txc menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-client, ratatui, tempfile |
+| `tx-client` | library: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins; also plugin `ide`: `txc ui install\|attach`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core |
 | `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins. `txi`: the internal binary the engines' wired hooks run (`txi hook <Event>`) | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
@@ -378,7 +377,7 @@ The pane border shows the nested session's name and tags. Later plugins bring th
 ### Adding a plugin
 
 A plugin is a crate under `poc/plugins/<id>` (package `tx-<id>`, depending on `tx-core` and, for
-anything that talks to tmux, `tx-ui`) whose `Plugin` impl registers verbs, engines, sinks and
+anything that talks to tmux, `tx-client`) whose `Plugin` impl registers verbs, engines, sinks and
 resources. Wire it in with three edits: a `plugins/<id>` entry in `members` in `poc/Cargo.toml`,
 a `tx-<id> = { path = "../plugins/<id>" }` dependency in `poc/tx-core-cli/Cargo.toml`, and one
 line in `tx-core-cli/src/plugins.rs::MANIFEST`; a verb may not take a name in

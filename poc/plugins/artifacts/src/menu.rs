@@ -11,9 +11,11 @@
 //! In an artifact's view the key goes back to the controlling session: the artifact's most
 //! recent live non-`user` toucher, else its creator; in another companion, to its `parent`.
 
+use tx_client::render::{
+    DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, tag_ansi, tag_hex,
+};
+use tx_client::tmux::{Ui, shell_quote};
 use tx_core::{Launch, Lifecycle, ListFilter, Session, SessionId, TxCore, VerbError};
-use tx_ui::render::{DIM_FG_ANSI, FG_ANSI, LOCATION_W, RESET_FG, location_text, tag_ansi, tag_hex};
-use tx_ui::tmux::{Ui, shell_quote};
 
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::grouping::bound_artifact;

@@ -5,10 +5,10 @@
 
 use std::sync::Arc;
 
+use tx_client::prompt::prompt_with_default;
+use tx_client::render::{ACCENT_ANSI, BOLD, RESET};
+use tx_client::tmux::{Ui, shell_quote};
 use tx_core::{CoreError, Session, TxCore, Verb, VerbError, VerbIo};
-use tx_ui::prompt::prompt_with_default;
-use tx_ui::render::{ACCENT_ANSI, BOLD, RESET};
-use tx_ui::tmux::{Ui, shell_quote};
 
 use crate::ops::Ops;
 

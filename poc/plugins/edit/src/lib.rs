@@ -9,10 +9,10 @@ use tx_core::{
     CoreError, Plugin, PluginError, Registry, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
 
-use tx_ui::editor::edit_session;
-use tx_ui::prompt::prompt_with_default;
-use tx_ui::render::{ACCENT_ANSI, BOLD, RESET};
-use tx_ui::tmux::Ui;
+use tx_client::editor::edit_session;
+use tx_client::prompt::prompt_with_default;
+use tx_client::render::{ACCENT_ANSI, BOLD, RESET};
+use tx_client::tmux::Ui;
 
 pub const PLUGIN_ID: &str = "edit";
 

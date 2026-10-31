@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use serde_json::Value;
+use tx_client::render::reltime;
 use tx_core::events::now;
 use tx_core::{Launch, SessionId, TxCore, Verb, VerbError, VerbIo};
-use tx_ui::render::reltime;
 
 use crate::ChatError;
 use crate::ext::{ChatExt, ChatRef, HistoryExt, Role, chat_ext, history_ext, owned_elsewhere};

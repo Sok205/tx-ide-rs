@@ -8,7 +8,7 @@ description = "tx-core plugin: session names and tags on pane borders, in prefix
 
 [dependencies]
 tx-core.workspace = true
-tx-ui.workspace = true
+tx-client.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
+use tx_client::tmux::Ui;
 use tx_core::{ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo};
-use tx_ui::tmux::Ui;
 
 use crate::artifact::{Artifact, USER_ACTOR};
 use crate::grouping::{GroupResolver, ext_of, own_group};

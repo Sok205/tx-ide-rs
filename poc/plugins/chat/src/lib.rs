@@ -16,8 +16,8 @@ pub mod ops;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use tx_client::tmux::UiError;
 use tx_core::{CoreError, EngineError, Plugin, PluginError, Registry, VerbError};
-use tx_ui::tmux::UiError;
 
 pub const HISTORY_ID: &str = "history";
 pub const CHAT_ID: &str = "chat";

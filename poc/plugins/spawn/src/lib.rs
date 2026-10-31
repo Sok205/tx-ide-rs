@@ -15,11 +15,11 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use tx_client::tmux::Ui;
 use tx_core::{
     CreateOptions, Effort, LaunchOptions, Plugin, PluginError, Registry, TxCore, Verb, VerbError,
     VerbIo,
 };
-use tx_ui::tmux::Ui;
 
 pub const PLUGIN_ID: &str = "spawn";
 /// The role every agent gets, never offered in the form.

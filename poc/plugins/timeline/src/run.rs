@@ -5,7 +5,7 @@
 //! itself. The resident (viewed through a popup) cannot reach the outer client, so it leaves the
 //! session name in [`GOTO_OPTION`] on its own tmux session and detaches; `txc _timeline-attach`,
 //! which runs on the outer client, picks it up and does the focusing. Every tmux call goes
-//! through `tx-ui` against the core's own server.
+//! through `tx-client` against the core's own server.
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -18,8 +18,8 @@ use ratatui::crossterm::event::{
 };
 use ratatui::crossterm::execute;
 
+use tx_client::tmux::Ui;
 use tx_core::{CoreError, TxCore};
-use tx_ui::tmux::Ui;
 
 use super::app::App;
 use super::model::{Builder, Payload, load_sessions};

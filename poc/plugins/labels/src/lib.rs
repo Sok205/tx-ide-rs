@@ -9,8 +9,8 @@ use tx_core::{
     VerbError, VerbIo,
 };
 
-use tx_ui::render::tag_hex;
-use tx_ui::tmux::Ui;
+use tx_client::render::tag_hex;
+use tx_client::tmux::Ui;
 
 pub const PLUGIN_ID: &str = "labels";
 

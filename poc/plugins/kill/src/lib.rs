@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
+use tx_client::tmux::Ui;
 use tx_core::{
     CoreError, Plugin, PluginError, Registry, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
-use tx_ui::tmux::Ui;
 
 pub const PLUGIN_ID: &str = "kill";
 

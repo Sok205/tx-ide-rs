@@ -3,8 +3,8 @@
 //! plugin is seen through its status, its resources and `Session.ext` (D3).
 
 use serde_json::Value;
+use tx_client::tmux::Ui;
 use tx_core::{CoreError, Launch, Lifecycle, ListFilter, PluginStatus, Session, TxCore};
-use tx_ui::tmux::Ui;
 
 use crate::model::{Context, KeyHint, Past};
 

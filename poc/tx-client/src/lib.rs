@@ -1,8 +1,14 @@
-//! tx-core plugin `ide`: the nested-tmux workspace layer. Views are tmux sessions on the core's
-//! private server; `ui install` composes the server's config from the resources every active
-//! plugin publishes, and this plugin publishes the IDE's own: theme, base keys, helper scripts.
+//! The tx client: the code shared by the key plugins (the socket-bound tmux helper, the picker
+//! renderer and palette, the modal editor) and the plugin `ide`, the nested-tmux workspace layer.
+//! Views are tmux sessions on the core's private server; `ui install` composes the server's
+//! config from the resources every active plugin publishes, and `ide` publishes the IDE's own:
+//! theme, base keys, helper scripts.
 
+pub mod editor;
 pub mod install;
+pub mod prompt;
+pub mod render;
+pub mod tmux;
 
 use std::sync::Arc;
 

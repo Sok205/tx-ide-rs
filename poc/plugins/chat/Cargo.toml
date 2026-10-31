@@ -8,7 +8,7 @@ description = "tx-core plugins: `history` mirrors agent transcripts, `chat` fork
 
 [dependencies]
 tx-core.workspace = true
-tx-ui.workspace = true
+tx-client.workspace = true
 tx-engine-claude = { path = "../engine-claude" }
 tx-engine-codex = { path = "../engine-codex" }
 serde.workspace = true

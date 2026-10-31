@@ -8,7 +8,7 @@ description = "tx-core plugin: swimlanes of session activity in the terminal (ra
 
 [dependencies]
 tx-core.workspace = true
-tx-ui.workspace = true
+tx-client.workspace = true
 tx-chat = { path = "../chat" }
 serde_json.workspace = true
 ratatui = "0.30"

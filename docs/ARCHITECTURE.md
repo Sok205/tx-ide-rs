@@ -10,8 +10,8 @@ out of **components** loaded into a `cordis::Runtime` — the paradigm in `cordi
 | `crates/cordis` | the runtime: `Component` (inject / provide / apply), `Ctx` (get, provide, effect, plug), fibers with the paper's lifecycle (`Inactive → Active → Unloading`), the unload guard, LIFO undo stacks, failure unwinding; `loader` reconciles a list of entries into fibers (§5.2). Synchronous; `apply` runs to completion, so `Reloading` is transient. |
 | `crates/tx` | the `tx` binary: domain model, adapters (tmux, git, fs), and the components that implement the verbs. |
 | `poc/tx-core` | the plain core (no Cordis): `TxCore` runs and manages agent sessions on tx's own tmux server. Design in `docs/superpowers/specs/2026-10-15-tx-core-design.md`, usage in `poc/tx-core/README.md`; `poc/` is its own Cargo workspace. |
-| `poc/plugins/*` | one plugin per feature, each depending on `tx-core` (the key plugins also on `tx-ui`): the engines (`engine-claude`, `engine-codex`), `hooks`, the key plugins `ide`, `labels`, `kill`, `picker`, `edit`, `spawn`, and `assistant`. Each contributes engines, sinks, verbs and resources (named static blobs such as a plugin's tmux key fragment). |
-| `poc/tx-ui` | library, not a plugin: the tmux helper, row renderer and modal editor the key plugins share. |
+| `poc/plugins/*` | one plugin per feature, each depending on `tx-core` (the key plugins also on `tx-client`): the engines (`engine-claude`, `engine-codex`), `hooks`, the key plugins `labels`, `kill`, `picker`, `edit`, `spawn`, and `assistant`. Each contributes engines, sinks, verbs and resources (named static blobs such as a plugin's tmux key fragment). |
+| `poc/tx-client` | library: the tmux helper, row renderer and modal editor the key plugins share; also the `ide` plugin (`ui install`, `ui attach`, the home session). |
 | `poc/tx-core-cli` | `txc`, the thin CLI over `tx-core`; depends on `tx-core` and every plugin and registers them through `plugins::MANIFEST`. |
 
 ## How an invocation runs

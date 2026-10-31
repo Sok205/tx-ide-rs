@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Widget};
-use tx_ui::render::reltime;
+use tx_client::render::reltime;
 
 use crate::model::{Item, Menu, View};
 

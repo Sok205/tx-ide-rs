@@ -18,10 +18,10 @@ path = "src/txi.rs"
 
 [dependencies]
 tx-core.workspace = true
+tx-client.workspace = true
 tx-engine-claude = { path = "../plugins/engine-claude" }
 tx-engine-codex = { path = "../plugins/engine-codex" }
 tx-chat = { path = "../plugins/chat" }
-tx-ide = { path = "../plugins/ide" }
 tx-labels = { path = "../plugins/labels" }
 tx-kill = { path = "../plugins/kill" }
 tx-picker = { path = "../plugins/picker" }

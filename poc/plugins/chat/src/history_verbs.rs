@@ -6,11 +6,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
+use tx_client::render::{chips, reltime};
 use tx_core::events::now;
 use tx_core::{
     CoreError, Lifecycle, ListFilter, Session, SessionId, TxCore, Verb, VerbError, VerbIo,
 };
-use tx_ui::render::{chips, reltime};
 
 use crate::HISTORY_ID;
 use crate::detach::detach;
