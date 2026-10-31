@@ -378,7 +378,8 @@ fn event_type_names_unique_and_stable() {
             "engine-data-changed",
             "exited",
             "stopped",
-            "archived"
+            "archived",
+            "archive-failed"
         ]
     );
     let variants: HashSet<EventType> = EventType::ALL.iter().copied().collect();

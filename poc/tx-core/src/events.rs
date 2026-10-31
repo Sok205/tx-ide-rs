@@ -40,6 +40,9 @@ pub enum EventType {
     Stopped,
     /// Hidden from listings, nothing deleted; a respawn brings it back.
     Archived,
+    /// The engine could not archive the agent's conversation (after a hook, a stop or an
+    /// exit); detail is the error. The operation itself succeeded.
+    ArchiveFailed,
 }
 
 impl EventType {
@@ -55,6 +58,7 @@ impl EventType {
         EventType::Exited,
         EventType::Stopped,
         EventType::Archived,
+        EventType::ArchiveFailed,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -70,6 +74,7 @@ impl EventType {
             EventType::Exited => "exited",
             EventType::Stopped => "stopped",
             EventType::Archived => "archived",
+            EventType::ArchiveFailed => "archive-failed",
         }
     }
 }
@@ -405,7 +410,8 @@ mod tests {
                 "engine-data-changed",
                 "exited",
                 "stopped",
-                "archived"
+                "archived",
+                "archive-failed"
             ]
         );
     }

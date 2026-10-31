@@ -20,6 +20,13 @@ pub enum EngineError {
     Refused(String),
     #[error("workspace action on {}: {reason}", path.display())]
     Workspace { path: PathBuf, reason: String },
+    /// A file operation in `archive` or `restore` failed; `path` names the file.
+    #[error("{}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
 }
 
 /// Which conversation a launch opens.
@@ -163,7 +170,8 @@ impl LaunchPlan {
 }
 
 /// One coding-agent engine. Five required methods; no I/O in `configure`, `launch` or `on_hook`.
-/// `Send + Sync` so a core can be shared across threads.
+/// `archive` and `restore` are the two methods that touch the filesystem. `Send + Sync` so a
+/// core can be shared across threads.
 pub trait LlmEngine: Send + Sync {
     /// A bare name (`[A-Za-z0-9_-]+`); stored in every record this engine launches.
     fn id(&self) -> &str;
@@ -200,6 +208,25 @@ pub trait LlmEngine: Send + Sync {
     /// Required, because an engine that wires no hooks never leaves `Starting`; returning
     /// `LlmEngineChange::NONE` says so.
     fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange;
+
+    /// Bring `archive_directory` up to date with this session's conversation: the transcript
+    /// (append-by-offset, [`crate::mirror::mirror_file`]) and its sidecars (copy-if-absent,
+    /// [`crate::mirror::mirror_tree`]), keyed by conversation so every past conversation of the
+    /// session is kept. Core calls it after every hook, outside the session lock, under a
+    /// non-blocking per-session lock of its own, so it must be cheap when nothing changed.
+    /// Idempotent; a missing live transcript archives nothing. The default archives nothing.
+    fn archive(&self, session: &Session, archive_directory: &Path) -> Result<(), EngineError> {
+        let _ = (session, archive_directory);
+        Ok(())
+    }
+
+    /// Before a resume: if the CLI's own copy of the conversation is missing, put the archived
+    /// one back where the CLI expects it. Never overwrites a live transcript. Returns whether
+    /// anything was restored. The default restores nothing.
+    fn restore(&self, session: &Session, archive_directory: &Path) -> Result<bool, EngineError> {
+        let _ = (session, archive_directory);
+        Ok(false)
+    }
 }
 
 /// This engine's data in a record: `ext[ext_key]`, `Null` when absent. A non-object value (a

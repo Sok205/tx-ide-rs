@@ -23,6 +23,12 @@
 //! both up front. After that, `SessionStart` reports them on every start (`startup`, `resume`,
 //! `clear`); the data is rewritten only when they differ, so a `/clear` (a new conversation
 //! inside the same process) is what changes it. Other keys of the object survive.
+//!
+//! `archive` keeps a copy of every conversation of a session under core's archive directory:
+//! `<archive>/<conversation id>.jsonl` (the transcript, by offset) and `<archive>/<conversation
+//! id>/` (Claude's sidecar directory of subagent transcripts and tool results, copy-if-absent).
+//! `restore` puts them back where Claude looks when the live transcript is gone (Claude deletes
+//! transcripts older than `cleanupPeriodDays`), so a `--resume` finds its conversation.
 
 use std::path::{Path, PathBuf};
 
@@ -32,7 +38,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
     EngineError, LaunchMode, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
-    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
+    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command, mirror_file,
+    mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -177,6 +184,32 @@ impl ClaudeAdapter {
             .and_then(Value::as_str)
             .unwrap_or(session.id.as_str())
     }
+
+    /// Where the session's current conversation lives: the recorded `transcript_path`, else
+    /// the computed one; and the sidecar directory next to it, `<project dir>/<conversation>/`.
+    fn live_paths(&self, session: &Session) -> (PathBuf, PathBuf) {
+        let conversation = self.conversation_of(session);
+        let transcript = engine_data(self, session)
+            .get(TRANSCRIPT_PATH_KEY)
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.transcript_path(&session.cwd, conversation));
+        let sidecars = transcript
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join(conversation);
+        (transcript, sidecars)
+    }
+
+    /// The archive's copies of the session's current conversation: `<archive>/<conversation
+    /// id>.jsonl` and `<archive>/<conversation id>/`.
+    fn archived_paths(&self, session: &Session, archive_directory: &Path) -> (PathBuf, PathBuf) {
+        let conversation = self.conversation_of(session);
+        (
+            archive_directory.join(format!("{conversation}.jsonl")),
+            archive_directory.join(conversation),
+        )
+    }
 }
 
 impl LlmEngine for ClaudeAdapter {
@@ -298,6 +331,36 @@ impl LlmEngine for ClaudeAdapter {
             _ => None,
         };
         LlmEngineChange { state, engine_data }
+    }
+
+    /// The current conversation's transcript by offset and its sidecar directory copy-if-absent,
+    /// both keyed by conversation id, so the conversations before a `/clear` stay archived. A
+    /// live transcript that is not on disk yet (a `SessionStart` before the first line) archives
+    /// nothing.
+    fn archive(&self, session: &Session, archive_directory: &Path) -> Result<(), EngineError> {
+        let (transcript, sidecars) = self.live_paths(session);
+        if !transcript.is_file() {
+            return Ok(());
+        }
+        let (archived_transcript, archived_sidecars) =
+            self.archived_paths(session, archive_directory);
+        mirror_file(&transcript, &archived_transcript)?;
+        mirror_tree(&sidecars, &archived_sidecars)
+    }
+
+    /// When the live transcript is gone and the archive has it: the transcript back as a whole
+    /// (its project directory created) and the sidecars that are missing. A live transcript is
+    /// never overwritten, and a conversation the archive does not hold restores nothing.
+    fn restore(&self, session: &Session, archive_directory: &Path) -> Result<bool, EngineError> {
+        let (transcript, sidecars) = self.live_paths(session);
+        let (archived_transcript, archived_sidecars) =
+            self.archived_paths(session, archive_directory);
+        if transcript.is_file() || !archived_transcript.is_file() {
+            return Ok(false);
+        }
+        mirror_file(&archived_transcript, &transcript)?;
+        mirror_tree(&archived_sidecars, &sidecars)?;
+        Ok(true)
     }
 }
 
@@ -1052,5 +1115,173 @@ mod tests {
         core.plug(vec![Box::new(ClaudePlugin)], &PluginConfig::default())
             .unwrap();
         assert_eq!(core.engine_ids(), vec!["claude"]);
+    }
+
+    /// A record whose conversation `conversation` lives at `transcript`.
+    fn recorded(cwd: &Path, conversation: &str, transcript: &Path) -> Session {
+        record(
+            cwd,
+            serde_json::json!({
+                "conversation_id": conversation,
+                "transcript_path": transcript.to_string_lossy(),
+                "model": "sonnet",
+            }),
+        )
+    }
+
+    fn write(path: &Path, data: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, data).unwrap();
+    }
+
+    #[test]
+    fn archive_mirrors_the_transcript_and_sidecars_by_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("home/projects/-w");
+        let transcript = project.join("c1.jsonl");
+        write(&transcript, b"{\"one\":1}\n");
+        write(&project.join("c1/tool-results/a.txt"), b"A");
+        let archive = dir.path().join("archive");
+        let session = recorded(dir.path(), "c1", &transcript);
+        let engine = ClaudeAdapter::new(dir.path().join("home"));
+
+        engine.archive(&session, &archive).unwrap();
+        assert_eq!(
+            std::fs::read(archive.join("c1.jsonl")).unwrap(),
+            b"{\"one\":1}\n"
+        );
+        assert_eq!(
+            std::fs::read(archive.join("c1/tool-results/a.txt")).unwrap(),
+            b"A"
+        );
+
+        // A later turn: the tail is appended, a new sidecar copied, an old one kept as it was.
+        write(&transcript, b"{\"one\":1}\n{\"two\":2}\n");
+        write(&project.join("c1/tool-results/a.txt"), b"CHANGED");
+        write(&project.join("c1/subagents/s.jsonl"), b"S");
+        engine.archive(&session, &archive).unwrap();
+        assert_eq!(
+            std::fs::read(archive.join("c1.jsonl")).unwrap(),
+            std::fs::read(&transcript).unwrap()
+        );
+        assert_eq!(
+            std::fs::read(archive.join("c1/tool-results/a.txt")).unwrap(),
+            b"A"
+        );
+        assert_eq!(
+            std::fs::read(archive.join("c1/subagents/s.jsonl")).unwrap(),
+            b"S"
+        );
+
+        // After a `/clear` the record names a second conversation; the first stays archived.
+        let cleared = recorded(dir.path(), "c2", &project.join("c2.jsonl"));
+        write(&project.join("c2.jsonl"), b"{\"fresh\":true}\n");
+        engine.archive(&cleared, &archive).unwrap();
+        assert!(archive.join("c1.jsonl").is_file());
+        assert_eq!(
+            std::fs::read(archive.join("c2.jsonl")).unwrap(),
+            b"{\"fresh\":true}\n"
+        );
+    }
+
+    #[test]
+    fn archive_without_a_live_transcript_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("archive");
+        let session = recorded(dir.path(), "c1", &dir.path().join("missing/c1.jsonl"));
+        ClaudeAdapter::new(dir.path().join("home"))
+            .archive(&session, &archive)
+            .unwrap();
+        assert!(!archive.exists());
+    }
+
+    #[test]
+    fn archive_falls_back_to_the_computed_transcript_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("w");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let engine = ClaudeAdapter::new(dir.path().join("home"));
+        let session = record(&cwd, serde_json::json!({"model": "sonnet"}));
+        let transcript = engine.transcript_path(&cwd, session.id.as_str());
+        write(&transcript, b"line\n");
+        let archive = dir.path().join("archive");
+        engine.archive(&session, &archive).unwrap();
+        assert_eq!(
+            std::fs::read(archive.join(format!("{}.jsonl", session.id))).unwrap(),
+            b"line\n"
+        );
+    }
+
+    #[test]
+    fn restore_puts_a_missing_transcript_and_its_sidecars_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("home/projects/-w");
+        let transcript = project.join("c1.jsonl");
+        let archive = dir.path().join("archive");
+        write(&archive.join("c1.jsonl"), b"{\"one\":1}\n");
+        write(&archive.join("c1/tool-results/a.txt"), b"A");
+        let session = recorded(dir.path(), "c1", &transcript);
+        let engine = ClaudeAdapter::new(dir.path().join("home"));
+
+        assert!(!project.exists());
+        assert!(engine.restore(&session, &archive).unwrap());
+        assert_eq!(std::fs::read(&transcript).unwrap(), b"{\"one\":1}\n");
+        assert_eq!(
+            std::fs::read(project.join("c1/tool-results/a.txt")).unwrap(),
+            b"A"
+        );
+        // Restoring again changes nothing: the live copy is there.
+        assert!(!engine.restore(&session, &archive).unwrap());
+    }
+
+    #[test]
+    fn restore_never_overwrites_a_live_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("home/projects/-w/c1.jsonl");
+        write(&transcript, b"LIVE");
+        let archive = dir.path().join("archive");
+        write(&archive.join("c1.jsonl"), b"ARCHIVED");
+        let session = recorded(dir.path(), "c1", &transcript);
+        let restored = ClaudeAdapter::new(dir.path().join("home"))
+            .restore(&session, &archive)
+            .unwrap();
+        assert!(!restored);
+        assert_eq!(std::fs::read(&transcript).unwrap(), b"LIVE");
+    }
+
+    #[test]
+    fn restore_without_an_archived_copy_restores_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("home/projects/-w/c1.jsonl");
+        let archive = dir.path().join("archive");
+        write(&archive.join("other.jsonl"), b"X");
+        let session = recorded(dir.path(), "c1", &transcript);
+        let restored = ClaudeAdapter::new(dir.path().join("home"))
+            .restore(&session, &archive)
+            .unwrap();
+        assert!(!restored);
+        assert!(!transcript.exists());
+    }
+
+    #[test]
+    fn archive_then_restore_round_trips_byte_for_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("home/projects/-w");
+        let transcript = project.join("c1.jsonl");
+        let bytes: Vec<u8> = (0..=255u8).cycle().take(300_000).collect();
+        write(&transcript, &bytes);
+        write(&project.join("c1/subagents/s.jsonl"), b"S");
+        let archive = dir.path().join("archive");
+        let session = recorded(dir.path(), "c1", &transcript);
+        let engine = ClaudeAdapter::new(dir.path().join("home"));
+        engine.archive(&session, &archive).unwrap();
+        std::fs::remove_file(&transcript).unwrap();
+        std::fs::remove_dir_all(project.join("c1")).unwrap();
+        assert!(engine.restore(&session, &archive).unwrap());
+        assert_eq!(std::fs::read(&transcript).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(project.join("c1/subagents/s.jsonl")).unwrap(),
+            b"S"
+        );
     }
 }

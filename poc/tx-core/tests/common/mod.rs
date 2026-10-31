@@ -317,6 +317,54 @@ impl LlmEngine for ShellStub {
             _ => plan,
         })
     }
+
+    /// The data's `transcript_path` mirrored to `<archive>/<conversation_id>.jsonl`, as Claude
+    /// does; no path or no file yet archives nothing; the path `refuse` is refused, as an
+    /// unreadable transcript would fail.
+    fn archive(
+        &self,
+        session: &tx_core::Session,
+        archive_directory: &Path,
+    ) -> Result<(), EngineError> {
+        let Some((conversation, transcript)) = stub_conversation(session) else {
+            return Ok(());
+        };
+        if transcript == Path::new("refuse") {
+            return Err(EngineError::Refused("archive refused".into()));
+        }
+        if !transcript.is_file() {
+            return Ok(());
+        }
+        tx_core::mirror_file(
+            &transcript,
+            &archive_directory.join(format!("{conversation}.jsonl")),
+        )
+    }
+
+    /// The archived transcript back to `transcript_path` when the live one is gone.
+    fn restore(
+        &self,
+        session: &tx_core::Session,
+        archive_directory: &Path,
+    ) -> Result<bool, EngineError> {
+        let Some((conversation, transcript)) = stub_conversation(session) else {
+            return Ok(false);
+        };
+        let archived = archive_directory.join(format!("{conversation}.jsonl"));
+        if transcript.is_file() || !archived.is_file() {
+            return Ok(false);
+        }
+        tx_core::mirror_file(&archived, &transcript)?;
+        Ok(true)
+    }
+}
+
+/// The stub's `(conversation_id, transcript_path)` from its data, when both are set.
+fn stub_conversation(session: &tx_core::Session) -> Option<(String, PathBuf)> {
+    let data = tx_core::engine_data(&ShellStub, session);
+    let conversation = data.get("conversation_id")?.as_str()?.to_owned();
+    let transcript = PathBuf::from(data.get("transcript_path")?.as_str()?);
+    Some((conversation, transcript))
 }
 
 /// A `Process` session that keeps stdin open and records what it is typed.
