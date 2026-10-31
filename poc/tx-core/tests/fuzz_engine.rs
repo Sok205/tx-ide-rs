@@ -18,8 +18,12 @@ use tx_core::{
 struct Stub(String);
 
 impl LlmEngine for Stub {
-    fn on_hook(&self, _: &tx_core::Status, _: &tx_core::Hook) -> tx_core::Change {
-        tx_core::Change::default()
+    fn on_hook(
+        &self,
+        _: &tx_core::LlmEngineStatus,
+        _: &tx_core::LlmEngineHook,
+    ) -> Option<tx_core::LlmEngineStateTransition> {
+        None
     }
 
     fn id(&self) -> &str {

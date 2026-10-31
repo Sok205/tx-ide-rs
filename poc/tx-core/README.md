@@ -53,7 +53,7 @@ struct Aider;
 impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
     // Wires no hooks, so its sessions stay `starting`; see tx-engine-claude for real rules.
-    fn on_hook(&self, _: &Status, _: &Hook) -> Change { Change::default() }
+    fn on_hook(&self, _: &LlmEngineStatus, _: &LlmEngineHook) -> Option<LlmEngineStateTransition> { None }
     fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         let mut args = vec!["--read".into(), r.profile.file().display().to_string()];
         if let Some(model) = r.model { args.extend(["--model".into(), model.into()]); }

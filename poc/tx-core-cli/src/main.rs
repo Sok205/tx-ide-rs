@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use args::{Invocation, LaunchSpec, Verb};
 use tx_core::{
-    CoreConfig, CoreError, CreateOptions, Hook, LaunchOptions, ListFilter, PluginConfig,
+    CoreConfig, CoreError, CreateOptions, LaunchOptions, ListFilter, LlmEngineHook, PluginConfig,
     RefreshResult, SendOptions, SessionId, TxCore,
 };
 
@@ -276,7 +276,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             else {
                 return Ok(ExitCode::SUCCESS);
             };
-            let hook = Hook {
+            let hook = LlmEngineHook {
                 name,
                 payload: read_payload(&mut std::io::stdin().lock()),
                 at: tx_core::events::now(),

@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 use tx_core::{
-    Change, Effort, EngineError, Hook, LaunchPlan, LaunchRequest, LlmEngine, State, Status,
-    WorkspaceAction, hook_shell_command,
+    Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
+    LlmEngineStateTransition, LlmEngineStatus, WorkspaceAction, hook_shell_command,
 };
 
 pub const CODEX_BIN: &str = "codex";
@@ -84,20 +84,27 @@ impl LlmEngine for CodexAdapter {
     /// `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the process
     /// lives, and its payload cannot tell the two apart; core ends the session when the
     /// process is gone.
-    fn on_hook(&self, current: &Status, hook: &Hook) -> Change {
+    fn on_hook(
+        &self,
+        current: &LlmEngineStatus,
+        hook: &LlmEngineHook,
+    ) -> Option<LlmEngineStateTransition> {
+        let to = |state| Some(LlmEngineStateTransition::to(state));
         match hook.name.as_str() {
-            "SessionStart" | "Stop" | "Interrupt" => Change::to(State::Idle),
-            "UserPromptSubmit" => Change::to(State::Working),
-            "PermissionRequest" => Change {
-                state: Some(State::Waiting),
+            "SessionStart" | "Stop" | "Interrupt" => to(LlmEngineState::Idle),
+            "UserPromptSubmit" => to(LlmEngineState::Working),
+            "PermissionRequest" => Some(LlmEngineStateTransition {
+                to: LlmEngineState::Waiting,
                 note: hook
                     .payload
                     .get("tool_name")
                     .and_then(Value::as_str)
                     .map(|tool| format!("approval: {tool}")),
-            },
-            "PostToolUse" if current.state == State::Waiting => Change::to(State::Working),
-            _ => Change::default(),
+            }),
+            "PostToolUse" if current.state == LlmEngineState::Waiting => {
+                to(LlmEngineState::Working)
+            }
+            _ => None,
         }
     }
 }
@@ -160,8 +167,8 @@ mod tests {
         args.iter().map(|a| (*a).to_owned()).collect()
     }
 
-    fn hook(name: &str, payload: serde_json::Value) -> Hook {
-        Hook {
+    fn hook(name: &str, payload: serde_json::Value) -> LlmEngineHook {
+        LlmEngineHook {
             name: name.into(),
             payload,
             at: 2.0,
@@ -170,39 +177,64 @@ mod tests {
 
     #[test]
     fn hooks_to_changes() {
-        use State::*;
+        use LlmEngineState::*;
         use serde_json::json;
         let none = json!({});
-        let table: Vec<(State, &str, serde_json::Value, Change)> = vec![
-            (Starting, "SessionStart", none.clone(), Change::to(Idle)),
-            (Idle, "UserPromptSubmit", none.clone(), Change::to(Working)),
+        let table: Vec<(
+            LlmEngineState,
+            &str,
+            serde_json::Value,
+            Option<LlmEngineStateTransition>,
+        )> = vec![
+            (
+                Starting,
+                "SessionStart",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Idle)),
+            ),
+            (
+                Idle,
+                "UserPromptSubmit",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Working)),
+            ),
             (
                 Working,
                 "PermissionRequest",
                 json!({"tool_name": "shell"}),
-                Change::to(Waiting).note("approval: shell"),
+                Some(LlmEngineStateTransition::to(Waiting).note("approval: shell")),
             ),
             (
                 Working,
                 "PermissionRequest",
                 none.clone(),
-                Change::to(Waiting),
+                Some(LlmEngineStateTransition::to(Waiting)),
             ),
-            (Waiting, "PostToolUse", none.clone(), Change::to(Working)),
-            (Working, "PostToolUse", none.clone(), Change::default()),
-            (Working, "Stop", none.clone(), Change::to(Idle)),
-            (Working, "Interrupt", none.clone(), Change::to(Idle)),
             (
-                Idle,
-                "SessionEnd",
-                json!({"reason": "other"}),
-                Change::default(),
+                Waiting,
+                "PostToolUse",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Working)),
             ),
-            (Idle, "PreToolUse", none.clone(), Change::default()),
-            (Idle, "Notification", none.clone(), Change::default()),
+            (Working, "PostToolUse", none.clone(), None),
+            (
+                Working,
+                "Stop",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Idle)),
+            ),
+            (
+                Working,
+                "Interrupt",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Idle)),
+            ),
+            (Idle, "SessionEnd", json!({"reason": "other"}), None),
+            (Idle, "PreToolUse", none.clone(), None),
+            (Idle, "Notification", none.clone(), None),
         ];
         for (state, name, payload, expected) in table {
-            let current = Status::new(state, 1.0);
+            let current = LlmEngineStatus::new(state, 1.0);
             assert_eq!(
                 CodexAdapter.on_hook(&current, &hook(name, payload.clone())),
                 expected,

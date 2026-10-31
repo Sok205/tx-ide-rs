@@ -10,7 +10,7 @@ use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, build_envelope, deliver};
 use crate::profile::{Profile, Profiles};
 use crate::session::{Effort, Launch, Lifecycle, Session, SessionId, validate_name};
-use crate::state::{Change, Hook, State, Status};
+use crate::state::{LlmEngineHook, LlmEngineState, LlmEngineStateTransition, LlmEngineStatus};
 use crate::store::{SessionStore, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 
@@ -323,7 +323,10 @@ fn mark_ended(session: &mut Session, lifecycle: Lifecycle) {
     session.lifecycle = lifecycle;
     session.ended_at = Some(ended_at);
     if let Some(status) = &mut session.status {
-        status.apply(Change::to(State::Ended), ended_at);
+        status.apply(
+            LlmEngineStateTransition::to(LlmEngineState::Ended),
+            ended_at,
+        );
     }
 }
 
@@ -620,11 +623,11 @@ impl TxCore {
             // An agent starts in `Starting` until its adapter's first change; a process has
             // no engine and so no state.
             status: match &launch {
-                Launch::Agent { .. } => Some(Status::new(
+                Launch::Agent { .. } => Some(LlmEngineStatus::new(
                     if exited_at_once {
-                        State::Ended
+                        LlmEngineState::Ended
                     } else {
-                        State::Starting
+                        LlmEngineState::Starting
                     },
                     created_at,
                 )),
@@ -735,11 +738,15 @@ impl TxCore {
     }
 
     /// A hook the session's engine wired fired inside it: the engine decides the change, core
-    /// applies it under the session lock (see [`Status::apply`]) and emits `StateChanged` when
+    /// applies it under the session lock (see [`LlmEngineStatus::apply`]) and emits `StateChanged` when
     /// the state moved. Returns the status after the hook; `None` when the hook is not for a
     /// live agent this core can read: the session is no longer `Running` (a stale hook), is a
     /// process session, or its engine is not registered here.
-    pub fn hook(&self, id: &SessionId, hook: Hook) -> Result<Option<Status>, CoreError> {
+    pub fn hook(
+        &self,
+        id: &SessionId,
+        hook: LlmEngineHook,
+    ) -> Result<Option<LlmEngineStatus>, CoreError> {
         let (status, events) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
@@ -756,9 +763,11 @@ impl TxCore {
                 .status
                 .as_mut()
                 .expect("agent sessions carry a status");
+            let Some(transition) = adapter.on_hook(status, &hook) else {
+                return Ok(Some(status.clone()));
+            };
             let before = status.clone();
-            let change = adapter.on_hook(status, &hook);
-            let from = status.apply(change, hook.at);
+            let from = status.apply(transition, hook.at);
             let after = status.clone();
             if after == before {
                 return Ok(Some(after));
@@ -1053,8 +1062,12 @@ mod tests {
 
     struct Stub;
     impl LlmEngine for Stub {
-        fn on_hook(&self, _: &crate::Status, _: &crate::Hook) -> crate::Change {
-            crate::Change::default()
+        fn on_hook(
+            &self,
+            _: &crate::LlmEngineStatus,
+            _: &crate::LlmEngineHook,
+        ) -> Option<crate::LlmEngineStateTransition> {
+            None
         }
 
         fn id(&self) -> &str {

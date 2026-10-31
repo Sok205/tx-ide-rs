@@ -8,7 +8,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
-use crate::state::Status;
+use crate::state::LlmEngineStatus;
 
 /// The record schema this build reads and writes.
 pub const RECORD_VERSION: u64 = 1;
@@ -202,7 +202,7 @@ pub struct Session {
     /// The agent's state as its engine adapter reported it. Core-owned. `None` for process
     /// sessions and for records written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<Status>,
+    pub status: Option<LlmEngineStatus>,
     /// Plugin-owned data keyed by plugin id; written through `TxCore::update_ext`. Core never
     /// reads it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

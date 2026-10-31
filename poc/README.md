@@ -83,14 +83,14 @@ states are final: nothing in core moves a record out of them.
 
 ### Agent state: the engine adapter decides, core applies
 
-An agent record carries `status: {state, since, note?}`, with `state` one of `starting`,
+An agent record carries `status` (an `LlmEngineStatus`: `{state, since, note?}`), with `state` one of `starting`,
 `idle`, `working`, `waiting` (blocked on the operator mid-turn) and `ended`. The vocabulary is
 core's; when to move between states is the adapter's. At launch the adapter wires the hooks it
 needs into the CLI's own command line (Claude `--settings '{"hooks":…}'`, Codex
 `-c hooks.<Event>=…`), each running `CoreConfig::hook_command` plus the CLI's event name —
 `txc chat hook <Event>` for `txc`. That verb hands the payload to `TxCore::hook`, which asks
-`LlmEngine::on_hook(&status, &hook)` for a `Change` and applies it under the session lock,
-logging `state-changed` when the state moved. Core owns what the adapter cannot see: a new agent
+`LlmEngine::on_hook(&status, &hook)` for an optional `LlmEngineStateTransition` (`None`: nothing
+changes) and applies it under the session lock, logging `state-changed` when the state moved. Core owns what the adapter cannot see: a new agent
 starts `starting`, and an exited or stopped one reads `ended`. Process sessions have no status.
 Because the hooks are `-c` overrides, every Codex session runs without Codex's shared background
 server (Codex warns: "command-line configuration overrides … requires embedded mode"). Sessions
@@ -151,7 +151,10 @@ Lock order is always `create.lock` before `<id>.lock`. Locks are `std::fs::File:
 ### An engine today (20 lines, no change to core)
 
 ```rust
-use tx_core::{Change, EngineError, Hook, LaunchPlan, LaunchRequest, LlmEngine, Status, WorkspaceAction};
+use tx_core::{
+    EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineStateTransition,
+    LlmEngineStatus, WorkspaceAction,
+};
 
 pub struct Aider;
 
@@ -159,7 +162,7 @@ impl LlmEngine for Aider {
     fn id(&self) -> &str { "aider" }
 
     // No hooks wired: the session stays `starting`. See the bundled adapters for real rules.
-    fn on_hook(&self, _: &Status, _: &Hook) -> Change { Change::default() }
+    fn on_hook(&self, _: &LlmEngineStatus, _: &LlmEngineHook) -> Option<LlmEngineStateTransition> { None }
 
     fn launch(&self, r: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
         let mut args = vec!["--read".into(), r.profile.file().display().to_string()];

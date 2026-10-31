@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 use tx_core::{
-    Change, Effort, EngineError, Hook, LaunchPlan, LaunchRequest, LlmEngine, State, Status,
-    WorkspaceAction, hook_shell_command,
+    Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
+    LlmEngineStateTransition, LlmEngineStatus, WorkspaceAction, hook_shell_command,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -82,35 +82,40 @@ impl LlmEngine for ClaudeAdapter {
         Ok(plan)
     }
 
-    fn on_hook(&self, current: &Status, hook: &Hook) -> Change {
+    fn on_hook(
+        &self,
+        current: &LlmEngineStatus,
+        hook: &LlmEngineHook,
+    ) -> Option<LlmEngineStateTransition> {
         let field = |key: &str| hook.payload.get(key).and_then(Value::as_str);
+        let to = |state| Some(LlmEngineStateTransition::to(state));
         match hook.name.as_str() {
-            "SessionStart" | "Stop" => Change::to(State::Idle),
-            "UserPromptSubmit" => Change::to(State::Working),
+            "SessionStart" | "Stop" => to(LlmEngineState::Idle),
+            "UserPromptSubmit" => to(LlmEngineState::Working),
             // The operator answered the prompt that made it wait.
-            "PreToolUse" | "PostToolUse" if current.state == State::Waiting => {
-                Change::to(State::Working)
+            "PreToolUse" | "PostToolUse" if current.state == LlmEngineState::Waiting => {
+                to(LlmEngineState::Working)
             }
             "Notification"
                 if field("notification_type")
                     .is_some_and(|kind| WAITING_NOTIFICATIONS.contains(&kind)) =>
             {
-                Change {
-                    state: Some(State::Waiting),
+                Some(LlmEngineStateTransition {
+                    to: LlmEngineState::Waiting,
                     note: field("message").map(str::to_owned),
-                }
+                })
             }
-            "StopFailure" => Change {
-                state: Some(State::Idle),
+            "StopFailure" => Some(LlmEngineStateTransition {
+                to: LlmEngineState::Idle,
                 note: field("error").map(|error| format!("error: {error}")),
-            },
+            }),
             "SessionEnd"
                 if !field("reason")
                     .is_some_and(|reason| CONTINUING_END_REASONS.contains(&reason)) =>
             {
-                Change::to(State::Ended)
+                to(LlmEngineState::Ended)
             }
-            _ => Change::default(),
+            _ => None,
         }
     }
 }
@@ -187,8 +192,8 @@ mod tests {
         args.iter().map(|a| (*a).to_owned()).collect()
     }
 
-    fn hook(name: &str, payload: serde_json::Value) -> Hook {
-        Hook {
+    fn hook(name: &str, payload: serde_json::Value) -> LlmEngineHook {
+        LlmEngineHook {
             name: name.into(),
             payload,
             at: 2.0,
@@ -197,17 +202,42 @@ mod tests {
 
     #[test]
     fn hooks_to_changes() {
-        use State::*;
+        use LlmEngineState::*;
         use serde_json::json;
         let none = json!({});
-        let note = |state, note: &str| Change::to(state).note(note);
-        let table: Vec<(State, &str, serde_json::Value, Change)> = vec![
-            (Starting, "SessionStart", none.clone(), Change::to(Idle)),
-            (Idle, "UserPromptSubmit", none.clone(), Change::to(Working)),
-            (Working, "PreToolUse", none.clone(), Change::default()),
-            (Working, "PostToolUse", none.clone(), Change::default()),
-            (Waiting, "PreToolUse", none.clone(), Change::to(Working)),
-            (Waiting, "PostToolUse", none.clone(), Change::to(Working)),
+        let note = |state, note: &str| Some(LlmEngineStateTransition::to(state).note(note));
+        let table: Vec<(
+            LlmEngineState,
+            &str,
+            serde_json::Value,
+            Option<LlmEngineStateTransition>,
+        )> = vec![
+            (
+                Starting,
+                "SessionStart",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Idle)),
+            ),
+            (
+                Idle,
+                "UserPromptSubmit",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Working)),
+            ),
+            (Working, "PreToolUse", none.clone(), None),
+            (Working, "PostToolUse", none.clone(), None),
+            (
+                Waiting,
+                "PreToolUse",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Working)),
+            ),
+            (
+                Waiting,
+                "PostToolUse",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Working)),
+            ),
             (
                 Working,
                 "Notification",
@@ -218,53 +248,58 @@ mod tests {
                 Working,
                 "Notification",
                 json!({"notification_type": "elicitation_dialog"}),
-                Change::to(Waiting),
+                Some(LlmEngineStateTransition::to(Waiting)),
             ),
             (
                 Idle,
                 "Notification",
                 json!({"notification_type": "idle_prompt", "message": "waiting"}),
-                Change::default(),
+                None,
             ),
-            (Working, "Notification", none.clone(), Change::default()),
-            (Working, "Stop", none.clone(), Change::to(Idle)),
+            (Working, "Notification", none.clone(), None),
+            (
+                Working,
+                "Stop",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Idle)),
+            ),
             (
                 Working,
                 "StopFailure",
                 json!({"error": "rate_limit"}),
                 note(Idle, "error: rate_limit"),
             ),
-            (Working, "StopFailure", none.clone(), Change::to(Idle)),
+            (
+                Working,
+                "StopFailure",
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Idle)),
+            ),
             (
                 Idle,
                 "SessionEnd",
                 json!({"reason": "logout"}),
-                Change::to(Ended),
+                Some(LlmEngineStateTransition::to(Ended)),
             ),
             (
                 Idle,
                 "SessionEnd",
                 json!({"reason": "prompt_input_exit"}),
-                Change::to(Ended),
-            ),
-            (Idle, "SessionEnd", none.clone(), Change::to(Ended)),
-            (
-                Idle,
-                "SessionEnd",
-                json!({"reason": "clear"}),
-                Change::default(),
+                Some(LlmEngineStateTransition::to(Ended)),
             ),
             (
                 Idle,
                 "SessionEnd",
-                json!({"reason": "resume"}),
-                Change::default(),
+                none.clone(),
+                Some(LlmEngineStateTransition::to(Ended)),
             ),
-            (Idle, "PreCompact", none.clone(), Change::default()),
-            (Idle, "stop", none.clone(), Change::default()),
+            (Idle, "SessionEnd", json!({"reason": "clear"}), None),
+            (Idle, "SessionEnd", json!({"reason": "resume"}), None),
+            (Idle, "PreCompact", none.clone(), None),
+            (Idle, "stop", none.clone(), None),
         ];
         for (state, name, payload, expected) in table {
-            let current = Status::new(state, 1.0);
+            let current = LlmEngineStatus::new(state, 1.0);
             assert_eq!(
                 ClaudeAdapter.on_hook(&current, &hook(name, payload.clone())),
                 expected,

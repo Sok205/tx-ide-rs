@@ -1,15 +1,16 @@
 //! The agent's state: one vocabulary core owns, moved by the engine adapter. A hook the adapter
-//! wired fires inside the session; [`crate::LlmEngine::on_hook`] turns it into a [`Change`];
-//! core applies it to the record's [`Status`] under the session lock.
+//! wired fires inside the session; [`crate::LlmEngine::on_hook`] turns it into an optional
+//! [`LlmEngineStateTransition`]; core applies it to the record's [`LlmEngineStatus`] under the
+//! session lock.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// What the agent is doing. Fixed in core, so every consumer reads every engine the same way;
-/// CLI-specific detail goes into [`Status::note`].
+/// CLI-specific detail goes into [`LlmEngineStatus::note`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum State {
+pub enum LlmEngineState {
     /// Launched; the CLI has not reported yet.
     Starting,
     /// The operator's turn.
@@ -21,38 +22,38 @@ pub enum State {
     Ended,
 }
 
-impl State {
-    pub const ALL: [State; 5] = [
-        State::Starting,
-        State::Idle,
-        State::Working,
-        State::Waiting,
-        State::Ended,
+impl LlmEngineState {
+    pub const ALL: [LlmEngineState; 5] = [
+        LlmEngineState::Starting,
+        LlmEngineState::Idle,
+        LlmEngineState::Working,
+        LlmEngineState::Waiting,
+        LlmEngineState::Ended,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            State::Starting => "starting",
-            State::Idle => "idle",
-            State::Working => "working",
-            State::Waiting => "waiting",
-            State::Ended => "ended",
+            LlmEngineState::Starting => "starting",
+            LlmEngineState::Idle => "idle",
+            LlmEngineState::Working => "working",
+            LlmEngineState::Waiting => "waiting",
+            LlmEngineState::Ended => "ended",
         }
     }
 }
 
-/// The agent's state on the record, since when, and the adapter's note on it.
+/// The agent's state on the record (`session.status`), since when, and the adapter's note on it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Status {
-    pub state: State,
+pub struct LlmEngineStatus {
+    pub state: LlmEngineState,
     pub since: f64,
     /// Shown with the state: "approval: Bash", "error: rate_limit".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
-impl Status {
-    pub fn new(state: State, since: f64) -> Self {
+impl LlmEngineStatus {
+    pub fn new(state: LlmEngineState, since: f64) -> Self {
         Self {
             state,
             since,
@@ -60,31 +61,35 @@ impl Status {
         }
     }
 
-    /// Applies an adapter's decision. No state: nothing happens (a note only comes with a
-    /// state). The same state: only the note is replaced. A new state: `since = at` and the
-    /// note is set or cleared. Returns the previous state when the state changed.
-    pub fn apply(&mut self, change: Change, at: f64) -> Option<State> {
-        let state = change.state?;
-        self.note = change.note;
-        if state == self.state {
+    /// Applies an adapter's decision. To the current state: only the note is replaced. To a new
+    /// state: `since = at` and the note is set or cleared. Returns the previous state when the
+    /// state changed.
+    pub fn apply(
+        &mut self,
+        transition: LlmEngineStateTransition,
+        at: f64,
+    ) -> Option<LlmEngineState> {
+        self.note = transition.note;
+        if transition.to == self.state {
             return None;
         }
         self.since = at;
-        Some(std::mem::replace(&mut self.state, state))
+        Some(std::mem::replace(&mut self.state, transition.to))
     }
 }
 
-/// What the adapter decided about one hook. Every field optional: a hook may change nothing.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Change {
-    pub state: Option<State>,
+/// What the adapter decided about one hook: move to `to`, with `note`. `on_hook` returns `None`
+/// when the hook changes nothing, so a note never travels without a state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LlmEngineStateTransition {
+    pub to: LlmEngineState,
     pub note: Option<String>,
 }
 
-impl Change {
-    pub fn to(state: State) -> Self {
+impl LlmEngineStateTransition {
+    pub fn to(state: LlmEngineState) -> Self {
         Self {
-            state: Some(state),
+            to: state,
             note: None,
         }
     }
@@ -95,9 +100,9 @@ impl Change {
     }
 }
 
-/// One hook invocation, as the CLI delivered it.
+/// One hook firing, as the CLI delivered it.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Hook {
+pub struct LlmEngineHook {
     /// The CLI's own event name: "Stop", "PermissionRequest", …
     pub name: String,
     /// The CLI's JSON payload, untouched; always an object.
@@ -108,6 +113,8 @@ pub struct Hook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use LlmEngineState as State;
+    use LlmEngineStateTransition as Transition;
 
     #[test]
     fn names_round_trip_through_serde() {
@@ -119,25 +126,10 @@ mod tests {
     }
 
     #[test]
-    fn no_state_changes_nothing_and_drops_the_note() {
-        let mut status = Status {
-            note: Some("kept".into()),
-            ..Status::new(State::Idle, 1.0)
-        };
-        let change = Change {
-            state: None,
-            note: Some("ignored".into()),
-        };
-        assert_eq!(status.apply(change, 2.0), None);
-        assert_eq!(status.note.as_deref(), Some("kept"));
-        assert_eq!(status.since, 1.0);
-    }
-
-    #[test]
     fn same_state_replaces_only_the_note() {
-        let mut status = Status::new(State::Waiting, 1.0);
+        let mut status = LlmEngineStatus::new(State::Waiting, 1.0);
         assert_eq!(
-            status.apply(Change::to(State::Waiting).note("approval: Bash"), 2.0),
+            status.apply(Transition::to(State::Waiting).note("approval: Bash"), 2.0),
             None
         );
         assert_eq!(status.state, State::Waiting);
@@ -147,15 +139,15 @@ mod tests {
 
     #[test]
     fn new_state_stamps_since_and_sets_or_clears_the_note() {
-        let mut status = Status::new(State::Working, 1.0);
+        let mut status = LlmEngineStatus::new(State::Working, 1.0);
         assert_eq!(
-            status.apply(Change::to(State::Idle).note("error: x"), 2.0),
+            status.apply(Transition::to(State::Idle).note("error: x"), 2.0),
             Some(State::Working)
         );
         assert_eq!(status.since, 2.0);
         assert_eq!(status.note.as_deref(), Some("error: x"));
         assert_eq!(
-            status.apply(Change::to(State::Working), 3.0),
+            status.apply(Transition::to(State::Working), 3.0),
             Some(State::Idle)
         );
         assert_eq!(status.note, None);
@@ -163,7 +155,7 @@ mod tests {
 
     #[test]
     fn status_without_a_note_omits_it() {
-        let status = Status::new(State::Idle, 1.5);
+        let status = LlmEngineStatus::new(State::Idle, 1.5);
         assert_eq!(
             serde_json::to_value(&status).unwrap(),
             serde_json::json!({"state": "idle", "since": 1.5})

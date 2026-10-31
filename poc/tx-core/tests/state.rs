@@ -4,10 +4,10 @@ mod common;
 
 use common::{Harness, agent, process};
 use serde_json::json;
-use tx_core::{EventType, Hook, State};
+use tx_core::{EventType, LlmEngineHook, LlmEngineState};
 
-fn hook(name: &str, payload: serde_json::Value, at: f64) -> Hook {
-    Hook {
+fn hook(name: &str, payload: serde_json::Value, at: f64) -> LlmEngineHook {
+    LlmEngineHook {
         name: name.into(),
         payload,
         at,
@@ -29,20 +29,20 @@ fn hooks_move_an_agent_and_core_ends_it() {
     let core = h.open_with_engine();
     let id = core.create_session(agent("a", &h.workdir("a"))).unwrap();
     let status = core.get_session(&id).unwrap().status.unwrap();
-    assert_eq!(status.state, State::Starting);
+    assert_eq!(status.state, LlmEngineState::Starting);
 
     let status = core
         .hook(&id, hook("idle", json!({}), 10.0))
         .unwrap()
         .unwrap();
-    assert_eq!((status.state, status.since), (State::Idle, 10.0));
+    assert_eq!((status.state, status.since), (LlmEngineState::Idle, 10.0));
 
     // Unknown to the adapter: nothing changes, nothing is logged.
     let status = core
         .hook(&id, hook("bogus", json!({}), 11.0))
         .unwrap()
         .unwrap();
-    assert_eq!((status.state, status.since), (State::Idle, 10.0));
+    assert_eq!((status.state, status.since), (LlmEngineState::Idle, 10.0));
 
     let status = core
         .hook(
@@ -70,7 +70,7 @@ fn hooks_move_an_agent_and_core_ends_it() {
         .unwrap();
     assert_eq!(
         (status.state, status.note.as_deref()),
-        (State::Working, None)
+        (LlmEngineState::Working, None)
     );
     assert_eq!(core.get_session(&id).unwrap().status.unwrap(), status);
 
@@ -85,13 +85,13 @@ fn hooks_move_an_agent_and_core_ends_it() {
 
     let stopped = core.stop_session(&id).unwrap();
     let ended = stopped.status.unwrap();
-    assert_eq!(ended.state, State::Ended);
+    assert_eq!(ended.state, LlmEngineState::Ended);
     assert_eq!(Some(ended.since), stopped.ended_at);
     // A stale hook after the end is ignored.
     assert_eq!(core.hook(&id, hook("idle", json!({}), 20.0)).unwrap(), None);
     assert_eq!(
         core.get_session(&id).unwrap().status.unwrap().state,
-        State::Ended
+        LlmEngineState::Ended
     );
     assert_eq!(
         state_lines(&h).len(),
@@ -111,7 +111,7 @@ fn an_exited_agent_reads_ended() {
     h.tmux_ok(&["kill-session", "-t", &live.session_target]);
     core.refresh_all().unwrap();
     let session = core.get_session(&id).unwrap();
-    assert_eq!(session.status.unwrap().state, State::Ended);
+    assert_eq!(session.status.unwrap().state, LlmEngineState::Ended);
 }
 
 #[test]
@@ -137,7 +137,7 @@ fn a_hook_for_an_unregistered_engine_is_ignored() {
     assert_eq!(bare.hook(&id, hook("idle", json!({}), 1.0)).unwrap(), None);
     assert_eq!(
         bare.get_session(&id).unwrap().status.unwrap().state,
-        State::Starting
+        LlmEngineState::Starting
     );
 }
 

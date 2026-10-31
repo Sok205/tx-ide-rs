@@ -191,7 +191,10 @@ mod tests {
     fn the_agent_state_adds_a_state_name() {
         let mut worker = agent("w", "running", &[], None);
         assert_eq!(states(&worker), ["alive", "running"]);
-        worker.status = Some(tx_core::Status::new(tx_core::State::Working, 1.0));
+        worker.status = Some(tx_core::LlmEngineStatus::new(
+            tx_core::LlmEngineState::Working,
+            1.0,
+        ));
         assert_eq!(states(&worker), ["alive", "running", "working"]);
         assert_eq!(
             states(&agent("x", "stopped", &[], None)),

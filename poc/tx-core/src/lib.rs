@@ -48,7 +48,7 @@ pub use plugin::{
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
 pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
-pub use state::{Change, Hook, State, Status};
+pub use state::{LlmEngineHook, LlmEngineState, LlmEngineStateTransition, LlmEngineStatus};
 #[doc(hidden)]
 pub use store::SessionStore;
 /// Stable: they are the payload of `CoreError::Store`.

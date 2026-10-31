@@ -220,7 +220,7 @@ mod tests {
     use std::path::PathBuf;
 
     use serde_json::json;
-    use tx_core::{Lifecycle, SessionId, State, Status};
+    use tx_core::{Lifecycle, LlmEngineState, LlmEngineStatus, SessionId};
 
     use super::*;
 
@@ -392,7 +392,7 @@ mod tests {
     fn row_layout_is_byte_exact() {
         let mut session = agent("worker-1", NOW - 90.0);
         session.tags = vec!["a".into()];
-        session.status = Some(Status::new(State::Working, NOW - 5.0));
+        session.status = Some(LlmEngineStatus::new(LlmEngineState::Working, NOW - 5.0));
         let attached = [location("main", "1")];
         let rows = [Row {
             session: &session,
@@ -431,7 +431,7 @@ mod tests {
         let old = agent("o", NOW - 500.0);
         let long = process("a-very-long-session-name", NOW - 100.0);
         let mut fresh = agent("f", NOW - 900.0);
-        fresh.status = Some(Status::new(State::Idle, NOW - 10.0));
+        fresh.status = Some(LlmEngineStatus::new(LlmEngineState::Idle, NOW - 10.0));
         let rows = [&old, &long, &fresh].map(|session| Row {
             session,
             target: "$1",
