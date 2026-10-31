@@ -26,8 +26,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-client |
 | `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-client |
 | `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-client |
-| `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `resume`, `chat ls\|hooks`, prefix+f (through core's fork); captures chat ids through its own agent hooks | tx-core, tx-client, tx-engine-claude, tx-engine-codex |
-| `plugins/chat` (`tx-chat`, plugin `history`) | plugin: the transcript mirror under `plugins/history/`, `history`, `history-hooks`; same crate as `chat` | tx-core, tx-client |
+| `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `chat ls` (the engine's conversation), `doctor --fix-hooks`, prefix+f (through core's fork); the peer-message parser the timeline uses | tx-core, tx-client |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-client |
 | `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n; ships the COMMON and DEVELOPER roles and their skills | tx-core, tx-client |
 | `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm`, the `tx-assistant` session `ui attach` lands in; ships the TX-ASSISTANT role | tx-core, tx-client |
@@ -283,16 +282,15 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
 | `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_session`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
-| `chat` | `resume`, `chat ls <session>`, `chat hooks install\|uninstall`, and the internal `_fork-pane` (prefix+f: `TxCore::fork_session` with the name from the popup), `_chat-hook`; resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session`; owns `ext.chat` |
-| `history` | `history` (the mirrored chats), `history-hooks install\|uninstall`, the internal `_history-ingest`; owns `ext.history` and `<data>/plugins/history/` |
+| `chat` | `chat ls <session>` (the current conversation, `TxCore::conversation`), `doctor --fix-hooks` (see "Upgrading" below), and the internal `_fork-pane` (prefix+f: `TxCore::fork_session` with the name from the popup); resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session` |
 | `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name); resource `agents/TX-ASSISTANT.md` |
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
 | `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<data>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<data>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
 
 | `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"group": …}`; a legacy `bound` on records written before artifact views is read until the process launch leaves core); every artifact has a kind: a `document` (a file, edited in place under `artifact path <id>` and snapshotted by `artifact modify <id>`) opens in a tx-client view of kind `editor`; a `diff` (`create --kind diff [--cwd W] [--base SHA]`: `git diff <base>` of worktree W plus its untracked files, the base pinned to a commit at create, the patch being the artifact's versioned content `current.patch` that `modify` and `open` re-snapshot) opens in a view of kind `diff` running `nvim -c "DiffviewOpen <base>"` in the worktree, or when the worktree is gone in a temporary detached worktree at the base with the patch applied (made from the worktree's git common directory, recorded as `repository` at create, else a sibling checkout; its close step is kept in `<id>/.cleanup.json` by view name and run by `artifact close <id>`, by `doctor --repair`, or by the next `open` once the view has ended), or when no checkout exists as the patch in an editor; any other kind (a `tour`) is opened by convention, `txc <kind> open <id>` run in-process by the plugin registering that verb, else "no opener for kind"; the view is bound to the artifact (`@tx-view-bound`) and found again by that binding, so `artifact open` and prefix+a on an artifact already open show its view instead of starting another (`artifact open` switches the client to it when run inside the server, else prints its name); `archive <id>` hides a finished artifact from prefix+a and `ls` (content kept; `ls --archived` includes it, `unarchive` brings it back), `ls --kind K` filters by kind; `group <view>` prints a view's resolved group (its parent agent's override, else its artifact's) and refuses to set one; and the store `<data>/plugins/artifacts/` (`<id>.json` with `kind` and `archived`, both optional on read so older records are documents; `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl`, `.locks/` and `.worktrees/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
 | `tour` | `tour create <stops.lua> --title T [--cwd W]` checks the stops with `nvim --clean -l` (they must load as a Lua list) and registers an artifact of kind `tour` (`{"kind": "tour", "worktree": <absolute W, default cwd>, "stops": "current.lua"}`) through the artifacts service; `tour open <id> [--tag T]`, also what `artifact open` and prefix+a run for a tour, shows the view already bound to it, else starts a view of kind `tour` running nvim in the worktree with `require("tx-tour")(<current.lua>)` on `VimEnter` (after tx-client's runtimepath `-c`), or fails with "tour worktree `<W>` is gone"; a tour is revised like a document (`artifact path` + `artifact modify`). The stops file is Lua run inside nvim at create and at every open: it is as trusted as whoever wrote it |
-| `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads `ext.chat` / `ext.history` (transcripts), `status` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
-| `menu` | `menu` and the internal `_menu-open <pane> <client>` (the menu in an 80% popup; after it closes, runs the choice through `txc` / tmux: `_new-agent`, `pick`, `_fork-pane`, `_timeline-attach`, `_artifact-menu`, `tutor start`, `assistant warm` + `switch-client`, `resume`), `_menu-first` (the client-attached hook: test-and-sets the server option `@tx-menu-shown`, skips clients nested in the server's own panes) and `_menu-tui`; items of disabled plugins are hidden; reads `ext.chat` (chat counts) and the other plugins' `keys/*.tmux` (the cheat sheet); resource `keys/menu.tmux` (prefix+m, hook `client-attached`) |
+| `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads each record's transcript through `TxCore::conversation` (the engine names it), model and effort from the engine data, `status` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
+| `menu` | `menu` and the internal `_menu-open <pane> <client>` (the menu in an 80% popup; after it closes, runs the choice through `txc` / tmux: `_new-agent`, `pick`, `_fork-pane`, `_timeline-attach`, `_artifact-menu`, `tutor start`, `assistant warm` + `switch-client`, `resume`), `_menu-first` (the client-attached hook: test-and-sets the server option `@tx-menu-shown`, skips clients nested in the server's own panes) and `_menu-tui`; items of disabled plugins are hidden; reads `TxCore::conversation` (the chat count of a past session) and the other plugins' `keys/*.tmux` (the cheat sheet); resource `keys/menu.tmux` (prefix+m, hook `client-attached`) |
 
 The picker's role column reads `ext.spawn.kind`, which a later plugin writes; until then every
 process session shows `shell`.
@@ -308,25 +306,34 @@ model `opus`, effort `medium`, tag `tx-system`, in the data dir (so the engine's
 land under `<data>/.claude/skills`). A `Running` record whose tmux session is gone is
 refreshed to `Exited` and the assistant started again.
 
-### Chat and history
+### Conversations
 
-Both plugins install their own agent hooks, each in its own sidecar; neither needs the other.
-(Agent state needs no install: the engine adapters wire their hooks per launch.) Run each once
-per machine:
+Each engine records its conversation in its own engine data (`ext.claude`, `ext.codex`:
+`conversation_id`, `transcript_path`) from the hooks it wires per launch, and core archives the
+transcript under the data dir. Readers ask core: `TxCore::conversation(id)` hands the record to its
+engine, which names the conversation; `txc chat ls <session>` prints it. Fork is core's:
+`txc fork SOURCE --prompt T` branches the source's conversation into a new agent in its own
+worktree. prefix+f forks the session in the active pane through `_fork-pane`; the outcome is on
+the status line.
+
+### Upgrading from a version with `chat hooks` / `history-hooks`
+
+Older versions captured chats with globally installed agent hooks (`txc chat hooks install`, which
+ran `_chat-hook`, and `txc history-hooks install`, which ran `_history-ingest` and mirrored
+transcripts under `plugins/history/`). Those verbs are gone, so the entries they added to
+`~/.claude/settings.json` and `~/.codex/hooks.json` now call a verb that no longer exists. Remove
+them once:
 
 ```
-txc chat hooks install      # captures the agent's chat id into ext.chat (resume)
-txc history-hooks install   # mirrors transcripts byte for byte on every Stop
+txc doctor --fix-hooks
 ```
 
-`uninstall` reverses either, and `--dry-run` prints the change. Without the chat hooks nothing
-records the chat id, so `resume` reports `has no chat`. Fork is core's: `txc fork SOURCE --prompt T`
-branches the source's conversation into a new agent in its own worktree (the engine reads the
-conversation from `ext.<engine>`, not from `ext.chat`).
-
-Data lives under the data dir: `plugins/history/<session>/<chat>/` (the mirrored transcript and
-its sidecar files). Per-session state is `ext.chat` and `ext.history`. prefix+f forks
-the session in the active pane through `_fork-pane`; the outcome is on the status line.
+It reads the sidecars the old installs wrote (`.tx-chat-managed.json`,
+`.tx-history-managed.json` next to each hook file) and removes exactly the entries they recorded;
+when nothing else changed since the install it restores the backup taken then. Backups are kept,
+and a second run does nothing. Without a sidecar, delete the hook blocks whose command runs
+`txc _chat-hook` or `txc _history-ingest` by hand. `ext.chat`, `ext.history` and
+`plugins/history/` already on disk are left as they are; nothing reads them any more.
 
 ## Running the IDE
 

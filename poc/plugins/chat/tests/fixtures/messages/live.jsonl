@@ -1,4 +1,0 @@
-{"type":"user","message":{"role":"user","content":"<from-agent session=\"alice\">peer</from-agent>"},"userType":"external","timestamp":"2026-01-02T03:00:00Z","uuid":"u1"}
-{"type":"user","message":{"role":"user","content":"later"},"userType":"external","timestamp":"2026-01-02T04:00:00Z","uuid":"u4"}
-{"type":"user","message":{"role":"user","content":"split here"},"userType":"external","timestamp":"2026-01-02T05:00:00Z","uuid":"u5"}
-{"type":"user","message":{"role":"user","content":"   "},"userType":"external","timestamp":"2026-01-02T00:30:00Z","uuid":"u6"}

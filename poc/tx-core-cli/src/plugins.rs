@@ -23,7 +23,6 @@ pub const FILE_NAME: &str = "plugins.yaml";
 pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_engine_claude::ClaudePlugin),
     || Box::new(tx_engine_codex::CodexPlugin),
-    || Box::new(tx_chat::HistoryPlugin),
     || Box::new(tx_chat::ChatPlugin),
     || Box::new(tx_client::IdePlugin),
     || Box::new(tx_labels::LabelsPlugin),
@@ -42,7 +41,8 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
 
 /// Ids of plugins this binary no longer links; `plugins.yaml` entries for them are ignored.
 /// `hooks`: agent state moved into core and the engine adapters (`txi hook`).
-pub const RETIRED: &[&str] = &["hooks"];
+/// `history`: the transcript mirror; core archives conversations through the engines.
+pub const RETIRED: &[&str] = &["hooks", "history"];
 
 /// The built-in verbs; a plugin may not register one of these.
 pub const RESERVED: &[&str] = &[

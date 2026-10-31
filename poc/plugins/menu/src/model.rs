@@ -86,7 +86,7 @@ impl Item {
         match self {
             Item::NewSession => &["spawn"],
             Item::Attach => &["picker"],
-            Item::History => &["history", "chat"],
+            Item::History => &["chat"],
             Item::Fork => &["chat"],
             Item::Timeline => &["timeline"],
             Item::Artifacts => &["artifacts"],
@@ -384,7 +384,6 @@ pub(crate) mod tests {
         [
             "spawn",
             "picker",
-            "history",
             "chat",
             "timeline",
             "artifacts",

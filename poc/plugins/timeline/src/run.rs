@@ -22,7 +22,7 @@ use tx_client::tmux::Ui;
 use tx_core::{CoreError, TxCore};
 
 use super::app::App;
-use super::model::{Builder, Payload, load_sessions};
+use super::model::{Builder, Payload, load_sessions, transcripts};
 use super::ui;
 
 /// How often the store and transcripts are re-read while idle.
@@ -59,7 +59,8 @@ pub fn detach_session(tmux: &Ui, session: &str) -> io::Result<()> {
 /// A payload over the current records; a store error becomes an I/O error for the loop.
 pub fn payload(core: &TxCore, builder: &mut Builder, days: f64, now: f64) -> io::Result<Payload> {
     let sessions = load_sessions(core).map_err(|error: CoreError| io::Error::other(error))?;
-    Ok(builder.build(&sessions, days, now))
+    let transcripts = transcripts(core, &sessions);
+    Ok(builder.build(&sessions, &transcripts, days, now))
 }
 
 /// `resident` is the tmux session name of a popup-hosted timeline: q and Enter detach it

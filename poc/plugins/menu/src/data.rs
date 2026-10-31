@@ -3,7 +3,6 @@
 //! from tmux. Reads only; another
 //! plugin is seen through its status, its resources and `Session.ext` (D3).
 
-use serde_json::Value;
 use tx_client::tmux::Ui;
 use tx_client::views;
 use tx_core::{CoreError, Lifecycle, ListFilter, PluginStatus, Session, TxCore, VerbError};
@@ -63,17 +62,13 @@ fn ended_or_created(session: &Session) -> f64 {
         .unwrap_or(session.created_at)
 }
 
-/// The number of chats `ext.chat` lists; 0 when it is missing or malformed.
-fn chat_count(session: &Session) -> usize {
-    session
-        .ext
-        .get("chat")
-        .and_then(|chat| chat.get("chats"))
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len)
+/// 1 when the record's engine knows its conversation, else 0 (the engine's plugin disabled
+/// counts as none).
+fn chat_count(core: &TxCore, session: &Session) -> usize {
+    usize::from(matches!(core.conversation(&session.id), Ok(Some(_))))
 }
 
-/// Exited and stopped sessions, newest end first (the `history` verb's list).
+/// Exited and stopped sessions, newest end first.
 pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
     let mut sessions = Vec::new();
     for lifecycle in [Lifecycle::Exited, Lifecycle::Stopped] {
@@ -93,7 +88,7 @@ pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
             name: session.name.clone(),
             tag: session.tags.first().cloned().unwrap_or_default(),
             at: ended_or_created(session),
-            chats: chat_count(session),
+            chats: chat_count(core, session),
             cwd: session.cwd.display().to_string(),
         })
         .collect())

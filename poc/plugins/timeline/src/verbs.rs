@@ -13,7 +13,7 @@ use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
 use crate::app::DEFAULT_WINDOW_MIN;
-use crate::model::{Builder, DEFAULT_DAYS, chat_sources, load_sessions};
+use crate::model::{Builder, DEFAULT_DAYS, load_sessions};
 use crate::{PLUGIN_ID, run};
 
 pub const RESIDENT_VERB: &str = "_timeline-resident";
@@ -127,11 +127,7 @@ pub fn parse_options(argv: &[String], allowed: &[&str]) -> Result<Options, Strin
 }
 
 pub fn builder(core: &TxCore) -> Builder {
-    let config = core.config();
-    Builder::new(
-        config.plugin_data_dir(tx_chat::HISTORY_ID),
-        config.plugin_data_dir(PLUGIN_ID),
-    )
+    Builder::new(core.config().plugin_data_dir(PLUGIN_ID))
 }
 
 struct Timeline {
@@ -325,28 +321,26 @@ impl Verb for TimelineJson {
     }
 }
 
-/// One line per agent record: what the timeline can read for it. A malformed `ext.chat` or
-/// `ext.history` is reported (exit 1) but never stops the view.
+/// One line per agent record: what the timeline can read for it. A conversation core cannot
+/// ask the engine for (its engine not registered) is reported (exit 1) but never stops the view.
 fn health(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let sessions = load_sessions(core)?;
-    let builder = builder(core);
     let mut problems = 0;
     for session in &sessions {
         let mut notes = Vec::new();
-        for (plugin, result) in [
-            ("chat", tx_chat::ext::chat_ext(session).map(drop)),
-            ("history", tx_chat::ext::history_ext(session).map(drop)),
-        ] {
-            if let Err(error) = result {
-                problems += 1;
-                notes.push(format!("ext.{plugin} malformed: {error}"));
+        let (found, known) = match core.conversation(&session.id) {
+            Ok(Some(conversation)) if conversation.transcript_path.is_file() => (1, 1),
+            Ok(Some(_)) => {
+                notes.push("transcript missing".to_owned());
+                (0, 1)
             }
-        }
-        let chats = chat_sources(session).len();
-        let found = builder.transcript_paths(session).len();
-        if found < chats {
-            notes.push(format!("{} transcript(s) missing", chats - found));
-        }
+            Ok(None) => (0, 0),
+            Err(error) => {
+                problems += 1;
+                notes.push(format!("conversation: {error}"));
+                (0, 0)
+            }
+        };
         let notes = if notes.is_empty() {
             "ok".to_owned()
         } else {
@@ -354,7 +348,7 @@ fn health(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
         };
         writeln!(
             io.stdout,
-            "{}\t{}\t{found}/{chats} transcripts\t{notes}",
+            "{}\t{}\t{found}/{known} transcripts\t{notes}",
             session.name,
             session.lifecycle.as_str()
         )

@@ -41,7 +41,8 @@ pub fn set_utc() {
     });
 }
 
-/// One world session as a tx-core record (`version: 1`): lifecycle and `status` from `state`, the chat plugin's chat refs, the edit plugin's group.
+/// One world session as a tx-core record (`version: 1`): lifecycle and `status` from `state`,
+/// the engine data (options and conversation), the edit plugin's group.
 pub fn record(session: &Value, transcripts: &Path) -> Value {
     let engine = session["engine"].as_str().unwrap();
     let state = session["state"].as_str().unwrap();
@@ -49,30 +50,27 @@ pub fn record(session: &Value, transcripts: &Path) -> Value {
         "kind": "agent", "engine": engine, "profile": [], "resume": null,
     });
     let mut ext = Map::new();
-    // Model and effort are engine data (PR 12a), under the engine's own `ext` key.
+    // Model, effort and the conversation are engine data (PR 12a, Engine 8c), under the
+    // engine's own `ext` key.
     let mut data = Map::new();
     for key in ["model", "effort"] {
         if let Some(value) = session.get(key).filter(|value| !value.is_null()) {
             data.insert(key.to_owned(), value.clone());
         }
     }
+    if let [chat] = session["transcripts"].as_array().unwrap().as_slice() {
+        data.insert("conversation_id".into(), chat["chat"].clone());
+        data.insert(
+            "transcript_path".into(),
+            json!(
+                transcripts
+                    .join(chat["file"].as_str().unwrap())
+                    .to_string_lossy()
+            ),
+        );
+    }
     if !data.is_empty() {
         ext.insert(engine.to_owned(), Value::Object(data));
-    }
-    let chats: Vec<Value> = session["transcripts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|chat| {
-            json!({
-                "id": chat["chat"], "role": "primary", "how": "spawn",
-                "since": session["created_at"],
-                "transcript": transcripts.join(chat["file"].as_str().unwrap()).to_string_lossy(),
-            })
-        })
-        .collect();
-    if !chats.is_empty() {
-        ext.insert("chat".into(), json!({ "chats": chats }));
     }
     if let Some(group) = session.get("group") {
         ext.insert("edit".into(), json!({ "group": group }));
@@ -101,5 +99,18 @@ pub fn records(dir: &Path) -> Vec<Value> {
         .unwrap()
         .iter()
         .map(|session| record(session, &transcripts))
+        .collect()
+}
+
+/// What `TxCore::conversation` answers for these records: each engine's recorded
+/// `transcript_path` (both engines name it the same way).
+pub fn transcripts(sessions: &[tx_core::Session]) -> tx_timeline::model::Transcripts {
+    sessions
+        .iter()
+        .filter_map(|session| {
+            let tx_core::Launch::Agent { engine, .. } = &session.launch;
+            let path = session.ext.get(engine)?.get("transcript_path")?.as_str()?;
+            Some((session.id.clone(), PathBuf::from(path)))
+        })
         .collect()
 }

@@ -11,8 +11,8 @@
 //!
 //! Where main read its own record fields, this reads tx-core's record and other plugins'
 //! `ext` entries, never failing on a malformed one (`timeline health` reports those):
-//! transcripts from `ext.chat.chats[].transcript` and `ext.history.chats` (the mirrored bundle
-//! as fallback), the live state from the record's `status`, the group override from
+//! the transcript of each record's current conversation, asked from its engine
+//! (`TxCore::conversation`), model and effort from the engine data, the live state from the record's `status`, the group override from
 //! `ext.edit.group`. Artifacts have no plugin yet, so milestones name the raw command.
 //!
 //! Times inside the payload are MINUTES from `epoch` (the local midnight `days` days back), as
@@ -24,9 +24,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
-use tx_chat::engines::BUNDLE_TRANSCRIPT_NAME;
-use tx_chat::ext::{chat_ext, history_ext};
-use tx_core::{CoreError, Launch, Lifecycle, ListFilter, Session, TxCore};
+use tx_core::{CoreError, Launch, Lifecycle, ListFilter, Session, SessionId, TxCore};
 
 use super::cache::TranscriptCache;
 use super::clock;
@@ -318,48 +316,19 @@ pub fn load_sessions(core: &TxCore) -> Result<Vec<Session>, CoreError> {
     Ok(sessions)
 }
 
-/// One chat a record hosted, as the timeline needs it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ChatSource {
-    pub id: Option<String>,
-    /// The engine's live transcript path.
-    pub transcript: Option<String>,
-    /// The history plugin's mirrored bundle directory.
-    pub bundle: Option<String>,
-}
+/// Each record's live transcript: the path of its current conversation, as its engine names it.
+pub type Transcripts = HashMap<SessionId, PathBuf>;
 
-/// The record's chats: `ext.chat.chats` in order, then the chats only `ext.history` knows. A
-/// malformed entry counts as absent.
-pub fn chat_sources(session: &Session) -> Vec<ChatSource> {
-    let chats = chat_ext(session).unwrap_or_default();
-    let history = history_ext(session).unwrap_or_default();
-    let mut out: Vec<ChatSource> = chats
-        .chats
+/// Asks core for every record's conversation. A record whose conversation is not known yet, or
+/// whose engine is not registered (`timeline health` reports those), has no transcript.
+pub fn transcripts(core: &TxCore, sessions: &[Session]) -> Transcripts {
+    sessions
         .iter()
-        .map(|chat| ChatSource {
-            id: chat.id.clone(),
-            transcript: chat.transcript.clone().filter(|path| !path.is_empty()),
-            bundle: chat
-                .id
-                .as_ref()
-                .and_then(|id| history.chats.get(id))
-                .and_then(|mirrored| mirrored.bundle.clone()),
+        .filter_map(|session| {
+            let conversation = core.conversation(&session.id).ok()??;
+            Some((session.id.clone(), conversation.transcript_path))
         })
-        .collect();
-    for (id, mirrored) in &history.chats {
-        if out
-            .iter()
-            .any(|chat| chat.id.as_deref() == Some(id.as_str()))
-        {
-            continue;
-        }
-        out.push(ChatSource {
-            id: Some(id.clone()),
-            transcript: Some(mirrored.transcript.clone()).filter(|path| !path.is_empty()),
-            bundle: mirrored.bundle.clone(),
-        });
-    }
-    out
+        .collect()
 }
 
 /// The engine the record runs.
@@ -368,8 +337,7 @@ pub fn engine_of(session: &Session) -> String {
     engine.clone()
 }
 
-/// `(model, effort)` the record was launched with: engine data (`ext.<engine>`, PR 12a).
-/// Engine 8c asks the engine instead.
+/// `(model, effort)` the record was launched with: its engine data (`ext.<engine>`, PR 12a).
 fn launch_options(session: &Session) -> (Option<String>, Option<String>) {
     let Launch::Agent { engine, .. } = &session.launch;
     let option = |key: &str| {
@@ -457,50 +425,35 @@ struct LaneData {
 
 /// Builds payloads over record snapshots, keeping the transcript cache warm between ticks.
 pub struct Builder {
-    history_dir: PathBuf,
     data_dir: PathBuf,
     cache: TranscriptCache,
 }
 
+/// The record's transcript when it exists on disk.
+pub fn transcript_on_disk<'a>(transcripts: &'a Transcripts, session: &Session) -> Option<&'a Path> {
+    transcripts
+        .get(&session.id)
+        .map(PathBuf::as_path)
+        .filter(|path| path.is_file())
+}
+
 impl Builder {
-    /// `history_dir` holds the history plugin's bundles; `data_dir` is the timeline's own.
-    pub fn new(history_dir: PathBuf, data_dir: PathBuf) -> Self {
+    /// `data_dir` is the timeline's own.
+    pub fn new(data_dir: PathBuf) -> Self {
         Self {
-            history_dir,
             data_dir,
             cache: TranscriptCache::default(),
         }
     }
 
-    /// First existing candidate per chat: the live transcript, else the mirrored bundle copy.
-    pub fn transcript_paths(&self, session: &Session) -> Vec<PathBuf> {
-        let mut found = Vec::new();
-        for chat in chat_sources(session) {
-            let mut candidates = Vec::new();
-            if let Some(transcript) = &chat.transcript {
-                candidates.push(PathBuf::from(transcript));
-            }
-            if let Some(id) = &chat.id {
-                match &chat.bundle {
-                    Some(bundle) => candidates.push(Path::new(bundle).join(BUNDLE_TRANSCRIPT_NAME)),
-                    None => candidates.push(
-                        self.history_dir
-                            .join(session.id.as_str())
-                            .join(id)
-                            .join(BUNDLE_TRANSCRIPT_NAME),
-                    ),
-                }
-            }
-            if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
-                found.push(path);
-            }
-        }
-        found
-    }
-
     /// Window-filtered records merged into lanes, same-name dead lanes disambiguated with a
     /// `@MonDD` suffix.
-    fn lane_seeds(&self, everyone: &[Session], cut: f64) -> Vec<LaneSeed> {
+    fn lane_seeds(
+        &self,
+        everyone: &[Session],
+        transcripts: &Transcripts,
+        cut: f64,
+    ) -> Vec<LaneSeed> {
         let mut records: Vec<&Session> = everyone
             .iter()
             .filter(|session| !session.tags.iter().any(|tag| tag == "temporary"))
@@ -509,9 +462,10 @@ impl Builder {
         records.sort_by(|left, right| left.created_at.total_cmp(&right.created_at));
         let mut seeds: Vec<LaneSeed> = Vec::new();
         for record in records {
-            let paths: HashSet<String> = chat_sources(record)
+            let paths: HashSet<String> = transcripts
+                .get(&record.id)
+                .map(|path| path.to_string_lossy().into_owned())
                 .into_iter()
-                .filter_map(|chat| chat.transcript)
                 .collect();
             let merged = seeds.iter_mut().find(|seed| {
                 seed.name == record.name
@@ -545,7 +499,7 @@ impl Builder {
 
     /// All parsed rows, turn spans and peer messages of a lane's merged records, paths
     /// deduplicated.
-    fn lane_data(&mut self, seed: &LaneSeed) -> LaneData {
+    fn lane_data(&mut self, seed: &LaneSeed, transcripts: &Transcripts) -> LaneData {
         let mut data = LaneData {
             rows: Vec::new(),
             turns: Vec::new(),
@@ -553,12 +507,12 @@ impl Builder {
         };
         let mut seen = HashSet::new();
         for record in &seed.records {
-            for path in self.transcript_paths(record) {
-                if seen.insert(path.clone()) {
-                    data.rows.extend_from_slice(self.cache.rows(&path));
-                    data.turns.extend(self.cache.turns(&path).cloned());
-                    data.peers.extend_from_slice(self.cache.peers(&path));
-                }
+            if let Some(path) = transcript_on_disk(transcripts, record)
+                && seen.insert(path)
+            {
+                data.rows.extend_from_slice(self.cache.rows(path));
+                data.turns.extend(self.cache.turns(path).cloned());
+                data.peers.extend_from_slice(self.cache.peers(path));
             }
         }
         data.rows
@@ -568,7 +522,13 @@ impl Builder {
         data
     }
 
-    pub fn build(&mut self, everyone: &[Session], days: f64, now: f64) -> Payload {
+    pub fn build(
+        &mut self,
+        everyone: &[Session],
+        transcripts: &Transcripts,
+        days: f64,
+        now: f64,
+    ) -> Payload {
         let epoch = clock::local_midnight(now - days * 86_400.0, 0);
         let minutes = |timestamp: f64| (timestamp - epoch) / 60.0;
 
@@ -580,14 +540,14 @@ impl Builder {
             .iter()
             .map(|session| (session.id.as_str(), session))
             .collect();
-        let seeds = self.lane_seeds(everyone, epoch);
+        let seeds = self.lane_seeds(everyone, transcripts, epoch);
 
         let mut lanes: Vec<Lane> = Vec::new();
         let mut lane_peers: Vec<Vec<(f64, String, String)>> = Vec::new();
         let mut spawns: Vec<(f64, String, usize, EdgeKind)> = Vec::new();
         let mut seed_data: Vec<LaneData> = Vec::new();
         for seed in &seeds {
-            seed_data.push(self.lane_data(seed));
+            seed_data.push(self.lane_data(seed, transcripts));
         }
         for (seed, LaneData { rows, turns, peers }) in seeds.iter().zip(seed_data) {
             let records = &seed.records;
@@ -612,12 +572,8 @@ impl Builder {
             });
             let mut engines: Vec<String> = records
                 .iter()
-                .flat_map(|record| {
-                    let engine = engine_of(record);
-                    chat_sources(record)
-                        .into_iter()
-                        .map(move |_| engine.clone())
-                })
+                .filter(|record| transcripts.contains_key(&record.id))
+                .map(engine_of)
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
@@ -754,9 +710,7 @@ impl Builder {
             };
             let blurb = cap(first_user, BLURB_CAP);
             let (model, effort) = launch_options(primary);
-            let metadata = self
-                .transcript_paths(primary)
-                .last()
+            let metadata = transcript_on_disk(transcripts, primary)
                 .and_then(|path| self.cache.metadata(path))
                 .cloned()
                 .unwrap_or_default()
