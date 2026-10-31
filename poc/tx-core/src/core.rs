@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::config::CoreConfig;
-use crate::engine::{EngineRegistry, LaunchMode, LaunchRequest, LlmEngine, apply_workspace};
+use crate::engine::{
+    EngineError, EngineRegistry, LaunchMode, LaunchRequest, LlmEngine, apply_workspace,
+};
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
@@ -414,6 +416,28 @@ fn exited_before_registration(session: &Session) -> Event {
         None,
         "exited before registration",
     )
+}
+
+/// Under an agent's archive directory: the lock one archive holds while it runs.
+pub const ARCHIVE_LOCK: &str = ".archive.lock";
+
+/// The per-session archive lock, taken without waiting: `None` when another archive holds it.
+/// Creates the directory. Released when the file is dropped.
+fn archive_lock(directory: &Path) -> Result<Option<std::fs::File>, EngineError> {
+    use crate::mirror::io_error;
+    std::fs::create_dir_all(directory).map_err(io_error(directory))?;
+    let path = directory.join(ARCHIVE_LOCK);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(io_error(&path))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(source)) => Err(io_error(&path)(source)),
+    }
 }
 
 /// The process is gone, whatever the adapter last said: `ended_at` is set and an agent's state
@@ -1005,7 +1029,7 @@ impl TxCore {
         session.ended_at = None;
         session.archived_at = None;
         session.state = Some(LlmEngineState::Starting);
-        // Engine PR 8a: the transcript restore goes here, right before the resume launch.
+        adapter.restore(&session, &self.config.archive_directory(id))?;
         let engine = EngineLaunch {
             adapter,
             resolved,
@@ -1143,12 +1167,21 @@ impl TxCore {
     /// never to interpret it. Returns the state after the hook; `None` when the hook is not for
     /// a live agent this core can read: the session is no longer `Running` (a stale hook), is a
     /// process session, or its engine is not registered here.
+    ///
+    /// Every hook then has the engine archive the conversation into
+    /// `CoreConfig::archive_directory`, after the session lock is released and under a
+    /// non-blocking per-session archive lock (a concurrent archive makes this one skip). Every
+    /// hook, not only one that reports `Idle`: Claude writes a turn's final reply after its
+    /// `Stop` hook has returned, so the next hook (the next prompt, a `SessionEnd` before a
+    /// `/clear`) is what brings the archive up to date. An archive failure is an
+    /// `ArchiveFailed` event, never an error: the hook already happened and must not fail the
+    /// agent.
     pub fn hook(
         &self,
         id: &SessionId,
         hook: LlmEngineHook,
     ) -> Result<Option<LlmEngineState>, CoreError> {
-        let (state, changed) = {
+        let (state, changed, session) = {
             let _session = self.locks.session(id).map_err(CoreError::Lock)?;
             let mut session = self.get_session(id)?;
             if session.lifecycle != Lifecycle::Running {
@@ -1182,10 +1215,38 @@ impl TxCore {
             if !changed.is_empty() {
                 self.save(&mut session)?;
             }
-            (state, changed)
+            (state, changed, session)
         };
         self.emit(changed);
+        self.archive_conversation(&session);
         Ok(Some(state))
+    }
+
+    /// The engine's `archive` for an agent record, under `<archive directory>/.archive.lock`
+    /// taken without waiting: a caller that finds the lock held leaves the archive to the
+    /// holder. Failure is an `ArchiveFailed` event, never an error. Called after every hook, and
+    /// after a stop or an exit, once the process is gone and the transcript final. A process
+    /// record or an unregistered engine archives nothing.
+    fn archive_conversation(&self, session: &Session) {
+        let Launch::Agent { engine, .. } = &session.launch else {
+            return;
+        };
+        let Some(adapter) = self.engines.get(engine) else {
+            return;
+        };
+        let directory = self.config.archive_directory(&session.id);
+        let result = archive_lock(&directory).and_then(|lock| match lock {
+            Some(_held) => adapter.archive(session, &directory),
+            None => Ok(()),
+        });
+        if let Err(error) = result {
+            self.emit(vec![event(
+                EventType::ArchiveFailed,
+                session,
+                None,
+                error.to_string(),
+            )]);
+        }
     }
 
     pub fn set_session_tags(
@@ -1257,6 +1318,7 @@ impl TxCore {
     fn mark_exited(&self, mut session: Session) -> Result<(Session, Event), CoreError> {
         mark_ended(&mut session, Lifecycle::Exited);
         self.save(&mut session)?;
+        self.archive_conversation(&session);
         let exited = event(EventType::Exited, &session, None, "");
         Ok((session, exited))
     }
@@ -1333,6 +1395,7 @@ impl TxCore {
         };
         if let Some(pid) = pid {
             wait_or_kill(pid);
+            self.archive_conversation(&session);
         }
         Ok((session, ended))
     }

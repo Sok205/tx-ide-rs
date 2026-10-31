@@ -18,6 +18,8 @@ pub const AGENTS_DIR: &str = "agents";
 pub const PLUGINS_DIR: &str = "plugins";
 /// Under the data directory: the detached worktrees agents run in, one tree per agent.
 pub const WORKTREES_DIR: &str = "worktrees";
+/// Under an agent's directory: the engine's archive of its conversations (`LlmEngine::archive`).
+pub const ARCHIVE_DIR: &str = "archive";
 
 /// The five directories tx keeps its files in, resolved by the front end (XDG, `TX_APPNAME`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -151,6 +153,12 @@ impl CoreConfig {
         self.directories.data.join(AGENTS_DIR).join(id.to_string())
     }
 
+    /// Where the engine archives one agent's conversations: `<data>/agents/<id>/archive/`.
+    /// Nothing is created.
+    pub fn archive_directory(&self, id: &SessionId) -> PathBuf {
+        self.agent_dir(id).join(ARCHIVE_DIR)
+    }
+
     /// A plugin's own data directory: `<data>/plugins/<plugin>/`. Nothing is created.
     pub fn plugin_data_dir(&self, plugin: &str) -> PathBuf {
         self.directories.data.join(PLUGINS_DIR).join(plugin)
@@ -219,6 +227,10 @@ mod tests {
         assert_eq!(
             config.agent_dir(&id),
             PathBuf::from(format!("/tmp/txc/data/agents/{id}"))
+        );
+        assert_eq!(
+            config.archive_directory(&id),
+            PathBuf::from(format!("/tmp/txc/data/agents/{id}/archive"))
         );
     }
 
