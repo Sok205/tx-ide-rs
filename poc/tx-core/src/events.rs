@@ -28,6 +28,8 @@ pub enum EventType {
     MessageSent,
     /// The agent's `state` moved; detail is "<from> → <to>".
     StateChanged,
+    /// The engine's own data under `ext[<ext key>]` was rewritten by a hook; detail is the key.
+    EngineDataChanged,
     Exited,
     Stopped,
     Forgotten,
@@ -40,6 +42,7 @@ impl EventType {
         EventType::Tagged,
         EventType::MessageSent,
         EventType::StateChanged,
+        EventType::EngineDataChanged,
         EventType::Exited,
         EventType::Stopped,
         EventType::Forgotten,
@@ -52,6 +55,7 @@ impl EventType {
             EventType::Tagged => "tagged",
             EventType::MessageSent => "message-sent",
             EventType::StateChanged => "state-changed",
+            EventType::EngineDataChanged => "engine-data-changed",
             EventType::Exited => "exited",
             EventType::Stopped => "stopped",
             EventType::Forgotten => "forgotten",
@@ -385,6 +389,7 @@ mod tests {
                 "tagged",
                 "message-sent",
                 "state-changed",
+                "engine-data-changed",
                 "exited",
                 "stopped",
                 "forgotten"

@@ -15,13 +15,17 @@ struct Shout;
 impl LlmEngine for Shout {
     fn on_hook(
         &self,
-        _: tx_core::LlmEngineState,
+        _: &tx_core::Session,
         _: &tx_core::LlmEngineHook,
-    ) -> Option<tx_core::LlmEngineState> {
-        None
+    ) -> tx_core::LlmEngineChange {
+        tx_core::LlmEngineChange::NONE
     }
 
     fn id(&self) -> &str {
+        "shout"
+    }
+
+    fn ext_key(&self) -> &'static str {
         "shout"
     }
 

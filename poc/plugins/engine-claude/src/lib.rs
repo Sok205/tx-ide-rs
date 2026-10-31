@@ -1,13 +1,23 @@
 //! The Claude Code engine for tx-core: `claude [--resume ID] [--model M] --effort E --no-chrome
 //! --append-system-prompt <profile text> --dangerously-skip-permissions [prompt]`, with every
 //! granted skill linked under `.claude/skills/<name>` in the working directory.
+//!
+//! Engine data, under `ext.claude` of the record, is this adapter's alone to read:
+//!
+//! ```json
+//! {"conversation_id": "5f0c…", "transcript_path": "/Users/w/.claude/projects/-Users-w-…/5f0c….jsonl"}
+//! ```
+//!
+//! Both come from the `SessionStart` payload. Claude reports them on every start (`startup`,
+//! `resume`, `clear`); the data is rewritten only when the id differs, so a `/clear` (a new
+//! conversation inside the same process) is what changes it. Other keys of the object survive.
 
 use std::path::PathBuf;
 
 use serde_json::Value;
 use tx_core::{
-    Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineHook, LlmEngineState,
-    WorkspaceAction, hook_shell_command,
+    Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook,
+    LlmEngineState, Session, WorkspaceAction, engine_data, hook_shell_command,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -40,6 +50,10 @@ pub const MID_TURN_NOTIFICATIONS: [&str; 2] = ["permission_prompt", "elicitation
 /// `SessionEnd` reasons that replace the conversation inside a process that keeps running
 /// (`SessionStart` follows at once); they end nothing.
 pub const CONTINUING_END_REASONS: [&str; 2] = ["clear", "resume"];
+/// The `ext` key this engine owns.
+pub const EXT_KEY: &str = "claude";
+pub const CONVERSATION_ID_KEY: &str = "conversation_id";
+pub const TRANSCRIPT_PATH_KEY: &str = "transcript_path";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ClaudeAdapter;
@@ -47,6 +61,10 @@ pub struct ClaudeAdapter;
 impl LlmEngine for ClaudeAdapter {
     fn id(&self) -> &str {
         "claude"
+    }
+
+    fn ext_key(&self) -> &'static str {
+        EXT_KEY
     }
 
     fn launch(&self, req: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
@@ -82,9 +100,9 @@ impl LlmEngine for ClaudeAdapter {
         Ok(plan)
     }
 
-    fn on_hook(&self, _current: LlmEngineState, hook: &LlmEngineHook) -> Option<LlmEngineState> {
+    fn on_hook(&self, session: &Session, hook: &LlmEngineHook) -> LlmEngineChange {
         let field = |key: &str| hook.payload.get(key).and_then(Value::as_str);
-        match hook.name.as_str() {
+        let state = match hook.name.as_str() {
             "SessionStart" | "Stop" | "StopFailure" => Some(LlmEngineState::Idle),
             // Tool hooks fire only inside a turn: after a stop on the operator they mean the
             // operator answered.
@@ -102,8 +120,28 @@ impl LlmEngine for ClaudeAdapter {
                 Some(LlmEngineState::Ended)
             }
             _ => None,
-        }
+        };
+        let engine_data = match hook.name.as_str() {
+            "SessionStart" => conversation_started(engine_data(self, session), &hook.payload),
+            _ => None,
+        };
+        LlmEngineChange { state, engine_data }
     }
+}
+
+/// The engine data after a `SessionStart`: `current` with the payload's `session_id` as
+/// `conversation_id` and its `transcript_path`. `None` when the payload lacks either string or
+/// the id is already the current one.
+pub fn conversation_started(current: &Value, payload: &Value) -> Option<Value> {
+    let conversation_id = payload.get("session_id")?.as_str()?;
+    let transcript_path = payload.get(TRANSCRIPT_PATH_KEY)?.as_str()?;
+    if current.get(CONVERSATION_ID_KEY).and_then(Value::as_str) == Some(conversation_id) {
+        return None;
+    }
+    let mut data = current.as_object().cloned().unwrap_or_default();
+    data.insert(CONVERSATION_ID_KEY.into(), conversation_id.into());
+    data.insert(TRANSCRIPT_PATH_KEY.into(), transcript_path.into());
+    Some(Value::Object(data))
 }
 
 /// `--settings` JSON wiring every [`HOOK_EVENTS`] entry to `hook_command`. Inline settings
@@ -186,22 +224,59 @@ mod tests {
         }
     }
 
-    /// (current state, hook name, payload) → the state the adapter moves to.
+    /// An agent record in `state` whose `ext.ClaudeAdapter` is `data` (absent when `Null`).
+    fn session(state: LlmEngineState, data: serde_json::Value) -> Session {
+        use tx_core::{Launch, Lifecycle, SessionId};
+        let mut ext = std::collections::BTreeMap::new();
+        if !data.is_null() {
+            ext.insert(EXT_KEY.to_owned(), data);
+        }
+        Session {
+            id: SessionId::mint(),
+            name: "agent".into(),
+            parent: None,
+            tags: Vec::new(),
+            cwd: "/tmp".into(),
+            created_at: 1.0,
+            ended_at: None,
+            last_modified_at: 1.0,
+            lifecycle: Lifecycle::Running,
+            launch: Launch::Agent {
+                engine: ClaudeAdapter.id().to_owned(),
+                profile: Vec::new(),
+                model: None,
+                effort: None,
+                resume: None,
+            },
+            state: Some(state),
+            ext,
+        }
+    }
+
+    /// (current state, current engine data, hook name, payload) → the change.
     type Row = (
         LlmEngineState,
+        serde_json::Value,
         &'static str,
         serde_json::Value,
-        Option<LlmEngineState>,
+        LlmEngineChange,
     );
 
-    fn check(adapter: &dyn LlmEngine, table: Vec<Row>) {
-        for (current, name, payload, expected) in table {
+    fn check(table: Vec<Row>) {
+        for (current, data, name, payload, expected) in table {
             assert_eq!(
-                adapter.on_hook(current, &hook(name, payload.clone())),
+                ClaudeAdapter.on_hook(
+                    &session(current, data.clone()),
+                    &hook(name, payload.clone())
+                ),
                 expected,
-                "{current:?} {name} {payload}"
+                "{current:?} {data} {name} {payload}"
             );
         }
+    }
+
+    fn to(state: LlmEngineState) -> LlmEngineChange {
+        LlmEngineChange::to(state)
     }
 
     #[test]
@@ -209,55 +284,209 @@ mod tests {
         use LlmEngineState::*;
         use serde_json::json;
         let none = json!({});
-        check(
-            &ClaudeAdapter,
-            vec![
-                (Starting, "SessionStart", none.clone(), Some(Idle)),
-                (Idle, "UserPromptSubmit", none.clone(), Some(Working)),
-                // Tool hooks fire only inside a turn: Working, whatever came before.
-                (Working, "PreToolUse", none.clone(), Some(Working)),
-                (Idle, "PreToolUse", none.clone(), Some(Working)),
-                (Idle, "PostToolUse", none.clone(), Some(Working)),
-                (
-                    Working,
-                    "Notification",
-                    json!({"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"}),
-                    Some(Idle),
-                ),
-                (
-                    Working,
-                    "Notification",
-                    json!({"notification_type": "elicitation_dialog"}),
-                    Some(Idle),
-                ),
-                (
-                    Idle,
-                    "Notification",
-                    json!({"notification_type": "idle_prompt", "message": "your turn"}),
-                    None,
-                ),
-                (Working, "Notification", none.clone(), None),
-                (Working, "Stop", none.clone(), Some(Idle)),
-                (
-                    Working,
-                    "StopFailure",
-                    json!({"error": "rate_limit"}),
-                    Some(Idle),
-                ),
-                (Idle, "SessionEnd", json!({"reason": "logout"}), Some(Ended)),
-                (
-                    Idle,
-                    "SessionEnd",
-                    json!({"reason": "prompt_input_exit"}),
-                    Some(Ended),
-                ),
-                (Idle, "SessionEnd", none.clone(), Some(Ended)),
-                (Idle, "SessionEnd", json!({"reason": "clear"}), None),
-                (Idle, "SessionEnd", json!({"reason": "resume"}), None),
-                (Idle, "PreCompact", none.clone(), None),
-                (Idle, "stop", none.clone(), None),
-            ],
+        let null = serde_json::Value::Null;
+        check(vec![
+            (
+                Idle,
+                null.clone(),
+                "UserPromptSubmit",
+                none.clone(),
+                to(Working),
+            ),
+            // Tool hooks fire only inside a turn: Working, whatever came before.
+            (
+                Working,
+                null.clone(),
+                "PreToolUse",
+                none.clone(),
+                to(Working),
+            ),
+            (Idle, null.clone(), "PreToolUse", none.clone(), to(Working)),
+            (Idle, null.clone(), "PostToolUse", none.clone(), to(Working)),
+            (
+                Working,
+                null.clone(),
+                "Notification",
+                json!({"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"}),
+                to(Idle),
+            ),
+            (
+                Working,
+                null.clone(),
+                "Notification",
+                json!({"notification_type": "elicitation_dialog"}),
+                to(Idle),
+            ),
+            (
+                Idle,
+                null.clone(),
+                "Notification",
+                json!({"notification_type": "idle_prompt", "message": "your turn"}),
+                LlmEngineChange::NONE,
+            ),
+            (
+                Working,
+                null.clone(),
+                "Notification",
+                none.clone(),
+                LlmEngineChange::NONE,
+            ),
+            (Working, null.clone(), "Stop", none.clone(), to(Idle)),
+            (
+                Working,
+                null.clone(),
+                "StopFailure",
+                json!({"error": "rate_limit"}),
+                to(Idle),
+            ),
+            (
+                Idle,
+                null.clone(),
+                "SessionEnd",
+                json!({"reason": "logout"}),
+                to(Ended),
+            ),
+            (
+                Idle,
+                null.clone(),
+                "SessionEnd",
+                json!({"reason": "prompt_input_exit"}),
+                to(Ended),
+            ),
+            (Idle, null.clone(), "SessionEnd", none.clone(), to(Ended)),
+            (
+                Idle,
+                null.clone(),
+                "SessionEnd",
+                json!({"reason": "clear"}),
+                LlmEngineChange::NONE,
+            ),
+            (
+                Idle,
+                null.clone(),
+                "SessionEnd",
+                json!({"reason": "resume"}),
+                LlmEngineChange::NONE,
+            ),
+            (
+                Idle,
+                null.clone(),
+                "PreCompact",
+                none.clone(),
+                LlmEngineChange::NONE,
+            ),
+            (
+                Idle,
+                null.clone(),
+                "stop",
+                none.clone(),
+                LlmEngineChange::NONE,
+            ),
+        ]);
+    }
+
+    #[test]
+    fn session_start_records_the_conversation() {
+        use LlmEngineState::*;
+        use serde_json::json;
+        let null = serde_json::Value::Null;
+        let first =
+            json!({"conversation_id": "id-1", "transcript_path": "/h/projects/-w/id-1.jsonl"});
+        let started = |id: &str, source: &str| {
+            json!({
+                "session_id": id,
+                "transcript_path": format!("/h/projects/-w/{id}.jsonl"),
+                "cwd": "/w",
+                "hook_event_name": "SessionStart",
+                "source": source,
+            })
+        };
+        check(vec![
+            // The first start, before any data: id and path land.
+            (
+                Starting,
+                null.clone(),
+                "SessionStart",
+                started("id-1", "startup"),
+                to(Idle).engine_data(first.clone()),
+            ),
+            // The same id again (a restart with the data already written): state only.
+            (
+                Starting,
+                first.clone(),
+                "SessionStart",
+                started("id-1", "resume"),
+                to(Idle),
+            ),
+            // A payload without the strings changes no data.
+            (Starting, null.clone(), "SessionStart", json!({}), to(Idle)),
+            (
+                Starting,
+                null.clone(),
+                "SessionStart",
+                json!({"session_id": 7, "transcript_path": "/x"}),
+                to(Idle),
+            ),
+            (
+                Starting,
+                null.clone(),
+                "SessionStart",
+                json!({"session_id": "id-1"}),
+                to(Idle),
+            ),
+            // Hand-edited non-object data counts as absent.
+            (
+                Idle,
+                json!("junk"),
+                "SessionStart",
+                started("id-1", "startup"),
+                to(Idle).engine_data(first.clone()),
+            ),
+            // Other keys of the object survive a new conversation.
+            (
+                Idle,
+                json!({"conversation_id": "id-1", "transcript_path": "/old", "model": "sonnet"}),
+                "SessionStart",
+                started("id-2", "clear"),
+                to(Idle).engine_data(json!({
+                    "conversation_id": "id-2",
+                    "transcript_path": "/h/projects/-w/id-2.jsonl",
+                    "model": "sonnet",
+                })),
+            ),
+        ]);
+    }
+
+    /// `/clear`: `SessionEnd{reason: clear}` ends nothing, then `SessionStart{source: clear}`
+    /// brings a new id.
+    #[test]
+    fn clear_sequence_keeps_the_agent_and_changes_the_conversation() {
+        use serde_json::json;
+        let data = json!({"conversation_id": "id-1", "transcript_path": "/h/id-1.jsonl"});
+        let session = session(LlmEngineState::Idle, data.clone());
+        assert_eq!(
+            ClaudeAdapter.on_hook(&session, &hook("SessionEnd", json!({"reason": "clear"}))),
+            LlmEngineChange::NONE
         );
+        let change = ClaudeAdapter.on_hook(
+            &session,
+            &hook(
+                "SessionStart",
+                json!({"session_id": "id-2", "transcript_path": "/h/id-2.jsonl", "source": "clear"}),
+            ),
+        );
+        assert_eq!(
+            change,
+            to(LlmEngineState::Idle).engine_data(
+                json!({"conversation_id": "id-2", "transcript_path": "/h/id-2.jsonl"})
+            )
+        );
+    }
+
+    #[test]
+    fn ext_key_is_claude() {
+        assert_eq!(ClaudeAdapter.ext_key(), "claude");
+        assert_eq!(ClaudeAdapter.ext_key(), EXT_KEY);
     }
 
     #[test]

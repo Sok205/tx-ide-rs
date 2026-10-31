@@ -28,6 +28,10 @@ pub enum CoreError {
     UnknownEngine(String),
     #[error("an engine with id {0:?} is already registered")]
     EngineTaken(String),
+    #[error("an engine owning the ext key {0:?} is already registered")]
+    ExtKeyTaken(String),
+    #[error("invalid ext key {0:?}: use [a-z0-9-]+")]
+    InvalidExtKey(String),
     #[error("tmux socket path is {len} bytes, longer than the {max} allowed: {path}", len = .0.as_os_str().len(), max = crate::config::MAX_SOCKET_PATH_BYTES, path = .0.display())]
     SocketPathTooLong(PathBuf),
     #[error("tmux socket path must be absolute: {}", .0.display())]

@@ -32,7 +32,8 @@ pub use core::{
 #[doc(hidden)]
 pub use engine::EngineRegistry;
 pub use engine::{
-    EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction, hook_shell_command,
+    EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction, engine_data,
+    hook_shell_command,
 };
 pub use error::CoreError;
 #[doc(hidden)]
@@ -49,7 +50,7 @@ pub use plugin::{
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
 pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
-pub use state::{LlmEngineHook, LlmEngineState};
+pub use state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 #[doc(hidden)]
 pub use store::SessionStore;
 /// Stable: they are the payload of `CoreError::Store`.

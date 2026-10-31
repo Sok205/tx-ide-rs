@@ -441,13 +441,17 @@ fn engine_adapter_object_is_usable_from_another_thread() {
     impl LlmEngine for Stub {
         fn on_hook(
             &self,
-            _: tx_core::LlmEngineState,
+            _: &tx_core::Session,
             _: &tx_core::LlmEngineHook,
-        ) -> Option<tx_core::LlmEngineState> {
-            None
+        ) -> tx_core::LlmEngineChange {
+            tx_core::LlmEngineChange::NONE
         }
 
         fn id(&self) -> &str {
+            "stub"
+        }
+
+        fn ext_key(&self) -> &'static str {
             "stub"
         }
         fn launch(&self, _: &LaunchRequest<'_>) -> Result<LaunchPlan, tx_core::EngineError> {
@@ -466,16 +470,16 @@ fn engine_adapter_object_is_usable_from_another_thread() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn event_type_all_is_seven_unique_lowercase_kebab_names() {
+fn event_type_all_is_nine_unique_lowercase_kebab_names() {
     let all: &[EventType] = EventType::ALL;
-    assert_eq!(all.len(), 7);
+    assert_eq!(all.len(), 9);
     let variants: BTreeSet<&str> = all
         .iter()
         .map(|t| format!("{t:?}").leak() as &str)
         .collect();
-    assert_eq!(variants.len(), 7, "duplicate variant in ALL");
+    assert_eq!(variants.len(), 9, "duplicate variant in ALL");
     let names: BTreeSet<&'static str> = all.iter().map(|t| t.as_str()).collect();
-    assert_eq!(names.len(), 7, "duplicate as_str in ALL");
+    assert_eq!(names.len(), 9, "duplicate as_str in ALL");
     for name in names {
         assert!(!name.is_empty());
         assert!(
