@@ -1,4 +1,4 @@
-//! Agent state end to end through the binary: the Claude adapter wires `txc chat hook <Event>`
+//! Agent state end to end through the binaries: the Claude adapter wires `txi hook <Event>`
 //! into the command line it builds, the hooks feed `TxCore::hook`, and `show` reads `status`.
 
 mod common;
@@ -15,8 +15,8 @@ impl Cli {
     fn state_of(&self, name: &str) -> Value {
         self.show(name)["status"]["state"].clone()
     }
-    fn chat_hook(&self, event: &str, id: &str, stdin: &str) -> Output {
-        self.run(&["chat", "hook", event], &[("TX_SESSION_ID", id)], stdin)
+    fn txi_hook(&self, event: &str, id: &str, stdin: &str) -> Output {
+        self.txi(&["hook", event], &[("TX_SESSION_ID", id)], stdin)
     }
     /// A Claude session whose `claude` writes its argv, NUL-separated, to `argv`, then stays
     /// alive.
@@ -92,8 +92,8 @@ fn the_wired_hooks_move_a_claude_session() {
     assert_eq!(
         command,
         format!(
-            "'{}' 'chat' 'hook' 'SessionStart' || exit 1",
-            env!("CARGO_BIN_EXE_txc")
+            "'{}' 'hook' 'SessionStart' || exit 1",
+            env!("CARGO_BIN_EXE_txi")
         )
     );
 
@@ -117,14 +117,10 @@ fn the_wired_hooks_move_a_claude_session() {
     assert!(child.wait().unwrap().success());
     assert_eq!(cli.state_of("a"), "idle");
 
-    assert!(
-        cli.chat_hook("UserPromptSubmit", &id, "{}")
-            .status
-            .success()
-    );
+    assert!(cli.txi_hook("UserPromptSubmit", &id, "{}").status.success());
     assert_eq!(cli.state_of("a"), "working");
     assert!(
-        cli.chat_hook(
+        cli.txi_hook(
             "Notification",
             &id,
             r#"{"notification_type":"permission_prompt","message":"needs Bash"}"#
@@ -135,9 +131,9 @@ fn the_wired_hooks_move_a_claude_session() {
     let status = cli.show("a")["status"].clone();
     assert_eq!(status["state"], "idle");
     assert_eq!(status["note"], "needs Bash");
-    assert!(cli.chat_hook("PostToolUse", &id, "{}").status.success());
+    assert!(cli.txi_hook("PostToolUse", &id, "{}").status.success());
     assert_eq!(cli.state_of("a"), "working");
-    assert!(cli.chat_hook("Stop", &id, "not json").status.success());
+    assert!(cli.txi_hook("Stop", &id, "not json").status.success());
     let status = cli.show("a")["status"].clone();
     assert_eq!(status["state"], "idle");
     assert!(status.get("note").is_none(), "{status}");
@@ -155,11 +151,7 @@ fn the_wired_hooks_move_a_claude_session() {
 
     cli.ok(&["stop", "a"]);
     assert_eq!(cli.state_of("a"), "ended");
-    assert!(
-        cli.chat_hook("UserPromptSubmit", &id, "{}")
-            .status
-            .success()
-    );
+    assert!(cli.txi_hook("UserPromptSubmit", &id, "{}").status.success());
     assert_eq!(cli.state_of("a"), "ended", "a hook after the end is stale");
 }
 
@@ -169,19 +161,15 @@ fn not_ours_exits_zero_and_writes_nothing() {
     let cli = Cli::new();
     let id = cli.create_claude("a");
     let before = cli.show("a");
-    let output = cli.run(&["chat", "hook", "Stop"], &[], "");
+    let output = cli.txi(&["hook", "Stop"], &[], "");
     assert!(output.status.success(), "no TX_SESSION_ID");
-    let output = cli.chat_hook("Stop", "0f6b3b8a-1111-4222-8333-444444444444", "");
+    let output = cli.txi_hook("Stop", "0f6b3b8a-1111-4222-8333-444444444444", "");
     assert!(output.status.success(), "unknown session");
-    let output = cli.chat_hook("Stop", "not an id", "");
+    let output = cli.txi_hook("Stop", "not an id", "");
     assert!(output.status.success(), "malformed id");
-    let output = cli.chat_hook("NoSuchEvent", &id, "[1, 2]");
+    let output = cli.txi_hook("NoSuchEvent", &id, "[1, 2]");
     assert!(output.status.success(), "unknown event, odd payload");
-    let output = cli.run(
-        &["chat", "hook", "Stop", "extra"],
-        &[("TX_SESSION_ID", "nope")],
-        "",
-    );
+    let output = cli.txi(&["hook", "Stop", "extra"], &[("TX_SESSION_ID", "nope")], "");
     assert!(output.status.success(), "extra arguments");
     assert_eq!(cli.show("a"), before);
 }
@@ -192,6 +180,22 @@ fn process_sessions_have_no_status() {
     let cli = Cli::new();
     let id = cli.create("p");
     assert!(cli.show("p").get("status").is_none());
-    assert!(cli.chat_hook("SessionStart", &id, "{}").status.success());
+    assert!(cli.txi_hook("SessionStart", &id, "{}").status.success());
     assert!(cli.show("p").get("status").is_none());
+}
+
+#[test]
+fn hooks_are_internal_to_txi() {
+    let cli = Cli::new();
+    let help = cli.ok(&["help"]);
+    assert!(
+        !help.contains("hook EVENT") && !help.contains("txi"),
+        "{help}"
+    );
+    // `chat …` is the chat plugin's again; it has no `hook` subcommand.
+    cli.fails(&["chat", "hook", "Stop"], 2);
+    let usage = cli.txi(&[], &[], "");
+    assert_eq!(usage.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&usage.stderr).contains("usage: txi hook <Event>"));
+    assert_eq!(cli.txi(&["bogus"], &[], "").status.code(), Some(2));
 }

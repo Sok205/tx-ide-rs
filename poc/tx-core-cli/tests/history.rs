@@ -40,12 +40,12 @@ impl Cli {
     fn history_dir(&self) -> PathBuf {
         self.state().join("plugins/history")
     }
-    /// What the agent's two Stop hooks run: `chat hook Stop` and `_history-ingest`.
+    /// What the agent's two Stop hooks run: `txi hook Stop` and `txc _history-ingest`.
     fn stop_hooks(&self, id: &str, payload: &str) {
-        for args in [&["chat", "hook", "Stop"][..], &["_history-ingest"][..]] {
-            let output = self.run(args, &[("TX_SESSION_ID", id)], payload);
-            assert!(output.status.success(), "{args:?}");
-        }
+        let env = [("TX_SESSION_ID", id)];
+        assert!(self.txi(&["hook", "Stop"], &env, payload).status.success());
+        let output = self.run(&["_history-ingest"], &env, payload);
+        assert!(output.status.success(), "_history-ingest");
     }
 }
 

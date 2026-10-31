@@ -38,7 +38,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-ui, tx-chat (message parser), ratatui |
 | `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `txc menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-ui, ratatui, tempfile |
 | `tx-ui` | library, not a plugin: the socket-bound `tmux::Ui` helper, the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins | tx-core |
-| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins | tx-core and every plugin above |
+| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins. `txi`: the internal binary the engines' wired hooks run (`txi hook <Event>`) | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
 carries everything; only `txc` touches `std::env`. Without `--profile-dir` / `--skill-dir`,
@@ -83,17 +83,22 @@ states are final: nothing in core moves a record out of them.
 
 ### Agent state: the engine adapter decides, core applies
 
-An agent record carries `status` (an `LlmEngineStatus`: `{state, since, note?}`), with `state` one of `starting`,
-`idle`, `working` and `ended`. Idle means it is the operator's move; when a turn stopped on an
-approval or a question rather than finishing, the note says why ("approval: Bash"), and the next
-tool hook moves it back to `working`. The vocabulary is
-core's; when to move between states is the adapter's. At launch the adapter wires the hooks it
-needs into the CLI's own command line (Claude `--settings '{"hooks":…}'`, Codex
-`-c hooks.<Event>=…`), each running `CoreConfig::hook_command` plus the CLI's event name —
-`txc chat hook <Event>` for `txc`. That verb hands the payload to `TxCore::hook`, which asks
+An agent record carries `status` (an `LlmEngineStatus`: `{state, since, note?}`), with `state`
+one of `starting`, `idle`, `working` and `ended`. Idle means it is the operator's move; when a
+turn stopped on an approval or a question rather than finishing, the note says why
+("approval: Bash"), and the next tool hook moves it back to `working`. The vocabulary is core's;
+when to move between states is the adapter's.
+
+At launch the adapter wires the hooks it needs into the CLI's own command line (Claude
+`--settings '{"hooks":…}'`, Codex `-c hooks.<Event>=…`), each running `CoreConfig::hook_command`
+plus the CLI's event name. For `txc` that is `txi hook <Event>`: `txi` is a second binary of
+`tx-core-cli`, installed next to `txc`, the internal entry point machines run (nothing in it is
+listed in `txc help`). It hands the payload to `TxCore::hook`, which asks
 `LlmEngine::on_hook(&status, &hook)` for an optional `LlmEngineStateTransition` (`None`: nothing
-changes) and applies it under the session lock, logging `state-changed` when the state moved. Core owns what the adapter cannot see: a new agent
-starts `starting`, and an exited or stopped one reads `ended`. Process sessions have no status.
+changes) and applies it under the session lock, logging `state-changed` when the state moved.
+Core owns what the adapter cannot see: a new agent starts `starting`, and an exited or stopped one
+reads `ended`. Process sessions have no status.
+
 Because the hooks are `-c` overrides, every Codex session runs without Codex's shared background
 server (Codex warns: "command-line configuration overrides … requires embedded mode"). Sessions
 with a role already did, through `-c developer_instructions`; only role-less ones change.
