@@ -606,6 +606,7 @@ impl TxCore {
             },
             launch,
             ext: std::collections::BTreeMap::new(),
+            status: None,
         };
         if let Err(error) = self.store.save(&session) {
             return Err(undo(CoreError::Store(error)));
@@ -982,6 +983,10 @@ mod tests {
 
     struct Stub;
     impl LlmEngine for Stub {
+        fn on_hook(&self, _: &crate::Status, _: &crate::Hook) -> crate::Change {
+            crate::Change::default()
+        }
+
         fn id(&self) -> &str {
             "stub"
         }
@@ -1127,6 +1132,7 @@ mod tests {
                 args: vec![],
             },
             ext: std::collections::BTreeMap::new(),
+            status: None,
         };
         let filter = ListFilter::new()
             .parent("p".parse().unwrap())

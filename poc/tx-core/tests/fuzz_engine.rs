@@ -18,6 +18,10 @@ use tx_core::{
 struct Stub(String);
 
 impl LlmEngine for Stub {
+    fn on_hook(&self, _: &tx_core::Status, _: &tx_core::Hook) -> tx_core::Change {
+        tx_core::Change::default()
+    }
+
     fn id(&self) -> &str {
         &self.0
     }

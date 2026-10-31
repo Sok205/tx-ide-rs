@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::CoreError;
 use crate::profile::Profile;
 use crate::session::{Effort, validate_name};
+use crate::state::{Change, Hook, Status};
 
 /// An adapter could not honor a request, or a workspace action could not be applied.
 #[derive(Debug, thiserror::Error)]
@@ -126,7 +127,7 @@ impl LaunchPlan {
     }
 }
 
-/// One coding-agent engine. Two required methods; no I/O in `launch`. `Send + Sync` so a core
+/// One coding-agent engine. Three required methods; no I/O in `launch` or `on_hook`. `Send + Sync` so a core
 /// can be shared across threads.
 pub trait LlmEngine: Send + Sync {
     /// A bare name (`[A-Za-z0-9_-]+`); stored in every record this engine launches.
@@ -139,6 +140,11 @@ pub trait LlmEngine: Send + Sync {
     fn envelope(&self, sender: Option<&str>, text: &str) -> String {
         crate::messaging::build_envelope(sender, text)
     }
+
+    /// A hook this adapter wired fired inside the session. Given the current status, say what
+    /// changes. Pure: core applies the result under the session's lock. Required, because an
+    /// engine that wires no hooks never leaves `Starting`; `Change::default()` says so.
+    fn on_hook(&self, current: &Status, hook: &Hook) -> Change;
 }
 
 /// id → adapter. Ids are unique; registration order does not matter.
@@ -267,6 +273,10 @@ mod tests {
     struct Stub(&'static str);
 
     impl LlmEngine for Stub {
+        fn on_hook(&self, _: &crate::Status, _: &crate::Hook) -> crate::Change {
+            crate::Change::default()
+        }
+
         fn id(&self) -> &str {
             self.0
         }

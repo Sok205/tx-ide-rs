@@ -4,7 +4,11 @@
 
 use std::path::PathBuf;
 
-use tx_core::{Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction};
+use serde_json::Value;
+use tx_core::{
+    Change, Effort, EngineError, Hook, LaunchPlan, LaunchRequest, LlmEngine, State, Status,
+    WorkspaceAction,
+};
 
 pub const CODEX_BIN: &str = "codex";
 pub const SKILLS_DIR: &str = ".agents/skills";
@@ -59,6 +63,27 @@ impl LlmEngine for CodexAdapter {
         }
         Ok(plan)
     }
+
+    /// Codex has no "waiting for input" hook, so it reaches `Waiting` only on an approval.
+    /// `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the process
+    /// lives, and its payload cannot tell the two apart; core ends the session when the
+    /// process is gone.
+    fn on_hook(&self, current: &Status, hook: &Hook) -> Change {
+        match hook.name.as_str() {
+            "SessionStart" | "Stop" | "Interrupt" => Change::to(State::Idle),
+            "UserPromptSubmit" => Change::to(State::Working),
+            "PermissionRequest" => Change {
+                state: Some(State::Waiting),
+                note: hook
+                    .payload
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .map(|tool| format!("approval: {tool}")),
+            },
+            "PostToolUse" if current.state == State::Waiting => Change::to(State::Working),
+            _ => Change::default(),
+        }
+    }
 }
 
 /// One symlink per granted skill dir: `<engine dir>/<skill name>` → the skill dir.
@@ -110,6 +135,57 @@ mod tests {
 
     fn argv(args: &[&str]) -> Vec<String> {
         args.iter().map(|a| (*a).to_owned()).collect()
+    }
+
+    fn hook(name: &str, payload: serde_json::Value) -> Hook {
+        Hook {
+            name: name.into(),
+            payload,
+            at: 2.0,
+        }
+    }
+
+    #[test]
+    fn hooks_to_changes() {
+        use State::*;
+        use serde_json::json;
+        let none = json!({});
+        let table: Vec<(State, &str, serde_json::Value, Change)> = vec![
+            (Starting, "SessionStart", none.clone(), Change::to(Idle)),
+            (Idle, "UserPromptSubmit", none.clone(), Change::to(Working)),
+            (
+                Working,
+                "PermissionRequest",
+                json!({"tool_name": "shell"}),
+                Change::to(Waiting).note("approval: shell"),
+            ),
+            (
+                Working,
+                "PermissionRequest",
+                none.clone(),
+                Change::to(Waiting),
+            ),
+            (Waiting, "PostToolUse", none.clone(), Change::to(Working)),
+            (Working, "PostToolUse", none.clone(), Change::default()),
+            (Working, "Stop", none.clone(), Change::to(Idle)),
+            (Working, "Interrupt", none.clone(), Change::to(Idle)),
+            (
+                Idle,
+                "SessionEnd",
+                json!({"reason": "other"}),
+                Change::default(),
+            ),
+            (Idle, "PreToolUse", none.clone(), Change::default()),
+            (Idle, "Notification", none.clone(), Change::default()),
+        ];
+        for (state, name, payload, expected) in table {
+            let current = Status::new(state, 1.0);
+            assert_eq!(
+                CodexAdapter.on_hook(&current, &hook(name, payload.clone())),
+                expected,
+                "{state:?} {name} {payload}"
+            );
+        }
     }
 
     #[test]

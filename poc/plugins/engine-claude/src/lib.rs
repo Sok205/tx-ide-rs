@@ -4,7 +4,11 @@
 
 use std::path::PathBuf;
 
-use tx_core::{Effort, EngineError, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction};
+use serde_json::Value;
+use tx_core::{
+    Change, Effort, EngineError, Hook, LaunchPlan, LaunchRequest, LlmEngine, State, Status,
+    WorkspaceAction,
+};
 
 pub const CLAUDE_BIN: &str = "claude";
 pub const SKILLS_DIR: &str = ".claude/skills";
@@ -15,6 +19,12 @@ pub const NO_CHROME_FLAG: &str = "--no-chrome";
 pub const APPEND_SYSTEM_PROMPT_FLAG: &str = "--append-system-prompt";
 pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
 pub const DEFAULT_EFFORT: Effort = Effort::High;
+/// `Notification` types that mean "blocked on the operator mid-turn". Not `idle_prompt`: Claude
+/// sends it about 60 s after every finished turn, which is already `Idle`.
+pub const WAITING_NOTIFICATIONS: [&str; 2] = ["permission_prompt", "elicitation_dialog"];
+/// `SessionEnd` reasons that replace the conversation inside a process that keeps running
+/// (`SessionStart` follows at once); they end nothing.
+pub const CONTINUING_END_REASONS: [&str; 2] = ["clear", "resume"];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ClaudeAdapter;
@@ -52,6 +62,38 @@ impl LlmEngine for ClaudeAdapter {
             plan = plan.workspace(link);
         }
         Ok(plan)
+    }
+
+    fn on_hook(&self, current: &Status, hook: &Hook) -> Change {
+        let field = |key: &str| hook.payload.get(key).and_then(Value::as_str);
+        match hook.name.as_str() {
+            "SessionStart" | "Stop" => Change::to(State::Idle),
+            "UserPromptSubmit" => Change::to(State::Working),
+            // The operator answered the prompt that made it wait.
+            "PreToolUse" | "PostToolUse" if current.state == State::Waiting => {
+                Change::to(State::Working)
+            }
+            "Notification"
+                if field("notification_type")
+                    .is_some_and(|kind| WAITING_NOTIFICATIONS.contains(&kind)) =>
+            {
+                Change {
+                    state: Some(State::Waiting),
+                    note: field("message").map(str::to_owned),
+                }
+            }
+            "StopFailure" => Change {
+                state: Some(State::Idle),
+                note: field("error").map(|error| format!("error: {error}")),
+            },
+            "SessionEnd"
+                if !field("reason")
+                    .is_some_and(|reason| CONTINUING_END_REASONS.contains(&reason)) =>
+            {
+                Change::to(State::Ended)
+            }
+            _ => Change::default(),
+        }
     }
 }
 
@@ -105,6 +147,92 @@ mod tests {
 
     fn argv(args: &[&str]) -> Vec<String> {
         args.iter().map(|a| (*a).to_owned()).collect()
+    }
+
+    fn hook(name: &str, payload: serde_json::Value) -> Hook {
+        Hook {
+            name: name.into(),
+            payload,
+            at: 2.0,
+        }
+    }
+
+    #[test]
+    fn hooks_to_changes() {
+        use State::*;
+        use serde_json::json;
+        let none = json!({});
+        let note = |state, note: &str| Change::to(state).note(note);
+        let table: Vec<(State, &str, serde_json::Value, Change)> = vec![
+            (Starting, "SessionStart", none.clone(), Change::to(Idle)),
+            (Idle, "UserPromptSubmit", none.clone(), Change::to(Working)),
+            (Working, "PreToolUse", none.clone(), Change::default()),
+            (Working, "PostToolUse", none.clone(), Change::default()),
+            (Waiting, "PreToolUse", none.clone(), Change::to(Working)),
+            (Waiting, "PostToolUse", none.clone(), Change::to(Working)),
+            (
+                Working,
+                "Notification",
+                json!({"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"}),
+                note(Waiting, "Claude needs your permission to use Bash"),
+            ),
+            (
+                Working,
+                "Notification",
+                json!({"notification_type": "elicitation_dialog"}),
+                Change::to(Waiting),
+            ),
+            (
+                Idle,
+                "Notification",
+                json!({"notification_type": "idle_prompt", "message": "waiting"}),
+                Change::default(),
+            ),
+            (Working, "Notification", none.clone(), Change::default()),
+            (Working, "Stop", none.clone(), Change::to(Idle)),
+            (
+                Working,
+                "StopFailure",
+                json!({"error": "rate_limit"}),
+                note(Idle, "error: rate_limit"),
+            ),
+            (Working, "StopFailure", none.clone(), Change::to(Idle)),
+            (
+                Idle,
+                "SessionEnd",
+                json!({"reason": "logout"}),
+                Change::to(Ended),
+            ),
+            (
+                Idle,
+                "SessionEnd",
+                json!({"reason": "prompt_input_exit"}),
+                Change::to(Ended),
+            ),
+            (Idle, "SessionEnd", none.clone(), Change::to(Ended)),
+            (
+                Idle,
+                "SessionEnd",
+                json!({"reason": "clear"}),
+                Change::default(),
+            ),
+            (
+                Idle,
+                "SessionEnd",
+                json!({"reason": "resume"}),
+                Change::default(),
+            ),
+            (Idle, "PreCompact", none.clone(), Change::default()),
+            (Idle, "stop", none.clone(), Change::default()),
+        ];
+        for (state, name, payload, expected) in table {
+            let current = Status::new(state, 1.0);
+            assert_eq!(
+                ClaudeAdapter.on_hook(&current, &hook(name, payload.clone())),
+                expected,
+                "{state:?} {name} {payload}"
+            );
+        }
     }
 
     #[test]

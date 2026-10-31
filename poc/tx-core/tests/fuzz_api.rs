@@ -126,6 +126,7 @@ fn session_with(parent: Option<SessionId>, tags: Vec<String>, lifecycle: Lifecyc
             args: vec![],
         },
         ext: std::collections::BTreeMap::new(),
+        status: None,
     }
 }
 
@@ -437,6 +438,10 @@ fn core_error_boxes_into_a_threadsafe_error_and_crosses_threads() {
 fn engine_adapter_object_is_usable_from_another_thread() {
     struct Stub;
     impl LlmEngine for Stub {
+        fn on_hook(&self, _: &tx_core::Status, _: &tx_core::Hook) -> tx_core::Change {
+            tx_core::Change::default()
+        }
+
         fn id(&self) -> &str {
             "stub"
         }

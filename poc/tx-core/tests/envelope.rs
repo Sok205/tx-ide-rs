@@ -13,6 +13,10 @@ use tx_core::{
 struct Shout;
 
 impl LlmEngine for Shout {
+    fn on_hook(&self, _: &tx_core::Status, _: &tx_core::Hook) -> tx_core::Change {
+        tx_core::Change::default()
+    }
+
     fn id(&self) -> &str {
         "shout"
     }

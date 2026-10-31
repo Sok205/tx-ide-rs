@@ -15,6 +15,7 @@ pub mod messaging;
 pub mod plugin;
 pub mod profile;
 pub mod session;
+pub mod state;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod store;
@@ -45,6 +46,7 @@ pub use plugin::{
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
 pub use session::{Effort, Launch, Lifecycle, RecordError, Session, SessionId, validate_name};
+pub use state::{Change, Hook, State, Status};
 #[doc(hidden)]
 pub use store::SessionStore;
 /// Stable: they are the payload of `CoreError::Store`.

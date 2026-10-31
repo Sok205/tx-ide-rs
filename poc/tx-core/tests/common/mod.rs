@@ -145,6 +145,10 @@ pub struct ShellStub;
 pub const STUB_ID: &str = "stub";
 
 impl LlmEngine for ShellStub {
+    fn on_hook(&self, _: &tx_core::Status, _: &tx_core::Hook) -> tx_core::Change {
+        tx_core::Change::default()
+    }
+
     fn id(&self) -> &str {
         STUB_ID
     }

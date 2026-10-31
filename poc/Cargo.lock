@@ -1831,6 +1831,7 @@ dependencies = [
 name = "tx-engine-claude"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tempfile",
  "tx-core",
 ]
@@ -1839,6 +1840,7 @@ dependencies = [
 name = "tx-engine-codex"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tempfile",
  "tx-core",
 ]
