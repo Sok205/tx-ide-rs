@@ -1,6 +1,6 @@
 //! Adversarial / property tests for `TxCore` against a private tmux server: a model-based random
 //! operation sequence, record integrity on every error path, terminal states, `resolve` edge
-//! cases, odd tags / parents / env values, concurrent cores, archive-then-create, server death.
+//! cases, odd tags / parents / env values, concurrent cores, stop-then-create, server death.
 //!
 //! Tests marked `#[ignore = "BUG: …"]` document real failures; they stay in the file so the
 //! reproduction survives, and the suite stays green.
@@ -13,9 +13,7 @@ use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, typed, wait_for};
 use proptest::prelude::*;
-use tx_core::{
-    AgentId, CoreError, ListFilter, LlmEngineState, RefreshResult, SendOptions, TxCore,
-};
+use tx_core::{AgentId, CoreError, ListFilter, LlmEngineState, RefreshResult, SendOptions, TxCore};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -103,7 +101,6 @@ enum Op {
         tags: Vec<usize>,
     },
     Stop(usize),
-    Archive(usize),
     Refresh(usize),
     RefreshAll,
     /// `kill-session -t =<name>` behind core's back.
@@ -123,7 +120,6 @@ fn arb_op() -> impl Strategy<Value = Op> {
         2 => (who.clone(), 0..NAMES.len()).prop_map(|(who, name)| Op::Rename { who, name }),
         2 => (who.clone(), tags).prop_map(|(who, tags)| Op::SetTags { who, tags }),
         2 => who.clone().prop_map(Op::Stop),
-        2 => who.clone().prop_map(Op::Archive),
         2 => who.clone().prop_map(Op::Refresh),
         1 => Just(Op::RefreshAll),
         2 => (0..VALID_NAMES).prop_map(Op::Kill),
@@ -140,8 +136,6 @@ struct Rec {
     parent: Option<AgentId>,
     /// The tmux session was killed behind core's back; the record still says running.
     killed: bool,
-    /// Archived: hidden from the default listing, its name free; never deleted.
-    archived: bool,
 }
 
 impl Rec {
@@ -167,14 +161,14 @@ impl Model {
         }
     }
 
-    /// Whether an unarchived record other than `except`, running or not, holds `name`.
+    /// Whether a running record other than `except` holds `name`; an ended one holds none.
     fn name_held(&self, name: &str, except: Option<&AgentId>) -> bool {
         self.recs
             .iter()
-            .any(|(id, rec)| !rec.archived && rec.name == name && Some(id) != except)
+            .any(|(id, rec)| !rec.ended && rec.name == name && Some(id) != except)
     }
 
-    /// The name a create asked `base` gets: the first of `base`, `base-2`, … no unarchived
+    /// The name a create asked `base` gets: the first of `base`, `base-2`, … no running
     /// record holds.
     fn free_name(&self, base: &str) -> String {
         (1..)
@@ -189,12 +183,12 @@ impl Model {
             .unwrap()
     }
 
-    /// The unarchived (`archived: false`) or archived records' ids passing `keep`, sorted.
-    fn listed(&self, archived: bool, keep: impl Fn(&Rec) -> bool) -> Vec<AgentId> {
+    /// The ids of the records passing `keep`, sorted.
+    fn listed(&self, keep: impl Fn(&Rec) -> bool) -> Vec<AgentId> {
         let mut ids: Vec<AgentId> = self
             .recs
             .iter()
-            .filter(|(_, rec)| rec.archived == archived && keep(rec))
+            .filter(|(_, rec)| keep(rec))
             .map(|(id, _)| id.clone())
             .collect();
         ids.sort();
@@ -212,8 +206,7 @@ impl Model {
         names
     }
 
-    /// `resolve(name)`: the `Running` record, else the most recently created unarchived one,
-    /// else the most recently created archived one.
+    /// `resolve(name)`: the `Running` record, else the most recently created ended one.
     fn expected_resolve(&self, name: &str) -> Option<AgentId> {
         let named: Vec<&AgentId> = self
             .all_ids
@@ -223,7 +216,6 @@ impl Model {
         named
             .iter()
             .find(|id| !self.recs[*id].ended)
-            .or(named.iter().rev().find(|id| !self.recs[*id].archived))
             .or(named.last())
             .map(|id| (*id).clone())
     }
@@ -249,38 +241,38 @@ fn check_model(
         ids
     };
     let listed = sorted(core.list_agents(&ListFilter::default()).unwrap());
-    prop_assert_eq!(listed, model.listed(false, |_| true), "step {}: ids", step);
-    let archived = sorted(core.list_agents(&ListFilter::new().archived()).unwrap());
-    prop_assert_eq!(
-        archived,
-        model.listed(true, |_| true),
-        "step {}: archived ids",
-        step
-    );
+    prop_assert_eq!(listed, model.listed(|_| true), "step {}: ids", step);
 
     let running = sorted(core.list_agents(&ListFilter::new().running()).unwrap());
     prop_assert_eq!(
         running,
-        model.listed(false, |rec| !rec.ended),
+        model.listed(|rec| !rec.ended),
         "step {}: running filter",
+        step
+    );
+    let ended = sorted(core.list_agents(&ListFilter::new().ended()).unwrap());
+    prop_assert_eq!(
+        ended,
+        model.listed(|rec| rec.ended),
+        "step {}: ended filter",
         step
     );
 
     let tagged = sorted(core.list_agents(&ListFilter::new().tag("t1")).unwrap());
     prop_assert_eq!(
         tagged,
-        model.listed(false, |rec| rec.tags.iter().any(|t| t == "t1")),
+        model.listed(|rec| rec.tags.iter().any(|t| t == "t1")),
         "step {}: tag filter",
         step
     );
-    let tagged_archived = sorted(
-        core.list_agents(&ListFilter::new().tag("t1").archived())
+    let tagged_ended = sorted(
+        core.list_agents(&ListFilter::new().tag("t1").ended())
             .unwrap(),
     );
     prop_assert_eq!(
-        tagged_archived,
-        model.listed(true, |rec| rec.tags.iter().any(|t| t == "t1")),
-        "step {}: archived tag filter",
+        tagged_ended,
+        model.listed(|rec| rec.ended && rec.tags.iter().any(|t| t == "t1")),
+        "step {}: ended tag filter",
         step
     );
 
@@ -291,7 +283,7 @@ fn check_model(
         );
         prop_assert_eq!(
             children,
-            model.listed(false, |rec| rec.parent.as_ref() == Some(first)),
+            model.listed(|rec| rec.parent.as_ref() == Some(first)),
             "step {}: parent filter",
             step
         );
@@ -308,13 +300,6 @@ fn check_model(
             id
         );
         prop_assert_eq!(&session.tags, &rec.tags, "step {}: tags of {}", step, id);
-        prop_assert_eq!(
-            session.archived_at.is_some(),
-            rec.archived,
-            "step {}: archived_at presence of {}",
-            step,
-            id
-        );
         prop_assert_eq!(
             &session.parent_id,
             &rec.parent,
@@ -386,7 +371,6 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                             tags: opts.tags,
                             parent: opts.parent,
                             killed: false,
-                            archived: false,
                         },
                     );
                     model.log_len += 1;
@@ -466,38 +450,6 @@ fn run_ops(h: &Harness, core: &TxCore, ops: &[Op]) -> Result<(), TestCaseError> 
                     rec.killed = false;
                     model.log_len += 1;
                     touched.insert(id);
-                }
-            }
-            Op::Archive(who) => {
-                let id = model.id_for(*who);
-                let expected = if model.recs.contains_key(&id) {
-                    "Ok"
-                } else {
-                    "NotFound"
-                };
-                let result = core.archive_agent(&id);
-                prop_assert_eq!(verdict(&result), expected, "step {}: archive {}", step, id);
-                if let Ok(session) = result {
-                    let rec = model.recs.get_mut(&id).unwrap();
-                    if !rec.archived {
-                        // A running one is stopped first: `Stopped`, or `Exited` when its
-                        // tmux session was already gone.
-                        if !rec.ended {
-                            rec.ended = true;
-                            rec.killed = false;
-                            model.log_len += 1;
-                        }
-                        rec.archived = true;
-                        model.log_len += 1;
-                        touched.insert(id);
-                    }
-                    prop_assert_eq!(
-                        session.state == LlmEngineState::Ended,
-                        rec.ended,
-                        "step {}: archive",
-                        step
-                    );
-                    prop_assert!(session.archived_at.is_some());
                 }
             }
             Op::Refresh(who) => {
@@ -660,11 +612,7 @@ fn scripted_corner_sequence_matches_the_model() {
         alpha(),                        // alpha-2: killed but still Running, alpha is held
         Op::Rename { who: 1, name: 0 }, // NameTaken: record of alpha is Running
         Op::Stop(0),                    // Exited, not Stopped
-        alpha(),                        // alpha-3: an ended, unarchived record holds alpha
-        Op::Archive(0),                 // already ended: archived only
-        alpha(),                        // alpha: the first holder is archived
-        Op::Archive(2),                 // a live one: stopped, then archived; no orphan
-        alpha(),                        // alpha-2 again: its holder is archived
+        alpha(),                        // alpha: an ended record does not hold its name
         Op::Rename { who: 1, name: 0 }, // NameTaken by the running alpha
         Op::Kill(1),
         Op::Rename { who: 1, name: 2 }, // killed record: record-only rename, Ok
@@ -676,14 +624,15 @@ fn scripted_corner_sequence_matches_the_model() {
             to: 0,
             from: Some(9),
         }, // NotFound (sender)
-        Op::Archive(0),                 // already archived: unchanged, no event
-        Op::Archive(9),                 // NotFound
+        Op::Stop(9),                    // NotFound
         Op::Kill(0),                    // the running alpha
-        Op::Archive(4),                 // killed: Exited, then archived
-        alpha(),                        // alpha: every record named alpha is archived
-        Op::Rename { who: 0, name: 2 }, // NameTaken: an archived record obeys the name rule
-        Op::Archive(1),
-        Op::Rename { who: 0, name: 2 }, // Ok: gamma's holder is archived too
+        Op::Stop(3),                    // killed: Exited
+        alpha(),                        // alpha: every record named alpha is ended
+        Op::Stop(4),                    // resolve: the most recently created of three ended
+        Op::Rename { who: 0, name: 2 }, // Ok: gamma's holder is ended
+        Op::Rename { who: 2, name: 2 }, // Ok: a running record takes it from two ended ones
+        Op::Rename { who: 0, name: 0 }, // Ok: back to alpha, held by ended records only
+        Op::Rename { who: 0, name: 2 }, // NameTaken: an ended record obeys the running holder
     ];
     run_ops(&h, &core, &ops).unwrap();
 }
@@ -709,12 +658,12 @@ fn resolve_prefers_an_id_over_a_name_equal_to_it() {
     );
     assert_eq!(core.resolve(b.as_str()).unwrap(), b);
     assert_eq!(core.resolve("a").unwrap(), a);
-    // Archived, the id record still exists, and the id still wins.
-    core.archive_agent(&a).unwrap();
+    // Ended, the id record still exists, and the id still wins.
+    core.stop_agent(&a).unwrap();
     assert_eq!(
         core.resolve(a.as_str()).unwrap(),
         a,
-        "an archived id still resolves as an id"
+        "an ended id still resolves as an id"
     );
     // Once the id record is gone (deleted by hand: core never deletes one), the name surfaces.
     std::fs::remove_file(h.data_dir().join(format!("agents/{a}/agent.json"))).unwrap();
@@ -735,16 +684,16 @@ fn resolve_three_records_one_name() {
     let core = h.open_with_engine();
     let repository = h.repository("a");
     let first = core.create_agent(agent("n", &repository)).unwrap();
-    // An ended, unarchived record keeps its name: only archiving frees it.
-    core.stop_agent(&first).unwrap();
+    // A running record holds its name; an ended one does not.
     let held = core.create_agent(agent("n", &repository)).unwrap();
     assert_eq!(core.get_agent(&held).unwrap().name, "n-2");
-    core.archive_agent(&held).unwrap();
-    core.archive_agent(&first).unwrap();
+    core.stop_agent(&held).unwrap();
+    core.stop_agent(&first).unwrap();
     let second = core.create_agent(agent("n", &repository)).unwrap();
     assert_eq!(core.get_agent(&second).unwrap().name, "n");
-    core.archive_agent(&second).unwrap();
+    core.stop_agent(&second).unwrap();
     let third = core.create_agent(agent("n", &repository)).unwrap();
+    assert_eq!(core.get_agent(&third).unwrap().name, "n");
     assert_eq!(core.resolve("n").unwrap(), third);
     // Kill behind the back: the record is still Running and still wins.
     h.tmux_ok(&["kill-session", "-t", "=n"]);
@@ -754,22 +703,16 @@ fn resolve_three_records_one_name() {
     assert_eq!(
         core.resolve("n").unwrap(),
         third,
-        "the unarchived one, though ended, beats the archived ones"
+        "most recently created among the ended"
     );
-    core.archive_agent(&third).unwrap();
-    assert_eq!(
-        core.resolve("n").unwrap(),
-        third,
-        "most recently created among the archived"
-    );
-    // Rename an older archived record away and back: still the most recent *created* wins.
+    // Rename an older ended record away and back: still the most recent *created* wins.
     core.rename_agent(&first, "m").unwrap();
     core.rename_agent(&first, "n").unwrap();
     assert_eq!(core.resolve("n").unwrap(), third);
-    // An older unarchived record beats a newer archived one.
+    // An older running record beats a newer ended one.
     let older = core.create_agent(agent("o", &repository)).unwrap();
     let newer = core.create_agent(agent("p", &repository)).unwrap();
-    core.archive_agent(&newer).unwrap();
+    core.stop_agent(&newer).unwrap();
     core.rename_agent(&older, "p").unwrap();
     assert_eq!(core.resolve("p").unwrap(), older);
 }
@@ -974,34 +917,32 @@ fn eight_cores_create_distinct_names_in_parallel() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 8. archive then create / refresh
+// 8. stop then create / refresh
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn archive_of_a_live_session_stops_it_and_frees_its_name() {
+fn stop_of_a_live_session_frees_its_name() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
     let id = core.create_agent(agent("f", &h.repository("a"))).unwrap();
-    let archived = core.archive_agent(&id).unwrap();
-    assert_eq!(archived.state, LlmEngineState::Ended);
-    assert!(
-        h.live_names().is_empty(),
-        "stopped first: no orphan in tmux"
-    );
+    let stopped = core.stop_agent(&id).unwrap();
+    assert_eq!(stopped.state, LlmEngineState::Ended);
+    assert!(h.live_names().is_empty(), "no orphan in tmux");
     let again = core.create_agent(agent("f", &h.repository("b"))).unwrap();
     assert_ne!(again, id);
+    assert_eq!(core.get_agent(&again).unwrap().name, "f");
     assert_eq!(
-        core.list_agents(&ListFilter::default()).unwrap(),
+        core.list_agents(&ListFilter::new().running()).unwrap(),
         std::slice::from_ref(&again)
     );
     assert_eq!(
-        core.list_agents(&ListFilter::new().archived()).unwrap(),
+        core.list_agents(&ListFilter::new().ended()).unwrap(),
         std::slice::from_ref(&id)
     );
     assert!(
         core.refresh_all().unwrap().is_empty(),
-        "an archived record has nothing to refresh"
+        "an ended record has nothing to refresh"
     );
     assert!(matches!(
         core.refresh_agent(&id).unwrap(),
@@ -1020,10 +961,10 @@ fn archive_of_a_live_session_stops_it_and_frees_its_name() {
         "NotRunning"
     );
     assert_eq!(kind(&core.stop_agent(&id).unwrap_err()), "NotRunning");
-    // An archived record still obeys the name rule, and may take a free name.
+    // An ended record still obeys the name rule, and may take a free name.
     assert_eq!(
         core.rename_agent(&id, "f").unwrap(),
-        archived,
+        stopped,
         "renaming to its own name is a no-op"
     );
     assert_eq!(core.rename_agent(&id, "g").unwrap().name, "g");
@@ -1036,10 +977,7 @@ fn archive_of_a_live_session_stops_it_and_frees_its_name() {
         "nothing is deleted"
     );
     assert_eq!(h.live_names(), ["f"]);
-    assert_eq!(
-        log_types(&h),
-        ["created", "stopped", "archived", "created", "renamed"]
-    );
+    assert_eq!(log_types(&h), ["created", "stopped", "created", "renamed"]);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1125,7 +1063,6 @@ fn location_survives_a_rename_behind_the_back_and_server_death_is_not_running() 
         "NotRunning"
     );
     assert!(core.refresh_all().unwrap().is_empty());
-    core.archive_agent(&a).unwrap();
     // Creating again starts a fresh server; old records stay Exited.
     let c = core.create_agent(agent("renamed", &repository)).unwrap();
     assert_eq!(h.live_names(), ["renamed"]);
@@ -1177,7 +1114,6 @@ fn terminal_records_never_revive() {
             core.refresh_agent(id).unwrap(),
             RefreshResult::Unchanged(_)
         ));
-        // Distinct names: an ended, unarchived record keeps holding the one it takes.
         core.rename_agent(id, &format!("zz{index}")).unwrap();
         core.rename_agent(id, &format!("back{index}")).unwrap();
         core.set_agent_tags(id, vec!["t".into()]).unwrap();

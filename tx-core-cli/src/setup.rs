@@ -13,9 +13,6 @@ use crate::plugins;
 /// Renames all five directories at once, as `NVIM_APPNAME` does for nvim.
 pub const APPNAME_ENV: &str = "TX_APPNAME";
 pub const DEFAULT_APPNAME: &str = "tx-ide";
-/// The version-1 home `tx migrate` moves by default: `$TX_CORE_HOME`, else `~/.tx-core`.
-pub const VERSION_ONE_HOME_ENV: &str = "TX_CORE_HOME";
-pub const VERSION_ONE_HOME: &str = ".tx-core";
 /// Under the data dir the roles plugins ship (written by `ui install`); under the config dir
 /// the user's own.
 pub const ROLES_DIR: &str = "roles";
@@ -32,9 +29,6 @@ pub enum Failure {
     Verb(tx_core::VerbError),
     /// The environment names an invalid application or leaves a directory unresolvable.
     Environment(String),
-    /// `--state-dir` alone, on a directory laid out the version-1 way.
-    VersionOneHome(PathBuf),
-    Migration(tx_core::migrate::MigrationError),
 }
 
 impl From<CoreError> for Failure {
@@ -51,13 +45,6 @@ impl std::fmt::Display for Failure {
             Failure::Plugin(error) => error.fmt(f),
             Failure::Verb(error) => error.fmt(f),
             Failure::Environment(text) => f.write_str(text),
-            Failure::VersionOneHome(dir) => write!(
-                f,
-                "{} is a version-1 home; run `tx migrate --from {}`",
-                dir.display(),
-                dir.display()
-            ),
-            Failure::Migration(error) => error.fmt(f),
         }
     }
 }
@@ -177,22 +164,6 @@ fn names_a_directory(global: &Global) -> bool {
     .any(|flag| flag.is_some())
 }
 
-/// An old script's `--state-dir ~/.tx-core` meant "everything"; now it names only the state
-/// directory. Caught when it is the only directory flag and points at a version-1 home.
-fn refuse_a_version_one_home(global: &Global) -> Result<(), Failure> {
-    let Some(state) = &global.state_dir else {
-        return Ok(());
-    };
-    let only_flag = global.config_dir.is_none()
-        && global.data_dir.is_none()
-        && global.cache_dir.is_none()
-        && global.run_dir.is_none();
-    if only_flag && state.join(tx_core::core::SESSIONS_DIR).is_dir() {
-        return Err(Failure::VersionOneHome(absolute(state.clone())));
-    }
-    Ok(())
-}
-
 pub fn absolute(path: PathBuf) -> PathBuf {
     if path.is_absolute() {
         return path;
@@ -219,8 +190,7 @@ fn default_skill_dirs(directories: &Directories) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The core config from the globals and the process environment; touches no disk beyond the
-/// version-1 check.
+/// The core config from the globals and the process environment; touches no disk.
 pub fn core_config(global: &Global) -> Result<CoreConfig, Failure> {
     core_config_in(global, &process_environment)
 }
@@ -229,7 +199,6 @@ pub fn core_config_in(
     global: &Global,
     environment: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<CoreConfig, Failure> {
-    refuse_a_version_one_home(global)?;
     let application = application_name(environment)?;
     let directories = directories(global, &application, environment)?;
     let profile_dirs = if global.profile_dirs.is_empty() {
@@ -298,22 +267,8 @@ pub fn open(global: &Global) -> Result<TxCore, Failure> {
 /// (those naming an engine it does not know) are skipped by every read; this names each on
 /// stderr, once per invocation.
 pub fn open_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
-    open_core(global, config, TxCore::open)
-}
-
-/// [`open_with`] for `tx migrate`: the version-1 records in `<data>/sessions/` do not refuse
-/// the open, since upgrading them is the point.
-pub fn open_for_migration_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
-    open_core(global, config, TxCore::open_for_migration)
-}
-
-fn open_core(
-    global: &Global,
-    config: CoreConfig,
-    open: fn(CoreConfig) -> Result<TxCore, CoreError>,
-) -> Result<TxCore, Failure> {
     let cfg = plugin_config(global, &config)?;
-    let mut core = open(config)?;
+    let mut core = TxCore::open(config)?;
     core.plug(plugins::manifest(), &cfg)
         .map_err(Failure::Plugin)?;
     for (id, reason) in core.skipped_records()? {

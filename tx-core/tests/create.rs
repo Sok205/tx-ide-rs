@@ -67,7 +67,6 @@ fn an_agent_runs_detached_with_the_tx_environment() {
     ] {
         assert_eq!(get(&env, key), Some(directory.to_str().unwrap()), "{key}");
     }
-    assert_eq!(get(&env, "TX_CORE_HOME"), None);
     let location = core.get_execution_location(&id).unwrap();
     assert_eq!(location.socket, h.socket());
     assert!(location.session_target.starts_with('$'));
@@ -362,10 +361,12 @@ fn every_agent_gets_its_own_detached_worktree_under_a_free_name() {
     assert_eq!(core.resolve("w").unwrap(), first);
     assert_eq!(core.resolve("w-2").unwrap(), second);
 
-    // Stopped: the name is free again, but its tree is still on disk, so the next is `w-3`.
+    // Stopped: the name is free again, but its tree is still on disk, so the next tree is
+    // `w-3`.
     core.stop_agent(&first).unwrap();
-    let third = core.create_agent(agent("w", &repository)).unwrap();
-    assert_eq!(core.get_agent(&third).unwrap().name, "w-3");
+    let third = core.get_agent(&core.create_agent(agent("w", &repository)).unwrap()).unwrap();
+    assert_eq!(third.name, "w");
+    assert_eq!(third.working_directory, expected("w-3"));
     assert!(expected("w").is_dir(), "stop never removes a worktree");
 }
 
@@ -400,24 +401,19 @@ fn a_program_that_exits_at_once_yields_an_exited_record() {
         .unwrap();
     let session = core.refresh_agent(&id).unwrap().agent().clone();
     assert!(session.state == LlmEngineState::Ended, "{session:?}");
-    let repository = h.repository("q2");
-    let held = core.create_agent(exiting("quick", &repository)).unwrap();
-    assert_eq!(
-        core.get_agent(&held).unwrap().name,
-        "quick-2",
-        "an exited record keeps its name"
-    );
-    core.archive_agent(&id).unwrap();
-    let freed = core.create_agent(exiting("quick", &repository)).unwrap();
+    let freed = core
+        .create_agent(exiting("quick", &h.repository("q2")))
+        .unwrap();
+    assert_ne!(freed, id);
     assert_eq!(
         core.get_agent(&freed).unwrap().name,
         "quick",
-        "the name is free once archived"
+        "an exited record frees its name"
     );
 }
 
 #[test]
-fn names_are_unique_among_unarchived_sessions() {
+fn names_are_unique_among_running_sessions() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
@@ -431,20 +427,13 @@ fn names_are_unique_among_unarchived_sessions() {
     assert_eq!(names, ["dup", "dup-2"]);
     core.stop_agent(&first).unwrap();
     let third = core.create_agent(agent("dup", &other_repository)).unwrap();
+    assert_ne!(first, third);
     assert_eq!(
         core.get_agent(&third).unwrap().name,
-        "dup-3",
-        "a stopped record keeps its name"
-    );
-    core.archive_agent(&first).unwrap();
-    let second = core.create_agent(agent("dup", &other_repository)).unwrap();
-    assert_ne!(first, second);
-    assert_eq!(
-        core.get_agent(&second).unwrap().name,
         "dup",
-        "archived, the name is free again"
+        "stopped, the name is free again"
     );
-    assert_eq!(core.resolve("dup").unwrap(), second);
+    assert_eq!(core.resolve("dup").unwrap(), third);
 }
 
 #[test]
@@ -532,26 +521,25 @@ fn list_and_resolve() {
 }
 
 #[test]
-fn resolve_prefers_unarchived_then_most_recent_archived() {
+fn resolve_prefers_running_then_most_recent_ended() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
     let repository = h.repository("a");
     let first = core.create_agent(agent("n", &repository)).unwrap();
-    core.archive_agent(&first).unwrap();
+    core.stop_agent(&first).unwrap();
     let second = core.create_agent(agent("n", &repository)).unwrap();
-    core.archive_agent(&second).unwrap();
+    core.stop_agent(&second).unwrap();
     assert_eq!(
         core.resolve("n").unwrap(),
         second,
-        "the most recent archived one when none is unarchived"
+        "the most recent ended one when none is running"
     );
     let third = core.create_agent(agent("n", &repository)).unwrap();
-    core.stop_agent(&third).unwrap();
     assert_eq!(
         core.resolve("n").unwrap(),
         third,
-        "the unarchived one wins, running or not"
+        "the running one wins"
     );
 }
 

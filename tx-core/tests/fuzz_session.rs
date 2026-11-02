@@ -70,7 +70,7 @@ fn arb_non_finite_f64() -> impl Strategy<Value = f64> {
 
 fn arb_session_with(
     created_at: impl Strategy<Value = f64>,
-    archived_at: impl Strategy<Value = Option<f64>>,
+    last_activity_at: impl Strategy<Value = Option<f64>>,
 ) -> impl Strategy<Value = Agent> {
     (
         arb_session_id(),
@@ -80,7 +80,7 @@ fn arb_session_with(
         prop::collection::vec(arb_text(), 0..4),
         arb_state(),
         created_at,
-        archived_at,
+        last_activity_at,
         prop::collection::vec(arb_text(), 0..4),
         prop::option::of(arb_session_id()),
         prop::collection::btree_map(arb_text(), arb_json(), 0..3),
@@ -94,7 +94,7 @@ fn arb_session_with(
                 roles,
                 state,
                 created_at,
-                archived_at,
+                last_activity_at,
                 tags,
                 parent_id,
                 ext,
@@ -107,8 +107,7 @@ fn arb_session_with(
                 state,
                 created_at,
                 last_modified_at: created_at,
-                last_activity_at: None,
-                archived_at,
+                last_activity_at,
                 tags,
                 parent_id,
                 ext,
@@ -157,7 +156,7 @@ const TOP_KEYS: [&str; 13] = [
     "state",
     "created_at",
     "last_modified_at",
-    "archived_at",
+    "last_activity_at",
     "tags",
     "parent_id",
     "ext",
@@ -197,7 +196,10 @@ proptest! {
         prop_assert_eq!(&back, &session);
         // PartialEq treats -0.0 == 0.0; make sure the sign bit survives too.
         prop_assert_eq!(back.created_at.to_bits(), session.created_at.to_bits());
-        prop_assert_eq!(back.archived_at.map(f64::to_bits), session.archived_at.map(f64::to_bits));
+        prop_assert_eq!(
+            back.last_activity_at.map(f64::to_bits),
+            session.last_activity_at.map(f64::to_bits)
+        );
     }
 
     #[test]
@@ -231,10 +233,10 @@ proptest! {
         prop_assert!(refused);
     }
 
-    /// `Some(NaN)` archived_at would silently become `None` after a round trip.
+    /// `Some(NaN)` last_activity_at would silently become `None` after a round trip.
     #[test]
-    fn non_finite_archived_at_is_refused(session in arb_session_with(Just(1.0), arb_non_finite_f64().prop_map(Some))) {
-        let refused = matches!(session.to_json(), Err(RecordError::NonFiniteTime("archived_at")));
+    fn non_finite_last_activity_at_is_refused(session in arb_session_with(Just(1.0), arb_non_finite_f64().prop_map(Some))) {
+        let refused = matches!(session.to_json(), Err(RecordError::NonFiniteTime("last_activity_at")));
         prop_assert!(refused);
     }
 }
@@ -266,8 +268,7 @@ fn sample() -> Agent {
         state: LlmEngineState::Ended,
         created_at: 1.0,
         last_modified_at: 1.0,
-        last_activity_at: None,
-        archived_at: Some(2.0),
+        last_activity_at: Some(2.0),
         tags: vec![],
         parent_id: None,
         ext: std::collections::BTreeMap::new(),
@@ -526,7 +527,6 @@ proptest! {
         let result = Agent::from_json(&Value::Object(value).to_string());
         match version.as_u64() {
             Some(RECORD_VERSION) => prop_assert!(result.is_ok(), "{result:?}"),
-            Some(1) => prop_assert!(matches!(result, Err(RecordError::NeedsMigration(1))), "{result:?}"),
             Some(other) => prop_assert!(matches!(result, Err(RecordError::UnsupportedVersion(v)) if v == other), "{result:?}"),
             None => {
                 let expected = version.to_string();
@@ -573,7 +573,7 @@ fn from_json_requires_all_mandatory_fields() {
             ),
             // A missing Option field reads as None, same as an explicit null.
             "parent_id" => assert_eq!(result.unwrap().parent_id, None),
-            "archived_at" => assert_eq!(result.unwrap().archived_at, None),
+            "last_activity_at" => assert_eq!(result.unwrap().last_activity_at, None),
             "ext" => assert!(result.unwrap().ext.is_empty()),
             _ => assert!(
                 matches!(result, Err(RecordError::Json(_))),

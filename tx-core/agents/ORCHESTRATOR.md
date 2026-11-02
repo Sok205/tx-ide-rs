@@ -37,7 +37,7 @@ track and escalate.
    report. The operator reviews and merges; you never merge or open a GitHub PR unless the operator
    says so.
 7. **After each merge**, tell every running implementer whose branch is affected to rebase, mark
-   dependents ready, and retire the finished implementer and QA agents with `tx archive <agent>`.
+   dependents ready, and retire the finished implementer and QA agents with `tx stop <agent>`.
 
 ## Watching agents
 

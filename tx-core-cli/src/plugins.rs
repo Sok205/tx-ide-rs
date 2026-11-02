@@ -47,7 +47,7 @@ pub const RETIRED: &[&str] = &["hooks", "history"];
 /// The built-in verbs; a plugin may not register one of these.
 pub const RESERVED: &[&str] = &[
     "help", "engines", "plugins", "create", "fork", "respawn", "ls", "show", "rename", "tag",
-    "send", "refresh", "where", "attach", "stop", "archive",
+    "send", "where", "attach", "stop",
 ];
 
 #[derive(Deserialize, Default)]

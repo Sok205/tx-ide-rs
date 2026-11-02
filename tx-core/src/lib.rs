@@ -13,7 +13,6 @@ pub mod locks;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod messaging;
-pub mod migrate;
 pub mod mirror;
 pub mod plugin;
 pub mod profile;

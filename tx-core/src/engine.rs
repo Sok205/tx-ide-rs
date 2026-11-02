@@ -352,21 +352,6 @@ pub trait LlmEngine: Send + Sync {
         None
     }
 
-    /// The engine data of a version-1 record, for `tx migrate`: `record` is the whole
-    /// version-1 JSON object (`id`, `cwd`, the retired chat plugin's `ext.chat`, …) and
-    /// `launch` its agent launch (`engine`, `profile`, `model`, `effort`, `resume`: the record's
-    /// own `launch`, or `ext.chat.launch` for a fork disguised as a process). Returns the
-    /// complete value of `ext[self.ext_key()]`: the options the engine still accepts and, when
-    /// the record names one ([`crate::migrate::version_one_conversation`]), the conversation.
-    /// Pure. The default knows no version-1 records and answers an empty object.
-    fn upgrade_version_one(
-        &self,
-        record: &serde_json::Map<String, serde_json::Value>,
-        launch: &serde_json::Map<String, serde_json::Value>,
-    ) -> serde_json::Value {
-        let _ = (record, launch);
-        serde_json::Value::Object(serde_json::Map::new())
-    }
 }
 
 /// This engine's data in a record: `ext[ext_key]`, `Null` when absent. A non-object value (a
@@ -707,7 +692,6 @@ mod tests {
             created_at: 0.0,
             last_modified_at: 0.0,
             last_activity_at: None,
-            archived_at: None,
             tags: Vec::new(),
             parent_id: None,
             ext: BTreeMap::new(),

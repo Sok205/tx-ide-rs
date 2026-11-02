@@ -33,7 +33,6 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tx_core::migrate::version_one_conversation;
 use tx_core::{
     Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
     LlmEngineChange, LlmEngineHook, LlmEngineState, WorkspaceAction, engine_data,
@@ -307,35 +306,6 @@ impl LlmEngine for CodexAdapter {
     /// answered. `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the
     /// process lives, and its payload cannot tell the two apart; core ends the session when the
     /// process is gone.
-    /// `model` and `effort` from the version-1 launch (an effort Codex does not accept is
-    /// dropped), and the conversation the record names with the rollout path the chat plugin
-    /// recorded; a conversation without a recorded path gets the id alone (the rollout's name
-    /// carries its creation time, so nothing can rebuild it).
-    fn upgrade_version_one(
-        &self,
-        record: &serde_json::Map<String, Value>,
-        launch: &serde_json::Map<String, Value>,
-    ) -> Value {
-        let mut data = serde_json::Map::new();
-        if let Some(model) = launch.get(MODEL_KEY).and_then(Value::as_str) {
-            data.insert(MODEL_KEY.into(), model.into());
-        }
-        if let Some(effort) = launch
-            .get(EFFORT_KEY)
-            .and_then(Value::as_str)
-            .and_then(|effort| effort.parse::<Effort>().ok())
-        {
-            data.insert(EFFORT_KEY.into(), effort.as_str().into());
-        }
-        if let Some((conversation, transcript)) = version_one_conversation(record, launch) {
-            data.insert(CONVERSATION_ID_KEY.into(), conversation.into());
-            if let Some(transcript) = transcript {
-                data.insert(TRANSCRIPT_PATH_KEY.into(), transcript.into());
-            }
-        }
-        Value::Object(data)
-    }
-
     fn on_hook(&self, session: &Agent, hook: &LlmEngineHook) -> LlmEngineChange {
         let state = match hook.name.as_str() {
             "SessionStart" | "Stop" | "Interrupt" | "PermissionRequest" => {
@@ -540,7 +510,6 @@ mod tests {
             created_at: 1.0,
             last_modified_at: 1.0,
             last_activity_at: None,
-            archived_at: None,
             tags: Vec::new(),
             parent_id: None,
             ext,
@@ -1268,41 +1237,4 @@ mod tests {
         }
     }
 
-    /// `tx migrate`: the version-1 launch's options (an effort Codex does not accept dropped),
-    /// and the conversation the chat plugin captured with its rollout; a resume id alone names
-    /// the conversation without a path, since nothing can rebuild a rollout's name.
-    #[test]
-    fn upgrade_version_one_builds_the_engine_data() {
-        let engine = adapter();
-        let object = |value: serde_json::Value| value.as_object().unwrap().clone();
-        let record = object(serde_json::json!({
-            "id": "a", "cwd": "/w",
-            "ext": {"chat": {"chats": [{"id": "c1", "transcript": "/h/sessions/rollout-c1.jsonl"}]}},
-        }));
-        let launch = object(serde_json::json!({
-            "kind": "agent", "engine": "codex", "model": "gpt-6.1-sol", "effort": "medium",
-        }));
-        assert_eq!(
-            engine.upgrade_version_one(&record, &launch),
-            serde_json::json!({"model": "gpt-6.1-sol", "effort": "medium", "conversation_id": "c1", "transcript_path": "/h/sessions/rollout-c1.jsonl"})
-        );
-        let launch = object(
-            serde_json::json!({"kind": "agent", "engine": "codex", "effort": "extreme", "resume": "r1"}),
-        );
-        assert_eq!(
-            engine.upgrade_version_one(
-                &object(serde_json::json!({"id": "a", "cwd": "/w"})),
-                &launch
-            ),
-            serde_json::json!({"conversation_id": "r1"}),
-            "an effort Codex refuses is dropped; a resume id has no rollout path"
-        );
-        assert_eq!(
-            engine.upgrade_version_one(
-                &object(serde_json::json!({"id": "a"})),
-                &object(serde_json::json!({"kind": "agent"}))
-            ),
-            serde_json::json!({})
-        );
-    }
 }

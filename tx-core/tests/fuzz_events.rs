@@ -378,7 +378,6 @@ fn event_type_names_unique_and_stable() {
             "engine-data-changed",
             "exited",
             "stopped",
-            "archived",
             "archive-failed"
         ]
     );

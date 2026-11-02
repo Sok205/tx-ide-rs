@@ -38,8 +38,6 @@ pub enum EventType {
     EngineDataChanged,
     Exited,
     Stopped,
-    /// Hidden from listings, nothing deleted; a respawn brings it back.
-    Archived,
     /// The engine could not archive the agent's conversation (after a hook, a stop or an
     /// exit); detail is the error. The operation itself succeeded.
     ArchiveFailed,
@@ -57,7 +55,6 @@ impl EventType {
         EventType::EngineDataChanged,
         EventType::Exited,
         EventType::Stopped,
-        EventType::Archived,
         EventType::ArchiveFailed,
     ];
 
@@ -73,7 +70,6 @@ impl EventType {
             EventType::EngineDataChanged => "engine-data-changed",
             EventType::Exited => "exited",
             EventType::Stopped => "stopped",
-            EventType::Archived => "archived",
             EventType::ArchiveFailed => "archive-failed",
         }
     }
@@ -410,7 +406,6 @@ mod tests {
                 "engine-data-changed",
                 "exited",
                 "stopped",
-                "archived",
                 "archive-failed"
             ]
         );

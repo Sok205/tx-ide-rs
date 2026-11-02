@@ -1,4 +1,4 @@
-//! rename / tags / refresh / stop / respawn / archive / location / send, against a private tmux
+//! rename / tags / refresh / stop / respawn / location / send, against a private tmux
 //! server.
 
 mod common;
@@ -64,18 +64,14 @@ fn rename_updates_tmux_and_record() {
         core.get_execution_location(&id).unwrap().session_target,
         core.get_execution_location(&id).unwrap().session_target
     );
-    // A stopped record keeps its name.
+    // A stopped record frees its name.
     core.stop_agent(&other).unwrap();
-    assert!(matches!(
-        core.rename_agent(&id, "taken").unwrap_err(),
-        CoreError::NameTaken(_)
-    ));
-    // Renaming a stopped record is a record-only change, and frees the old name.
+    assert_eq!(core.rename_agent(&id, "taken").unwrap().name, "taken");
+    // Renaming a stopped record is a record-only change.
     assert_eq!(
         core.rename_agent(&other, "was-taken").unwrap().name,
         "was-taken"
     );
-    assert_eq!(core.rename_agent(&id, "taken").unwrap().name, "taken");
     assert_eq!(core.get_agent(&other).unwrap().state, LlmEngineState::Ended);
     let types: Vec<String> = h
         .log_lines()
@@ -420,18 +416,9 @@ fn respawn_refusals_change_nothing() {
         .initial_prompt("start");
     let a = core.create_agent(opts).unwrap();
     core.stop_agent(&a).unwrap();
-    // A stopped agent keeps its name: a rename onto it is refused.
-    let b = core.create_agent(agent("b", &repository)).unwrap();
-    assert!(matches!(
-        core.rename_agent(&b, "a").unwrap_err(),
-        CoreError::NameTaken(ref name) if name == "a"
-    ));
-    core.stop_agent(&b).unwrap();
-    core.archive_agent(&b).unwrap();
-    // Archived, `a` frees its name; a new agent takes it, in a worktree of its own (the
-    // archived one keeps its directory). `a` cannot come back under the name, and is never
-    // renamed for it.
-    core.archive_agent(&a).unwrap();
+    // Stopped, `a` frees its name; a new agent takes it, in a worktree of its own (the ended
+    // one keeps its directory). `a` cannot come back under the name, and is never renamed for
+    // it.
     let c = core.create_agent(agent("a", &repository)).unwrap();
     assert_eq!(core.get_agent(&c).unwrap().name, "a");
     assert!(cwd_of(&core, &a).is_dir());
@@ -447,9 +434,10 @@ fn respawn_refusals_change_nothing() {
     ));
     let held = core.get_agent(&a).unwrap();
     assert_eq!(held.name, "a");
-    assert!(
-        held.archived_at.is_some(),
-        "a refused respawn leaves it archived"
+    assert_eq!(
+        held.state,
+        LlmEngineState::Ended,
+        "a refused respawn leaves it ended"
     );
     core.rename_agent(&c, "b").unwrap();
     // A worktree that is gone is never recreated.
@@ -469,15 +457,12 @@ fn respawn_refusals_change_nothing() {
         .collect();
     assert_eq!(
         types,
-        [
-            "created", "stopped", "created", "stopped", "archived", "archived", "created",
-            "renamed"
-        ]
+        ["created", "stopped", "created", "renamed"]
     );
 }
 
 #[test]
-fn archive_stops_hides_and_keeps_everything_until_a_respawn() {
+fn stop_hides_and_keeps_everything_until_a_respawn() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
@@ -489,11 +474,9 @@ fn archive_stops_hides_and_keeps_everything_until_a_respawn() {
     let id = core.create_agent(opts).unwrap();
     let worktree = cwd_of(&core, &id);
     let profile = h.state_dir().join(format!("profiles/{id}.md"));
-    // Running: stopped first, then archived.
-    let archived = core.archive_agent(&id).unwrap();
-    assert_eq!(archived.state, LlmEngineState::Ended);
-    assert!(archived.archived_at.is_some());
-    assert_eq!(core.get_agent(&id).unwrap(), archived);
+    let stopped = core.stop_agent(&id).unwrap();
+    assert_eq!(stopped.state, LlmEngineState::Ended);
+    assert_eq!(core.get_agent(&id).unwrap(), stopped);
     assert!(
         h.data_dir()
             .join(format!("agents/{id}/agent.json"))
@@ -502,31 +485,32 @@ fn archive_stops_hides_and_keeps_everything_until_a_respawn() {
     assert!(profile.exists());
     assert!(worktree.is_dir());
     assert!(h.live_names().is_empty());
-    assert!(core.list_agents(&ListFilter::new()).unwrap().is_empty());
+    assert!(
+        core.list_agents(&ListFilter::new().running())
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
-        core.list_agents(&ListFilter::new().archived()).unwrap(),
+        core.list_agents(&ListFilter::new().ended()).unwrap(),
         std::slice::from_ref(&id)
     );
     assert_eq!(
         core.resolve("f").unwrap(),
         id,
-        "an archived agent resolves by name"
+        "an ended agent resolves by name"
     );
-    // Again: unchanged, no event.
-    assert_eq!(core.archive_agent(&id).unwrap(), archived);
     // Its name is free: a new agent gets it plainly, in another worktree directory.
     let other = core.create_agent(agent("f", &repository)).unwrap();
     assert_eq!(core.get_agent(&other).unwrap().name, "f");
     assert_ne!(cwd_of(&core, &other), worktree);
-    assert_eq!(core.resolve("f").unwrap(), other, "the unarchived one wins");
-    core.archive_agent(&other).unwrap();
-    // A respawn brings the first back in place and unarchives it.
+    assert_eq!(core.resolve("f").unwrap(), other, "the running one wins");
+    core.stop_agent(&other).unwrap();
+    // A respawn brings the first back in place.
     let respawned = core.respawn_agent(&id).unwrap();
     assert_ne!(respawned.state, LlmEngineState::Ended);
-    assert_eq!(respawned.archived_at, None);
     assert_eq!(respawned.working_directory, worktree);
     assert_eq!(
-        core.list_agents(&ListFilter::new()).unwrap(),
+        core.list_agents(&ListFilter::new().running()).unwrap(),
         std::slice::from_ref(&id)
     );
     assert_eq!(core.resolve("f").unwrap(), id);
@@ -538,20 +522,12 @@ fn archive_stops_hides_and_keeps_everything_until_a_respawn() {
         .collect();
     assert_eq!(
         types,
-        [
-            "created",
-            "stopped",
-            "archived",
-            "created",
-            "stopped",
-            "archived",
-            "respawned"
-        ]
+        ["created", "stopped", "created", "stopped", "respawned"]
     );
 }
 
 #[test]
-fn a_stopped_agent_keeps_its_name_from_a_new_create() {
+fn a_stopped_agent_frees_its_name_for_a_new_create() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
@@ -559,7 +535,7 @@ fn a_stopped_agent_keeps_its_name_from_a_new_create() {
     let first = core.create_agent(agent("n", &repository)).unwrap();
     core.stop_agent(&first).unwrap();
     let second = core.create_agent(agent("n", &repository)).unwrap();
-    assert_eq!(core.get_agent(&second).unwrap().name, "n-2");
+    assert_eq!(core.get_agent(&second).unwrap().name, "n");
 }
 
 #[test]
