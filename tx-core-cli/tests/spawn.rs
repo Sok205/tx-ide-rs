@@ -63,6 +63,40 @@ fn new_agent_creates_the_session_the_form_describes() {
 }
 
 #[test]
+fn new_agent_form_takes_its_project_from_cwd() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    let recorded = cli.state().join("recorded-spec.json");
+    let path = cli.shim_path(&[("nvim", "cp \"$TX_NEW_AGENT_SPEC\" \"$RECORDED_SPEC\"")]);
+    let repository = cli.repository("proj");
+    let output = cli.run(
+        &[
+            "_new-agent",
+            "%0",
+            "client-0",
+            "--cwd",
+            repository.to_str().unwrap(),
+        ],
+        &[
+            ("PATH", &path),
+            ("RECORDED_SPEC", recorded.to_str().unwrap()),
+        ],
+        "",
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let spec: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&recorded).unwrap()).unwrap();
+    assert_eq!(spec["project"], "proj");
+    assert_eq!(spec["project_paths"]["proj"], repository.to_str().unwrap());
+}
+
+#[test]
 fn a_cancelled_form_creates_nothing() {
     require_tmux!();
     let cli = Cli::new();

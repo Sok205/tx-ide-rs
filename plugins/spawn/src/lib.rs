@@ -264,17 +264,26 @@ impl Verb for NewAgent {
     }
 
     fn usage(&self) -> &'static str {
-        "_new-agent <pane> <client>   the new-agent form, then create the agent (prefix+n, internal)"
+        "_new-agent <pane> <client> [--cwd DIR]   the new-agent form, then create the agent (prefix+n, internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let [pane, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: tx _new-agent <pane> <client>");
-            return Ok(2);
+        let (pane, client, directory) = match argv {
+            [pane, client] => (pane, client, None),
+            [pane, client, flag, directory] if flag == "--cwd" => {
+                (pane, client, Some(directory.clone()))
+            }
+            _ => {
+                let _ = writeln!(
+                    io.stderr,
+                    "usage: tx _new-agent <pane> <client> [--cwd DIR]"
+                );
+                return Ok(2);
+            }
         };
         let ui = Ui::from_core(core);
-        let path = ui
-            .display_message("#{pane_current_path}", Some(pane))
+        let path = directory
+            .or_else(|| ui.display_message("#{pane_current_path}", Some(pane)))
             .or_else(|| {
                 std::env::current_dir()
                     .ok()
