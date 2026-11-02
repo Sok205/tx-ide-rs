@@ -2,8 +2,9 @@
 //! Claude's JSON config file, so the first launch in a directory does not stop on the trust
 //! dialog.
 
-use std::fs;
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
@@ -71,21 +72,35 @@ pub fn trust_project(config_file: &Path, project: &Path) -> Result<Trusted, Trus
     }
     entry.insert(TRUST_KEY.to_owned(), Value::Bool(true));
 
-    let mut temporary_name = config_file.file_name().unwrap_or_default().to_os_string();
-    temporary_name.push(".tx-trust.tmp");
-    let temporary_file = config_file.with_file_name(temporary_name);
     let rendered = serde_json::to_string_pretty(&config).map_err(|source| TrustError::Json {
         path: config_file.to_path_buf(),
         source,
     })?;
-    fs::write(&temporary_file, rendered).map_err(io_error)?;
-    fs::set_permissions(
-        &temporary_file,
-        fs::metadata(config_file).map_err(io_error)?.permissions(),
-    )
-    .map_err(io_error)?;
-    fs::rename(&temporary_file, config_file).map_err(io_error)?;
+    replace_file(config_file, &rendered).map_err(io_error)?;
     Ok(Trusted::Added)
+}
+
+/// Replaces `file` with `contents` through a sibling temporary file that is created, before any
+/// byte is written, with the original's mode (so a private config is never briefly readable) and
+/// removed again if anything after its creation fails. A temporary file that already exists is
+/// someone else's: creation fails and it stays.
+fn replace_file(file: &Path, contents: &str) -> io::Result<()> {
+    let mut temporary_name = file.file_name().unwrap_or_default().to_os_string();
+    temporary_name.push(".tx-trust.tmp");
+    let temporary_file = file.with_file_name(temporary_name);
+    let mode = fs::metadata(file)?.permissions().mode();
+    let mut temporary = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(&temporary_file)?;
+    let written = temporary
+        .write_all(contents.as_bytes())
+        .and_then(|()| fs::rename(&temporary_file, file));
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary_file);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -171,5 +186,51 @@ mod tests {
 
         assert!(matches!(outcome, Err(TrustError::NotAnObject { .. })));
         assert_eq!(fs::read_to_string(&config_file).unwrap(), "[]");
+    }
+
+    #[test]
+    fn a_0600_config_stays_0600() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_file = write_config(directory.path(), &json!({}));
+        fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
+
+        trust_project(&config_file, Path::new("/p")).unwrap();
+
+        let mode = fs::metadata(&config_file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_pre_existing_temporary_file_is_not_ours_to_delete_so_it_stays_and_the_call_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_file = write_config(directory.path(), &json!({"projects": {}}));
+        let original = fs::read(&config_file).unwrap();
+        let temporary_file = directory.path().join(".claude.json.tx-trust.tmp");
+        fs::write(&temporary_file, "someone else's").unwrap();
+
+        let outcome = trust_project(&config_file, Path::new("/p"));
+
+        assert!(matches!(outcome, Err(TrustError::Io { .. })));
+        assert_eq!(fs::read(&config_file).unwrap(), original);
+        assert_eq!(
+            fs::read_to_string(&temporary_file).unwrap(),
+            "someone else's"
+        );
+    }
+
+    #[test]
+    fn the_temporary_file_is_removed_when_the_rename_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("occupant"), "x").unwrap();
+        let temporary_file = directory.path().join("target.tx-trust.tmp");
+
+        // A non-empty directory cannot be replaced by a file, so the rename fails after the
+        // temporary file exists.
+        let outcome = replace_file(&target, "{}");
+
+        assert!(outcome.is_err());
+        assert!(!temporary_file.exists());
     }
 }
