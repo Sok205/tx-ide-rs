@@ -60,7 +60,7 @@ impl Verb for HomeVerb {
     }
 
     fn usage(&self) -> &'static str {
-        "home   the tx-ide home: sessions, history, the assistant (prefix+m)"
+        "home   the tx-ide home: projects, their agents and views, the assistant (prefix+m)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -163,9 +163,7 @@ impl Verb for Tui {
             .choice
             .clone()
             .unwrap_or_else(|| floor::choice_path(&plugin_directory(core), &arguments.pane));
-        if arguments.first && !arguments.popup {
-            warm_when_absent(core, io)?;
-        }
+        let warming = arguments.first && !arguments.popup && warm_when_down(core, io)?;
         let mut home = if arguments.popup {
             Home::new_popup(Context::default())
         } else {
@@ -175,6 +173,7 @@ impl Verb for Tui {
             first: arguments.first,
             popup: arguments.popup,
             returned_from: arguments.returned_from,
+            warming,
         };
         let chosen = run::run(core, &mut home, &options)
             .map_err(|error| error.to_string())
@@ -196,12 +195,17 @@ impl Verb for Tui {
     }
 }
 
-/// `tx assistant warm`, detached and forgotten, when the assistant plugin is on and has no
-/// assistant at all (a stopped one waits for `r`).
-fn warm_when_absent(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
-    if core.verb(ASSISTANT_VERB).is_none() || data::assistant_state(core) != AssistantState::Absent
+/// `tx assistant warm`, detached and forgotten, when the assistant plugin is on and no
+/// assistant runs: none at all, or a stopped one (a new server after a reboot), which `warm`
+/// respawns in place. Whether it was started.
+fn warm_when_down(core: &TxCore, io: &mut VerbIo<'_>) -> Result<bool, VerbError> {
+    if core.verb(ASSISTANT_VERB).is_none()
+        || !matches!(
+            data::assistant_state(core),
+            AssistantState::Absent | AssistantState::Stopped { .. }
+        )
     {
-        return Ok(());
+        return Ok(false);
     }
     let tx = Txc::current(core)?;
     let mut warm = tx.command(&[ASSISTANT_VERB, "warm"]);
@@ -209,10 +213,13 @@ fn warm_when_absent(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError>
         .stderr(Stdio::null())
         .process_group(0);
     // Its outcome shows in the header: the record, or the failure line `warm` leaves.
-    if let Err(error) = warm.spawn() {
-        let _ = writeln!(io.stderr, "tx home: assistant warm: {error}");
+    match warm.spawn() {
+        Ok(_) => Ok(true),
+        Err(error) => {
+            let _ = writeln!(io.stderr, "tx home: assistant warm: {error}");
+            Ok(false)
+        }
     }
-    Ok(())
 }
 
 /// `file` holds `action`, or is gone when there is none.

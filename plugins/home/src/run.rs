@@ -34,6 +34,8 @@ pub struct Options {
     pub popup: bool,
     /// The session the pane showed before the TUI came back; its row is selected once listed.
     pub returned_from: Option<String>,
+    /// This open started `assistant warm`: until its record exists the header says `creating`.
+    pub warming: bool,
 }
 
 enum Request {
@@ -97,6 +99,7 @@ struct Data<'a> {
     /// The detail last asked for, so a row is asked for once.
     asked: Option<String>,
     returned_from: Option<String>,
+    warming: bool,
 }
 
 impl Data<'_> {
@@ -111,7 +114,15 @@ impl Data<'_> {
     /// Replaces the home's context; the first one selects the row the pane returned from.
     fn apply(&mut self, home: &mut Home, reply: Reply) -> io::Result<()> {
         self.outstanding -= 1;
-        let context = reply.map_err(io::Error::other)?;
+        let mut context = reply.map_err(io::Error::other)?;
+        if self.warming
+            && matches!(
+                context.assistant,
+                AssistantState::Absent | AssistantState::Stopped { .. }
+            )
+        {
+            context.assistant = AssistantState::Creating;
+        }
         home.replace_context(context);
         if let Some(name) = self.returned_from.take() {
             home.select_session(&name);
@@ -181,6 +192,7 @@ fn event_loop(
         refreshed: started,
         asked: None,
         returned_from: options.returned_from.clone(),
+        warming: options.warming,
     };
     data.ask(Request::Context)?;
     match replies.recv_timeout(FIRST_DATA) {
