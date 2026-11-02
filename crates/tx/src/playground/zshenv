@@ -1,2 +1,0 @@
-# tx playground shell: the user's own environment first.
-[[ -f "$HOME/.zshenv" ]] && source "$HOME/.zshenv"
