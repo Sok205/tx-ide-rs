@@ -99,14 +99,28 @@ fn draw_main(home: &Home, frame: usize, area: Rect, buf: &mut Buffer) {
     let body = usize::from(area.height - 2);
     let cursor = home.cursor();
     let mut lines = Vec::new();
-    let mut cursor_line = None;
+    // The cursor row's first line and the end of its block: the detail and views rows below it.
+    let mut block: Option<(usize, usize)> = None;
     for (index, row) in home.rows().iter().enumerate() {
-        if Some(index) == cursor {
-            cursor_line = Some(lines.len());
-        }
+        let start = lines.len();
         lines.extend(row_lines(row, &home.context, frame));
+        if Some(index) == cursor {
+            block = Some((start, lines.len()));
+        } else if let Some((_, end)) = &mut block
+            && *end == start
+            && matches!(row, Row::Detail(..) | Row::Views(_))
+        {
+            *end = lines.len();
+        }
     }
-    let first = cursor_line.map_or(0, |line| (line + 1).saturating_sub(body));
+    let cursor_line = block.map(|(start, _)| start);
+    let first = block.map_or(0, |(start, end)| {
+        if end - start <= body {
+            end.saturating_sub(body)
+        } else {
+            start
+        }
+    });
     let visible = lines.iter().enumerate().skip(first).take(body);
     for ((index, line), y) in visible.zip(area.y + 1..) {
         put(buf, area, area.x, y, line, area.width);
@@ -124,12 +138,16 @@ fn header_line(home: &Home, width: usize) -> Line<'static> {
     let running = context
         .agents
         .iter()
-        .filter(|agent| agent.state != LlmEngineState::Ended)
+        .filter(|agent| !agent.is_assistant && agent.state != LlmEngineState::Ended)
         .count();
     let ended_today = context
         .agents
         .iter()
-        .filter(|agent| agent.state == LlmEngineState::Ended && context.now - agent.age_at <= DAY)
+        .filter(|agent| {
+            !agent.is_assistant
+                && agent.state == LlmEngineState::Ended
+                && context.now - agent.age_at <= DAY
+        })
         .count();
     let counts = format!("  {running} running · {ended_today} ended today · assistant ");
     let (state, style) = match &context.assistant {
@@ -159,7 +177,7 @@ fn row_lines(row: &Row<'_>, context: &Context, frame: usize) -> Vec<Line<'static
             Span::styled(format!("  {}", project.path.display()), dim()),
         ])],
         Row::Agent(agent) => vec![agent_line(agent, context.now, frame)],
-        Row::Detail(agent, detail) => detail_lines(agent, *detail),
+        Row::Detail(agent, detail) => detail_lines(agent, *detail, context.now),
         Row::Views(views) => {
             let names: Vec<&str> = views.iter().map(|view| view.name.as_str()).collect();
             vec![Line::styled(format!("    ⌐ {}", names.join(" · ")), dim())]
@@ -217,7 +235,7 @@ fn detail_line(parts: Vec<Vec<Span<'static>>>, separator: &str) -> Line<'static>
     Line::from(spans)
 }
 
-fn detail_lines(agent: &AgentRow, detail: Option<&Detail>) -> Vec<Line<'static>> {
+fn detail_lines(agent: &AgentRow, detail: Option<&Detail>, now: f64) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
         return vec![Line::styled(format!("{DETAIL_INDENT}…"), dim())];
     };
@@ -237,6 +255,15 @@ fn detail_lines(agent: &AgentRow, detail: Option<&Detail>) -> Vec<Line<'static>>
     };
     if let Some(engine) = engine {
         facts.push(vec![Span::styled(engine, fg(FG))]);
+    }
+    if let Some(parent) = &detail.parent_name {
+        facts.push(labelled("parent", parent.clone()));
+    }
+    if detail.started_at != 0.0 {
+        facts.push(labelled("started", reltime(Some(detail.started_at), now)));
+    }
+    if let Some(ended_at) = detail.ended_at {
+        facts.push(labelled("ended", reltime(Some(ended_at), now)));
     }
     if !facts.is_empty() {
         lines.push(detail_line(facts, "   "));
@@ -258,7 +285,7 @@ fn detail_lines(agent: &AgentRow, detail: Option<&Detail>) -> Vec<Line<'static>>
         let counts: Vec<String> = detail
             .artifacts
             .iter()
-            .map(|(kind, count)| format!("{kind} {count}"))
+            .map(|(kind, count)| format!("{count} {kind}"))
             .collect();
         spans.extend(labelled("artifacts", counts.join(" · ")));
         spans.push(Span::raw("        "));
@@ -517,12 +544,12 @@ mod tests {
             roles: vec!["COMMON".into(), "DEVELOPER".into()],
             model: Some("opus".into()),
             effort: Some("medium".into()),
-            parent_name: None,
+            parent_name: Some("lead".into()),
             last_user: Some("fix the retry backoff".into()),
             last_agent: Some("Backoff fixed; tests pass.".into()),
             artifacts: vec![("doc".into(), 1), ("diff".into(), 2)],
             started_at: 100.0,
-            ended_at: None,
+            ended_at: Some(940.0),
         }
     }
 
@@ -532,7 +559,7 @@ mod tests {
         let lines = text(&render(&home));
         assert_eq!(
             lines[0],
-            "tx-ide  3 running · 1 ended today · assistant ● ready"
+            "tx-ide  2 running · 1 ended today · assistant ● ready"
         );
         for (state, tail) in [
             (AssistantState::Absent, "assistant ○ none"),
@@ -626,11 +653,11 @@ mod tests {
         assert_eq!(lines[fixer + 1], "      …");
 
         home.context.details = BTreeMap::from([("w1".to_owned(), detail())]);
-        let lines = text(&render(&home));
+        let lines = text(&render_sized(&home, 0, 120, H));
         let fixer = row_of(&lines, "fixer   ");
         assert_eq!(
             lines[fixer + 1],
-            "      branch fix/retry-backoff   roles COMMON DEVELOPER   opus/medium"
+            "      branch fix/retry-backoff   roles COMMON DEVELOPER   opus/medium   parent lead   started 15m   ended 1m"
         );
         assert_eq!(lines[fixer + 2], "      you ›  fix the retry backoff");
         assert_eq!(
@@ -639,7 +666,7 @@ mod tests {
         );
         assert_eq!(
             lines[fixer + 4],
-            "      artifacts doc 1 · diff 2        x stop  a artifacts  t timeline"
+            "      artifacts 1 doc · 2 diff        x stop  a artifacts  t timeline"
         );
     }
 
@@ -655,7 +682,7 @@ mod tests {
         home.key(KeyCode::Right);
         let lines = text(&render(&home));
         assert!(
-            lines[row_of(&lines, "artifacts doc 1")].contains("r resume  a artifacts"),
+            lines[row_of(&lines, "artifacts 1 doc")].contains("r resume  a artifacts"),
             "{lines:?}"
         );
     }
@@ -717,6 +744,12 @@ mod tests {
             "Ended sessions will show up here under their project, greyed, with r to resume."
         );
         assert!(lines[row_of(&lines, "tx-assistant")].starts_with("  ○ tx-assistant"));
+        let mut starting = Home::new(first_run_context());
+        starting.context.assistant = AssistantState::Starting;
+        assert_eq!(
+            text(&render(&starting))[0],
+            "tx-ide  0 running · 0 ended today · assistant ◐ starting · claude"
+        );
         let key_cell = &buf[(2, u16::try_from(intro + 2).unwrap())];
         assert_eq!(key_cell.fg, WARN);
         assert_eq!(
@@ -756,6 +789,42 @@ mod tests {
         assert_eq!(reversed.len(), 1, "{lines:?}");
         assert!(lines[reversed[0]].contains(&selected.name), "{lines:?}");
         assert!(lines[1..9].iter().all(|line| !line.contains("wrangler  ")));
+    }
+
+    #[test]
+    fn an_unfolded_detail_near_the_bottom_stays_in_view() {
+        let mut context = context();
+        for index in 0..40 {
+            let name = format!("bulk-{index:02}");
+            context.agents.push(agent(
+                &name,
+                &name,
+                LlmEngineState::Working,
+                800.0 - f64::from(index),
+                0,
+            ));
+        }
+        let mut home = Home::new(context);
+        for _ in 0..30 {
+            home.key(KeyCode::Char('j'));
+        }
+        let Some(Row::Agent(selected)) = home.cursor().map(|index| home.rows()[index].clone())
+        else {
+            panic!("the cursor is on an agent");
+        };
+        let selected = selected.clone();
+        home.key(KeyCode::Right);
+        home.context.details = BTreeMap::from([(selected.id.clone(), detail())]);
+
+        let lines = text(&render_sized(&home, 0, 60, 10));
+        let you = row_of(&lines, "you ›");
+        assert!((1..9).contains(&you), "{lines:?}");
+        assert!(lines[you - 2].contains(&selected.name), "{lines:?}");
+
+        let buf = render_sized(&home, 0, 60, 5);
+        let lines = text(&buf);
+        assert!(lines[1].contains(&selected.name), "{lines:?}");
+        assert!(buf[(0, 1)].modifier.contains(Modifier::REVERSED));
     }
 
     #[test]
