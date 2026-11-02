@@ -5,6 +5,7 @@
 pub mod fork_pane;
 pub mod hooks_cleanup;
 pub mod messages;
+pub mod transcript;
 pub mod verbs;
 
 use std::path::Path;

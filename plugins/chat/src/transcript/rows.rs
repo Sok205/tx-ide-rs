@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::clock::parse_iso;
+use super::clock::parse_iso;
 
 pub const EV_TEXT: usize = 130;
 pub const TOOL_DETAIL: usize = 160;
@@ -239,7 +239,7 @@ pub fn tool_line(name: &str, detail: &str) -> String {
     }
 }
 
-pub(super) fn iso_timestamp(value: Option<&Value>) -> Option<f64> {
+pub fn iso_timestamp(value: Option<&Value>) -> Option<f64> {
     parse_iso(value?.as_str()?)
 }
 
@@ -455,7 +455,7 @@ pub fn parse_line(line: &str, out: &mut Vec<Row>) {
     parse_entry(&entry, out);
 }
 
-pub(super) fn parse_entry(entry: &Value, out: &mut Vec<Row>) {
+pub fn parse_entry(entry: &Value, out: &mut Vec<Row>) {
     if !entry.is_object() {
         return;
     }
