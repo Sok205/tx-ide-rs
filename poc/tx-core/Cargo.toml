@@ -17,6 +17,7 @@ libc.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+regex = "1"
 
 [lints]
 workspace = true

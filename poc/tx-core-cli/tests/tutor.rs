@@ -427,7 +427,7 @@ fn navigation_status_and_hint() {
     let hint = tutor.ok(&["tutor", "hint"], "");
     let solution = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tutor/python/solutions/04-first-route.py"),
+            .join("../plugins/tutor/packs/python/solutions/04-first-route.py"),
     )
     .unwrap();
     assert_eq!(hint, solution);

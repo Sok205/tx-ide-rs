@@ -147,22 +147,25 @@ require("config.diff-style")
 -- C-h/j/k/l across splits, panes, and nested sessions (see lua/config/tmux-nav.lua)
 require("config.tmux-nav").setup()
 
--- Closing a diffview lands you back on the tab you opened it from
--- (see lua/config/diffview-return.lua)
-require("config.diffview-return").setup()
+-- tx-client's nvim modules: `txc ui install` puts them under <data>/nvim, which a tx view
+-- prepends to the runtimepath and loads (plugin/tx.lua) before this file runs. Outside a view
+-- this config prepends the same directory itself, so the keymaps exist in a plain nvim too.
+local tx_data_directory = vim.env.TX_DATA_DIR
+  or (vim.env.XDG_DATA_HOME or vim.env.HOME .. "/.local/share") .. "/tx-ide"
+vim.opt.runtimepath:prepend(tx_data_directory .. "/nvim")
+
+-- Closing a diffview lands you back on the tab you opened it from (tx-diffview-return.lua).
+-- plugin/tx.lua already ran setup() inside a view; setup is idempotent.
+require("tx-diffview-return").setup()
 
 -- Keymap usage telemetry (see lua/config/keylog.lua)
 require("config.keylog").setup()
 
 -- <leader>aq / <leader>aQ — ask a live tx agent about the code under the cursor, one
--- question or a queued batch. The module ships with tx-client: `txc ui install` puts it under
--- <data>/nvim, which a tx view prepends to the runtimepath and loads before this file runs;
--- the flag keeps a second load from registering the keymaps twice.
+-- question or a queued batch (tx-ask.lua); the flag keeps a second load from registering the
+-- keymaps twice.
 if not vim.g.tx_ask_loaded then
   vim.g.tx_ask_loaded = true
-  local data_directory = vim.env.TX_DATA_DIR
-    or (vim.env.XDG_DATA_HOME or vim.env.HOME .. "/.local/share") .. "/tx-ide"
-  vim.opt.runtimepath:prepend(data_directory .. "/nvim")
   require("tx-ask")
 end
 

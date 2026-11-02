@@ -1,4 +1,5 @@
-//! The mockup plugin's resources: the skill and the COMMON overlay, listed through the core.
+//! The mockup plugin registers no resources: its skill and the COMMON overlay are shipped by
+//! the core (`tx_core::roles`), so they are there whether the plugin is enabled or not.
 
 use tx_core::{CoreConfig, PluginConfig, TxCore};
 use tx_mockup::MockupPlugin;
@@ -17,22 +18,22 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
 }
 
 #[test]
-fn ships_skill_and_overlay() {
+fn the_skill_and_overlay_come_from_the_core() {
     let (_dir, core) = core(&PluginConfig::default());
+    assert!(core.plugin_resources("agents/").is_empty());
     let resources = core.resources("agents/");
-    let names: Vec<&str> = resources
-        .iter()
-        .map(|resource| resource.name.as_str())
-        .collect();
-    assert_eq!(
-        names,
-        ["agents/COMMON.local.md", "agents/skills/tx-mockup/SKILL.md",]
-    );
+    let find = |name: &str| {
+        resources
+            .iter()
+            .find(|resource| resource.name == name)
+            .unwrap_or_else(|| panic!("{name} shipped by tx-core"))
+    };
+    assert_eq!(find("agents/COMMON.local.md").plugin, "tx-core");
 
-    let overlay = std::str::from_utf8(resources[0].bytes).unwrap();
+    let overlay = std::str::from_utf8(find("agents/COMMON.local.md").bytes).unwrap();
     assert!(overlay.starts_with("---\nskills: [tx-mockup]"), "{overlay}");
 
-    let skill = std::str::from_utf8(resources[1].bytes).unwrap();
+    let skill = std::str::from_utf8(find("agents/skills/tx-mockup/SKILL.md").bytes).unwrap();
     assert!(skill.contains("name: tx-mockup"), "{skill}");
     assert!(skill.contains("txc mockup show"), "{skill}");
     assert!(skill.contains("\"frames\""), "{skill}");
@@ -43,5 +44,5 @@ fn a_disabled_plugin_publishes_nothing() {
     let mut config = PluginConfig::default();
     config.disabled.insert("mockup".to_owned());
     let (_dir, core) = core(&config);
-    assert!(core.resources("").is_empty());
+    assert!(core.plugin_resources("").is_empty());
 }

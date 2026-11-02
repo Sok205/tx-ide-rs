@@ -192,6 +192,22 @@ pub(crate) struct Host {
     status: Vec<(String, PluginStatus)>,
 }
 
+impl Host {
+    /// A host that already lists the core's shipped roles (`crate::roles::SHIPPED`), ahead of
+    /// whatever the plugins register.
+    pub(crate) fn with_shipped_roles() -> Self {
+        let mut host = Host::default();
+        for &(name, bytes) in crate::roles::SHIPPED {
+            host.resources.push(Resource {
+                plugin: crate::roles::PLUGIN_ID.to_owned(),
+                name: name.to_owned(),
+                bytes,
+            });
+        }
+        host
+    }
+}
+
 /// One plugin after `register`: `None` when the config disabled it.
 struct Loaded {
     id: String,
@@ -350,6 +366,14 @@ impl TxCore {
             .iter()
             .filter(|r| r.name.starts_with(prefix))
             .cloned()
+            .collect()
+    }
+
+    /// [`Self::resources`] without the core's own shipped roles: what the plugins registered.
+    pub fn plugin_resources(&self, prefix: &str) -> Vec<Resource> {
+        self.resources(prefix)
+            .into_iter()
+            .filter(|r| r.plugin != crate::roles::PLUGIN_ID)
             .collect()
     }
 

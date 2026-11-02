@@ -560,7 +560,7 @@ impl TxCore {
             worktrees: WorktreeManager::new(config.worktrees_dir()),
             locks: Locks::new(directories.state.join(LOCKS_DIR)),
             sinks: Vec::new(),
-            host: Default::default(),
+            host: crate::plugin::Host::with_shipped_roles(),
             config,
         })
     }

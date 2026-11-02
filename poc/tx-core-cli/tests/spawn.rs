@@ -107,6 +107,7 @@ fn disabled_spawn_hides_the_verb_and_the_key() {
     cli.fails(&["_new-agent", "%0", "c"], 2);
     cli.ok(&["ui", "install"]);
     assert!(!cli.state().join("keys/spawn.tmux").exists());
-    assert!(!cli.state().join("roles/DEVELOPER.md").exists());
+    // The roles are the core's, not the plugin's: still installed.
+    assert!(cli.state().join("roles/DEVELOPER.md").exists());
     assert!(cli.state().join("roles/TX-ASSISTANT.md").exists());
 }

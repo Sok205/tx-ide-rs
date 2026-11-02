@@ -4,12 +4,15 @@
 #
 #   1. cargo install --path poc/tx-core-cli        txc and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin)
 #   2. txc ui install                               the IDE's tmux config from the plugins' resources
+#   2b. ~/.config/nvim and ~/.tmux.conf             links to poc/config/{nvim,tmux.conf}; a real
+#                                                  directory or file there is moved to <path>.bak.<stamp>
 #   3. the switch (once; a second run finds nothing to do):
 #      - the old install's `tx` (~/.local/bin/tx) becomes `tx-old`, and ~/.tx-ide/tmux.conf sets
 #        @tx-ide-bin tx-old so the old fragment's prefix+t / prefix+T popups keep working;
 #      - the old install's hook entries (commands under ~/.tx-ide/hooks/) leave
-#        ~/.claude/settings.json and ~/.codex/hooks.json, with the old Claude statusline; both
-#        files are backed up to <file>.bak.<stamp> first, everything else in them stays as it is;
+#        ~/.claude/settings.json and ~/.codex/hooks.json; both files are backed up to
+#        <file>.bak.<stamp> first, everything else in them (the Claude statusLine included)
+#        stays as it is;
 #      - txc doctor --fix-hooks removes what older txc versions wired.
 #   4. what is left for you to do, printed at the end.
 #
@@ -24,8 +27,12 @@
 # tmux-system-resources: nothing in the poc wants those names).
 set -u -o pipefail
 
-POC="$(cd "$(dirname "$0")" && pwd)"
+POC="$(cd "$(dirname "$0")" && pwd -P)"
 HOME_DIR="${HOME%/}"
+# txc's data dir (the five-directory rule of `txc help`): agent worktrees live under its worktrees/.
+TX_DATA="${TX_DATA_DIR:-${XDG_DATA_HOME:-$HOME_DIR/.local/share}/${TX_APPNAME:-tx-ide}}"
+# Physical, like $POC, so a symlinked /tmp or home compares equal.
+TX_DATA="$(cd "$TX_DATA" 2>/dev/null && pwd -P || printf '%s' "$TX_DATA")"
 LOCAL_BIN="$HOME_DIR/.local/bin"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}"
 CODEX_DIR="${CODEX_HOME:-$HOME_DIR/.codex}"
@@ -120,6 +127,54 @@ else
   exit 1
 fi
 
+# === 2b: the operator's nvim and tmux config ===
+# poc/config/ holds the editor and default-server tmux config; the links make them live. A link
+# already pointing there is left alone; a link elsewhere is replaced; a real directory or file is
+# moved aside first.
+header "Link ~/.config/nvim and ~/.tmux.conf to $POC/config"
+# An agent's worktree is deleted when the agent is archived, and a link into it would go with it:
+# the links must point at the main checkout.
+case "$POC/" in
+"$TX_DATA/worktrees/"*)
+  fail "$POC" "is an agent worktree under $TX_DATA/worktrees — run poc/install from the main checkout"
+  exit 1
+  ;;
+esac
+link_config() {
+  local target="$1" link="$2" current
+  if [[ -L "$link" ]]; then
+    current=$(readlink "$link")
+    if [[ "$current" == "$target" ]]; then
+      ok "$link" "already links to $target"
+      return 0
+    fi
+    if ((DRY_RUN)); then
+      would "$link" "relink from $current to $target"
+    else
+      ln -sfn "$target" "$link"
+      ok "$link" "relinked from $current"
+    fi
+  elif [[ -e "$link" ]]; then
+    if ((DRY_RUN)); then
+      would "$link" "move to $link.bak.$STAMP, then link to $target"
+    else
+      mv "$link" "$link.bak.$STAMP"
+      ln -sfn "$target" "$link"
+      ok "$link" "linked (previous content: $link.bak.$STAMP)"
+    fi
+  else
+    if ((DRY_RUN)); then
+      would "$link" "link to $target"
+    else
+      mkdir -p "$(dirname "$link")"
+      ln -sfn "$target" "$link"
+      ok "$link" "linked"
+    fi
+  fi
+}
+link_config "$POC/config/nvim" "$HOME_DIR/.config/nvim"
+link_config "$POC/config/tmux.conf" "$HOME_DIR/.tmux.conf"
+
 # === 3a: the old install becomes tx-old ===
 header "Rename the old install to tx-old"
 # The old installer links ~/.local/bin/tx to <repo>/bin/tx; only that entry is renamed (a
@@ -175,42 +230,38 @@ fi
 # === 3b: the old hook entries ===
 header "Remove the old install's hooks from the agents' settings"
 OLD_HOOKS_PREFIX="$TX_IDE_DIR/hooks/"
-OLD_STATUSLINE="$TX_IDE_DIR/statusline.sh"
 # jq: drop every hook command under the old home's hooks/ (the resolved directory, or any
 # `.tx-ide/hooks/`), then the blocks and events left empty. Other hook directories under
-# ~/.claude/hooks/ are not ours and stay. $statusline is "" for a file without one.
+# ~/.claude/hooks/ are not ours and stay; so does the Claude statusLine (the operator keeps the
+# old statusline.sh, a plain file under the old home that nothing in the repository backs).
 JQ_STRIP='
   def ours: type == "string" and (startswith($prefix) or test("/\\.tx-ide/hooks/"));
   def strip_blocks:
     map(.hooks |= ((. // []) | map(select(.command | ours | not))) | select(.hooks | length > 0));
-  (if (.hooks | type) == "object" then
-     .hooks |= with_entries(.value |= strip_blocks | select(.value | length > 0))
-   else . end)
-  | if $statusline != "" and (.statusLine.command // "" | . == "bash " + $statusline or test("/\\.tx-ide/statusline\\.sh$"))
-    then del(.statusLine) else . end
+  if (.hooks | type) == "object" then
+    .hooks |= with_entries(.value |= strip_blocks | select(.value | length > 0))
+  else . end
 '
 
-# jq: the entries JQ_STRIP removes, one per line (`<event>: <command>`, `statusLine: <command>`).
-# Empty means the file is not touched at all, whatever its formatting.
+# jq: the entries JQ_STRIP removes, one per line (`<event>: <command>`). Empty means the file is
+# not touched at all, whatever its formatting.
 JQ_LIST='
   def ours: type == "string" and (startswith($prefix) or test("/\\.tx-ide/hooks/"));
-  ([(if (.hooks | type) == "object" then .hooks else {} end) | to_entries[]
+  (if (.hooks | type) == "object" then .hooks else {} end) | to_entries[]
     | .key as $event | (.value // [])[] | (.hooks // [])[] | select(.command | ours)
-    | "\($event): \(.command)"]
-   + (if $statusline != "" and (.statusLine.command // "" | . == "bash " + $statusline or test("/\\.tx-ide/statusline\\.sh$"))
-      then ["statusLine: \(.statusLine.command)"] else [] end))[]
+    | "\($event): \(.command)"
 '
 
-# strip_old_hooks <file> <statusline-path-or-empty>: rewrites the file behind <file> without the
-# old entries, backed up first, naming each entry removed; a file with none is not written.
+# strip_old_hooks <file>: rewrites the file behind <file> without the old entries, backed up
+# first, naming each entry removed; a file with none is not written.
 strip_old_hooks() {
-  local file="$1" statusline="$2" real removed wanted temporary mode
+  local file="$1" real removed wanted temporary mode
   if [[ ! -f "$file" ]]; then
     info "$file (absent)"
     return 0
   fi
   real=$(real_path "$file")
-  if ! removed=$(jq -r --arg prefix "$OLD_HOOKS_PREFIX" --arg statusline "$statusline" "$JQ_LIST" "$real"); then
+  if ! removed=$(jq -r --arg prefix "$OLD_HOOKS_PREFIX" "$JQ_LIST" "$real"); then
     fail "$file" "not valid JSON — left alone"
     return 1
   fi
@@ -218,7 +269,7 @@ strip_old_hooks() {
     ok "$file" "no old entries — not written"
     return 0
   fi
-  wanted=$(jq --arg prefix "$OLD_HOOKS_PREFIX" --arg statusline "$statusline" "$JQ_STRIP" "$real")
+  wanted=$(jq --arg prefix "$OLD_HOOKS_PREFIX" "$JQ_STRIP" "$real")
   if ((DRY_RUN)); then
     would "$file" "remove these entries (backup: $real.bak.$STAMP)"
     printf '%s\n' "$removed" | sed 's/^/      - /'
@@ -235,8 +286,8 @@ strip_old_hooks() {
   printf '%s\n' "$removed" | sed 's/^/      - /'
 }
 
-strip_old_hooks "$CLAUDE_DIR/settings.json" "$OLD_STATUSLINE"
-strip_old_hooks "$CODEX_DIR/hooks.json" ""
+strip_old_hooks "$CLAUDE_DIR/settings.json"
+strip_old_hooks "$CODEX_DIR/hooks.json"
 
 # === 3c: what older txc versions wired ===
 header "txc doctor --fix-hooks"
@@ -265,7 +316,9 @@ ${B}The old install, as tx-old:${X}
   - the settings keys the old install set (disableWorkflows, skillOverrides, …) were left alone.
 
 ${B}Your own config:${X}
-  - drop config.tx-ask and config.diffview-return from your nvim config; tx-client ships both.
+  - ~/.config/nvim and ~/.tmux.conf link to $POC/config; edit them there, they are versioned.
+  - restart your default tmux server once (tmux kill-server on the default socket) so it stops
+    sourcing the old fragment; the IDE's server is unaffected.
   - terminal profile: unchanged. The IDE's M-1..9 / Cmd-Opt-digit keys come from the keymap
     the old setup/iterm.sh installed; nothing to redo.
 

@@ -17,13 +17,16 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
 }
 
 #[test]
-fn the_role_is_a_resource() {
+fn the_key_fragment_is_a_resource_and_the_role_comes_from_the_core() {
     let (_dir, core) = core(&PluginConfig::default());
-    let agents = core.resources("agents/");
-    assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0].plugin, "assistant");
-    assert_eq!(agents[0].name, "agents/TX-ASSISTANT.md");
-    assert!(agents[0].bytes.starts_with(b"# TX-ASSISTANT role"));
+    assert!(core.plugin_resources("agents/").is_empty());
+    let role = core
+        .resources("agents/")
+        .into_iter()
+        .find(|r| r.name == "agents/TX-ASSISTANT.md")
+        .expect("shipped by tx-core");
+    assert_eq!(role.plugin, "tx-core");
+    assert!(role.bytes.starts_with(b"# TX-ASSISTANT role"));
     let keys = core.resources("keys/");
     assert_eq!(keys.len(), 1);
     assert_eq!(keys[0].name, "keys/assistant.tmux");
@@ -83,6 +86,6 @@ fn a_disabled_plugin_publishes_nothing() {
     let mut config = PluginConfig::default();
     config.disabled.insert("assistant".to_owned());
     let (_dir, core) = core(&config);
-    assert!(core.resources("").is_empty());
+    assert!(core.plugin_resources("").is_empty());
     assert!(core.verb("assistant").is_none());
 }

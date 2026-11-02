@@ -28,10 +28,10 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 | `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-client |
 | `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `chat ls` (the engine's conversation), `doctor --fix-hooks`, prefix+f (through core's fork); the peer-message parser the timeline uses | tx-core, tx-client |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-client |
-| `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n; ships the txc editions of the COMMON, DEVELOPER, ORCHESTRATOR and QA roles and their skills (`plugins/spawn/agents/`) | tx-core, tx-client |
-| `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm\|ask`, the `tx-assistant` session `ui attach` lands in and prefix+/ asks from any pane; ships the TX-ASSISTANT role | tx-core, tx-client |
+| `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n | tx-core, tx-client |
+| `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm\|ask`, the `tx-assistant` session `ui attach` lands in and prefix+/ asks from any pane | tx-core, tx-client |
 | `plugins/mockup` (`tx-mockup`) | plugin: `txc mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-client, ratatui |
-| `plugins/tutor` (`tx-tutor`) | plugin: `txc tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships the repo's `tutor/` lesson packs | tx-core, tx-client, toml, libc |
+| `plugins/tutor` (`tx-tutor`) | plugin: `txc tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships its `packs/` lesson packs | tx-core, tx-client, toml, libc |
 | `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|path\|archive\|unarchive\|close\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`, of kind `document`, `diff` or another plugin's), `txc group` (effort groups), prefix+a | tx-core, tx-client |
 | `plugins/tour` (`tx-tour`) | plugin: `txc tour create <stops.lua> --title T [--cwd W]\|open <id> [--tag T]`, code tours as artifacts of kind `tour` opened as nvim views of their stops | tx-core, tx-client, tx-artifacts |
 | `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-client, tx-chat (message parser), ratatui |
@@ -41,7 +41,7 @@ Decisions the spec left open: `../docs/superpowers/plans/2026-10-15-tx-core.md`.
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
 carries everything; only `txc` / `txi` touch `std::env`. Without `--profile-dir` / `--skill-dir`,
-`txc` resolves roles from `<data>/roles` (the roles plugins ship, written by `ui install`) and
+`txc` resolves roles from `<data>/roles` (the roles the core ships from `tx-core/agents/` — COMMON, DEVELOPER, ORCHESTRATOR, QA, TX-ASSISTANT, the COMMON.local overlay and the tx-* skills — plus any a plugin adds, written by `ui install`) and
 then `<config>/roles` (yours, never pruned, overriding a shipped role of the same name), with
 skills under each one's `skills/`.
 
@@ -315,11 +315,11 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
-| `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_agent`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent`, `agents/COMMON.md`, `agents/DEVELOPER.md`, `agents/skills/**` (from the repo's `agents/` tree) |
+| `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_agent`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent` |
 | `chat` | `chat ls <session>` (the current conversation, `TxCore::conversation`), `doctor --fix-hooks` (see "Upgrading" below), and the internal `_fork-pane` (prefix+f: `TxCore::fork_agent` with the name from the popup); resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session` |
-| `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name), `assistant ask --from-buffer [--pane PANE]` and `assistant ask TEXT…` (warm, wait up to 20 s for the assistant to leave `starting`, deliver the line as the operator; `--from-buffer` reads and deletes the server's `tx-assistant-input` paste buffer, which the prefix+/ bind fills from a command prompt; with `--pane`, which the bind passes as `#{pane_id}`, the line is typed in that pane's session behind a focus envelope cut from the old tx's: `<from-user session="VIEW"><tx-command-prompt session-name=… window-index=… pane-index=… pane-id=… pane-path=… inner-session-name=… session-kind=…/> line</from-user>`; without one, or with the pane gone, `<from-user session="prefix+/">`); resources `keys/assistant.tmux` (prefix+/) and `agents/TX-ASSISTANT.md` |
-| `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); resources `agents/COMMON.local.md`, `agents/skills/tx-mockup/SKILL.md` |
-| `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<data>/plugins/tutor/<lang>.json`; resources `tutor/**` (the repo's `tutor/` packs, materialised under `<data>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
+| `assistant` | `assistant warm` (start the `tx-assistant` session unless it is running; prints its name), `assistant ask --from-buffer [--pane PANE]` and `assistant ask TEXT…` (warm, wait up to 20 s for the assistant to leave `starting`, deliver the line as the operator; `--from-buffer` reads and deletes the server's `tx-assistant-input` paste buffer, which the prefix+/ bind fills from a command prompt; with `--pane`, which the bind passes as `#{pane_id}`, the line is typed in that pane's session behind a focus envelope cut from the old tx's: `<from-user session="VIEW"><tx-command-prompt session-name=… window-index=… pane-index=… pane-id=… pane-path=… inner-session-name=… session-kind=…/> line</from-user>`; without one, or with the pane gone, `<from-user session="prefix+/">`); resource `keys/assistant.tmux` (prefix+/) |
+| `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); its skill and the COMMON overlay are shipped by the core |
+| `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<data>/plugins/tutor/<lang>.json`; resources `tutor/**` (the plugin's `packs/` tree, materialised under `<data>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
 
 | `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"group": …}`; a legacy `bound` on records written before artifact views is read until the process launch leaves core); every artifact has a kind: a `document` (a file, edited in place under `artifact path <id>` and snapshotted by `artifact modify <id>`) opens in a tx-client view of kind `editor`; a `diff` (`create --kind diff [--cwd W] [--base SHA]`: `git diff <base>` of worktree W plus its untracked files, the base pinned to a commit at create, the patch being the artifact's versioned content `current.patch` that `modify` and `open` re-snapshot) opens in a view of kind `diff` running `nvim -c "DiffviewOpen <base>"` in the worktree, or when the worktree is gone in a temporary detached worktree at the base with the patch applied (made from the worktree's git common directory, recorded as `repository` at create, else a sibling checkout; its close step is kept in `<id>/.cleanup.json` by view name and run by `artifact close <id>`, by `doctor --repair`, or by the next `open` once the view has ended), or when no checkout exists as the patch in an editor; any other kind (a `tour`) is opened by convention, `txc <kind> open <id>` run in-process by the plugin registering that verb, else "no opener for kind"; the view is bound to the artifact (`@tx-view-bound`) and found again by that binding, so `artifact open` and prefix+a on an artifact already open show its view instead of starting another (`artifact open` switches the client to it when run inside the server, else prints its name); `archive <id>` hides a finished artifact from prefix+a and `ls` (content kept; `ls --archived` includes it, `unarchive` brings it back), `ls --kind K` filters by kind; `group <view>` prints a view's resolved group (its parent agent's override, else its artifact's) and refuses to set one; and the store `<data>/plugins/artifacts/` (`<id>.json` with `kind` and `archived`, both optional on read so older records are documents; `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl`, `.locks/` and `.worktrees/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
 | `tour` | `tour create <stops.lua> --title T [--cwd W]` checks the stops with `nvim --clean -l` (they must load as a Lua list) and registers an artifact of kind `tour` (`{"kind": "tour", "worktree": <absolute W, default cwd>, "stops": "current.lua"}`) through the artifacts service; `tour open <id> [--tag T]`, also what `artifact open` and prefix+a run for a tour, shows the view already bound to it, else starts a view of kind `tour` running nvim in the worktree with `require("tx-tour")(<current.lua>)` on `VimEnter` (after tx-client's runtimepath `-c`), or fails with "tour worktree `<W>` is gone"; a tour is revised like a document (`artifact path` + `artifact modify`). The stops file is Lua run inside nvim at create and at every open: it is as trusted as whoever wrote it |
@@ -384,9 +384,16 @@ txc ui attach     # attaches this terminal to the core server's `home` session
 change it would make and changes nothing. It is idempotent: a second run finds nothing to do.
 
 ```
-poc/install             # cargo install --path poc/tx-core-cli (txc, txi); txc ui install; the switch
+poc/install             # cargo install --path poc/tx-core-cli (txc, txi); txc ui install; the config links; the switch
 poc/install --dry-run
 ```
+
+`poc/config/` is the operator's own config, versioned here: `nvim/` (the LazyVim config every
+nvim on the machine loads, tx views included; it prepends `<data>/nvim` itself so tx-client's
+`tx-ask` and `tx-diffview-return` work in a plain nvim too) and `tmux.conf` (the default tmux
+server's config: prefix, copy mode, status bar, TPM; nothing tx-specific, the IDE's server has its
+own under `<data>/tmux.conf`). The install links `~/.config/nvim` and `~/.tmux.conf` to them,
+moving a real directory or file aside as `<path>.bak.<stamp>`.
 
 The switch, run once, keeps the old install runnable as `tx-old` and stops its hooks from firing
 into the old store: `~/.local/bin/tx` becomes `~/.local/bin/tx-old` and `~/.tx-ide/tmux.conf`
@@ -396,14 +403,13 @@ entries whose command lives under `~/.tx-ide/hooks/` leave `~/.claude/settings.j
 `~/.codex/hooks.json`, with the old Claude `statusLine`, after a `<file>.bak.<stamp>` copy of
 each; every other entry stays byte for byte (the old uninstall is not run: it would restore the
 pre-tx hooks its marker recorded). `txc doctor --fix-hooks` then removes what older txc versions
-wired. The script never touches a tmux server, `~/.tx-ide`'s data or the repository's `agents/`;
-it ends with what is left to do by hand (reload the old server's config, drop `config.tx-ask`
-and `config.diffview-return` from your own nvim config). `$HOME`, `$CARGO_INSTALL_ROOT`,
+wired. The script never touches a tmux server or `~/.tx-ide`'s data; it ends with what is left to do by
+hand (restart the old default server so it stops sourcing the old fragment). `$HOME`, `$CARGO_INSTALL_ROOT`,
 `$TX_APPNAME`, `$TX_IDE_HOME`, `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honoured, so the whole
 run can be rehearsed against copies under a throwaway `HOME` (with `$RUSTUP_HOME` and
 `$CARGO_HOME` pointing at the real ones).
 
-`ui install` materialises each active plugin's resources under `<data>/{bin,keys,conf,roles}` and
+`ui install` materialises the core's roles and each active plugin's resources under `<data>/{bin,keys,conf,roles}` and
 writes `<data>/tmux.conf`, which sets `@tx-bin`, `@tx-data` and `@tx-arguments` and runs
 `keys/ide.tmux` and then every other active plugin's `keys/<id>.tmux`. The key bindings and
 `bin/*` find `txc`, its directories and the helper scripts through those server options, so re-run `ui install` after rebuilding `txc`. Files in those

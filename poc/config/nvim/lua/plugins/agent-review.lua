@@ -93,7 +93,7 @@ return {
       { "<leader>gH", "<cmd>DiffviewFileHistory<cr>", desc = "File history (branch)" },
       { "<leader>go", "<cmd>DiffviewOpen<cr>", desc = "Diff working tree (uncommitted changes)" },
       -- the return to the origin tab is an autocmd, not this key: see
-      -- lua/config/diffview-return.lua
+      -- tx-client's tx-diffview-return.lua
       { "<leader>gq", "<cmd>DiffviewClose<cr>", desc = "Close diffview (returns to origin tab)" },
       {
         "<leader>ad",

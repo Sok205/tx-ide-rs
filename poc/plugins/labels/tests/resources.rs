@@ -19,7 +19,7 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
 #[test]
 fn the_key_fragment_declares_its_key_and_its_non_key_state() {
     let (_dir, core) = core(&PluginConfig::default());
-    let all = core.resources("");
+    let all = core.plugin_resources("");
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].plugin, "labels");
     assert_eq!(all[0].name, "keys/labels.tmux");
@@ -55,5 +55,5 @@ fn a_disabled_plugin_publishes_nothing() {
     let mut config = PluginConfig::default();
     config.disabled.insert("labels".to_owned());
     let (_dir, core) = core(&config);
-    assert!(core.resources("").is_empty());
+    assert!(core.plugin_resources("").is_empty());
 }

@@ -23,8 +23,8 @@ const KINDS: [&str; 5] = ["bin", "keys", "conf", NVIM_RESOURCE, ROLES_RESOURCE];
 /// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
 /// view's runtimepath by `views::open`.
 pub const NVIM_RESOURCE: &str = "nvim";
-/// Plugins ship roles as `agents/…` resources; they are installed under `<data>/roles/`, since
-/// `<data>/agents/` holds agent records.
+/// The core (and any plugin) ships roles as `agents/…` resources; they are installed under
+/// `<data>/roles/`, since `<data>/agents/` holds agent records.
 const ROLES_RESOURCE: &str = "agents";
 const ROLES_DIR: &str = "roles";
 /// The verb that starts the assistant session; `home` nests into it when the plugin is active.

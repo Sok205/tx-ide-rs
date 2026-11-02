@@ -58,11 +58,7 @@ impl Plugin for AssistantPlugin {
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(Assistant));
-        r.resource("keys/assistant.tmux", include_bytes!("../tmux/keys.tmux"))?;
-        r.resource(
-            "agents/TX-ASSISTANT.md",
-            include_bytes!("../../../../agents/TX-ASSISTANT.md"),
-        )
+        r.resource("keys/assistant.tmux", include_bytes!("../tmux/keys.tmux"))
     }
 }
 

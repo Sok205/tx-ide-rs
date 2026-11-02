@@ -44,14 +44,7 @@ impl Plugin for MockupPlugin {
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(MockupVerb));
         r.verb(Arc::new(ViewVerb));
-        r.resource(
-            "agents/COMMON.local.md",
-            include_bytes!("../../../../agents/COMMON.mockup.local.md"),
-        )?;
-        r.resource(
-            "agents/skills/tx-mockup/SKILL.md",
-            include_bytes!("../../../../agents/skills/tx-mockup/SKILL.md"),
-        )
+        Ok(())
     }
 }
 

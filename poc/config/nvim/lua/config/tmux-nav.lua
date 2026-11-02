@@ -1,14 +1,13 @@
--- <C-h/j/k/l>: nvim splits first, then tmux panes — the nvim half of tx-ide's
--- @tx-ide-nav-keys (tmux/tx-ide.tmux). At the tabpage edge, hand off to bin/tmux-nav,
--- which walks out of tx's nested client-in-a-pane sessions.
+-- <C-h/j/k/l>: nvim splits first, then tmux panes — the nvim half of the IDE's navigation
+-- keys (tx-client's keys/ide.tmux). At the tabpage edge, hand off to tmux-nav, which walks out
+-- of nested client-in-a-pane sessions.
 
 local M = {}
 
--- Resolve bin/tmux-nav THROUGH the ~/.config/nvim symlink (plain dirname math on the
--- symlinked path would escape into ~/.config); $PATH fallback outside a checkout.
-local source_file = debug.getinfo(1, "S").source:sub(2)
-local navigator = vim.uv.fs_realpath(vim.fs.dirname(source_file) .. "/../../../bin/tmux-nav")
-  or "tmux-nav"
+-- `txc ui install` writes tmux-nav under <data>/bin; $PATH fallback when it is not installed.
+local tx_data_directory = vim.env.TX_DATA_DIR
+  or (vim.env.XDG_DATA_HOME or vim.env.HOME .. "/.local/share") .. "/tx-ide"
+local navigator = vim.uv.fs_realpath(tx_data_directory .. "/bin/tmux-nav") or "tmux-nav"
 
 local directions = {
   h = { flag = "L", name = "left" },

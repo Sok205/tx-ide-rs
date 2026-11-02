@@ -1,4 +1,4 @@
-//! The lesson packs as plugin resources: the repo's `tutor/` tree, compiled in under
+//! The lesson packs as plugin resources: the plugin's `packs/` tree, compiled in under
 //! `tutor/<path>`, plus the plugin's own `lesson.lua`. `materialise` writes them into the
 //! plugin's data dir, where nvim and the scaffold read them.
 
@@ -10,11 +10,11 @@ pub const PREFIX: &str = "tutor/";
 
 macro_rules! from_repo {
     ($($path:literal),* $(,)?) => {
-        &[$((concat!("tutor/", $path), include_bytes!(concat!("../../../../tutor/", $path)))),*]
+        &[$((concat!("tutor/", $path), include_bytes!(concat!("../packs/", $path)))),*]
     };
 }
 
-/// `(resource name, bytes)`; the `tutor/` path in the repo is the name.
+/// `(resource name, bytes)`; the path under `packs/` is the name.
 pub const FILES: &[(&str, &[u8])] = from_repo![
     "keys.txt",
     "python/pack.toml",
