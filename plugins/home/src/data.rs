@@ -1,11 +1,12 @@
-//! Gathering the menu's [`Context`]: plugin status and the cheat sheet from the core's
-//! registry, past sessions from the records, the fork check from tmux. Reads only; another
-//! plugin is seen through its status, its resources and `Agent.ext` (D3).
+//! Gathering the home's [`Context`]: plugin status and the cheat sheet from the core's
+//! registry. Reads only; another plugin is seen through its status, its resources and
+//! `Agent.ext` (D3).
 
-use tx_client::tmux::Ui;
-use tx_core::{Agent, CoreError, ListFilter, PluginStatus, TxCore};
+use std::path::PathBuf;
 
-use crate::model::{Context, KeyHint, Past};
+use tx_core::{CoreError, PluginStatus, TxCore};
+
+use crate::model::{AssistantState, Context, KeyHint};
 
 /// `# keys:` and the first prose comment of a key fragment, up to its first sentence; `None`
 /// when the fragment declares no key.
@@ -53,53 +54,9 @@ pub fn key_hint(plugin: &str, text: &str) -> Option<KeyHint> {
     })
 }
 
-/// When an ended record was last written: its end, or a later rename or tag.
-fn ended_at(session: &Agent) -> f64 {
-    session.last_modified_at
-}
-
-/// 1 when the record's engine knows its conversation, else 0 (the engine's plugin disabled
-/// counts as none).
-fn chat_count(core: &TxCore, session: &Agent) -> usize {
-    usize::from(matches!(core.conversation(&session.id), Ok(Some(_))))
-}
-
-/// Ended sessions, newest end first.
-pub fn past_sessions(core: &TxCore) -> Result<Vec<Past>, CoreError> {
-    let mut sessions = Vec::new();
-    for id in core.list_agents(&ListFilter::new().ended())? {
-        match core.get_agent(&id) {
-            Ok(session) => sessions.push(session),
-            Err(CoreError::NotFound(_)) => {}
-            Err(error) => return Err(error),
-        }
-    }
-    sessions.sort_by(|a, b| ended_at(b).total_cmp(&ended_at(a)));
-    Ok(sessions
-        .iter()
-        .map(|session| Past {
-            id: session.id.to_string(),
-            name: session.name.clone(),
-            tag: session.tags.first().cloned().unwrap_or_default(),
-            at: ended_at(session),
-            chats: chat_count(core, session),
-            cwd: session.working_directory.display().to_string(),
-        })
-        .collect())
-}
-
-/// The tx session `pane` shows: the session nested in it, else the pane's own, never a view.
-pub fn session_in_pane(core: &TxCore, ui: &Ui, pane: &str) -> Option<Agent> {
-    let name = ui
-        .inner_for_pane(pane)
-        .or_else(|| ui.display_message("#{session_name}", Some(pane)))
-        .filter(|name| !ui.is_view(name))?;
-    let id = core.resolve(&name).ok()?;
-    core.get_agent(&id).ok()
-}
-
-pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, CoreError> {
-    let plugins: Vec<(String, bool)> = core
+/// The plugin list and the cheat sheet from the core's registry; the sessions come in Task 7.
+pub fn context(core: &TxCore) -> Result<Context, CoreError> {
+    let plugins = core
         .plugin_status()
         .iter()
         .map(|(id, status)| (id.clone(), *status == PluginStatus::Active))
@@ -110,16 +67,14 @@ pub fn context(core: &TxCore, ui: &Ui, pane: &str) -> Result<Context, CoreError>
         .filter_map(|resource| key_hint(&resource.plugin, &String::from_utf8_lossy(resource.bytes)))
         .collect();
     Ok(Context {
-        active: plugins
-            .iter()
-            .filter(|(_, active)| *active)
-            .map(|(id, _)| id.clone())
-            .collect(),
         plugins,
-        pane_session: session_in_pane(core, ui, pane).is_some(),
-        history: past_sessions(core)?,
         keys,
         now: tx_core::events::now(),
+        home_directory: std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default(),
+        assistant: AssistantState::Absent,
+        ..Context::default()
     })
 }
 

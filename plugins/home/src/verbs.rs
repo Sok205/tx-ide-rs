@@ -11,7 +11,7 @@ use tx_client::tmux::{Ui, shell_quote};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
 use crate::data;
-use crate::model::{Action, Menu};
+use crate::model::{Action, Home};
 use crate::run;
 
 pub const OPEN_VERB: &str = "_home-open";
@@ -132,14 +132,14 @@ impl Verb for Tui {
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let (pane, file, first) = match argv {
-            [pane, _client, file] => (pane, file, false),
-            [pane, _client, file, flag] if flag == "--first" => (pane, file, true),
+        let (file, first) = match argv {
+            [_pane, _client, file] => (file, false),
+            [_pane, _client, file, flag] if flag == "--first" => (file, true),
             _ => return usage(io, "_home-tui <pane> <client> <file> [--first]"),
         };
-        let ui = Ui::from_core(core);
-        let mut menu = Menu::new(data::context(core, &ui, pane)?);
-        if let Some(action) = run::run(&mut menu, first).map_err(failed)? {
+        // Until Task 9 makes it the floor, the TUI only ever runs in the prefix+m popup.
+        let mut home = Home::new_popup(data::context(core)?);
+        if let Some(action) = run::run(&mut home, first).map_err(failed)? {
             std::fs::write(file, action.encode()).map_err(|e| failed(format!("{file}: {e}")))?;
         }
         Ok(0)
@@ -330,7 +330,8 @@ fn perform(ui: &Ui, tx: &Txc, pane: &str, client: &str, action: &Action) {
         form: false,
     };
     match action {
-        Action::NewSession => popup(
+        Action::Attach(name) => switch(ui, client, name),
+        Action::New(directory) => popup(
             ui,
             client,
             &Popup {
@@ -340,35 +341,38 @@ fn perform(ui: &Ui, tx: &Txc, pane: &str, client: &str, action: &Action) {
                 title: " New agent ",
                 form: true,
             },
-            &tx.shell(&["_new-agent", pane, client]),
+            &tx.shell(&[
+                "_new-agent",
+                pane,
+                client,
+                "--cwd",
+                &directory.to_string_lossy(),
+            ]),
         ),
-        Action::Attach => popup(ui, client, &wide(" tx "), &tx.shell(&["pick"])),
-        Action::Fork => popup(
-            ui,
-            client,
-            &Popup {
-                width: "80",
-                height: "4",
-                y: "C",
-                title: " Fork session ",
-                form: true,
-            },
-            &tx.shell(&["_fork-pane", pane, client]),
-        ),
+        Action::Stop(id) => match output(tx.command(&["stop", id])) {
+            Ok(_) => status(ui, client, "stopped"),
+            Err(error) => status(ui, client, &format!("stop: {error}")),
+        },
+        Action::Ask(text) => {
+            // `assistant ask` prints nothing; `warm` names the session to show (Task 9).
+            let asked = output(tx.command(&["assistant", "ask", text]))
+                .and_then(|_| output(tx.command(&["assistant", "warm"])));
+            match asked {
+                Ok(name) => switch(ui, client, name.trim()),
+                Err(error) => status(ui, client, &format!("assistant: {error}")),
+            }
+        }
+        Action::Artifacts(id) => {
+            if let Err(error) = output(tx.command(&["_artifact-menu", id, client])) {
+                status(ui, client, &format!("artifacts: {error}"));
+            }
+        }
         Action::Timeline => popup(
             ui,
             client,
             &wide(" timeline "),
             &tx.shell(&["_timeline-attach"]),
         ),
-        Action::Artifacts => match artifact_target(ui, pane, client) {
-            Some((session, nested)) => {
-                if let Err(error) = output(tx.command(&["_artifact-menu", &session, &nested])) {
-                    status(ui, client, &format!("artifacts: {error}"));
-                }
-            }
-            None => status(ui, client, "artifacts: no session in this pane"),
-        },
         Action::Tutor => {
             let mut command = tx.command(&["tutor", "start", "--detach"]);
             command.env_remove("TMUX");
@@ -380,10 +384,6 @@ fn perform(ui: &Ui, tx: &Txc, pane: &str, client: &str, action: &Action) {
                 Err(error) => status(ui, client, &format!("tutor: {error}")),
             }
         }
-        Action::Assistant => match output(tx.command(&["assistant", "warm"])) {
-            Ok(name) => switch(ui, client, name.trim()),
-            Err(error) => status(ui, client, &format!("assistant: {error}")),
-        },
         Action::Resume(id) => match output(tx.command(&["respawn", id])) {
             Ok(out) => match respawned_name(&out) {
                 Some(name) => {
@@ -441,23 +441,6 @@ fn tutor_view(stdout: &str) -> Option<&str> {
         .lines()
         .find_map(|line| line.split_once(" is ready: ").map(|(view, _)| view.trim()))
         .filter(|view| !view.is_empty())
-}
-
-/// What prefix+a would see in `pane`: the nested session and the nested client drawing it, or
-/// the pane's own session and the firing client.
-fn artifact_target(ui: &Ui, pane: &str, client: &str) -> Option<(String, String)> {
-    if let Some(inner) = ui.inner_for_pane(pane) {
-        let tty = ui.display_message("#{pane_tty}", Some(pane))?;
-        let (_, clients) = ui.quiet(&["list-clients", "-F", "#{client_tty}\t#{client_name}"]);
-        let nested = clients.lines().find_map(|line| {
-            line.split_once('\t')
-                .filter(|(client_tty, _)| *client_tty == tty)
-                .map(|(_, name)| name.to_owned())
-        })?;
-        return Some((inner, nested));
-    }
-    let session = ui.display_message("#{session_name}", Some(pane))?;
-    Some((session, client.to_owned()))
 }
 
 #[cfg(test)]

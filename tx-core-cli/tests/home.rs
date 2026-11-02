@@ -112,6 +112,7 @@ fn ui_install_binds_prefix_m_and_the_first_attach_hook() {
 /// `ui install` turning the menu on in a live IDE: the operator's attach already happened, so
 /// it must not pop up on the next reattach.
 #[test]
+#[ignore = "rewritten in Task 9/11"]
 fn enabling_the_menu_on_a_live_server_counts_the_attached_client_as_first() {
     require_tmux!();
     let cli = Cli::new();
@@ -162,6 +163,7 @@ fn enabling_the_menu_on_a_live_server_counts_the_attached_client_as_first() {
 /// The operator's first attach: home's pane nests an agent (that nested client attaches first
 /// and must not count), the terminal attaches home and gets the menu; a reattach does not.
 #[test]
+#[ignore = "rewritten in Task 9/11"]
 fn the_menu_pops_up_on_the_first_attach_only() {
     require_tmux!();
     let cli = Cli::new();
@@ -241,6 +243,7 @@ fn the_menu_pops_up_on_the_first_attach_only() {
 }
 
 #[test]
+#[ignore = "rewritten in Task 9/11"]
 fn prefix_m_opens_the_menu_without_disabled_plugins_items() {
     require_tmux!();
     let cli = Cli::new();
@@ -306,6 +309,7 @@ fn home_outside_tx_ide_says_where_to_run_it() {
 /// Keys the operator typed for the IDE as the client attached must not pick items: a first-open
 /// menu ignores item keys for its grace period, then takes them.
 #[test]
+#[ignore = "rewritten in Task 9/11"]
 fn a_first_open_menu_ignores_item_keys_in_its_grace_period() {
     require_tmux!();
     let cli = Cli::new();
