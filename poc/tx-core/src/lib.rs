@@ -17,6 +17,7 @@ pub mod migrate;
 pub mod mirror;
 pub mod plugin;
 pub mod profile;
+pub mod roles;
 pub mod state;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]

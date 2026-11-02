@@ -367,7 +367,7 @@ fn resources_are_listed_by_prefix_in_name_order() {
     assert_eq!(pairs(&keys), [("a", "keys/a.tmux")]);
     assert_eq!(keys[0].bytes, b"# a");
     assert_eq!(
-        pairs(&core.resources("")),
+        pairs(&core.plugin_resources("")),
         [("a", "bin/a"), ("a", "keys/a.tmux")]
     );
     assert!(core.resources("conf/").is_empty());
@@ -454,7 +454,7 @@ fn invalid_resource_names_are_refused() {
     let mut core = h.open();
     core.plug(vec![Box::new(NameProbe)], &PluginConfig::default())
         .unwrap();
-    assert_eq!(core.resources("").len(), 6, "only the valid names landed");
+    assert_eq!(core.plugin_resources("").len(), 6, "only the valid names landed");
 }
 
 #[test]
@@ -487,7 +487,7 @@ fn disabled_plugin_publishes_no_resources() {
     )
     .unwrap();
     assert_eq!(
-        pairs(&core.resources("")),
+        pairs(&core.plugin_resources("")),
         [("b", "keys/x"), ("b", "keys/y")]
     );
 }

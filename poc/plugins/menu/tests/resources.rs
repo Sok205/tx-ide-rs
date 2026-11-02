@@ -57,6 +57,6 @@ fn a_disabled_plugin_publishes_nothing() {
     let mut config = PluginConfig::default();
     config.disabled.insert("menu".to_owned());
     let (_dir, core) = core(&config);
-    assert!(core.resources("").is_empty());
+    assert!(core.plugin_resources("").is_empty());
     assert!(core.verb("menu").is_none());
 }

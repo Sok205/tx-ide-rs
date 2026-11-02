@@ -31,6 +31,10 @@ fn dry_run(home: &Path) -> String {
         .arg("--dry-run")
         .env("HOME", home)
         .env("CARGO_INSTALL_ROOT", home.join("cargo"))
+        // The script under test may itself sit in an agent worktree of the real data dir.
+        .env_remove("TX_DATA_DIR")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("TX_APPNAME")
         .env_remove("TX_IDE_HOME")
         .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("CODEX_HOME")
@@ -125,11 +129,41 @@ fn a_compact_file_with_old_entries_lists_what_goes_and_keeps_the_rest() {
     assert!(output.contains("would remove these entries"), "{output}");
     assert!(output.contains(&format!("- PreToolUse: {OURS_WORK}")), "{output}");
     assert!(output.contains(&format!("- Stop: {OURS_POST}")), "{output}");
-    assert!(output.contains(&format!("- statusLine: {OURS_STATUSLINE}")), "{output}");
+    assert!(!output.contains("- statusLine:"), "the statusLine stays: {output}");
     assert!(!output.contains(&format!("- PreToolUse: {FOREIGN}")), "{output}");
-    // The diff it prints keeps the foreign entry and drops the statusLine.
+    // The diff it prints keeps the foreign entry and the statusLine.
     assert!(output.contains(&format!("+            \"command\": \"{FOREIGN}\"")), "{output}");
-    assert!(!output.contains("+  \"statusLine\""), "{output}");
+    assert!(output.contains("+  \"statusLine\""), "{output}");
     // A dry run changes nothing.
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), compact);
+}
+
+#[test]
+fn refuses_to_run_from_an_agent_worktree() {
+    if !have("jq") || !have("cargo") || !have("tmux") {
+        eprintln!("jq, cargo or tmux not available; skipping");
+        return;
+    }
+    let home = home();
+    // A copy of the script inside what the data dir calls an agent worktree.
+    let data = home.path().join(".local/share/tx-ide");
+    let worktree = data.join("worktrees/repo-0123abcd/repo--agent/poc");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::copy(script(), worktree.join("install")).unwrap();
+    let output = std::process::Command::new("bash")
+        .arg(worktree.join("install"))
+        .arg("--dry-run")
+        .env("HOME", home.path())
+        .env_remove("TX_DATA_DIR")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("TX_APPNAME")
+        .env_remove("TX_IDE_HOME")
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CODEX_HOME")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("run poc/install from the main checkout"), "{text}");
+    assert!(!text.contains("Rename the old install"), "stops before the switch: {text}");
 }

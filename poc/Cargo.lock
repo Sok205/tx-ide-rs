@@ -1793,6 +1793,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "sha2",
@@ -1917,7 +1918,6 @@ dependencies = [
 name = "tx-spawn"
 version = "0.1.0"
 dependencies = [
- "regex",
  "serde",
  "serde_json",
  "tempfile",

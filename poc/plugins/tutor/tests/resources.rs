@@ -1,4 +1,4 @@
-//! The tutor plugin's resources: the repo's `tutor/` packs, listed through the core.
+//! The tutor plugin's resources: its `packs/` tree, listed through the core.
 
 use std::path::{Path, PathBuf};
 
@@ -31,12 +31,13 @@ fn files(dir: &Path, root: &Path, out: &mut Vec<String>) {
 }
 
 #[test]
-fn ships_every_file_of_the_repos_tutor_tree() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tutor");
+fn ships_every_file_of_the_packs_tree() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packs");
     let mut expected = Vec::new();
     files(&root, &root, &mut expected);
-    // Lint config is not a pack file.
+    // Lint config is not a pack file; the lesson buffer's Lua is shipped from `nvim/`.
     expected.retain(|name| name != "tutor/.markdownlint-cli2.yaml");
+    expected.push("tutor/lesson.lua".to_owned());
     expected.sort();
     let (_dir, core) = core(&PluginConfig::default());
     let resources = core.resources("tutor/");
@@ -44,7 +45,7 @@ fn ships_every_file_of_the_repos_tutor_tree() {
     names.sort();
     assert_eq!(names, expected);
     assert_eq!(
-        core.resources("").len(),
+        core.plugin_resources("").len(),
         names.len(),
         "only tutor/ resources"
     );
@@ -72,6 +73,6 @@ fn a_disabled_plugin_publishes_nothing() {
     let mut config = PluginConfig::default();
     config.disabled.insert("tutor".to_owned());
     let (_dir, core) = core(&config);
-    assert!(core.resources("").is_empty());
+    assert!(core.plugin_resources("").is_empty());
     assert!(core.verb("tutor").is_none());
 }

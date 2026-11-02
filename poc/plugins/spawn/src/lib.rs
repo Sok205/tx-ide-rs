@@ -61,42 +61,6 @@ const RTP_ENV: &str = "TX_NEW_AGENT_RTP";
 /// nvim.
 const RESULT_ENV: &str = "TX_NEW_AGENT_RESULT";
 
-/// The roles and skills this plugin ships, written for `txc` (the old `tx` keeps its own in the
-/// repository's `agents/`): `agents/…` resources, which `txc ui install` writes under
-/// `<data>/roles/`.
-pub const ROLE_RESOURCES: &[(&str, &[u8])] = &[
-    ("agents/COMMON.md", include_bytes!("../agents/COMMON.md")),
-    (
-        "agents/DEVELOPER.md",
-        include_bytes!("../agents/DEVELOPER.md"),
-    ),
-    (
-        "agents/ORCHESTRATOR.md",
-        include_bytes!("../agents/ORCHESTRATOR.md"),
-    ),
-    ("agents/QA.md", include_bytes!("../agents/QA.md")),
-    (
-        "agents/skills/tx-sessions/SKILL.md",
-        include_bytes!("../agents/skills/tx-sessions/SKILL.md"),
-    ),
-    (
-        "agents/skills/tx-artifacts/SKILL.md",
-        include_bytes!("../agents/skills/tx-artifacts/SKILL.md"),
-    ),
-    (
-        "agents/skills/tx-diff-review/SKILL.md",
-        include_bytes!("../agents/skills/tx-diff-review/SKILL.md"),
-    ),
-    (
-        "agents/skills/tx-code-tours/SKILL.md",
-        include_bytes!("../agents/skills/tx-code-tours/SKILL.md"),
-    ),
-    (
-        "agents/skills/tx-code-tours/scripts/apply_tour.py",
-        include_bytes!("../agents/skills/tx-code-tours/scripts/apply_tour.py"),
-    ),
-];
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SpawnPlugin;
 
@@ -112,9 +76,6 @@ impl Plugin for SpawnPlugin {
             "bin/tmux-new-agent",
             include_bytes!("../bin/tmux-new-agent"),
         )?;
-        for &(name, bytes) in ROLE_RESOURCES {
-            r.resource(name, bytes)?;
-        }
         Ok(())
     }
 }
