@@ -232,10 +232,17 @@ fn record_choice(file: &Path, action: Option<&Action>) -> Result<(), String> {
             }
             std::fs::write(file, action.encode()).map_err(describe)
         }
-        None => match std::fs::remove_file(file) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(describe(error)),
-            _ => Ok(()),
-        },
+        None => remove(file),
+    }
+}
+
+/// `file` is gone, whether or not it was there.
+fn remove(file: &Path) -> Result<(), String> {
+    match std::fs::remove_file(file) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(format!("{}: {error}", file.display()))
+        }
+        _ => Ok(()),
     }
 }
 
@@ -271,10 +278,22 @@ impl Verb for Install {
         };
         let ui = Ui::from_core(core);
         let installed = Txc::current(core).and_then(|tx| {
-            floor::install(&ui, session, &floor::hook_command(&tx.shell(&[])), |pane| {
-                tx.shell(&[TUI_VERB, pane, "--first"])
-            })
-            .map_err(failed)
+            let pane = floor::install(&ui, session, &floor::hook_command(&tx.shell(&[])))
+                .map_err(failed)?;
+            if !floor::takes_floor(pane.dead, &pane.command) {
+                return Ok(());
+            }
+            // A fresh TUI: a choice or a last session left by a pane of an earlier server with
+            // the same id is not this pane's.
+            let directory = plugin_directory(core);
+            for file in [
+                floor::choice_path(&directory, &pane.id),
+                floor::last_path(&directory, &pane.id),
+            ] {
+                remove(&file).map_err(failed)?;
+            }
+            ui.respawn_pane(&pane.id, &tx.shell(&[TUI_VERB, &pane.id, "--first"]))
+                .map_err(failed)
         });
         if let Err(error) = installed {
             let message = format!("tx home: {error}");

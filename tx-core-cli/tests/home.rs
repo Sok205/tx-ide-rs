@@ -106,7 +106,11 @@ fn prefix_m_opens_the_home_popup_and_q_closes_it() {
     press(&cli, &["C-a", "m"]);
     assert!(cli.wait_for(5, popup_shown), "no popup:\n{}", screen(&cli));
     press(&cli, &["q"]);
-    assert!(cli.wait_for(5, || !popup_shown()), "q did not close it:\n{}", screen(&cli));
+    assert!(
+        cli.wait_for(5, || !popup_shown()),
+        "q did not close it:\n{}",
+        screen(&cli)
+    );
     assert!(home_shown(&cli), "{}", screen(&cli));
 }
 
@@ -269,12 +273,26 @@ fn home_install_turns_a_shell_home_into_the_tui() {
     let cli = Cli::new();
     installed_server(&cli, NO_ASSISTANT);
     hand_made_home(&cli, "sh");
+    // A choice and a last session an earlier server's pane of the same id left behind.
+    let directory = cli.state().join("plugins/home");
+    let digits: String = home_pane(&cli)
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    let stale = [
+        directory.join(format!("choice.{digits}")),
+        directory.join(format!("last.{digits}")),
+    ];
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(&stale[0], "tutor").unwrap();
+    std::fs::write(&stale[1], "gone").unwrap();
     assert_eq!(cli.ok(&["_home-install", "home"]), "");
     assert!(
         cli.wait_for(5, || home_command(&cli) == "tx"),
         "{}",
         home_command(&cli)
     );
+    assert!(stale.iter().all(|file| !file.exists()), "{stale:?}");
     let pane = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_id}"]);
     let hooks = cli.tmux_out(&["show-hooks", "-p", "-t", &pane]);
     assert!(hooks.contains("pane-died"), "{hooks}");
@@ -283,12 +301,68 @@ fn home_install_turns_a_shell_home_into_the_tui() {
         cli.tmux_out(&["show-options", "-pv", "-t", &pane, "remain-on-exit"]),
         "on"
     );
+    assert_eq!(
+        cli.tmux_out(&["show-options", "-pv", "-t", &pane, "remain-on-exit-format"]),
+        "tx home: working…"
+    );
     // A second install leaves the running TUI alone.
     let pid = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_pid}"]);
     cli.ok(&["_home-install", "home"]);
     assert_eq!(
         cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_pid}"]),
         pid
+    );
+}
+
+/// A shell the operator split off the floor and focused is theirs: a second install finds the
+/// floor by its mark and touches no other pane.
+#[test]
+fn home_install_leaves_a_split_shell_alone() {
+    require_tmux!();
+    let cli = Cli::new();
+    installed_server(&cli, NO_ASSISTANT);
+    hand_made_home(&cli, "sh");
+    cli.ok(&["_home-install", "home"]);
+    assert!(
+        cli.wait_for(5, || home_command(&cli) == "tx"),
+        "{}",
+        home_command(&cli)
+    );
+    let floor_pane = home_pane(&cli);
+    let pid_of = |pane: &str| cli.tmux_out(&["display-message", "-p", "-t", pane, "#{pane_pid}"]);
+    let floor_pid = pid_of(&floor_pane);
+    let split = cli.tmux_out(&[
+        "split-window",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        "=home:",
+        "sh",
+    ]);
+    assert_eq!(home_pane(&cli), split, "the split pane is the active one");
+    let split_pid = pid_of(&split);
+    cli.ok(&["_home-install", "home"]);
+    assert!(
+        !cli.wait_for(1, || pid_of(&split) != split_pid),
+        "the split shell was replaced"
+    );
+    let hooks = cli.tmux_out(&["show-hooks", "-p", "-t", &split]);
+    assert!(!hooks.contains("pane-died"), "{hooks}");
+    assert_eq!(
+        cli.tmux_out(&[
+            "display-message",
+            "-p",
+            "-t",
+            &floor_pane,
+            "#{pane_current_command}"
+        ]),
+        "tx"
+    );
+    assert_eq!(pid_of(&floor_pane), floor_pid);
+    assert_eq!(
+        cli.tmux_out(&["show-options", "-pv", "-t", &floor_pane, "@tx-home-floor"]),
+        "1"
     );
 }
 

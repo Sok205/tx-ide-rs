@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use tx_client::tmux::{Ui, UiError};
+use tx_client::views::{self, HOME_FLOOR_OPTION, HomePane};
 
 /// Foreground commands of a home pane that the TUI may replace: a shell. A nested client
 /// (`tmux`) is left alone: the operator is inside a session, and the floor comes back when they
@@ -61,37 +62,40 @@ pub fn hook_command(tx: &str) -> String {
     format!("run-shell -b {}", tmux_quote(&shell))
 }
 
-/// The floor on `session`'s pane: `remain-on-exit` and the hook as pane options (a split pane
-/// in the window keeps its own life), and the TUI (`tui(pane)`, a pane command) in the pane when
-/// [`takes_floor`].
-pub fn install(
-    ui: &Ui,
-    session: &str,
-    hook: &str,
-    tui: impl FnOnce(&str) -> String,
-) -> Result<(), UiError> {
-    let target = format!("={session}:");
-    let pane = ui.run(&[
-        "display-message",
-        "-p",
-        "-t",
-        &target,
-        "#{pane_id}\t#{pane_dead}\t#{pane_current_command}",
-    ])?;
-    let mut fields = pane.trim_end_matches('\n').splitn(3, '\t');
-    let (Some(pane), Some(dead), Some(command)) = (fields.next(), fields.next(), fields.next())
-    else {
+/// What the floor pane shows while it is dead and `_home-perform` works, in place of tmux's
+/// "Pane is dead".
+pub const WORKING: &str = "tx home: working…";
+
+/// The floor among a home's panes: the one marked [`HOME_FLOOR_OPTION`], else (a home never
+/// installed) the first pane of the first window.
+pub fn floor_pane(panes: &[HomePane]) -> Option<&HomePane> {
+    panes.iter().find(|pane| pane.floor).or(panes.first())
+}
+
+/// The floor on `session`'s floor pane: the mark, `remain-on-exit` with its [`WORKING`] text and
+/// the hook, all pane options (any other pane of the view keeps its own life). The pane as it
+/// was; whether the TUI goes into it is the caller's call.
+pub fn install(ui: &Ui, session: &str, hook: &str) -> Result<HomePane, UiError> {
+    let panes = views::home_panes(ui, session)?;
+    let Some(pane) = floor_pane(&panes) else {
         return Err(UiError::Failed {
-            args: format!("display-message -t {target}"),
-            stderr: format!("unexpected output {pane:?}"),
+            args: format!("list-panes -s -t ={session}"),
+            stderr: "no pane".to_owned(),
         });
     };
-    ui.run(&["set-option", "-p", "-t", pane, "remain-on-exit", "on"])?;
-    ui.run(&["set-hook", "-p", "-t", pane, "pane-died", hook])?;
-    if takes_floor(dead == "1", command) {
-        ui.respawn_pane(pane, &tui(pane))?;
-    }
-    Ok(())
+    let id = pane.id.as_str();
+    ui.run(&["set-option", "-p", "-t", id, HOME_FLOOR_OPTION, "1"])?;
+    ui.run(&["set-option", "-p", "-t", id, "remain-on-exit", "on"])?;
+    ui.run(&[
+        "set-option",
+        "-p",
+        "-t",
+        id,
+        "remain-on-exit-format",
+        WORKING,
+    ])?;
+    ui.run(&["set-hook", "-p", "-t", id, "pane-died", hook])?;
+    Ok(pane.clone())
 }
 
 #[cfg(test)]
@@ -123,6 +127,29 @@ mod tests {
         assert!(!takes_floor(false, "nvim"));
         assert!(!takes_floor(false, "tx"));
         assert!(!takes_floor(false, ""));
+    }
+
+    #[test]
+    fn the_floor_is_the_marked_pane_else_the_first() {
+        let pane = |id: &str, floor: bool| HomePane {
+            id: id.into(),
+            floor,
+            dead: false,
+            command: "zsh".into(),
+        };
+        assert_eq!(floor_pane(&[]), None);
+        assert_eq!(
+            floor_pane(&[pane("%1", false), pane("%2", false)])
+                .unwrap()
+                .id,
+            "%1"
+        );
+        assert_eq!(
+            floor_pane(&[pane("%1", false), pane("%2", true)])
+                .unwrap()
+                .id,
+            "%2"
+        );
     }
 
     #[test]
