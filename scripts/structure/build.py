@@ -1,7 +1,7 @@
 """Build tx-core's docs site: rustdoc twice (public, and internal with private and #[doc(hidden)]
 items), each page extended with the Structure drawer, plus the graph page each drawer loads.
 
-Usage: python3 scripts/structure/build.py <poc workspace> <site dir> <label>
+Usage: python3 scripts/structure/build.py <workspace> <site dir> <label>
 Writes <site>/public, <site>/internal, <site>/index.html and <site>/.nojekyll (GitHub Pages)."""
 
 import hashlib

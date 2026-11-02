@@ -1,6 +1,6 @@
 # tx-core docs with a structure graph
 
-`cargo doc` for `poc/tx-core`, twice, with a **Structure** drawer added to every rustdoc page:
+`cargo doc` for `tx-core`, twice, with a **Structure** drawer added to every rustdoc page:
 
 - **internal**: `--document-private-items --document-hidden-items`, so every item appears, including the `#[doc(hidden)]` modules (`tmux`, `store`, `locks`, `messaging`). The graph shows field, signature and call relations.
 - **public**: plain `cargo doc`, which is what a crate user sees. The graph shows relations through public fields and public signatures only.
@@ -17,11 +17,11 @@ The drawer is a square in the page's top-right corner. It follows rustdoc's font
 ## Build
 
 ```sh
-python3 scripts/structure/build.py poc /tmp/tx-core-docs "poc @ $(git rev-parse --short HEAD)"
+python3 scripts/structure/build.py . /tmp/tx-core-docs "tx-core @ $(git rev-parse --short HEAD)"
 open /tmp/tx-core-docs/internal/tx_core/index.html
 ```
 
-This needs the stable Rust toolchain and Python 3, with no Python packages. The internal build uses the unstable `--document-hidden-items` through `RUSTC_BOOTSTRAP=1`. Cargo output goes to `poc/target/structure/`.
+This needs the stable Rust toolchain and Python 3, with no Python packages. The internal build uses the unstable `--document-hidden-items` through `RUSTC_BOOTSTRAP=1`. Cargo output goes to `target/structure/`.
 
 The site directory gets:
 
@@ -34,7 +34,7 @@ The site directory gets:
 The `gh-pages` branch holds a built site; Pages serves it from there (Settings → Pages → Deploy from a branch → `gh-pages`, `/ (root)`). To refresh it:
 
 ```sh
-python3 scripts/structure/build.py poc /tmp/tx-core-docs "poc @ $(git rev-parse --short HEAD)"
+python3 scripts/structure/build.py . /tmp/tx-core-docs "tx-core @ $(git rev-parse --short HEAD)"
 git worktree add /tmp/tx-core-pages gh-pages
 rsync -a --delete --exclude .git /tmp/tx-core-docs/ /tmp/tx-core-pages/
 git -C /tmp/tx-core-pages add -A

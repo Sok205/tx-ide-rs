@@ -4,9 +4,6 @@ A plain core for a swarm of interactive agents. Each agent is a normal process i
 session on tx's **own** tmux server (`-S <run>/tmux.sock -f <data>/tmux.conf`). Agents
 keep running after the launching CLI exits; attaching shows the agent's native terminal.
 
-Design: `../../docs/superpowers/specs/2026-10-15-tx-core-design.md`.
-Plan and the decisions the spec left open: `../../docs/superpowers/plans/2026-10-15-tx-core.md`.
-
 ## Crates
 
 | crate | what |
@@ -120,7 +117,7 @@ to `cwd`, refusing anything that escapes it), then starts `program args…` with
 
 ## Verification
 
-From `poc/` (its own Cargo workspace, separate from the `tx` binary):
+From the repository root (the Cargo workspace):
 
 ```
 cargo test --workspace

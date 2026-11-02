@@ -1,5 +1,5 @@
 //! tx-core: run and manage a swarm of interactive agents, each a process in a detached session
-//! on tx's own tmux server. See `docs/superpowers/specs/2026-10-15-tx-core-design.md`.
+//! on tx's own tmux server.
 
 pub mod agent;
 pub mod config;
