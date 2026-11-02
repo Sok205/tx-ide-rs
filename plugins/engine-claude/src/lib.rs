@@ -30,6 +30,8 @@
 //! `restore` puts them back where Claude looks when the live transcript is gone (Claude deletes
 //! transcripts older than `cleanupPeriodDays`), so a `--resume` finds its conversation.
 
+pub mod trust;
+
 use std::path::{Path, PathBuf};
 
 use std::str::FromStr;
@@ -544,6 +546,18 @@ pub fn claude_home_from_env() -> PathBuf {
             .map(PathBuf::from)
             .unwrap_or_default()
             .join(".claude"),
+    }
+}
+
+/// Claude's JSON config file, which holds the per-project state: `$CLAUDE_CONFIG_DIR/.claude.json`
+/// when that is set, else `$HOME/.claude.json` (beside `~/.claude`, not inside it).
+pub fn claude_config_file_from_env() -> PathBuf {
+    match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(directory) if !directory.is_empty() => PathBuf::from(directory).join(".claude.json"),
+        _ => std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+            .join(".claude.json"),
     }
 }
 
