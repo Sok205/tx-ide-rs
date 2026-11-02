@@ -33,8 +33,8 @@ pub enum TrustError {
 }
 
 /// Marks `project` as trusted in the Claude config file at `config_file`: adds the one key and
-/// preserves everything else, replacing the file atomically. A file that does not exist is left
-/// alone; Claude owns its creation.
+/// preserves everything else, replacing the file atomically (the file a symlink points to, so the
+/// link stays). A file that does not exist is left alone; Claude owns its creation.
 pub fn trust_project(config_file: &Path, project: &Path) -> Result<Trusted, TrustError> {
     let io_error = |source| TrustError::Io {
         path: config_file.to_path_buf(),
@@ -76,7 +76,9 @@ pub fn trust_project(config_file: &Path, project: &Path) -> Result<Trusted, Trus
         path: config_file.to_path_buf(),
         source,
     })?;
-    replace_file(config_file, &rendered).map_err(io_error)?;
+    // The file itself, not a symlink to it: a symlinked config stays one.
+    let resolved = config_file.canonicalize().map_err(io_error)?;
+    replace_file(&resolved, &rendered).map_err(io_error)?;
     Ok(Trusted::Added)
 }
 
@@ -175,6 +177,32 @@ mod tests {
 
         assert_eq!(outcome, Trusted::AlreadyTrusted);
         assert_eq!(fs::read(&config_file).unwrap(), after_first);
+    }
+
+    #[test]
+    fn a_symlinked_config_stays_a_symlink_and_its_target_gains_the_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let dotfiles = directory.path().join("dotfiles");
+        fs::create_dir(&dotfiles).unwrap();
+        let target = write_config(&dotfiles, &json!({"projects": {}}));
+        let link = directory.path().join("claude.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let outcome = trust_project(&link, Path::new("/p")).unwrap();
+
+        assert_eq!(outcome, Trusted::Added);
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            read_config(&target)["projects"]["/p"],
+            json!({"hasTrustDialogAccepted": true})
+        );
+        assert_eq!(fs::read_dir(&dotfiles).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
     }
 
     #[test]
