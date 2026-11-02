@@ -1,186 +1,38 @@
 # tx-ide
-A tmux + Claude Code session controller One CLI (`tx`) gives every tmux
-session a **durable record**, an fzf **picker** to find and attach them, verbs to **spawn**
-Claude Code / Codex / Antigravity workers and nvim companions, **chat operations** (fork /
-handover / rollover) over the conversations behind a session, a central **history** of every
-chat, and a repo/branch/model **statusline**.
 
-There is no daemon. State lives in plain JSON records under `$TX_IDE_HOME` (default
-`~/.tx-ide`); every read reconciles those records against the live tmux server, and engine hooks
-drive each session's state as you work.
+A plain core for a swarm of interactive coding agents in tmux: each agent is an ordinary engine
+process (Claude Code, Codex) in its own worktree with a durable record; views (nvim, shells,
+diffviews) sit beside them; a picker, a timeline, artifacts, a tutor and a one-line assistant
+are plugins. The front end is `txc`.
 
-![tx-ide control-center](docs/images/tmux-control-center.png)
-
-## Requirements
-
-- macOS or Linux.
-- Rust 1.92+ (`rustup`), to build `tx`.
-- `tmux` (3.6+ recommended; 3.5 works) and `fzf` ≥ 0.63. The installer offers to `brew install`
-  missing ones.
-- `git` (worker worktrees).
-- At least one agent engine: Claude Code (`claude`), Codex (`codex`) or Antigravity (`agy`).
-- Optional: `nvim` for `tx spawn-nvim` (the repo ships a LazyVim config under `nvim/`).
+Everything lives under [`poc/`](poc/README.md): the `tx-core` library, the `tx-client` tmux/nvim
+layer, the plugins, the `txc`/`txi` binaries, the shipped roles (`poc/tx-core/agents/`) and the
+operator's own nvim and tmux config (`poc/config/`).
 
 ## Install
 
 ```bash
 git clone <this-repo> ~/tx-ide-rs
-cd ~/tx-ide-rs
-cargo build --release
-ln -sf ../target/release/tx bin/tx
-./install
+~/tx-ide-rs/poc/install            # cargo install txc and txi; txc ui install; link ~/.config/nvim and ~/.tmux.conf
+~/tx-ide-rs/poc/install --dry-run  # print every change first
+txc ui attach                      # the IDE
 ```
 
-The cloned repo is the code; `$TX_IDE_HOME` holds only state. `./install` asks before each step,
-is safe to re-run, and backs up every file it edits (`<file>.bak.<timestamp>`). It:
-
-- links `tx`, `tx-assistant` and the tmux helpers into `~/.local/bin` (make sure it is on `PATH`),
-- creates the `$TX_IDE_HOME` skeleton,
-- adds a `source-file` line for the tx tmux fragment to `~/.tmux.conf`,
-- generates the hook shims under `$TX_IDE_HOME/hooks/` and registers them with every engine CLI
-  it finds (`~/.claude/settings.json`, `~/.codex/hooks.json`, …) behind a marker, leaving your
-  other hooks alone,
-- installs the statusline, and offers to link the bundled nvim config.
-
-Then:
-
-```bash
-tx --help    # the commands
-tx start     # create the Views home base, warm the tx-assistant, attach
-```
-
-To use another home, export it before installing: `TX_IDE_HOME=~/.tx-ide-dev ./install`.
-
-### Updating
-
-```bash
-git pull && cargo build --release && ./install
-```
-
-`bin/tx` points at `target/release/tx`, so a rebuild is picked up at once; re-running
-`./install` refreshes the shims and hooks.
-
-## Uninstall
-
-```bash
-./uninstall               # reverse the install; keep sessions, history, log and role overrides
-./uninstall --keep-agent  # keep the Claude hooks, statusline and marker
-./uninstall --purge       # also delete sessions/, history/, user-agents/ and log.jsonl
-```
-
-## Quick start
-
-```bash
-tx start                                              # Views + tx-assistant, then attach
-tx spawn auth --tag api --cwd ~/code/app --prompt "Fix the login bug"   # a Claude worker
-tx spawn review --tag api --engine codex --effort 4 --cwd ~/code/app    # a Codex worker
-tx spawn-nvim notes --tag api --cwd ~/code/app --diff                   # nvim with a diffview
-tx ls                                                  # what is running
-tx attach                                              # the fzf picker (prefix+t in tmux)
-tx tutor start                                         # the interactive walkthrough (builds an HTTP server)
-tx start --tutor                                       # boot tx-ide straight into the walkthrough
-```
-
-Inside tmux: `prefix+t` opens the picker, `prefix+/` sends a line to the tx-assistant,
-`prefix+n` spawns a new agent (an nvim form in a popup: name, tags, prompt, project / engine / model / effort / role lists; the projects come from `config.json`), `prefix+f` forks the active pane's session (a popup asks the name; blank = `<source>-fork`), `prefix+e` edits a session's name, tags and group override, `prefix+X` kills the active pane's session,
-`prefix+s` lists sessions with their names and tags, and `C-h/j/k/l` move between panes
-(passing through into nvim and nested tmux).
-
-## Commands
-
-`tx` (or `tx --help`) prints the summary. `tx <verb> -h` prints a verb's flags.
-
-| Area | Commands |
-|---|---|
-| Spawn | `spawn` (worker or shell; `--engine`, `--prompt`, `--model`, `--effort 1-5`, `--role`, `--read-only`), `spawn-nvim`, `spawn-view` |
-| Inspect | `ls` (`--json`), `show`, `history`, `chat ls`, `whoami`, `attach`, `timeline` (swimlane TUI; `--last 30m`, `--days`) |
-| Chat operations | `fork`, `handover`, `rollover`, `resume` |
-| Manage | `tag`, `group`, `rename`, `kill`, `archive`, `rm`, `send-message`, `send-user-message`, `migrate` |
-| Artifacts | `artifact create / modify / group / ls / show / diff / open / doctor` |
-| Sync | `sync push / pull / status` |
-| Home base | `start` |
-| Learn | `tutor` (`start`, `check`, `next`, `prev`, `goto`, `status`, `hint`, `reset`) |
-
-Hidden helpers used by the tmux fragment, hooks and installer start with `_` (`tx _plugins`,
-`tx hook …`, `tx _list`, …). Two verbs are new compared with the Python version: `tx revive
-<name>` brings back an exited record whose tmux session is still alive, and `tx ls --json`.
-
-Agents launch from a detached worktree under `$TX_IDE_HOME/worktrees/`. Roles (`--role NAME`)
-come from `agents/` in this repo, overridden or extended by `$TX_IDE_HOME/user-agents/NAME.md`
-and `NAME.local.md`.
-
-## Tutorial
-
-`tx tutor start` is tx-ide's vimtutor: 13 lessons that teach the picker, spawning, reviewing,
-chat operations, the tx-assistant and cleanup while you build a small Python HTTP server (no
-networking knowledge needed). It scaffolds `~/tx-tutor/python`, opens the `tutor-python` view
-(lesson on the left, shell on the right); `tx tutor check` verifies each step. `tx start --tutor
-[LANG]` boots tx-ide (tx-assistant + Views) and lands in the walkthrough instead of Views. Lessons live in
-`tutor/<lang>/` — see `tutor/python/lessons.toml` for the check format. Pack servers must answer
-with a `Content-Length` (not chunked) body — the checker's HTTP client does not decode chunked
-transfer-encoding.
-
-## Configuration
-
-`$TX_IDE_HOME/config.json` (optional, read on every run):
-
-```json
-{
-  "stuck_working_threshold_seconds": 600,
-  "projects": { "tx-ide": "~/code/tx-ide-rs", "web": "~/code/web" },
-  "default_project": "tx-ide",
-  "sync": { "backend": "local", "path": "~/tx-archive" },
-  "plugins": {
-    "engine.antigravity": { "disabled": true },
-    "verbs.chat": { "disabled": true }
-  }
-}
-```
-
-- `stuck_working_threshold_seconds` — how long a `working` session may idle, with its pane no
-  longer running the agent, before it is demoted to `idle` (default 600).
-- `projects` / `default_project` — the working directories `prefix+n` offers for a new agent
-  (name → path, `~` expands), with the one preselected (default: the first). Without any, the
-  key offers the firing pane's directory.
-- `sync` — the remote for `tx sync` (`local` with `path`, or `s3` with `bucket` / `prefix`).
-- `plugins` — switch components off. Entries: `engine.claude`, `engine.codex`,
-  `engine.antigravity`, `verbs.home`, `verbs.sessions`, `verbs.listing`, `verbs.hooks`,
-  `verbs.chat`, `verbs.artifacts`, `verbs.tutor`, `verbs.install`. A disabled verb group's commands disappear
-  (from `--help` too); a disabled engine cannot be spawned. `tx _plugins` shows each entry's
-  status. A malformed `config.json` falls back to the defaults.
-
-tmux options (set in `~/.tmux.conf` above the tx `source-file` line, all default `on`):
-`@tx-ide-popups`, `@tx-ide-session-labels`, `@tx-ide-nav-keys`, `@tx-ide-pane-keys`, … — see the
-header of `tmux/tx-ide.tmux`.
+Needs Rust 1.92+, tmux, fzf, git, jq, and at least one engine CLI (`claude`, `codex`); `nvim` for
+views. `poc/README.md` is the full reference (directories, verbs, keys, plugins, the install).
 
 ## Development
 
-```
-crates/cordis     the component runtime (effects with undo, typed keys, fiber lifecycle, loader)
-crates/tx         the tx binary: domain model, tmux/git/engine adapters, verb components
-bin/ tmux/ shared/ setup/ install uninstall claude/    helpers and entry points (bash)
-agents/ nvim/     shipped roles and nvim config
-docs/             architecture, parity contract, baseline, follow-ups
-```
-
 ```bash
-cargo test --workspace                        # unit + integration tests
+cd poc
+cargo test --workspace
 cargo clippy --workspace --all-targets
-scripts/port-tests.sh                         # the black-box acceptance suite (~15 min)
-scripts/port-tests.sh spawn life              # selected areas
 ```
 
-`scripts/port-tests.sh` runs the Python repo's `port-tests/` (expects `../tx-ide`, or set
-`TX_REF`) against this build; it needs `python3.14` and sets `TMPDIR=/private/tmp` on macOS. It
-re-points `bin/tx` at the debug build — run `ln -sf ../target/release/tx bin/tx` afterwards if
-this checkout is your installed one.
+Design notes and plans: `docs/superpowers/`. The rustdoc structure graph: `scripts/structure/`.
 
-Current status on macOS (tmux 3.5a): 765 of 847 acceptance tests pass (the Python reference:
-745); the rest are host limits shared with the reference or open questions in the test spec —
-see `docs/BASELINE.md` and `docs/PARITY-CONTRACT.md`.
-
-Further reading: `docs/ARCHITECTURE.md` (how components are wired, what of the paper is built),
-`docs/cordis-paradigm.md` (the paradigm), `docs/PORTING-GUIDE.md`, `docs/FOLLOW-UPS.md`.
+The previous implementation (the `tx` binary under `crates/`, its bash helpers and installer) was
+removed after the switch to `txc`; it is reachable at the tag `old-tx-final`.
 
 ## License
 
