@@ -35,8 +35,8 @@ With no envelope, the request is context-free: don't guess the target, ask which
 Every agent has a **durable record** (`tx show <agent>`): its `name`, `tags`, `engine`, `roles`,
 `working_directory`, `parent_id`, `state`, and its conversation, which is what `tx respawn`
 and `tx fork` continue. The tmux option `@tx-id` links the live session to its record, so the
-record outlives a stop or a server restart. `tx ls` lists the running agents, `--ended` and
-`--archived` the rest; `tx where <agent>` prints the socket and pane to inspect it with raw
+record outlives a stop or a server restart. `tx ls` lists the running agents, `--ended` the
+rest; `tx where <agent>` prints the socket and pane to inspect it with raw
 tmux (read-only).
 
 Tags are a field of the record, not a tmux option — change them with `tx tag <agent> [tags]`.

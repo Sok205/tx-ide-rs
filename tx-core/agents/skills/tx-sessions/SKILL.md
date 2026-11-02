@@ -76,5 +76,6 @@ one yourself.
 - `tx send <agent> -- <text>` types a message into a running agent, framed as from you.
 - `tx ls` lists agents (`--tag T`, `--parent P`, `--json`); `tx show <agent>` prints the record,
   including its `state` (`starting`, `working`, `idle`, `ended`).
-- `tx stop <agent>` ends it (`tx respawn <agent>` restarts it with the same record, worktree and
-  conversation); `tx archive <agent>` stops it and hides it from `tx ls` once its work is done.
+- `tx stop <agent>` ends it once its work is done (`tx respawn <agent>` restarts it with the same
+  record, worktree and conversation); an ended agent leaves `tx ls` (`tx ls --ended` lists it)
+  and frees its name.

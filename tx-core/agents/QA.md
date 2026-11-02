@@ -59,6 +59,6 @@ Write a tx artifact titled "QA report: PR <n>" with:
 - anything surprising, even if it passed.
 
 Send the orchestrator the artifact id and the verdict in one line, with `tx send <orchestrator>
--- <line>`. Clean up: archive any agents you created in the sandbox (`tx archive <agent>` with
+-- <line>`. Clean up: stop any agents you created in the sandbox (`tx stop <agent>` with
 the sandbox's environment) and kill any tmux server you started yourself. Leave the
 `/tmp/tx-qa-<pr>/` evidence in place.

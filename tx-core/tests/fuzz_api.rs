@@ -121,7 +121,6 @@ fn session_with(parent: Option<AgentId>, tags: Vec<String>, state: LlmEngineStat
         created_at: 1.0,
         last_modified_at: 1.0,
         last_activity_at: None,
-        archived_at: None,
         tags,
         parent_id: parent,
         ext: std::collections::BTreeMap::new(),
@@ -405,16 +404,16 @@ fn engine_adapter_object_is_usable_from_another_thread() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn event_type_all_is_twelve_unique_lowercase_kebab_names() {
+fn event_type_all_is_eleven_unique_lowercase_kebab_names() {
     let all: &[EventType] = EventType::ALL;
-    assert_eq!(all.len(), 12);
+    assert_eq!(all.len(), 11);
     let variants: BTreeSet<&str> = all
         .iter()
         .map(|t| format!("{t:?}").leak() as &str)
         .collect();
-    assert_eq!(variants.len(), 12, "duplicate variant in ALL");
+    assert_eq!(variants.len(), 11, "duplicate variant in ALL");
     let names: BTreeSet<&'static str> = all.iter().map(|t| t.as_str()).collect();
-    assert_eq!(names.len(), 12, "duplicate as_str in ALL");
+    assert_eq!(names.len(), 11, "duplicate as_str in ALL");
     for name in names {
         assert!(!name.is_empty());
         assert!(

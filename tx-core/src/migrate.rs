@@ -510,7 +510,6 @@ fn upgrade_one(core: &TxCore, path: &Path, record: &Map<String, Value>, id: &Age
         created_at,
         last_modified_at,
         last_activity_at: None,
-        archived_at: record.get("archived_at").and_then(Value::as_f64),
         tags: strings(record.get("tags")),
         parent_id: text_of(record, "parent").and_then(|parent| parent.parse().ok()),
         ext,
@@ -1001,7 +1000,6 @@ mod tests {
         assert_eq!(lead.state, LlmEngineState::Working);
         assert_eq!(lead.created_at, 1.0);
         assert_eq!(lead.last_modified_at, 5.0);
-        assert_eq!(lead.archived_at, None);
         assert_eq!(lead.tags, ["t"]);
         assert_eq!(lead.parent_id, None);
         // The engine's own data, under what a later build already recorded (`effort`).
@@ -1017,7 +1015,6 @@ mod tests {
         let stopped = core.store().load(&"b".parse().unwrap()).unwrap().unwrap();
         assert_eq!(stopped.state, LlmEngineState::Ended);
         assert_eq!(stopped.parent_id, Some("a".parse().unwrap()));
-        assert_eq!(stopped.archived_at, Some(6.0));
         assert_eq!(
             stopped.ext["claude"],
             json!({"conversation_id": "r1", "transcript_path": "/computed.jsonl"}),

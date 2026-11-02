@@ -22,14 +22,12 @@ verbs:
                                                                     changes are not carried over); SOURCE's engine, roles and
                                                                     engine options unless an option says otherwise; name NAME,
                                                                     else SOURCE-fork; tags default to SOURCE's; prints its id
-  ls [--parent ID] [--tag T] [--running|--ended] [--archived] [--json]
-                                                                    id, name, state, working directory per line;
-                                                                    --running / --ended: only agents whose state
-                                                                    is not / is ended;
-                                                                    --archived: the archived sessions instead;
+  ls [--parent ID] [--tag T] [--running|--ended] [--json]
+                                                                    id, name, state, working directory per line
+                                                                    of the running agents (the default, --running),
+                                                                    or of the ended ones (--ended);
                                                                     --json: one array of {id, name, state,
-                                                                    working_directory, tags}, running only
-                                                                    unless --ended says otherwise
+                                                                    working_directory, tags}
   show TARGET                                                       the record as JSON
   rename TARGET NAME
   tag TARGET [TAG]...                                               replace the tag list
@@ -44,8 +42,6 @@ verbs:
   interrupt TARGET                                                  abort the agent's running turn
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
-  archive TARGET                                                    stop it if running, then hide it from ls; nothing
-                                                                    is deleted, and respawn brings it back
   engines                                                           the engines whose plugin is enabled (claude, codex)
   plugins                                                           id and active|disabled per plugin
   migrate [--from DIR]                                              move a version-1 home (default
@@ -115,9 +111,8 @@ pub enum Verb {
     Ls {
         parent: Option<String>,
         tag: Option<String>,
-        /// `Some(false)`: `--running`; `Some(true)`: `--ended`.
-        ended: Option<bool>,
-        archived: bool,
+        /// `--ended`: the ended agents instead of the running ones.
+        ended: bool,
         json: bool,
     },
     Show {
@@ -153,9 +148,6 @@ pub enum Verb {
         target: String,
     },
     Respawn {
-        target: String,
-    },
-    Archive {
         target: String,
     },
     Engines,
@@ -394,9 +386,6 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("respawn") => Verb::Respawn {
             target: target(&mut cursor, "respawn")?,
         },
-        Some("archive") => Verb::Archive {
-            target: target(&mut cursor, "archive")?,
-        },
         Some(other) => Verb::Plugin {
             name: other.to_owned(),
             argv: cursor.rest(),
@@ -494,29 +483,22 @@ fn parse_fork(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
 fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut parent = None;
     let mut tag = None;
-    let mut ended = None;
-    let mut archived = false;
+    let mut ended = false;
     let mut json = false;
     while let Some(flag) = cursor.next() {
         match flag {
             "--parent" => parent = Some(cursor.value(flag)?.to_owned()),
             "--tag" => tag = Some(cursor.value(flag)?.to_owned()),
-            "--running" => ended = Some(false),
-            "--ended" => ended = Some(true),
-            "--archived" => archived = true,
+            "--running" => ended = false,
+            "--ended" => ended = true,
             "--json" => json = true,
             other => return Err(usage(format!("ls: unexpected argument {other:?}"))),
         }
-    }
-    // The JSON listing is for pickers of live agents (nvim's tx-ask).
-    if json && ended.is_none() {
-        ended = Some(false);
     }
     Ok(Verb::Ls {
         parent,
         tag,
         ended,
-        archived,
         json,
     })
 }
@@ -744,31 +726,27 @@ mod tests {
             Verb::Ls {
                 parent: Some("p".into()),
                 tag: Some("t".into()),
-                ended: Some(true),
-                archived: false,
+                ended: true,
                 json: false
             }
         );
         assert!(matches!(
             parse_str("ls --running").unwrap().verb,
             Verb::Ls {
-                ended: Some(false),
+                ended: false,
                 json: false,
                 ..
             }
         ));
         assert!(matches!(
             parse_str("ls").unwrap().verb,
-            Verb::Ls { ended: None, .. }
+            Verb::Ls { ended: false, .. }
         ));
-        assert!(matches!(
-            parse_str("ls --archived").unwrap().verb,
-            Verb::Ls { archived: true, .. }
-        ));
+        assert!(parse_str("ls --archived").is_err());
         assert!(matches!(
             parse_str("ls --json").unwrap().verb,
             Verb::Ls {
-                ended: Some(false),
+                ended: false,
                 json: true,
                 ..
             }
@@ -776,7 +754,7 @@ mod tests {
         assert!(matches!(
             parse_str("ls --json --ended").unwrap().verb,
             Verb::Ls {
-                ended: Some(true),
+                ended: true,
                 json: true,
                 ..
             }
@@ -879,10 +857,6 @@ mod tests {
         assert_eq!(
             parse_str("respawn x").unwrap().verb,
             Verb::Respawn { target: "x".into() }
-        );
-        assert_eq!(
-            parse_str("archive x").unwrap().verb,
-            Verb::Archive { target: "x".into() }
         );
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
         assert_eq!(parse_str("help").unwrap().verb, Verb::Help);

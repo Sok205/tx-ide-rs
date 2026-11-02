@@ -17,7 +17,7 @@ pub enum CoreError {
     NotFound(String),
     #[error("another session is already named {0:?}")]
     NameTaken(String),
-    /// A respawn whose name an unarchived record took meanwhile; never renamed automatically.
+    /// A respawn whose name a running record took meanwhile; never renamed automatically.
     #[error(
         "cannot respawn: the name {name:?} is held by session {holder}; rename one of them first"
     )]

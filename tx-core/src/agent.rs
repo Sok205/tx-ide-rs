@@ -103,15 +103,11 @@ pub struct Agent {
     /// When the record was last written; core stamps it on every save.
     pub last_modified_at: f64,
     /// When the agent last did something: today, when its `state` last moved. Core stamps it in
-    /// the save that moves the state. Metadata edits (a rename, tags, `ext`, archiving) are not
+    /// the save that moves the state. Metadata edits (a rename, tags, `ext`) are not
     /// activity and leave it alone; they move `last_modified_at` only. `None` until the first
     /// state move.
     #[serde(default)]
     pub last_activity_at: Option<f64>,
-    /// When the agent was archived: hidden from listings and its name freed, with nothing
-    /// deleted. `None` for an unarchived record; a respawn clears it.
-    #[serde(default)]
-    pub archived_at: Option<f64>,
     pub tags: Vec<String>,
     /// Ancestry only; core never schedules or stops children.
     #[serde(default)]
@@ -167,9 +163,6 @@ impl Agent {
         }
         if self.last_activity_at.is_some_and(|at| !at.is_finite()) {
             return Err(RecordError::NonFiniteTime("last_activity_at"));
-        }
-        if self.archived_at.is_some_and(|at| !at.is_finite()) {
-            return Err(RecordError::NonFiniteTime("archived_at"));
         }
         let record = RecordOut {
             version: RECORD_VERSION,
@@ -245,7 +238,6 @@ mod tests {
             created_at: 1727000000.5,
             last_modified_at: 1727000000.5,
             last_activity_at: None,
-            archived_at: None,
             tags: vec!["a".into(), "b".into()],
             parent_id: Some(sid("p")),
             ext: BTreeMap::new(),
@@ -265,7 +257,6 @@ mod tests {
             created_at: 1.0,
             last_modified_at: 2.0,
             last_activity_at: None,
-            archived_at: Some(3.0),
             tags: vec![],
             parent_id: None,
             ext: BTreeMap::new(),
@@ -297,7 +288,6 @@ mod tests {
         assert_eq!(value["roles"], serde_json::json!(["COMMON", "dev"]));
         assert_eq!(value["state"], "working");
         assert_eq!(value["parent_id"], "p");
-        assert_eq!(value["archived_at"], Value::Null);
         for gone in ["lifecycle", "launch", "ended_at", "cwd", "parent", "ext"] {
             assert!(value.get(gone).is_none(), "{gone}: {text}");
         }
@@ -320,7 +310,6 @@ mod tests {
                 "created_at",
                 "last_modified_at",
                 "last_activity_at",
-                "archived_at",
                 "tags",
                 "parent_id",
             ]
@@ -328,7 +317,6 @@ mod tests {
         let value: Value = serde_json::from_str(&ended().to_json().unwrap()).unwrap();
         assert_eq!(value["engine"], "codex");
         assert_eq!(value["state"], "ended");
-        assert_eq!(value["archived_at"], 3.0);
         assert_eq!(value["parent_id"], Value::Null);
     }
 
@@ -344,13 +332,12 @@ mod tests {
 
     #[test]
     fn optional_fields_may_be_null_or_absent() {
-        let text = r#"{"version":2,"id":"i","name":"n","engine":"claude","working_directory":"/","roles":[],"state":"idle","created_at":1.0,"last_modified_at":1.0,"archived_at":null,"tags":[],"parent_id":null}"#;
+        let text = r#"{"version":2,"id":"i","name":"n","engine":"claude","working_directory":"/","roles":[],"state":"idle","created_at":1.0,"last_modified_at":1.0,"last_activity_at":null,"tags":[],"parent_id":null}"#;
         let session = Agent::from_json(text).unwrap();
         assert_eq!(session.parent_id, None);
-        assert_eq!(session.archived_at, None);
         assert!(session.ext.is_empty() && session.other.is_empty());
         let text = text
-            .replace(r#","archived_at":null"#, "")
+            .replace(r#","last_activity_at":null"#, "")
             .replace(r#","parent_id":null"#, "");
         assert_eq!(Agent::from_json(&text).unwrap(), session);
     }
@@ -481,16 +468,10 @@ mod tests {
                 session.to_json(),
                 Err(RecordError::NonFiniteTime("last_modified_at"))
             ));
-            let mut session = ended();
-            session.archived_at = Some(bad);
-            assert!(matches!(
-                session.to_json(),
-                Err(RecordError::NonFiniteTime("archived_at"))
-            ));
         }
         let mut session = ended();
         session.created_at = -0.0;
-        session.archived_at = Some(f64::MIN_POSITIVE / 2.0);
+        session.last_activity_at = Some(f64::MIN_POSITIVE / 2.0);
         assert_eq!(
             Agent::from_json(&session.to_json().unwrap()).unwrap(),
             session

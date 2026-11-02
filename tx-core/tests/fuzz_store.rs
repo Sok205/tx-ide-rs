@@ -32,7 +32,6 @@ fn session(id: &str, created_at: f64) -> Agent {
         created_at,
         last_modified_at: created_at,
         last_activity_at: None,
-        archived_at: None,
         tags: vec![],
         parent_id: None,
         ext: std::collections::BTreeMap::new(),
@@ -127,21 +126,22 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Agent
         state(),
     )
         .prop_map(
-            |(id, name, parent, tags, cwd, created_at, archived_at, engine, roles, state)| Agent {
-                id: sid(&id),
-                name,
-                engine,
-                working_directory: PathBuf::from(cwd),
-                roles,
-                state,
-                created_at,
-                last_modified_at: created_at,
-                last_activity_at: None,
-                archived_at,
-                tags,
-                parent_id: parent.map(|p| sid(&p)),
-                ext: std::collections::BTreeMap::new(),
-                other: serde_json::Map::new(),
+            |(id, name, parent, tags, cwd, created_at, last_activity_at, engine, roles, state)| {
+                Agent {
+                    id: sid(&id),
+                    name,
+                    engine,
+                    working_directory: PathBuf::from(cwd),
+                    roles,
+                    state,
+                    created_at,
+                    last_modified_at: created_at,
+                    last_activity_at,
+                    tags,
+                    parent_id: parent.map(|p| sid(&p)),
+                    ext: std::collections::BTreeMap::new(),
+                    other: serde_json::Map::new(),
+                }
             },
         )
 }
@@ -155,9 +155,9 @@ fn assert_bitwise_eq(a: &Agent, b: &Agent) {
         "created_at bits"
     );
     assert_eq!(
-        a.archived_at.map(f64::to_bits),
-        b.archived_at.map(f64::to_bits),
-        "archived_at bits"
+        a.last_activity_at.map(f64::to_bits),
+        b.last_activity_at.map(f64::to_bits),
+        "last_activity_at bits"
     );
 }
 
@@ -212,13 +212,13 @@ fn non_finite_timestamps_are_refused_by_save_without_touching_disk() {
             "{error:?}"
         );
         let mut s = session("nf", 1.0);
-        s.archived_at = Some(value);
+        s.last_activity_at = Some(value);
         let error = store.save(&s).unwrap_err();
         assert!(
             matches!(
                 &error,
                 StoreError::Encode {
-                    source: RecordError::NonFiniteTime("archived_at"),
+                    source: RecordError::NonFiniteTime("last_activity_at"),
                     ..
                 }
             ),

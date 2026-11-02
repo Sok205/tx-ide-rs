@@ -92,7 +92,7 @@ fn a_disabled_engine_plugin_leaves_its_kind_unregistered_but_its_records_listed(
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
     assert_eq!(cli.ok(&["engines"]), "claude\n");
     assert!(cli.ok(&["plugins"]).contains("engine-codex\tdisabled"));
-    let listed = cli.ok(&["ls"]);
+    let listed = cli.ok(&["ls", "--ended"]);
     assert!(listed.contains("old-codex"), "{listed}");
     assert!(cli.ok(&["show", "old-codex"]).contains("\"codex\""));
     assert_eq!(
@@ -292,7 +292,7 @@ fn version_one_records_refuse_until_migrated_then_match_the_mapping() {
     );
     assert!(cli.state().join("legacy/notes.json").is_file());
 
-    let listed = cli.ok(&["ls"]);
+    let listed = cli.ok(&["ls"]) + &cli.ok(&["ls", "--ended"]);
     for name in ["lead", "helper", "lead-fork", "quiet", "elder"] {
         assert!(listed.contains(name), "{name} missing from:\n{listed}");
     }
@@ -308,7 +308,6 @@ fn version_one_records_refuse_until_migrated_then_match_the_mapping() {
     assert_eq!(lead["roles"], serde_json::json!(["COMMON", "DEVELOPER"]));
     assert_eq!(lead["state"], "working");
     assert_eq!(lead["last_modified_at"], 5.0);
-    assert_eq!(lead["archived_at"], serde_json::Value::Null);
     assert_eq!(lead["tags"], serde_json::json!(["t"]));
     assert_eq!(lead["parent_id"], serde_json::Value::Null);
     assert_eq!(
@@ -521,20 +520,10 @@ fn agent_session_round_trip() {
     assert_eq!(cli.ok(&["stop", "ag-2"]).trim(), format!("{id}\tended"));
     assert!(cli.fails(&["where", "ag-2"], 1).contains("not running"));
     assert!(!cli.tmux(&["has-session", "-t", "=ag-2"]).status.success());
-    assert_eq!(
-        cli.ok(&["archive", "ag-2"]).trim(),
-        format!("{id}\tarchived")
-    );
     assert_eq!(cli.ok(&["ls"]), "");
     assert!(
-        cli.ok(&["ls", "--archived"])
+        cli.ok(&["ls", "--ended"])
             .starts_with(&format!("{id}\tag-2\tended\t"))
-    );
-    assert!(cli.ok(&["show", "ag-2"]).contains("\"archived_at\""));
-    assert_eq!(
-        cli.ok(&["archive", "ag-2"]).trim(),
-        format!("{id}\tarchived"),
-        "archiving again changes nothing"
     );
 }
 

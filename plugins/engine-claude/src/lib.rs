@@ -606,7 +606,6 @@ mod tests {
             created_at: 1.0,
             last_modified_at: 1.0,
             last_activity_at: None,
-            archived_at: None,
             tags: Vec::new(),
             parent_id: None,
             ext,

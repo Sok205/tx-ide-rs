@@ -272,7 +272,6 @@ mod tests {
             created_at,
             last_modified_at: created_at,
             last_activity_at: None,
-            archived_at: None,
             tags: vec![],
             parent_id: None,
             ext: std::collections::BTreeMap::new(),

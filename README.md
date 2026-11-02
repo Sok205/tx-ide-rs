@@ -148,14 +148,15 @@ whose engine plugin is disabled is left for a later run (`deferred`). The report
 
 | home | what |
 |---|---|
-| disk (`agents/<id>/agent.json`, record version 2) | the record: id, name, engine (`claude` \| `codex`), working_directory, roles, state, timestamps (`last_modified_at` is stamped on every write, `last_activity_at` on every state move; `archived_at` when hidden), tags, parent_id, `ext`; keys this build does not know are kept and written back. The snapshot every read returns. |
+| disk (`agents/<id>/agent.json`, record version 2) | the record: id, name, engine (`claude` \| `codex`), working_directory, roles, state, timestamps (`last_modified_at` is stamped on every write, `last_activity_at` on every state move), tags, parent_id, `ext`; keys this build does not know are kept and written back. The snapshot every read returns. |
 | tmux | the link only: session option `@tx-id` = record id |
 | looked up on demand | `#{session_id}` (`$N`) and `#{pane_id}` (`%N`) found by `@tx-id`, so a rename in tmux cannot break them |
 
 There is no lifecycle field: an agent is running while `state` is not `ended`, and `ended` is
 final until a respawn; the event log says whether it exited (vanished) or was stopped
 (`stop_agent`). `ListFilter::running()` / `ended()` and `tx ls --running` / `--ended` pick a
-side.
+side; `tx ls` alone lists the running agents. Only a running record holds its name: an ended
+agent's name is free again.
 
 ### Agent state: the engine adapter decides, core applies
 
@@ -292,7 +293,7 @@ crate depending only on `tx-core`; the CLI registers the bundled ones in `main`.
 ### Reading the operation log from outside
 
 `log.jsonl` is `{"ts","actor","type","msg"}` per line; types are `created`, `renamed`, `tagged`,
-`message-sent`, `state-changed`, `exited`, `stopped`, `archived`. It is a notification trail, not the record:
+`message-sent`, `state-changed`, `exited`, `stopped`. It is a notification trail, not the record:
 on an event, re-read the session with `get_agent`. Lines are never torn, so `tail -f` works.
 
 ### From inside an agent

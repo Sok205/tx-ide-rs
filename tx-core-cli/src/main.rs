@@ -182,7 +182,6 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             parent,
             tag,
             ended,
-            archived,
             json,
         } => {
             let parent = match parent {
@@ -196,14 +195,11 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             if let Some(tag) = tag {
                 filter = filter.tag(tag);
             }
-            match ended {
-                Some(true) => filter = filter.ended(),
-                Some(false) => filter = filter.running(),
-                None => {}
-            }
-            if archived {
-                filter = filter.archived();
-            }
+            filter = if ended {
+                filter.ended()
+            } else {
+                filter.running()
+            };
             let ids = core.list_agents(&filter)?;
             if json {
                 let mut entries = Vec::with_capacity(ids.len());
@@ -314,10 +310,6 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         Verb::Respawn { target } => {
             let session = core.respawn_agent(&core.resolve(&target)?)?;
             writeln!(out, "{}\t{}", session.id, session.name).ok();
-        }
-        Verb::Archive { target } => {
-            let session = core.archive_agent(&core.resolve(&target)?)?;
-            writeln!(out, "{}\tarchived", session.id).ok();
         }
     }
     Ok(ExitCode::SUCCESS)

@@ -58,23 +58,25 @@ fn warm_restarts_a_vanished_assistant() {
     );
     let restarted = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(restarted.status.code(), Some(0));
-    // The ended assistant keeps its name and its worktree, untouched; the new one is the next
-    // free name, in a worktree of its own, and `warm` says which.
-    assert_eq!(
-        String::from_utf8_lossy(&restarted.stdout),
-        "tx-assistant-2\n"
-    );
+    // The ended assistant frees its name but keeps its worktree, untouched; the new one takes
+    // the name, in a worktree of its own (the next free directory), and `warm` says which.
+    assert_eq!(String::from_utf8_lossy(&restarted.stdout), "tx-assistant\n");
+    let first_id = first.split('\t').next().unwrap();
     let listed = cli.ok(&["ls", "--tag", "tx-system"]);
-    assert_eq!(listed.lines().count(), 2, "{listed:?}");
+    assert_eq!(listed.lines().count(), 1, "{listed:?}");
     assert_ne!(listed, first);
-    assert_eq!(state_of(&cli, "tx-assistant"), "ended");
-    assert_eq!(cwd_of(&cli, "tx-assistant"), first_cwd);
+    assert!(
+        cli.ok(&["ls", "--ended", "--tag", "tx-system"]).starts_with(first_id),
+        "the ended assistant is listed with --ended"
+    );
+    assert_eq!(state_of(&cli, first_id), "ended");
+    assert_eq!(cwd_of(&cli, first_id), first_cwd);
     assert_eq!(
         std::fs::read_to_string(first_cwd.join("note.txt")).unwrap(),
         "keep me\n"
     );
-    assert_ne!(state_of(&cli, "tx-assistant-2"), "ended");
-    let second_cwd = cwd_of(&cli, "tx-assistant-2");
+    assert_ne!(state_of(&cli, "tx-assistant"), "ended");
+    let second_cwd = cwd_of(&cli, "tx-assistant");
     assert_ne!(second_cwd, first_cwd);
     assert!(
         second_cwd.ends_with("home--tx-assistant-2"),
@@ -82,7 +84,7 @@ fn warm_restarts_a_vanished_assistant() {
     );
     // Warm again: the running one is found by its role, not by the name `tx-assistant`.
     let again = cli.run(&["assistant", "warm"], &env, "");
-    assert_eq!(String::from_utf8_lossy(&again.stdout), "tx-assistant-2\n");
+    assert_eq!(String::from_utf8_lossy(&again.stdout), "tx-assistant\n");
     assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]), listed);
 }
 

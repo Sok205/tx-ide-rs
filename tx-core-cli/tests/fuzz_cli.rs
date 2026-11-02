@@ -233,7 +233,6 @@ fn token_pool() -> Vec<String> {
         "where",
         "attach",
         "stop",
-        "archive",
         "engines",
         "help",
         "--help",
@@ -533,7 +532,8 @@ fn create_boundary_names_and_relative_cwd() {
         cli.ok(&["stop", "--cwd"]).trim().split('\t').nth(1),
         Some("ended")
     );
-    assert_eq!(cli.ok(&["ls"]).lines().count(), 3);
+    assert_eq!(cli.ok(&["ls"]).lines().count(), 2);
+    assert_eq!(cli.ok(&["ls", "--ended"]).lines().count(), 1);
 }
 
 #[test]
@@ -812,6 +812,8 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
     }
     cli.ok(&["stop", "9"]);
     let ls = cli.ok(&["ls"]);
+    assert_eq!(ls.lines().count(), names.len() - 1, "the running ones");
+    let ls = ls + &cli.ok(&["ls", "--ended"]);
     assert_eq!(ls.lines().count(), names.len());
     for line in ls.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
@@ -839,7 +841,10 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
         cli.ok(&["ls", "--running"]).lines().count(),
         names.len() - 1
     );
-    assert_eq!(cli.ok(&["ls", "--tag", "k"]).lines().count(), names.len());
+    assert_eq!(
+        cli.ok(&["ls", "--tag", "k"]).lines().count(),
+        names.len() - 1
+    );
     assert_eq!(cli.ok(&["ls", "--parent", "a"]), "");
     assert!(
         cli.fails(&["ls", "--parent", "nope"], 1)
@@ -1122,8 +1127,8 @@ fn six_concurrent_creates_with_the_same_name_get_distinct_suffixed_names() {
         .collect();
     sessions.sort_unstable();
     assert_eq!(sessions, expected);
-    // Once archived, the bare name is free again.
-    cli.ok(&["archive", "same"]);
+    // Once stopped, the bare name is free again.
+    cli.ok(&["stop", "same"]);
     let id = cli.ok(&[
         "create",
         "same",
@@ -1138,11 +1143,11 @@ fn six_concurrent_creates_with_the_same_name_get_distinct_suffixed_names() {
     assert_eq!(shown["name"], "same");
     assert_eq!(cli.ok(&["ls", "--running"]).lines().count(), 6);
     assert_eq!(cli.ok(&["ls"]).lines().count(), 6);
-    assert_eq!(cli.ok(&["ls", "--archived"]).lines().count(), 1);
+    assert_eq!(cli.ok(&["ls", "--ended"]).lines().count(), 1);
 }
 
 /// Every directory flag naming `dir`: the suites keep the five directories in one place, so
-/// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
+/// their paths stay `<dir>/agents`, `<dir>/tmux.sock`, … (the XDG suite separates them).
 pub fn directory_flags(dir: &std::path::Path) -> Vec<std::ffi::OsString> {
     [
         "--config-dir",

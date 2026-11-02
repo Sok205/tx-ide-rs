@@ -44,7 +44,6 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
     h.tmux_ok(&["kill-session", "-t", "=bob"]);
     core.refresh_all().unwrap();
     core.stop_agent(&a).unwrap();
-    core.archive_agent(&b).unwrap();
 
     let events = recorder.0.lock().unwrap().clone();
     assert_eq!(
@@ -57,7 +56,6 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
             EventType::MessageSent,
             EventType::Exited,
             EventType::Stopped,
-            EventType::Archived,
         ]
     );
     assert_eq!(events[0].id, a);
@@ -69,7 +67,7 @@ fn every_mutation_reaches_the_sink_in_order_with_its_session() {
         "message-sent is attributed to the recipient"
     );
     assert_eq!(events[5].id, b);
-    assert_eq!(events[7].id, b);
+    assert_eq!(events[6].id, a);
     assert!(
         events
             .iter()

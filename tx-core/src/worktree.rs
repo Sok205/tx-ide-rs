@@ -110,7 +110,7 @@ impl WorktreeManager {
 
     /// Create a detached worktree for a session. The session name is the first of `<base>`,
     /// `<base>-2`, … not in `unavailable_names`; the worktree's directory label is, separately,
-    /// the first of `<name>`, `<name>-2`, … free on disk. The two differ when an archived
+    /// the first of `<name>`, `<name>-2`, … free on disk. The two differ when an ended
     /// session still keeps its worktree under the name. Returns the name and the path.
     pub fn create_unique(
         &self,
