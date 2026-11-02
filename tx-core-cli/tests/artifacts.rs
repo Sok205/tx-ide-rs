@@ -477,7 +477,7 @@ fn operator(cli: &Cli) -> (String, String) {
     fake_editor(cli);
     // The menu would pop up on this first attach and take the keys.
     let yaml = std::fs::read_to_string(cli.state().join("plugins.yaml")).unwrap();
-    cli.write_yaml(&format!("{yaml}  menu: {{ enabled: false }}\n"));
+    cli.write_yaml(&format!("{yaml}  home: {{ enabled: false }}\n"));
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();
     let cwd = cli.repository("a");

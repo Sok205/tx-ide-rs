@@ -60,7 +60,7 @@ fn installed_server(cli: &Cli, yaml: &str) {
     assert!(
         cli.wait_for(5, || cli
             .tmux_out(&["list-keys", "-T", "prefix", "m"])
-            .contains("_menu-open")),
+            .contains("_home-open")),
         "prefix+m never bound"
     );
 }
@@ -77,13 +77,13 @@ fn ui_install_binds_prefix_m_and_the_first_attach_hook() {
     assert!(bound.contains("#{pane_id}"), "{bound}");
     assert!(bound.contains("#{client_name}"), "{bound}");
     let hook = cli.tmux_out(&["show-hooks", "-g", "client-attached"]);
-    assert!(hook.contains("_menu-first"), "{hook}");
-    assert!(hook.contains("@tx-menu-shown"), "{hook}");
+    assert!(hook.contains("_home-first"), "{hook}");
+    assert!(hook.contains("@tx-home-shown"), "{hook}");
     assert!(
         std::fs::read_to_string(cli.state().join("keys/.installed"))
             .unwrap()
             .lines()
-            .any(|line| line == "menu\tkeys=m\tunset=\tunhook=client-attached[90]")
+            .any(|line| line == "home\tkeys=m\tunset=\tunhook=client-attached[90]")
     );
     assert!(hook.starts_with("client-attached[90] "), "{hook}");
     // Someone else's hook on another index survives the menu's unhook.
@@ -98,14 +98,14 @@ fn ui_install_binds_prefix_m_and_the_first_attach_hook() {
         .success()
     );
 
-    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  menu: { enabled: false }\n");
+    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
     cli.ok(&["ui", "install"]);
     assert!(
         !cli.tmux_out(&["list-keys", "-T", "prefix", "m"])
-            .contains("_menu-open")
+            .contains("_home-open")
     );
     let hook = cli.tmux_out(&["show-hooks", "-g", "client-attached"]);
-    assert!(!hook.contains("_menu-first"), "{hook}");
+    assert!(!hook.contains("_home-first"), "{hook}");
     assert!(hook.contains("display-message mine"), "{hook}");
 }
 
@@ -116,7 +116,7 @@ fn enabling_the_menu_on_a_live_server_counts_the_attached_client_as_first() {
     require_tmux!();
     let cli = Cli::new();
     installed_server(&cli, NO_ASSISTANT);
-    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  menu: { enabled: false }\n");
+    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
     cli.ok(&["ui", "install"]);
     let sock = cli.sock().display().to_string();
     cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =probe"));
@@ -125,7 +125,7 @@ fn enabling_the_menu_on_a_live_server_counts_the_attached_client_as_first() {
         "{:?}",
         clients(&cli)
     );
-    assert_eq!(cli.tmux_out(&["show-option", "-gqv", "@tx-menu-shown"]), "");
+    assert_eq!(cli.tmux_out(&["show-option", "-gqv", "@tx-home-shown"]), "");
 
     cli.write_yaml(NO_ASSISTANT);
     cli.ok(&["ui", "install"]);
@@ -133,7 +133,7 @@ fn enabling_the_menu_on_a_live_server_counts_the_attached_client_as_first() {
         cli.wait_for(5, || cli.tmux_out(&[
             "show-option",
             "-gqv",
-            "@tx-menu-shown"
+            "@tx-home-shown"
         ]) == "1"),
         "the live client was not counted"
     );
@@ -190,7 +190,7 @@ fn the_menu_pops_up_on_the_first_attach_only() {
         clients(&cli)
     );
     assert_eq!(
-        cli.tmux_out(&["show-option", "-gqv", "@tx-menu-shown"]),
+        cli.tmux_out(&["show-option", "-gqv", "@tx-home-shown"]),
         "",
         "the nested client is not the first attach"
     );
@@ -201,7 +201,7 @@ fn the_menu_pops_up_on_the_first_attach_only() {
         "no menu on the first attach:\n{}",
         screen(&cli)
     );
-    assert_eq!(cli.tmux_out(&["show-option", "-gv", "@tx-menu-shown"]), "1");
+    assert_eq!(cli.tmux_out(&["show-option", "-gv", "@tx-home-shown"]), "1");
     let shown = screen(&cli);
     assert!(shown.contains("████████╗██╗  ██╗"), "{shown}");
     assert!(
@@ -250,7 +250,7 @@ fn prefix_m_opens_the_menu_without_disabled_plugins_items() {
     );
     // Not this test's first attach.
     assert!(
-        cli.tmux(&["set-option", "-g", "@tx-menu-shown", "1"])
+        cli.tmux(&["set-option", "-g", "@tx-home-shown", "1"])
             .status
             .success()
     );
@@ -293,14 +293,14 @@ fn prefix_m_opens_the_menu_without_disabled_plugins_items() {
 }
 
 #[test]
-fn menu_outside_tx_ide_says_where_to_run_it() {
+fn home_outside_tx_ide_says_where_to_run_it() {
     let cli = Cli::new();
-    let stderr = cli.fails(&["menu"], 1);
+    let stderr = cli.fails(&["home"], 1);
     assert!(stderr.contains("prefix+m"), "{stderr}");
-    cli.fails(&["menu", "x"], 2);
-    cli.fails(&["_menu-open", "%1"], 2);
-    cli.fails(&["_menu-first"], 2);
-    cli.fails(&["_menu-tui", "%1", "c"], 2);
+    cli.fails(&["home", "x"], 2);
+    cli.fails(&["_home-open", "%1"], 2);
+    cli.fails(&["_home-first"], 2);
+    cli.fails(&["_home-tui", "%1", "c"], 2);
 }
 
 /// Keys the operator typed for the IDE as the client attached must not pick items: a first-open

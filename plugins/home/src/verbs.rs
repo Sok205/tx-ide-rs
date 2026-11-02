@@ -1,6 +1,6 @@
-//! The verbs. `_menu-open` (prefix+m) shows `_menu-tui` in a popup on the firing client and
+//! The verbs. `_home-open` (prefix+m) shows `_home-tui` in a popup on the firing client and
 //! waits for it; once the popup has closed (tmux opens no second popup over a first) it runs
-//! the chosen action. `_menu-first` (the client-attached hook) opens it once per server. Every
+//! the chosen action. `_home-first` (the client-attached hook) opens it once per server. Every
 //! action is another plugin's `tx` verb or a tmux command (D3).
 
 use std::path::PathBuf;
@@ -14,16 +14,16 @@ use crate::data;
 use crate::model::{Action, Menu};
 use crate::run;
 
-pub const OPEN_VERB: &str = "_menu-open";
-pub const FIRST_VERB: &str = "_menu-first";
-pub const TUI_VERB: &str = "_menu-tui";
+pub const OPEN_VERB: &str = "_home-open";
+pub const FIRST_VERB: &str = "_home-first";
+pub const TUI_VERB: &str = "_home-tui";
 /// Server option: the start menu has been shown on this server.
-pub const SHOWN_OPTION: &str = "@tx-menu-shown";
+pub const SHOWN_OPTION: &str = "@tx-home-shown";
 const STATUS_MILLISECONDS: &str = "4000";
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![
-        Arc::new(MenuVerb),
+        Arc::new(HomeVerb),
         Arc::new(Open),
         Arc::new(First),
         Arc::new(Tui),
@@ -39,21 +39,21 @@ fn usage(io: &mut VerbIo<'_>, text: &str) -> Result<i32, VerbError> {
     Ok(2)
 }
 
-/// `menu`: open the start menu on the terminal this runs in.
-struct MenuVerb;
+/// `home`: open the start menu on the terminal this runs in.
+struct HomeVerb;
 
-impl Verb for MenuVerb {
+impl Verb for HomeVerb {
     fn name(&self) -> &'static str {
-        "menu"
+        "home"
     }
 
     fn usage(&self) -> &'static str {
-        "menu   the tx-ide start menu (prefix+m)"
+        "home   the tx-ide start menu (prefix+m)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         if !argv.is_empty() {
-            return usage(io, "menu");
+            return usage(io, "home");
         }
         let ui = Ui::from_core(core);
         let here = ui.inside().then(|| {
@@ -65,7 +65,7 @@ impl Verb for MenuVerb {
         let Some((Some(pane), Some(client))) = here else {
             let _ = writeln!(
                 io.stderr,
-                "tx menu: run it inside tx-ide (`tx ui attach`), or press prefix+m there"
+                "tx home: run it inside tx-ide (`tx ui attach`), or press prefix+m there"
             );
             return Ok(1);
         };
@@ -73,7 +73,7 @@ impl Verb for MenuVerb {
     }
 }
 
-/// `_menu-open <pane> <client>`: prefix+m.
+/// `_home-open <pane> <client>`: prefix+m.
 struct Open;
 
 impl Verb for Open {
@@ -82,19 +82,19 @@ impl Verb for Open {
     }
 
     fn usage(&self) -> &'static str {
-        "_menu-open <pane> <client>   the start menu in a popup, then its choice (prefix+m, internal)"
+        "_home-open <pane> <client>   the start menu in a popup, then its choice (prefix+m, internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [pane, client] = argv else {
-            return usage(io, "_menu-open <pane> <client>");
+            return usage(io, "_home-open <pane> <client>");
         };
         let ui = Ui::from_core(core);
         reported(&ui, client, open(core, &ui, pane, client, false))
     }
 }
 
-/// `_menu-first <pane> <client>`: the client-attached hook.
+/// `_home-first <pane> <client>`: the client-attached hook.
 struct First;
 
 impl Verb for First {
@@ -103,12 +103,12 @@ impl Verb for First {
     }
 
     fn usage(&self) -> &'static str {
-        "_menu-first <pane> <client>   the start menu, once per server (client-attached hook, internal)"
+        "_home-first <pane> <client>   the start menu, once per server (client-attached hook, internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [pane, client] = argv else {
-            return usage(io, "_menu-first <pane> <client>");
+            return usage(io, "_home-first <pane> <client>");
         };
         let ui = Ui::from_core(core);
         if is_nested(&ui, client) || !claim_first(&ui) {
@@ -118,7 +118,7 @@ impl Verb for First {
     }
 }
 
-/// `_menu-tui <pane> <client> <choice-file> [--first]`: the menu itself, inside the popup.
+/// `_home-tui <pane> <client> <choice-file> [--first]`: the menu itself, inside the popup.
 /// `--first`: opened by the first attach, so it starts with the grace period.
 struct Tui;
 
@@ -128,14 +128,14 @@ impl Verb for Tui {
     }
 
     fn usage(&self) -> &'static str {
-        "_menu-tui <pane> <client> <file> [--first]   the menu in the popup; writes the choice (internal)"
+        "_home-tui <pane> <client> <file> [--first]   the menu in the popup; writes the choice (internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let (pane, file, first) = match argv {
             [pane, _client, file] => (pane, file, false),
             [pane, _client, file, flag] if flag == "--first" => (pane, file, true),
-            _ => return usage(io, "_menu-tui <pane> <client> <file> [--first]"),
+            _ => return usage(io, "_home-tui <pane> <client> <file> [--first]"),
         };
         let ui = Ui::from_core(core);
         let mut menu = Menu::new(data::context(core, &ui, pane)?);
@@ -149,7 +149,7 @@ impl Verb for Tui {
 /// The menu's own failure, on the client's status line: the hook and the bind swallow output.
 fn reported(ui: &Ui, client: &str, result: Result<i32, VerbError>) -> Result<i32, VerbError> {
     if let Err(error) = &result {
-        status(ui, client, &format!("tx menu: {error}"));
+        status(ui, client, &format!("tx home: {error}"));
     }
     result
 }
@@ -221,7 +221,7 @@ impl Txc {
 fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result<i32, VerbError> {
     let tx = Txc::current(core)?;
     let choice = tempfile::Builder::new()
-        .prefix("tx-menu-")
+        .prefix("tx-home-")
         .tempfile()
         .map_err(|e| failed(format!("choice file: {e}")))?
         .into_temp_path();
@@ -301,7 +301,7 @@ fn popup(ui: &Ui, client: &str, spec: &Popup<'_>, command: &str) {
     }
     args.extend(["-T", spec.title, command]);
     if let Err(error) = ui.run(&args) {
-        status(ui, client, &format!("tx menu: {error}"));
+        status(ui, client, &format!("tx home: {error}"));
     }
 }
 
@@ -399,7 +399,7 @@ fn perform(ui: &Ui, tx: &Txc, pane: &str, client: &str, action: &Action) {
 
 fn switch(ui: &Ui, client: &str, session: &str) {
     if let Err(error) = ui.run(&["switch-client", "-c", client, "-t", &format!("={session}")]) {
-        status(ui, client, &format!("tx menu: {error}"));
+        status(ui, client, &format!("tx home: {error}"));
     }
 }
 
@@ -428,7 +428,7 @@ fn show(ui: &Ui, pane: &str, client: &str, name: &str) {
     match ui.live_targets().get(name) {
         Some(target) if nests_here(hosts, command.as_deref()) => {
             if let Err(error) = ui.respawn_pane(pane, &ui.nest_attach_command(target)) {
-                status(ui, client, &format!("tx menu: {error}"));
+                status(ui, client, &format!("tx home: {error}"));
             }
         }
         _ => switch(ui, client, name),

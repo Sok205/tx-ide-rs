@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn the_shipped_fragment_has_a_hint() {
-        let hint = key_hint("menu", include_str!("../tmux/keys.tmux")).unwrap();
+        let hint = key_hint("home", include_str!("../tmux/keys.tmux")).unwrap();
         assert_eq!(hint.keys, ["m"]);
         assert!(hint.text.starts_with("prefix+m opens"), "{}", hint.text);
     }

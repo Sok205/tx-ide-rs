@@ -51,7 +51,7 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/assistant.tmux\"\n\
          run-shell \"{state}/keys/artifacts.tmux\"\n\
          run-shell \"{state}/keys/timeline.tmux\"\n\
-         run-shell \"{state}/keys/menu.tmux\"\n",
+         run-shell \"{state}/keys/home.tmux\"\n",
         exe().display(),
         arguments = cli.arguments(),
     )
@@ -96,7 +96,7 @@ fn start_server(cli: &Cli) {
                     .contains("_timeline-attach")
                 && cli
                     .tmux_out(&["list-keys", "-T", "prefix", "m"])
-                    .contains("_menu-open")
+                    .contains("_home-open")
                 && cli
                     .tmux_out(&["show-option", "-gv", "pane-border-format"])
                     .contains("_pane-label")
@@ -136,7 +136,7 @@ fn ui_install_materialises_resources() {
         "spawn",
         "artifacts",
         "timeline",
-        "menu",
+        "home",
     ] {
         let path = state.join(format!("keys/{id}.tmux"));
         assert!(path.is_file(), "{path:?}");
@@ -166,7 +166,7 @@ fn ui_install_materialises_resources() {
         ("spawn", "keys=n"),
         ("artifacts", "keys=a"),
         ("timeline", "keys=T"),
-        ("menu", "keys=m"),
+        ("home", "keys=m"),
     ] {
         assert!(
             installed
@@ -285,10 +285,10 @@ fn ui_install_fragment_loads() {
     assert!(bound("prefix", "n").contains("tmux-new-agent"));
     assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
     assert!(bound("prefix", "T").contains("_timeline-attach"));
-    assert!(bound("prefix", "m").contains("_menu-open"));
+    assert!(bound("prefix", "m").contains("_home-open"));
     assert!(
         cli.tmux_out(&["show-hooks", "-g", "client-attached"])
-            .contains("_menu-first")
+            .contains("_home-first")
     );
     cli.tmux(&["kill-server"]);
 }
@@ -323,7 +323,7 @@ fn fragments_do_nothing_outside_an_installed_server() {
         "spawn",
         "artifacts",
         "timeline",
-        "menu",
+        "home",
     ] {
         let output = Command::new(cli.state().join(format!("keys/{id}.tmux")))
             .env("TMUX", format!("{},1,0", other.display()))

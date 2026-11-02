@@ -36,13 +36,14 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_artifacts::ArtifactsPlugin),
     || Box::new(tx_tour::TourPlugin),
     || Box::new(tx_timeline::TimelinePlugin),
-    || Box::new(tx_menu::MenuPlugin),
+    || Box::new(tx_home::HomePlugin),
 ];
 
 /// Ids of plugins this binary no longer links; `plugins.yaml` entries for them are ignored.
 /// `hooks`: agent state moved into core and the engine adapters (`txi hook`).
 /// `history`: the transcript mirror; core archives conversations through the engines.
-pub const RETIRED: &[&str] = &["hooks", "history"];
+/// `menu`: renamed `home`; an old `menu` entry no longer configures anything.
+pub const RETIRED: &[&str] = &["hooks", "history", "menu"];
 
 /// The built-in verbs; a plugin may not register one of these.
 pub const RESERVED: &[&str] = &[
@@ -141,7 +142,7 @@ mod tests {
     #[test]
     fn a_retired_id_is_skipped_with_its_settings() {
         let cfg = parse_text(
-            "plugins:\n  hooks:\n    enabled: false\n    settings: { stuck_after_seconds: 600 }\n",
+            "plugins:\n  hooks:\n    enabled: false\n    settings: { stuck_after_seconds: 600 }\n  menu: { enabled: false }\n",
         )
         .unwrap();
         assert!(cfg.disabled.is_empty());
