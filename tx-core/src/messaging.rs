@@ -106,7 +106,7 @@ mod tests {
             return;
         }
         let dir = tempfile::Builder::new()
-            .prefix("txc")
+            .prefix("tx")
             .tempdir_in("/tmp")
             .unwrap();
         let tmux = Tmux::new("tmux", dir.path().join("tmux.sock"), "/dev/null");

@@ -1,4 +1,4 @@
-//! Adversarial / property tests over the built `txc` binary: randomized argv, argument corner
+//! Adversarial / property tests over the built `tx` binary: randomized argv, argument corner
 //! cases, env-derived sender, directory resolution and concurrent creates. Every process runs
 //! with its directories under /tmp, so tmux always uses a private socket; the user's default tmux
 //! server is never touched. Agents run a fake `claude` (a shim that just stays alive).
@@ -34,7 +34,7 @@ impl Cli {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .args(directory_flags(&self.state()))
             .env("PATH", &self.path)
@@ -66,7 +66,7 @@ impl Cli {
         let output = self.run(args);
         assert!(
             output.status.success(),
-            "txc {args:?} failed: {}",
+            "tx {args:?} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
@@ -77,7 +77,7 @@ impl Cli {
         assert_eq!(
             output.status.code(),
             Some(code),
-            "txc {args:?}: {}",
+            "tx {args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stderr).into_owned()
@@ -131,7 +131,7 @@ impl Cli {
         let output = self.run_env(&args, &[("PATH", path.as_str())]);
         assert!(
             output.status.success(),
-            "txc {args:?} failed: {}",
+            "tx {args:?} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).trim().to_owned()
@@ -307,16 +307,16 @@ fn random_argv_always_exits_0_1_or_2_with_shaped_stderr() {
         match code {
             0 => assert!(err.is_empty(), "argv {args:?}: exit 0 wrote stderr {err}"),
             1 => {
-                assert!(err.starts_with("txc: "), "argv {args:?}: {err}");
+                assert!(err.starts_with("tx: "), "argv {args:?}: {err}");
                 assert!(
-                    !err.contains("usage: txc"),
+                    !err.contains("usage: tx"),
                     "argv {args:?}: core error printed usage: {err}"
                 );
                 assert_eq!(err.lines().count(), 1, "argv {args:?}: {err}");
             }
             _ => {
-                assert!(err.starts_with("txc: "), "argv {args:?}: {err}");
-                assert!(err.contains("usage: txc"), "argv {args:?}: {err}");
+                assert!(err.starts_with("tx: "), "argv {args:?}: {err}");
+                assert!(err.contains("usage: tx"), "argv {args:?}: {err}");
                 assert!(
                     output.stdout.is_empty(),
                     "argv {args:?}: usage error wrote stdout"
@@ -387,11 +387,11 @@ fn usage_level_inputs_are_table_driven() {
             err.contains(needle),
             "{args:?}: expected {needle:?} in {err}"
         );
-        assert!(err.starts_with("txc: "), "{args:?}: {err}");
+        assert!(err.starts_with("tx: "), "{args:?}: {err}");
     }
     assert!(!cli.state().exists());
     // Usage errors are reported before the state dir is validated.
-    let output = Command::new(env!("CARGO_BIN_EXE_txc"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tx"))
         .args(["--state-dir", "/dev/null/impossible"])
         .output()
         .unwrap();
@@ -726,13 +726,13 @@ fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
     let cli = Cli::new();
     assert_eq!(
         cli.fails(&["attach", "nope"], 1),
-        "txc: no session \"nope\"\n"
+        "tx: no session \"nope\"\n"
     );
     assert_eq!(
         cli.fails(&["attach", "żółć"], 1),
-        "txc: no session \"żółć\"\n"
+        "tx: no session \"żółć\"\n"
     );
-    assert_eq!(cli.fails(&["attach", ""], 1), "txc: no session \"\"\n");
+    assert_eq!(cli.fails(&["attach", ""], 1), "tx: no session \"\"\n");
     assert!(
         cli.fails(&["attach"], 2)
             .contains("attach needs a session id or name")
@@ -760,7 +760,7 @@ fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
         .to_owned();
     cli.ok(&["stop", "a"]);
     let err = cli.fails(&["attach", "a"], 1);
-    assert_eq!(err, format!("txc: session {id} is not running\n"));
+    assert_eq!(err, format!("tx: session {id} is not running\n"));
     // A session whose tmux side vanished is reported as not running after refresh.
     cli.ok(&[
         "create",
@@ -775,7 +775,7 @@ fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
     assert!(cli.tmux(&["kill-session", "-t", "=b"]).status.success());
     let output = cli.run(&["attach", "b"]);
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
-    assert!(stderr(&output).starts_with("txc: "), "{}", stderr(&output));
+    assert!(stderr(&output).starts_with("tx: "), "{}", stderr(&output));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -858,10 +858,10 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
 // 7. Directory resolution
 // ---------------------------------------------------------------------------------------------
 
-/// `txc` with an environment that holds nothing of the caller's: `HOME` and `TMPDIR` under
+/// `tx` with an environment that holds nothing of the caller's: `HOME` and `TMPDIR` under
 /// `root`, no `XDG_*`, no `TX_*`.
 fn sandboxed(root: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
     command
         .env("HOME", root.join("home"))
         .env("TMPDIR", root.join("tmp"))

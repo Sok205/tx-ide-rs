@@ -34,7 +34,7 @@ pub struct Harness {
 impl Harness {
     pub fn new() -> Self {
         let dir = tempfile::Builder::new()
-            .prefix("txc")
+            .prefix("tx")
             .tempdir_in("/tmp")
             .unwrap();
         Self { dir }

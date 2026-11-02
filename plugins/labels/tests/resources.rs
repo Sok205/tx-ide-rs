@@ -5,7 +5,7 @@ use tx_labels::LabelsPlugin;
 
 fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
     let dir = tempfile::Builder::new()
-        .prefix("txc")
+        .prefix("tx")
         .tempdir_in("/tmp")
         .unwrap();
     let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(

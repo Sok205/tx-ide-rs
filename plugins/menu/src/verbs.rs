@@ -1,7 +1,7 @@
 //! The verbs. `_menu-open` (prefix+m) shows `_menu-tui` in a popup on the firing client and
 //! waits for it; once the popup has closed (tmux opens no second popup over a first) it runs
 //! the chosen action. `_menu-first` (the client-attached hook) opens it once per server. Every
-//! action is another plugin's `txc` verb or a tmux command (D3).
+//! action is another plugin's `tx` verb or a tmux command (D3).
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -35,7 +35,7 @@ fn failed(error: impl std::fmt::Display) -> VerbError {
 }
 
 fn usage(io: &mut VerbIo<'_>, text: &str) -> Result<i32, VerbError> {
-    let _ = writeln!(io.stderr, "usage: txc {text}");
+    let _ = writeln!(io.stderr, "usage: tx {text}");
     Ok(2)
 }
 
@@ -65,7 +65,7 @@ impl Verb for MenuVerb {
         let Some((Some(pane), Some(client))) = here else {
             let _ = writeln!(
                 io.stderr,
-                "txc menu: run it inside tx-ide (`txc ui attach`), or press prefix+m there"
+                "tx menu: run it inside tx-ide (`tx ui attach`), or press prefix+m there"
             );
             return Ok(1);
         };
@@ -185,7 +185,7 @@ fn claim_first(ui: &Ui) -> bool {
     ok && out.trim() == "mine"
 }
 
-/// How to run this `txc` against this core.
+/// How to run this `tx` against this core.
 struct Txc {
     exe: PathBuf,
     /// The core's `cli_arguments()`.
@@ -219,7 +219,7 @@ impl Txc {
 }
 
 fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result<i32, VerbError> {
-    let txc = Txc::current(core)?;
+    let tx = Txc::current(core)?;
     let choice = tempfile::Builder::new()
         .prefix("tx-menu-")
         .tempfile()
@@ -230,7 +230,7 @@ fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result
     if first {
         args.push("--first");
     }
-    let command = txc.shell(&args);
+    let command = tx.shell(&args);
     // -EE: a menu that fails keeps its popup open, showing why.
     ui.run(&[
         "display-popup",
@@ -256,7 +256,7 @@ fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result
     .map_err(failed)?;
     let text = std::fs::read_to_string(&choice).unwrap_or_default();
     if let Some(action) = Action::decode(&text) {
-        perform(ui, &txc, pane, client, &action);
+        perform(ui, &tx, pane, client, &action);
     }
     Ok(0)
 }
@@ -321,7 +321,7 @@ fn output(mut command: Command) -> Result<String, String> {
     }
 }
 
-fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
+fn perform(ui: &Ui, tx: &Txc, pane: &str, client: &str, action: &Action) {
     let wide = |title| Popup {
         width: "118",
         height: "30",
@@ -340,9 +340,9 @@ fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
                 title: " New agent ",
                 form: true,
             },
-            &txc.shell(&["_new-agent", pane, client]),
+            &tx.shell(&["_new-agent", pane, client]),
         ),
-        Action::Attach => popup(ui, client, &wide(" tx "), &txc.shell(&["pick"])),
+        Action::Attach => popup(ui, client, &wide(" tx "), &tx.shell(&["pick"])),
         Action::Fork => popup(
             ui,
             client,
@@ -353,24 +353,24 @@ fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
                 title: " Fork session ",
                 form: true,
             },
-            &txc.shell(&["_fork-pane", pane, client]),
+            &tx.shell(&["_fork-pane", pane, client]),
         ),
         Action::Timeline => popup(
             ui,
             client,
             &wide(" timeline "),
-            &txc.shell(&["_timeline-attach"]),
+            &tx.shell(&["_timeline-attach"]),
         ),
         Action::Artifacts => match artifact_target(ui, pane, client) {
             Some((session, nested)) => {
-                if let Err(error) = output(txc.command(&["_artifact-menu", &session, &nested])) {
+                if let Err(error) = output(tx.command(&["_artifact-menu", &session, &nested])) {
                     status(ui, client, &format!("artifacts: {error}"));
                 }
             }
             None => status(ui, client, "artifacts: no session in this pane"),
         },
         Action::Tutor => {
-            let mut command = txc.command(&["tutor", "start", "--detach"]);
+            let mut command = tx.command(&["tutor", "start", "--detach"]);
             command.env_remove("TMUX");
             match output(command) {
                 Ok(out) => match tutor_view(&out) {
@@ -380,11 +380,11 @@ fn perform(ui: &Ui, txc: &Txc, pane: &str, client: &str, action: &Action) {
                 Err(error) => status(ui, client, &format!("tutor: {error}")),
             }
         }
-        Action::Assistant => match output(txc.command(&["assistant", "warm"])) {
+        Action::Assistant => match output(tx.command(&["assistant", "warm"])) {
             Ok(name) => switch(ui, client, name.trim()),
             Err(error) => status(ui, client, &format!("assistant: {error}")),
         },
-        Action::Resume(id) => match output(txc.command(&["respawn", id])) {
+        Action::Resume(id) => match output(tx.command(&["respawn", id])) {
             Ok(out) => match respawned_name(&out) {
                 Some(name) => {
                     status(ui, client, &format!("respawned '{name}'"));
@@ -500,13 +500,13 @@ mod tests {
 
     #[test]
     fn popup_commands_are_shell_quoted() {
-        let txc = Txc {
-            exe: PathBuf::from("/opt/txc"),
+        let tx = Txc {
+            exe: PathBuf::from("/opt/tx"),
             arguments: vec!["--state-dir".to_owned(), "/s/state".to_owned()],
         };
         assert_eq!(
-            txc.shell(&["_new-agent", "%3", "/dev/ttys001"]),
-            "'/opt/txc' '--state-dir' '/s/state' '_new-agent' '%3' '/dev/ttys001'"
+            tx.shell(&["_new-agent", "%3", "/dev/ttys001"]),
+            "'/opt/tx' '--state-dir' '/s/state' '_new-agent' '%3' '/dev/ttys001'"
         );
     }
 }

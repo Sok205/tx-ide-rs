@@ -136,7 +136,7 @@ fn whoami_outside_server_exits_1() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "txc whoami: not inside the tx tmux server\n"
+        "tx whoami: not inside the tx tmux server\n"
     );
 }
 

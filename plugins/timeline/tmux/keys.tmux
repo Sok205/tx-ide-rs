@@ -2,17 +2,17 @@
 # keys: T
 # tx key plugin `timeline`: prefix+T attaches the resident timeline in a popup; q detaches it
 # while the resident (and its transcript cache) stays warm. Run by `run-shell` from the server's
-# tmux.conf, which `txc ui install` writes.
+# tmux.conf, which `tx ui install` writes.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the quoting.
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.
 set -u
 
-TXC=$(tmux show-option -gv @tx-bin 2>/dev/null)
+TX_BIN=$(tmux show-option -gv @tx-bin 2>/dev/null)
 ARGUMENTS=$(tmux show-option -gv @tx-arguments 2>/dev/null)
 [ -n "$ARGUMENTS" ] || exit 0
-[ -n "$TXC" ] || exit 0
-TX="$TXC $ARGUMENTS"
+[ -n "$TX_BIN" ] || exit 0
+TX="$TX_BIN $ARGUMENTS"
 
 CONF=$(mktemp -t tx-timeline-keys.XXXXXX)
 trap 'rm -f "$CONF"' EXIT

@@ -1,4 +1,4 @@
-//! The kill plugin through the binary: `txc kill`, and the plugin switch.
+//! The kill plugin through the binary: `tx kill`, and the plugin switch.
 
 mod common;
 

@@ -35,7 +35,7 @@ impl Verb for ForkPane {
             [pane, client] => ask(core, pane, client),
             [pane, client, name] => fork(core, pane, client, name),
             _ => {
-                let _ = writeln!(io.stderr, "usage: txc _fork-pane PANE CLIENT [NAME]");
+                let _ = writeln!(io.stderr, "usage: tx _fork-pane PANE CLIENT [NAME]");
                 Ok(2)
             }
         }

@@ -102,7 +102,7 @@ impl Verb for EditSession {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [pane, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _edit-session <pane> <client>");
+            let _ = writeln!(io.stderr, "usage: tx _edit-session <pane> <client>");
             return Ok(2);
         };
         let ui = Ui::from_core(core);
@@ -146,11 +146,11 @@ impl Verb for EditTag {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [token] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _edit-tag <name>");
+            let _ = writeln!(io.stderr, "usage: tx _edit-tag <name>");
             return Ok(2);
         };
         let Ok(id) = core.resolve(token) else {
-            let _ = writeln!(io.stderr, "txc: session '{token}' not found");
+            let _ = writeln!(io.stderr, "tx: session '{token}' not found");
             return Ok(1);
         };
         let session = core.get_agent(&id)?;

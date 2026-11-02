@@ -1,6 +1,6 @@
 //! tx-core plugin `kill`: prefix+X confirms, then stops the session in the active pane: an
-//! agent through `txc kill` so the record stays honest, a view through `txc ui view close`.
-//! `txc kill <name>` also closes a view by name, under the views guard (never an agent's tmux
+//! agent through `tx kill` so the record stays honest, a view through `tx ui view close`.
+//! `tx kill <name>` also closes a view by name, under the views guard (never an agent's tmux
 //! session behind core's back). Publishes `keys/kill.tmux` and its helper script.
 
 use std::sync::Arc;
@@ -57,7 +57,7 @@ impl Verb for Kill {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [token] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc kill <name>");
+            let _ = writeln!(io.stderr, "usage: tx kill <name>");
             return Ok(2);
         };
         let ui = Ui::from_core(core);

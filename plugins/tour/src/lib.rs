@@ -1,12 +1,12 @@
 //! tx-core plugin `tour`: a code tour is an artifact of kind `tour` whose working copy
 //! `current.lua` is a Lua file returning the ordered stops (`{file, line, label, message,
-//! severity}`, `file` relative to the tour's worktree). `txc tour create` registers one through
-//! the artifacts service; `txc tour open` (also what `txc artifact open` and prefix+a run for a
+//! severity}`, `file` relative to the tour's worktree). `tx tour create` registers one through
+//! the artifacts service; `tx tour open` (also what `tx artifact open` and prefix+a run for a
 //! tour, by the open-by-kind convention) starts a tx-client view of kind `tour`: nvim in the
 //! worktree running tx-client's `require("tx-tour")(<current.lua>)`, bound to the artifact.
 //!
-//! A tour is revised like a document: edit `$(txc artifact path <id>)/current.lua` in place and
-//! snapshot it with `txc artifact modify <id>`. There is no `tour modify`.
+//! A tour is revised like a document: edit `$(tx artifact path <id>)/current.lua` in place and
+//! snapshot it with `tx artifact modify <id>`. There is no `tour modify`.
 //!
 //! Trust: the stops file is Lua run inside nvim, at create (validation) and at every open. It is
 //! as trusted as the operator or agent who wrote it, the same model as production.
@@ -32,7 +32,7 @@ const FILENAME: &str = "stops.lua";
 pub const STOPS: &str = "current.lua";
 const VIEW_SUFFIX: &str = "-tour";
 
-const USAGE: &str = "usage: txc tour create <stops.lua> --title T [--cwd W] | open <id> [--tag T]";
+const USAGE: &str = "usage: tx tour create <stops.lua> --title T [--cwd W] | open <id> [--tag T]";
 
 /// Run by `nvim -l -` with the stops path as `arg[1]`: exits 1 with the reason on stderr unless
 /// the file loads and returns a list.
@@ -71,7 +71,7 @@ impl Verb for TourVerb {
         let command = match parse_args(argv) {
             Ok(command) => command,
             Err(message) => {
-                writeln!(io.stderr, "txc tour: {message}\n{USAGE}").map_err(write_failed)?;
+                writeln!(io.stderr, "tx tour: {message}\n{USAGE}").map_err(write_failed)?;
                 return Ok(2);
             }
         };

@@ -1,11 +1,11 @@
 //! The roles and skills the core ships (`tx_core::roles`): listed first, under the plugin id
-//! `tx-core`, written for `txc`.
+//! `tx-core`, written for `tx`.
 
 use tx_core::{CoreConfig, PluginConfig, TxCore, roles};
 
 fn core() -> (tempfile::TempDir, TxCore) {
     let dir = tempfile::Builder::new()
-        .prefix("txc")
+        .prefix("tx")
         .tempdir_in("/tmp")
         .unwrap();
     let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
@@ -64,58 +64,4 @@ fn every_file_of_the_agents_tree_is_shipped() {
     let mut shipped: Vec<String> = roles::SHIPPED.iter().map(|(n, _)| (*n).to_owned()).collect();
     shipped.sort();
     assert_eq!(shipped, expected);
-}
-
-fn bare_tx() -> regex::Regex {
-    regex::Regex::new(r"(^\s*(?:[-*]\s+|\d+\.\s+)?|`|\$\()tx\s").unwrap()
-}
-
-/// A bare `tx ` command word: at a line's start (after indentation or a list marker), after a
-/// backtick, or inside `$(`. The shipped roles and skills must name `txc` commands only; `tx:`
-/// frontmatter and `tx-…` skill names are not command words.
-#[test]
-fn the_shipped_roles_and_skills_name_no_tx_command() {
-    let bare_tx = bare_tx();
-    let offending: Vec<String> = roles::SHIPPED
-        .iter()
-        .flat_map(|(name, bytes)| {
-            std::str::from_utf8(bytes)
-                .unwrap()
-                .lines()
-                .enumerate()
-                .filter(|(_, line)| bare_tx.is_match(line))
-                .map(|(index, line)| format!("{name}:{}: {line}", index + 1))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    assert!(
-        offending.is_empty(),
-        "bare tx commands:\n{}",
-        offending.join("\n")
-    );
-}
-
-#[test]
-fn the_checker_catches_a_bare_tx_command() {
-    let bare_tx = bare_tx();
-    for line in [
-        "tx spawn worker --role DEVELOPER",
-        "  tx artifact modify <id>",
-        "- tx ls",
-        "2. tx kill it",
-        "run `tx send-message orchestrator`",
-        "SELF=$(tx whoami)",
-    ] {
-        assert!(bare_tx.is_match(line), "{line}");
-    }
-    for line in [
-        "tx:",
-        "  skills: [tx-sessions, tx-artifacts]",
-        "txc create worker --prompt hi",
-        "`txc artifact path <id>`",
-        "SELF=$(txc whoami)",
-        "the tx-tour runtime",
-    ] {
-        assert!(!bare_tx.is_match(line), "{line}");
-    }
 }

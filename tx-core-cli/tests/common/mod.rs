@@ -1,12 +1,12 @@
 //! Shared harness for the CLI suites: one temp dir under /tmp holding all five directories (short socket path), helpers
-//! that run `txc` against it, and a kill-server on drop so no private server outlives its test.
+//! that run `tx` against it, and a kill-server on drop so no private server outlives its test.
 #![allow(dead_code)]
 
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-/// Whether `txc help` lists `verb` on a line of its own: after the indent, the line is the verb
+/// Whether `tx help` lists `verb` on a line of its own: after the indent, the line is the verb
 /// or starts with the verb and a space. A bare substring would match flags and prose.
 pub fn lists_verb(help: &str, verb: &str) -> bool {
     help.lines().any(|line| {
@@ -56,7 +56,7 @@ impl Cli {
     pub fn new() -> Self {
         Self {
             dir: tempfile::Builder::new()
-                .prefix("txc")
+                .prefix("tx")
                 .tempdir_in("/tmp")
                 .unwrap(),
         }
@@ -77,7 +77,7 @@ impl Cli {
         std::fs::write(self.state().join("plugins.yaml"), text).unwrap();
     }
     pub fn command(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .args(directory_flags(&self.state()))
             .args(args)
@@ -133,7 +133,7 @@ impl Cli {
         let output = self.run(args, &[], "");
         assert!(
             output.status.success(),
-            "txc {args:?}: {}",
+            "tx {args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
@@ -143,7 +143,7 @@ impl Cli {
         assert_eq!(
             output.status.code(),
             Some(code),
-            "txc {args:?}: {}",
+            "tx {args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stderr).into_owned()
@@ -252,7 +252,7 @@ impl Cli {
         );
         assert!(
             output.status.success(),
-            "txc create {name}: {}",
+            "tx create {name}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).trim().to_owned()

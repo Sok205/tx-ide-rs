@@ -85,7 +85,7 @@ pub fn render_artifact_show(
     pending: &[String],
 ) -> String {
     let working = if dirty {
-        "dirty: un-snapshotted edits (close with `txc artifact modify`)"
+        "dirty: un-snapshotted edits (close with `tx artifact modify`)"
     } else {
         "clean"
     };
@@ -183,7 +183,7 @@ mod tests {
             "plan.md  (0123456789abcdef)\n  kind:       document\n  filename:   plan.md\n  \
              created:    2h ago\n  \
              updated:    5s ago\n  group:      derived: feat\n  revisions:  3\n  working:    \
-             dirty: un-snapshotted edits (close with `txc artifact modify`)\n  history:\n    \
+             dirty: un-snapshotted edits (close with `tx artifact modify`)\n  history:\n    \
              rev 0      2h ago  s1                  \n    rev 1      1m ago  user                  \
              tweak\n    rev 2      5s ago  s1                  "
         );

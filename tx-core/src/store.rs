@@ -348,7 +348,7 @@ mod tests {
     }
 
     /// A version-1 file placed where a record belongs is unreadable by name, with the pointer
-    /// to `txc migrate`: never a silent skip, never a serde error.
+    /// to `tx migrate`: never a silent skip, never a serde error.
     #[test]
     fn a_version_one_record_is_unreadable_with_the_migrate_hint() {
         let (_dir, store) = store();
@@ -365,7 +365,7 @@ mod tests {
         );
         assert_eq!(
             error.to_string(),
-            "unreadable record v/agent.json: record version 1: run `txc migrate`"
+            "unreadable record v/agent.json: record version 1: run `tx migrate`"
         );
         assert!(matches!(
             store.all().unwrap_err(),

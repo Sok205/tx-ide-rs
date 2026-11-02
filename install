@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# install — make txc the daily driver. Idempotent, safe to re-run; --dry-run prints every
+# install — make tx the daily driver. Idempotent, safe to re-run; --dry-run prints every
 # file change and changes nothing.
 #
-#   1. cargo install --path tx-core-cli            txc and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin)
-#   2. txc ui install                               the IDE's tmux config from the plugins' resources
+#   1. cargo install --path tx-core-cli            tx and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin),
+#                                                  plus a txc -> tx link there for what still calls txc
+#   2. tx ui install                               the IDE's tmux config from the plugins' resources
 #   2b. ~/.config/nvim and ~/.tmux.conf             links to config/{nvim,tmux.conf}; a real
 #                                                  directory or file there is moved to <path>.bak.<stamp>
 #   3. the switch (once; a second run finds nothing to do):
@@ -13,10 +14,10 @@
 #        ~/.claude/settings.json and ~/.codex/hooks.json; both files are backed up to
 #        <file>.bak.<stamp> first, everything else in them (the Claude statusLine included)
 #        stays as it is;
-#      - txc doctor --fix-hooks removes what older txc versions wired.
+#      - tx doctor --fix-hooks removes what older tx versions wired.
 #   4. what is left for you to do, printed at the end.
 #
-# Honoured: $HOME, $CARGO_INSTALL_ROOT, $TX_APPNAME (txc's directories), $TX_IDE_HOME (the old
+# Honoured: $HOME, $CARGO_INSTALL_ROOT, $TX_APPNAME (tx's directories), $TX_IDE_HOME (the old
 # home, default ~/.tx-ide), $CLAUDE_CONFIG_DIR, $CODEX_HOME. Nothing here talks to a tmux server;
 # reload your old server yourself (the last section says how). Needs cargo, tmux and jq. A run
 # with a sandboxed $HOME (QA) also needs $RUSTUP_HOME and $CARGO_HOME, or rustup finds no toolchain.
@@ -24,12 +25,12 @@
 # Not touched: ~/.tx-ide's data (sessions, history, artifacts), the repository's agents/, the hook
 # shims under ~/.tx-ide/hooks, the global tmux session-closed hook of the old server, the other
 # ~/.local/bin links of the old install (tx-assistant, tmux-pane-session-name,
-# tmux-system-resources: nothing in txc wants those names).
+# tmux-system-resources: nothing in tx wants those names).
 set -u -o pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd -P)"
 HOME_DIR="${HOME%/}"
-# txc's data dir (the five-directory rule of `txc help`): agent worktrees live under its worktrees/.
+# tx's data dir (the five-directory rule of `tx help`): agent worktrees live under its worktrees/.
 TX_DATA="${TX_DATA_DIR:-${XDG_DATA_HOME:-$HOME_DIR/.local/share}/${TX_APPNAME:-tx-ide}}"
 # Physical, like $REPO, so a symlinked /tmp or home compares equal.
 TX_DATA="$(cd "$TX_DATA" 2>/dev/null && pwd -P || printf '%s' "$TX_DATA")"
@@ -39,7 +40,7 @@ CODEX_DIR="${CODEX_HOME:-$HOME_DIR/.codex}"
 TX_IDE_DIR="${TX_IDE_HOME:-$HOME_DIR/.tx-ide}"
 TX_IDE_DIR="${TX_IDE_DIR/#\~/$HOME_DIR}"
 CARGO_BIN="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME_DIR/.cargo}}/bin"
-TXC="$CARGO_BIN/txc"
+TX_BIN="$CARGO_BIN/tx"
 STAMP=$(date +%Y%m%d%H%M%S)
 
 DRY_RUN=0
@@ -74,7 +75,7 @@ cat <<EOF
 ${B}=== tx-ide install ===${X}$( ((DRY_RUN)) && printf '  %s(dry run: nothing is changed)%s' "$Y" "$X")
 
 repo:       $REPO
-binaries:   $CARGO_BIN/{txc,txi}
+binaries:   $CARGO_BIN/{tx,txi}
 old home:   $TX_IDE_DIR
 hook files: $CLAUDE_DIR/settings.json, $CODEX_DIR/hooks.json
 EOF
@@ -99,31 +100,47 @@ for tool in claude nvim fzf; do
   fi
 done
 
-# === 1: txc and txi ===
-header "txc and txi (cargo install --path $REPO/tx-core-cli)"
+# === 1: tx and txi ===
+# The old install's `tx` must be renamed (3a) before a cargo install into the same directory
+# would overwrite it.
+if [[ "$CARGO_BIN" -ef "$LOCAL_BIN" && -L "$LOCAL_BIN/tx" && "$(readlink "$LOCAL_BIN/tx")" == */bin/tx ]]; then
+  fail "$LOCAL_BIN/tx" "the old install's tx is where cargo installs the new one — mv it to tx-old first"
+  exit 1
+fi
+header "tx and txi (cargo install --path $REPO/tx-core-cli)"
 if ((DRY_RUN)); then
-  would "$CARGO_BIN/txc, $CARGO_BIN/txi" "run: cargo install --path $REPO/tx-core-cli --force"
+  would "$CARGO_BIN/tx, $CARGO_BIN/txi" "run: cargo install --path $REPO/tx-core-cli --force"
 else
   if cargo install --path "$REPO/tx-core-cli" --force 2>&1 | sed 's/^/    /'; then
-    ok "$CARGO_BIN/txc, $CARGO_BIN/txi" "installed"
+    ok "$CARGO_BIN/tx, $CARGO_BIN/txi" "installed"
   else
     fail "cargo install" "failed"
     exit 1
   fi
+fi
+# The binary was called txc before; running agents, their roles and an IDE server installed
+# before the rename still call it by that name.
+if [[ -L "$CARGO_BIN/txc" && "$(readlink "$CARGO_BIN/txc")" == tx ]]; then
+  ok "$CARGO_BIN/txc" "links to tx"
+elif ((DRY_RUN)); then
+  would "$CARGO_BIN/txc" "link to tx (the binary's old name)"
+else
+  ln -sfn tx "$CARGO_BIN/txc"
+  ok "$CARGO_BIN/txc" "links to tx (the binary's old name)"
 fi
 case ":${PATH:-}:" in
 *":$CARGO_BIN:"*) ok "$CARGO_BIN" "on PATH" ;;
 *) warn "$CARGO_BIN" "not on PATH — add it to your shell rc" ;;
 esac
 
-# === 2: txc ui install ===
-header "txc ui install${TX_APPNAME:+ (TX_APPNAME=$TX_APPNAME)}"
+# === 2: tx ui install ===
+header "tx ui install${TX_APPNAME:+ (TX_APPNAME=$TX_APPNAME)}"
 if ((DRY_RUN)); then
-  would "the IDE's tmux config and helper scripts" "run: $TXC ui install"
-elif "$TXC" ui install 2>&1 | sed 's/^/    /'; then
-  ok "txc ui install" "done"
+  would "the IDE's tmux config and helper scripts" "run: $TX_BIN ui install"
+elif "$TX_BIN" ui install 2>&1 | sed 's/^/    /'; then
+  ok "tx ui install" "done"
 else
-  fail "txc ui install" "failed"
+  fail "tx ui install" "failed"
   exit 1
 fi
 
@@ -182,11 +199,15 @@ header "Rename the old install to tx-old"
 OLD_REPO=""
 OLD_TX="$LOCAL_BIN/tx"
 NEW_TX="$LOCAL_BIN/tx-old"
-if [[ -L "$OLD_TX" ]]; then
+if [[ "$OLD_TX" -ef "$TX_BIN" ]]; then
+  OLD_TX=""
+elif [[ -L "$OLD_TX" ]]; then
   target=$(readlink "$OLD_TX")
   [[ "$target" == */bin/tx ]] && OLD_REPO="${target%/bin/tx}"
 fi
-if [[ -e "$NEW_TX" || -L "$NEW_TX" ]]; then
+if [[ -z "$OLD_TX" ]]; then
+  info "$LOCAL_BIN/tx is the new tx — nothing to rename"
+elif [[ -e "$NEW_TX" || -L "$NEW_TX" ]]; then
   if [[ -e "$OLD_TX" || -L "$OLD_TX" ]]; then
     fail "$OLD_TX" "both tx and tx-old exist here — resolve by hand"
     exit 1
@@ -289,14 +310,14 @@ strip_old_hooks() {
 strip_old_hooks "$CLAUDE_DIR/settings.json"
 strip_old_hooks "$CODEX_DIR/hooks.json"
 
-# === 3c: what older txc versions wired ===
-header "txc doctor --fix-hooks"
+# === 3c: what older tx versions wired ===
+header "tx doctor --fix-hooks"
 if ((DRY_RUN)); then
-  would "the entries older txc versions added" "run: $TXC doctor --fix-hooks"
-elif "$TXC" doctor --fix-hooks 2>&1 | sed 's/^/    /'; then
-  ok "txc doctor --fix-hooks" "done"
+  would "the entries older tx versions added" "run: $TX_BIN doctor --fix-hooks"
+elif "$TX_BIN" doctor --fix-hooks 2>&1 | sed 's/^/    /'; then
+  ok "tx doctor --fix-hooks" "done"
 else
-  warn "txc doctor --fix-hooks" "failed; run it by hand"
+  warn "tx doctor --fix-hooks" "failed; run it by hand"
 fi
 
 # === Final ===
@@ -305,14 +326,13 @@ cat <<EOF
 ${B}=== Done ===${X}$( ((DRY_RUN)) && printf ' %s(dry run)%s' "$Y" "$X")
 
 ${B}Start the IDE:${X}
-  ${D}txc ui attach${X}             the home view, nested into the tx-assistant; prefix+/ asks it from any pane
+  ${D}tx ui attach${X}             the home view, nested into the tx-assistant; prefix+/ asks it from any pane
 
 ${B}The old install, as tx-old:${X}
   ${D}tmux source-file ~/.tmux.conf${X}   in your old tmux server, so prefix+t / prefix+T there run tx-old
   - \`tx-old ls\` and the rest still work; sessions it spawns are no longer state-tracked
-    (their hooks are gone), and its role texts still say \`tx\`.
-  - the old nvim config's \`tx whoami\` falls back to the tmux session name; its global
-    session-closed hook still runs the old binary by its repository path.
+    (their hooks are gone). Its role texts and the old nvim config call \`tx\`, which is now
+    the new binary; its global session-closed hook still runs the old one by its repository path.
   - the settings keys the old install set (disableWorkflows, skillOverrides, …) were left alone.
 
 ${B}Your own config:${X}
@@ -323,6 +343,7 @@ ${B}Your own config:${X}
     the old setup/iterm.sh installed; nothing to redo.
 
 ${B}Undo:${X}
-  ${D}mv $LOCAL_BIN/tx-old $LOCAL_BIN/tx${X}; remove the @tx-ide-bin line from $OLD_TMUX_CONF;
+  ${D}cargo uninstall tx-core-cli; rm $CARGO_BIN/txc; mv $LOCAL_BIN/tx-old $LOCAL_BIN/tx${X};
+  remove the @tx-ide-bin line from $OLD_TMUX_CONF;
   restore $CLAUDE_DIR/settings.json and $CODEX_DIR/hooks.json from their .bak.<stamp> copies.
 EOF

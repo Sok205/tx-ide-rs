@@ -49,7 +49,7 @@ const HELP_ROWS: [(&str, &str); 13] = [
     ),
     (
         "open <id> [--tag T] [--cwd D]",
-        "document/diff: an nvim view bound to the artifact (reuses an open one); else `txc <kind> open`",
+        "document/diff: an nvim view bound to the artifact (reuses an open one); else `tx <kind> open`",
     ),
     ("path <id>", "print the artifact directory"),
     (
@@ -68,7 +68,7 @@ const HELP_ROWS: [(&str, &str); 13] = [
 ];
 
 fn help() -> String {
-    let mut out = String::from("usage: txc artifact <subcommand> [args]\n\nsubcommands:\n");
+    let mut out = String::from("usage: tx artifact <subcommand> [args]\n\nsubcommands:\n");
     for (usage, summary) in HELP_ROWS {
         out.push_str(&format!("  {usage:<56} {summary}\n"));
     }
@@ -150,7 +150,7 @@ fn read_file(path: &Path) -> Result<Vec<u8>, VerbError> {
     std::fs::read(path).map_err(|error| VerbError::Failed(format!("{}: {error}", path.display())))
 }
 
-/// `txc artifact <subcommand>`.
+/// `tx artifact <subcommand>`.
 pub struct ArtifactVerb {
     pub editor: Arc<str>,
 }
@@ -181,7 +181,7 @@ impl Verb for ArtifactVerb {
     }
 
     fn usage(&self) -> &'static str {
-        "artifact create|modify|group|ls|show|diff|open|path|archive|unarchive|close|doctor   durable versioned artifacts (txc artifact help)"
+        "artifact create|modify|group|ls|show|diff|open|path|archive|unarchive|close|doctor   durable versioned artifacts (tx artifact help)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -217,11 +217,11 @@ impl Verb for ArtifactVerb {
         match outcome {
             Outcome::Code(code) => Ok(code),
             Outcome::Usage(message) => {
-                let _ = writeln!(ctx.io.stderr, "txc artifact {sub}: {message}");
+                let _ = writeln!(ctx.io.stderr, "tx artifact {sub}: {message}");
                 Ok(2)
             }
             Outcome::Artifact(error) => {
-                let _ = writeln!(ctx.io.stderr, "txc artifact: {error}");
+                let _ = writeln!(ctx.io.stderr, "tx artifact: {error}");
                 Ok(1)
             }
         }
@@ -325,7 +325,7 @@ impl Ctx<'_, '_> {
             other => {
                 return Ok(Outcome::Usage(format!(
                     "unknown kind '{other}' (document or diff; another kind is created by its own \
-                     plugin, `txc {other} create`)"
+                     plugin, `tx {other} create`)"
                 )));
             }
         }
@@ -423,7 +423,7 @@ impl Ctx<'_, '_> {
         if try_outcome!(self.artifacts.current_is_dirty(&artifact)) {
             notice.push_str(&format!(
                 " NOTE: the working copy still has unsnapshotted edits; run \
-                 `txc artifact modify {}` (no file) to snapshot them.",
+                 `tx artifact modify {}` (no file) to snapshot them.",
                 artifact.id
             ));
         }
@@ -576,12 +576,12 @@ impl Ctx<'_, '_> {
     }
 
     /// Open-by-convention: a kind the plugin does not handle itself is opened by the plugin that
-    /// registers the verb named after it, run in-process as `txc <kind> open <id>`.
+    /// registers the verb named after it, run in-process as `tx <kind> open <id>`.
     fn open_by_convention(&mut self, kind: &str, artifact_id: &str) -> Step {
         let Some(verb) = self.core.verb(kind) else {
             let _ = writeln!(
                 self.io.stderr,
-                "txc artifact: no opener for kind `{kind}` (expected verb `txc {kind} open`)"
+                "tx artifact: no opener for kind `{kind}` (expected verb `tx {kind} open`)"
             );
             return Ok(Outcome::Code(1));
         };
@@ -694,11 +694,11 @@ fn diff_facts(kind: &Kind) -> String {
     }
 }
 
-/// `txc group <session> [<group> | --clear]`: a session's effort-group override,
+/// `tx group <session> [<group> | --clear]`: a session's effort-group override,
 /// `ext["artifacts"].group`.
 pub struct GroupVerb;
 
-const GROUP_USAGE: &str = "usage: txc group <session> [<group> | --clear]";
+const GROUP_USAGE: &str = "usage: tx group <session> [<group> | --clear]";
 
 impl Verb for GroupVerb {
     fn name(&self) -> &'static str {
@@ -711,7 +711,7 @@ impl Verb for GroupVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let usage = |io: &mut VerbIo<'_>, message: &str| {
-            let _ = writeln!(io.stderr, "txc group: {message}\n{GROUP_USAGE}");
+            let _ = writeln!(io.stderr, "tx group: {message}\n{GROUP_USAGE}");
             Ok(2)
         };
         let args = match parse(argv, &[], &["clear"]) {
@@ -742,7 +742,7 @@ impl Verb for GroupVerb {
         };
         let session = core.get_agent(&id)?;
         if let Err(problem) = ext_of(&session) {
-            let _ = writeln!(io.stderr, "txc group: {problem}");
+            let _ = writeln!(io.stderr, "tx group: {problem}");
         }
         if clear || group.is_some() {
             let owned = group.map(str::to_owned);
@@ -771,7 +771,7 @@ impl Verb for GroupVerb {
     }
 }
 
-/// `txc group <view>`: a view has no override of its own, so it is read-only; its group comes
+/// `tx group <view>`: a view has no override of its own, so it is read-only; its group comes
 /// from its parent agent's chain and its bound artifact. A name that is no view stays unknown.
 fn view_group(
     core: &TxCore,
@@ -785,7 +785,7 @@ fn view_group(
     if setting {
         let _ = writeln!(
             io.stderr,
-            "txc group: '{name}' is a view; its group follows its parent and its artifact"
+            "tx group: '{name}' is a view; its group follows its parent and its artifact"
         );
         return Ok(1);
     }
@@ -851,7 +851,7 @@ impl Verb for MenuVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [session, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc {MENU_VERB} <session> <client>");
+            let _ = writeln!(io.stderr, "usage: tx {MENU_VERB} <session> <client>");
             return Ok(2);
         };
         nav(core, &self.editor).menu(session, client)
@@ -869,7 +869,7 @@ impl Verb for PickVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [session, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc {PICK_VERB} <session> <client>");
+            let _ = writeln!(io.stderr, "usage: tx {PICK_VERB} <session> <client>");
             return Ok(2);
         };
         nav(core, &self.editor).pick(session, client)
@@ -890,7 +890,7 @@ impl Verb for GoVerb {
         let usage = |io: &mut VerbIo<'_>| {
             let _ = writeln!(
                 io.stderr,
-                "usage: txc {GO_VERB} <session> <client> attach|focus|popup artifact|session|view <id>"
+                "usage: tx {GO_VERB} <session> <client> attach|focus|popup artifact|session|view <id>"
             );
             Ok(2)
         };

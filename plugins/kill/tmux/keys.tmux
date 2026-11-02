@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # keys: X
 # tx key plugin `kill`: prefix+X confirms, then stops the tx session in the active pane through
-# `txc kill`, so the record stays honest. Run by `run-shell` from the server's tmux.conf, which
-# `txc ui install` writes; @tx-data names the directory holding bin/tmux-kill-tx-session.
+# `tx kill`, so the record stays honest. Run by `run-shell` from the server's tmux.conf, which
+# `tx ui install` writes; @tx-data names the directory holding bin/tmux-kill-tx-session.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the quoting.
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.

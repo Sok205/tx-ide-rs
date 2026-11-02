@@ -64,7 +64,7 @@ const POPUP_DELAY: &str = "0.1";
 const HOSTING_COMMANDS: [&str; 6] = ["zsh", "bash", "sh", "fish", "dash", "tmux"];
 
 const PICK_USAGE: &str = "\
-usage: txc pick [-f|--filter QUERY] [-j|--jump]
+usage: tx pick [-f|--filter QUERY] [-j|--jump]
 (--host and --all are not supported)
 ";
 
@@ -130,11 +130,11 @@ pub fn fzf_args(
     let bin = bin.display();
     let socket = socket.display();
     let arguments = arguments.join(" ");
-    let txc = format!("{bin} {arguments}");
-    let reload = format!("reload-sync({txc} _list)");
-    let edit_tag = format!("{txc} _edit-tag {{1}}");
-    let chips = format!("{txc} _roles --chips");
-    let picker_key = |key: &str| format!("transform({txc} _picker-key {key})");
+    let tx = format!("{bin} {arguments}");
+    let reload = format!("reload-sync({tx} _list)");
+    let edit_tag = format!("{tx} _edit-tag {{1}}");
+    let chips = format!("{tx} _roles --chips");
+    let picker_key = |key: &str| format!("transform({tx} _picker-key {key})");
     let header_cols = format!(
         "{:<namew$}   {:<LOCATION_W$} {:<7} {:<6} {:<ROLE_W$} TAGS",
         "NAME", "LOCATION", "STARTED", "IDLE", "ROLE"
@@ -187,9 +187,9 @@ pub fn fzf_args(
         format!("--bind=focus:transform-header({focus_cmd})+execute-silent(: >\"$TX_ARM_FILE\")"),
         // The roles panel runs in the picker's own terminal (fzf hands it over for the
         // duration): a tmux popup cannot nest inside the prefix+t picker popup.
-        format!("--bind=tab:execute({txc} _roles-panel)+{reload}+transform-header({focus_cmd})"),
+        format!("--bind=tab:execute({tx} _roles-panel)+{reload}+transform-header({focus_cmd})"),
         format!(
-            "--bind=click-header:execute-silent({txc} _toggle-hide --click \"$FZF_CLICK_HEADER_COLUMN\" \"$FZF_CLICK_HEADER_WORD\")+{reload}+transform-header({focus_cmd})"
+            "--bind=click-header:execute-silent({tx} _toggle-hide --click \"$FZF_CLICK_HEADER_COLUMN\" \"$FZF_CLICK_HEADER_WORD\")+{reload}+transform-header({focus_cmd})"
         ),
     ]
     .into();
@@ -208,7 +208,7 @@ pub fn fzf_args(
         ));
         // `y` stays bound in normal mode (an unbound key would type), so it checks the arm.
         args.push(format!(
-            "--bind=y:execute-silent([ -s \"$TX_ARM_FILE\" ] && {txc} kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+transform-header({focus_cmd})"
+            "--bind=y:execute-silent([ -s \"$TX_ARM_FILE\" ] && {tx} kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+transform-header({focus_cmd})"
         ));
     } else {
         args.push("--bind=d:ignore,y:ignore".to_owned());
@@ -405,17 +405,17 @@ impl Verb for Pick {
                 .filter(|target| !target.is_empty())
                 .unwrap_or(name);
             if !ui.has_session(name) {
-                eprintln!("txc: session '{name}' does not exist");
+                eprintln!("tx: session '{name}' does not exist");
             } else if popup {
                 if open_popup(core, &ui, name)? {
                     return Ok(0);
                 }
-                eprintln!("txc: a popup needs a tmux client");
+                eprintln!("tx: a popup needs a tmux client");
             } else if options.jump {
                 if jump(&ui, name, target)? {
                     return Ok(0);
                 }
-                eprintln!("txc: could not jump to or switch to session {name}");
+                eprintln!("tx: could not jump to or switch to session {name}");
             } else {
                 drop(arm_file);
                 drop(digits_file);
@@ -481,12 +481,12 @@ impl Verb for PickerPopup {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [client, name] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc {POPUP_VERB} <client> <name>");
+            let _ = writeln!(io.stderr, "usage: tx {POPUP_VERB} <client> <name>");
             return Ok(2);
         };
         let ui = Ui::from_core(core);
         if !ui.has_session(name) {
-            ui.display_status(client, &format!("txc: session '{name}' does not exist"));
+            ui.display_status(client, &format!("tx: session '{name}' does not exist"));
             return Ok(1);
         }
         let (_, prefix) = ui.quiet(&["show-options", "-gv", "prefix"]);
@@ -496,7 +496,7 @@ impl Verb for PickerPopup {
             &popup_footer(prefix.trim()),
             name,
         ) {
-            ui.display_status(client, &format!("txc: {error}"));
+            ui.display_status(client, &format!("tx: {error}"));
             return Ok(1);
         }
         Ok(0)
@@ -561,7 +561,7 @@ fn hidden_failed(error: std::io::Error) -> VerbError {
 }
 
 /// This binary and the core's arguments, as the binds re-invoke it.
-fn txc_command(core: &TxCore) -> Result<String, VerbError> {
+fn tx_command(core: &TxCore) -> Result<String, VerbError> {
     let bin = std::env::current_exe()
         .and_then(std::fs::canonicalize)
         .map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?;
@@ -589,7 +589,7 @@ impl Verb for PickerKey {
         let Some(path) = std::env::var_os(DIGITS_FILE_ENV).filter(|path| !path.is_empty()) else {
             let _ = writeln!(
                 io.stderr,
-                "txc _picker-key: {DIGITS_FILE_ENV} is not set (run from the picker)"
+                "tx _picker-key: {DIGITS_FILE_ENV} is not set (run from the picker)"
             );
             return Ok(2);
         };
@@ -601,7 +601,7 @@ impl Verb for PickerKey {
             popup: pending.trim() == POPUP_MARK,
         };
         let Some(reply) = picker_keys::press(key, &state) else {
-            let _ = writeln!(io.stderr, "txc _picker-key: unknown key '{key}'");
+            let _ = writeln!(io.stderr, "tx _picker-key: unknown key '{key}'");
             return Ok(2);
         };
         std::fs::write(&path, reply.pending())
@@ -662,7 +662,7 @@ impl Verb for ToggleHide {
             }
             [word] => word.as_str(),
             _ => {
-                let _ = writeln!(io.stderr, "usage: txc {}", self.usage());
+                let _ = writeln!(io.stderr, "usage: tx {}", self.usage());
                 return Ok(2);
             }
         };
@@ -687,10 +687,10 @@ impl Verb for RolesPanel {
     }
 
     fn run(&self, core: &TxCore, _io: &mut VerbIo<'_>, _argv: &[String]) -> Result<i32, VerbError> {
-        let txc = txc_command(core)?;
-        let reload = format!("reload-sync({txc} _roles)");
-        let toggle = format!("execute-silent({txc} _toggle-hide {{1}})+{reload}");
-        let toggle_all = format!("execute-silent({txc} _toggle-hide --all)+{reload}");
+        let tx = tx_command(core)?;
+        let reload = format!("reload-sync({tx} _roles)");
+        let toggle = format!("execute-silent({tx} _toggle-hide {{1}})+{reload}");
+        let toggle_all = format!("execute-silent({tx} _toggle-hide --all)+{reload}");
         let color = format!(
             "bg:{BG_DEEP_HEX},fg:{DIM_FG_HEX},pointer:{ACCENT_HEX},fg+:{FG_HEX}:regular,\
              bg+:{SELECTION_BG}:regular,header:{DIM_FG_HEX},prompt:{ACCENT_HEX}"
@@ -840,7 +840,7 @@ mod tests {
 
     fn args(binds: Binds) -> Vec<String> {
         fzf_args(
-            Path::new("/x/txc"),
+            Path::new("/x/tx"),
             Path::new("/k/tmux.sock"),
             &["--data-dir".to_owned(), "/s".to_owned()],
             12,
@@ -868,9 +868,9 @@ mod tests {
 
     #[test]
     fn fzf_args_are_exact() {
-        let txc = "/x/txc --data-dir /s";
-        let reload = format!("reload-sync({txc} _list)");
-        let chips = format!("{txc} _roles --chips");
+        let tx = "/x/tx --data-dir /s";
+        let reload = format!("reload-sync({tx} _list)");
+        let chips = format!("{tx} _roles --chips");
         let focus = format!(
             "printf '\x1b[38;2;122;162;247m\x1b[1m%s\x1b[0m \x1b[38;2;192;202;245m\x1b[1m%s\x1b[0m\\n' {{1}} {{2}}; {chips}; printf '%s' '{HEADER}'"
         );
@@ -901,22 +901,22 @@ mod tests {
             format!("--bind=start:execute-silent(( while sleep 1; do [ -s \"$TX_DIGITS_FILE\" ] || curl -fsS -XPOST \"localhost:$FZF_PORT\" -d \"{reload}\" >/dev/null 2>&1 || exit 0; done ) &)"),
             format!("--bind=ctrl-r:{reload}"),
             format!("--bind=r:{reload}"),
-            format!("--bind=p:transform({txc} _picker-key p)"),
+            format!("--bind=p:transform({tx} _picker-key p)"),
             "--bind=alt-p:print(popup)+accept".into(),
             format!("--bind=focus:transform-header({focus})+execute-silent(: >\"$TX_ARM_FILE\")"),
-            format!("--bind=tab:execute({txc} _roles-panel)+{reload}+transform-header({focus})"),
-            format!("--bind=click-header:execute-silent({txc} _toggle-hide --click \"$FZF_CLICK_HEADER_COLUMN\" \"$FZF_CLICK_HEADER_WORD\")+{reload}+transform-header({focus})"),
-            format!("--bind=ctrl-t:execute(tmux -S /k/tmux.sock display-popup -E -h 4 -w 60% \"{txc} _edit-tag {{1}}\")+{reload}"),
-            format!("--bind=t:execute(tmux -S /k/tmux.sock display-popup -E -h 4 -w 60% \"{txc} _edit-tag {{1}}\")+{reload}"),
+            format!("--bind=tab:execute({tx} _roles-panel)+{reload}+transform-header({focus})"),
+            format!("--bind=click-header:execute-silent({tx} _toggle-hide --click \"$FZF_CLICK_HEADER_COLUMN\" \"$FZF_CLICK_HEADER_WORD\")+{reload}+transform-header({focus})"),
+            format!("--bind=ctrl-t:execute(tmux -S /k/tmux.sock display-popup -E -h 4 -w 60% \"{tx} _edit-tag {{1}}\")+{reload}"),
+            format!("--bind=t:execute(tmux -S /k/tmux.sock display-popup -E -h 4 -w 60% \"{tx} _edit-tag {{1}}\")+{reload}"),
             format!("--bind=d:execute-silent(printf '%s' {{1}} >\"$TX_ARM_FILE\")+transform-header({arm})"),
-            format!("--bind=y:execute-silent([ -s \"$TX_ARM_FILE\" ] && {txc} kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+transform-header({focus})"),
+            format!("--bind=y:execute-silent([ -s \"$TX_ARM_FILE\" ] && {tx} kill {{1}} >/dev/null 2>&1; : >\"$TX_ARM_FILE\")+{reload}+transform-header({focus})"),
             format!("--bind=n:transform-header({focus})+execute-silent(: >\"$TX_ARM_FILE\")"),
             "--bind=j:down,k:up,g:first,G:last,q:abort".into(),
             "--bind=ctrl-d:half-page-down,ctrl-u:half-page-up".into(),
             format!("--bind=/:{search}"),
             format!("--bind=i:{search}"),
-            format!("--bind=esc:transform({txc} _picker-key esc)"),
-            format!("--bind=enter:transform({txc} _picker-key enter)"),
+            format!("--bind=esc:transform({tx} _picker-key esc)"),
+            format!("--bind=enter:transform({tx} _picker-key enter)"),
         ];
         expected.extend(
             ignored_keys()
@@ -929,7 +929,7 @@ mod tests {
     #[test]
     fn a_query_starts_in_search_mode() {
         let actual = fzf_args(
-            Path::new("/x/txc"),
+            Path::new("/x/tx"),
             Path::new("/k/tmux.sock"),
             &[],
             12,
@@ -986,7 +986,7 @@ mod tests {
 
     #[test]
     fn open_mode_by_surroundings() {
-        for command in [Some("zsh"), Some("txc"), None] {
+        for command in [Some("zsh"), Some("tx"), None] {
             for target_hosts in [false, true] {
                 assert_eq!(
                     open_mode(false, true, target_hosts, command),
@@ -1013,7 +1013,7 @@ mod tests {
         }
         assert_eq!(open_mode(true, false, false, Some("zsh")), OpenMode::Switch);
         assert_eq!(open_mode(true, true, false, Some("nvim")), OpenMode::Switch);
-        assert_eq!(open_mode(true, true, false, Some("txc")), OpenMode::Switch);
+        assert_eq!(open_mode(true, true, false, Some("tx")), OpenMode::Switch);
         assert_eq!(open_mode(true, true, false, None), OpenMode::Switch);
         assert_eq!(open_mode(true, false, false, None), OpenMode::Switch);
     }

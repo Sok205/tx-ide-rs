@@ -1,4 +1,4 @@
-//! `txc`: the thin CLI over tx-core. Exit 0 on success, 1 on a core error (`txc: <error>` on
+//! `tx`: the thin CLI over tx-core. Exit 0 on success, 1 on a core error (`tx: <error>` on
 //! stderr), 2 on misuse (the usage line on stderr). `attach` replaces the process with tmux.
 
 use std::io::Write;
@@ -29,18 +29,18 @@ fn main() -> ExitCode {
     let invocation = match args.and_then(|args| args::parse(&args)) {
         Ok(invocation) => invocation,
         Err(error) => {
-            eprintln!("txc: {error}\n{}", args::USAGE);
+            eprintln!("tx: {error}\n{}", args::USAGE);
             return ExitCode::from(2);
         }
     };
     match run(invocation) {
         Ok(code) => code,
         Err(Failure::Usage(error)) => {
-            eprintln!("txc: {error}\n{}", args::USAGE);
+            eprintln!("tx: {error}\n{}", args::USAGE);
             ExitCode::from(2)
         }
         Err(error) => {
-            eprintln!("txc: {error}");
+            eprintln!("tx: {error}");
             ExitCode::from(1)
         }
     }
@@ -386,7 +386,7 @@ fn migrate(global: &args::Global, from: Option<PathBuf>) -> Result<ExitCode, Fai
     let Some(install) = core.verb("ui") else {
         writeln!(
             out,
-            "the ide plugin is disabled; run `txc ui install` once it is enabled"
+            "the ide plugin is disabled; run `tx ui install` once it is enabled"
         )
         .ok();
         return Ok(ExitCode::SUCCESS);

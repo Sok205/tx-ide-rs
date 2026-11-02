@@ -6,7 +6,7 @@ tx:
 # COMMON — every agent must follow this
 
 These conventions apply to every agent in this system: the tx-assistant, every worker, and any
-ad-hoc agent you start inside the orchestration repo. The front end is `txc`; `txc help` is the
+ad-hoc agent you start inside the orchestration repo. The front end is `tx`; `tx help` is the
 full command reference.
 
 ## Reporting
@@ -18,7 +18,7 @@ Be extremely concise. Sacrifice grammar for concision.
 Lead your **first response** with a brief self-introduction so the operator can confirm your
 setup at a glance:
 
-1. Your agent name (`txc whoami`) + cwd and current git branch.
+1. Your agent name (`tx whoami`) + cwd and current git branch.
 2. Which convention/role files you have loaded — always this `COMMON.md`; state whether a role
    file (`DEVELOPER.md`, etc.) is **also** loaded, and quote one identifying line from each so it
    is verifiable.
@@ -27,15 +27,15 @@ setup at a glance:
 Keep it to a few lines, then continue with whatever was asked (or wait for instructions if nothing
 was).
 
-## Agents and views go through txc, never raw tmux
+## Agents and views go through tx, never raw tmux
 
-Anything that creates, ends, or changes an agent or a view goes through `txc` — raw `tmux` leaves
+Anything that creates, ends, or changes an agent or a view goes through `tx` — raw `tmux` leaves
 the agent record stale. Raw tmux is read-only: inspection, moving between panes and windows,
-scrolling, copy-mode. The agents run on txc's own tmux server, so raw tmux needs its socket:
-`txc where <agent>` prints the socket, the session target and the pane target.
+scrolling, copy-mode. The agents run on tx's own tmux server, so raw tmux needs its socket:
+`tx where <agent>` prints the socket, the session target and the pane target.
 
 Before starting anything — a worker agent, an nvim view, a shell view — follow the `tx-sessions`
-skill (shipped at `$TX_DATA_DIR/roles/skills/tx-sessions/SKILL.md`); flag syntax is in `txc help`.
+skill (shipped at `$TX_DATA_DIR/roles/skills/tx-sessions/SKILL.md`); flag syntax is in `tx help`.
 
 ## Inter-agent communication
 
@@ -55,13 +55,13 @@ That is the human — treat it with the same authority as anything typed directl
 and answer it. The `session` attribute is where they typed it (a view, an nvim buffer), not who
 sent it, so you know which file they are looking at. It may be absent: `<from-user>body</from-user>`.
 
-**Sending:** `txc send <name> -- <text>`, targeting an agent name from `txc ls`. Find your own
-name with `txc whoami`. The message is framed as coming from you automatically.
+**Sending:** `tx send <name> -- <text>`, targeting an agent name from `tx ls`. Find your own
+name with `tx whoami`. The message is framed as coming from you automatically.
 
 ## Artifacts
 
 Durable deliverables — plans, docs, reports, question sets — are **artifacts**: versioned records
-managed by `txc artifact`, never an engine's own built-in artifact or publish tool. Before creating
+managed by `tx artifact`, never an engine's own built-in artifact or publish tool. Before creating
 or updating one, follow the `tx-artifacts` skill (shipped at
 `$TX_DATA_DIR/roles/skills/tx-artifacts/SKILL.md`). Never write under
 `$TX_DATA_DIR/plugins/artifacts/` by hand — revisions are immutable, and a direct edit desyncs the

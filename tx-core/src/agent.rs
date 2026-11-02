@@ -13,7 +13,7 @@ use crate::error::CoreError;
 use crate::state::LlmEngineState;
 
 /// The record schema this build reads and writes. Version 1 (one `sessions/<id>.json` per
-/// record, with `lifecycle` and `launch`) is upgraded by `txc migrate`, never read in place.
+/// record, with `lifecycle` and `launch`) is upgraded by `tx migrate`, never read in place.
 pub const RECORD_VERSION: u64 = 2;
 /// Agent names are tmux session names and file-name fragments; keep them short.
 pub const MAX_NAME_BYTES: usize = 128;
@@ -131,9 +131,9 @@ pub enum RecordError {
     Json(#[from] serde_json::Error),
     #[error("record version {0} is not supported (this build reads version {RECORD_VERSION})")]
     UnsupportedVersion(u64),
-    /// An older record this build knows how to upgrade, but only through `txc migrate`: the
+    /// An older record this build knows how to upgrade, but only through `tx migrate`: the
     /// mapping needs the engine plugins and moves files.
-    #[error("record version {0}: run `txc migrate`")]
+    #[error("record version {0}: run `tx migrate`")]
     NeedsMigration(u64),
     #[error("record version {0} is not an unsigned integer")]
     InvalidVersion(String),
@@ -379,13 +379,13 @@ mod tests {
         );
     }
 
-    /// Acceptance 1: a version-1 record is refused by name, with the pointer to `txc migrate`,
+    /// Acceptance 1: a version-1 record is refused by name, with the pointer to `tx migrate`,
     /// before any of its fields is looked at (a process record, an unknown engine included).
     #[test]
     fn version_one_needs_migration() {
         let error = Agent::from_json(VERSION_ONE).unwrap_err();
         assert!(matches!(error, RecordError::NeedsMigration(1)), "{error:?}");
-        assert_eq!(error.to_string(), "record version 1: run `txc migrate`");
+        assert_eq!(error.to_string(), "record version 1: run `tx migrate`");
         let process = VERSION_ONE.replace(
             r#"{"kind":"agent","engine":"claude","profile":[]}"#,
             r#"{"kind":"process","program":"sh","args":[]}"#,

@@ -34,9 +34,9 @@ pub enum CoreError {
     StillRunning(AgentId),
     #[error("worktree {} is gone; a respawn never recreates one", .0.display())]
     WorktreeMissing(PathBuf),
-    /// `<data>/sessions/` still holds version-1 records; nothing opens until `txc migrate`
+    /// `<data>/sessions/` still holds version-1 records; nothing opens until `tx migrate`
     /// upgrades them.
-    #[error("{records} version-1 record(s) in {}: run `txc migrate`", directory.display())]
+    #[error("{records} version-1 record(s) in {}: run `tx migrate`", directory.display())]
     NeedsMigration { directory: PathBuf, records: usize },
     /// The record's or request's engine kind has no adapter registered: its plugin is disabled.
     #[error("engine {0} is disabled")]

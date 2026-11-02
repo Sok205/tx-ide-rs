@@ -19,7 +19,7 @@ fn have(tool: &str) -> bool {
 
 fn home() -> tempfile::TempDir {
     tempfile::Builder::new()
-        .prefix("txc-install")
+        .prefix("tx-install")
         .tempdir_in("/tmp")
         .unwrap()
 }

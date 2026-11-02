@@ -26,14 +26,14 @@ impl Cli {
 }
 
 fn exe() -> PathBuf {
-    std::fs::canonicalize(env!("CARGO_BIN_EXE_txc")).unwrap()
+    std::fs::canonicalize(env!("CARGO_BIN_EXE_tx")).unwrap()
 }
 
 fn expected_conf(cli: &Cli) -> String {
     let state = cli.state();
     let state = state.display();
     format!(
-        "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
+        "# tx-core server config, written by `tx ui install`. Re-run to update.\n\
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
          set -g detach-on-destroy on\n\
@@ -226,7 +226,7 @@ fn a_symlinked_kind_directory_is_refused() {
     assert_eq!(
         stderr,
         format!(
-            "txc ui install: {} is a symlink; refusing to prune\n",
+            "tx ui install: {} is a symlink; refusing to prune\n",
             keys.display()
         )
     );
@@ -243,7 +243,7 @@ fn ui_install_takes_no_arguments() {
     ] {
         assert!(
             cli.fails(args, 2)
-                .starts_with("usage: txc ui install | attach")
+                .starts_with("usage: tx ui install | attach")
         );
     }
     let conf = std::fs::read_to_string(cli.conf()).unwrap_or_default();
@@ -501,7 +501,7 @@ fn resource_verb_prints_bytes_and_fails_on_unknown() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "txc _resource: no such resource: nope/x\n"
+        "tx _resource: no such resource: nope/x\n"
     );
     cli.fails(&["_resource"], 2);
     cli.write_yaml(&plugins_yaml_disabling("kill"));
@@ -513,7 +513,7 @@ fn resource_verb_prints_bytes_and_fails_on_unknown() {
 fn ui_install_refuses_unsafe_paths() {
     let cli = Cli::new();
     let state = cli.dir.path().join("with space");
-    let output = Command::new(env!("CARGO_BIN_EXE_txc"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tx"))
         .args(common::directory_flags(&state))
         .args(["ui", "install"])
         .env_remove("TMUX")
@@ -523,7 +523,7 @@ fn ui_install_refuses_unsafe_paths() {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         format!(
-            "txc ui install: path contains unsafe characters: {}\n",
+            "tx ui install: path contains unsafe characters: {}\n",
             state.display()
         )
     );
@@ -536,7 +536,7 @@ fn ui_install_refuses_unsafe_paths() {
 fn attach_command(cli: &Cli) -> String {
     format!(
         "{} {} ui attach",
-        env!("CARGO_BIN_EXE_txc"),
+        env!("CARGO_BIN_EXE_tx"),
         cli.arguments()
     )
 }
@@ -579,7 +579,7 @@ fn ui_attach_inside_another_tmux_says_its_prefix_wins() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.starts_with(
-            "txc ui attach: nesting inside another tmux (socket /tmp/not-the-core.sock); its prefix wins \u{2014} press the prefix twice to reach the IDE's keys\n"
+            "tx ui attach: nesting inside another tmux (socket /tmp/not-the-core.sock); its prefix wins \u{2014} press the prefix twice to reach the IDE's keys\n"
         ),
         "{stderr:?}"
     );

@@ -7,7 +7,7 @@
 //!     settings: { ... }
 //! ```
 //! A missing file enables everything; a malformed file or an unknown id is a usage error. A
-//! retired id is skipped, so a file written for an older txc keeps loading.
+//! retired id is skipped, so a file written for an older tx keeps loading.
 
 use std::collections::BTreeMap;
 use std::path::Path;

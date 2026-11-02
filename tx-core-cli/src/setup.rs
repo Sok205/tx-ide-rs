@@ -1,4 +1,4 @@
-//! What `txc` and `txi` share: the five directories, the core config, `plugins.yaml`, opening the core,
+//! What `tx` and `txi` share: the five directories, the core config, `plugins.yaml`, opening the core,
 //! and how a failure maps to an exit code.
 
 use std::ffi::OsString;
@@ -13,14 +13,14 @@ use crate::plugins;
 /// Renames all five directories at once, as `NVIM_APPNAME` does for nvim.
 pub const APPNAME_ENV: &str = "TX_APPNAME";
 pub const DEFAULT_APPNAME: &str = "tx-ide";
-/// The version-1 home `txc migrate` moves by default: `$TX_CORE_HOME`, else `~/.tx-core`.
+/// The version-1 home `tx migrate` moves by default: `$TX_CORE_HOME`, else `~/.tx-core`.
 pub const VERSION_ONE_HOME_ENV: &str = "TX_CORE_HOME";
 pub const VERSION_ONE_HOME: &str = ".tx-core";
 /// Under the data dir the roles plugins ship (written by `ui install`); under the config dir
 /// the user's own.
 pub const ROLES_DIR: &str = "roles";
 pub const SKILLS_DIR: &str = "skills";
-/// The internal binary the wired hooks run; installed next to `txc`.
+/// The internal binary the wired hooks run; installed next to `tx`.
 pub const TXI: &str = "txi";
 
 /// Why `run` stopped: usage is exit 2 with the usage text, everything else exit 1.
@@ -53,7 +53,7 @@ impl std::fmt::Display for Failure {
             Failure::Environment(text) => f.write_str(text),
             Failure::VersionOneHome(dir) => write!(
                 f,
-                "{} is a version-1 home; run `txc migrate --from {}`",
+                "{} is a version-1 home; run `tx migrate --from {}`",
                 dir.display(),
                 dir.display()
             ),
@@ -301,7 +301,7 @@ pub fn open_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure>
     open_core(global, config, TxCore::open)
 }
 
-/// [`open_with`] for `txc migrate`: the version-1 records in `<data>/sessions/` do not refuse
+/// [`open_with`] for `tx migrate`: the version-1 records in `<data>/sessions/` do not refuse
 /// the open, since upgrading them is the point.
 pub fn open_for_migration_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
     open_core(global, config, TxCore::open_for_migration)
@@ -317,7 +317,7 @@ fn open_core(
     core.plug(plugins::manifest(), &cfg)
         .map_err(Failure::Plugin)?;
     for (id, reason) in core.skipped_records()? {
-        eprintln!("txc: skipped record {id}: {reason}");
+        eprintln!("tx: skipped record {id}: {reason}");
     }
     Ok(core)
 }

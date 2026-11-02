@@ -1,5 +1,5 @@
-//! tx-core plugin `artifacts`: durable versioned deliverables (`txc artifact …`), effort groups
-//! (`txc group`), and prefix+a (`_artifact-menu`, `_artifact-pick`, `_artifact-go`).
+//! tx-core plugin `artifacts`: durable versioned deliverables (`tx artifact …`), effort groups
+//! (`tx group`), and prefix+a (`_artifact-menu`, `_artifact-pick`, `_artifact-go`).
 //!
 //! The store lives under `<data>/plugins/artifacts/`: `<id>.json` records,
 //! `<id>/current<ext>` working copies, `<id>/revs/<n><ext>` snapshots, plus the plugin's own
@@ -7,7 +7,7 @@
 //! `ext["artifacts"] = {"group"}`. An artifact has a kind (`kinds`): a `document` opens in a
 //! tx-client view of kind `editor` bound to it (`@tx-view-bound`), a `diff` in one of kind `diff`
 //! running diffview in its worktree, and any other kind through the verb named after it
-//! (`txc <kind> open <id>`). The touching session is `$TX_SESSION_ID`, else `user`.
+//! (`tx <kind> open <id>`). The touching session is `$TX_SESSION_ID`, else `user`.
 //!
 //! Settings (`plugins.yaml`): `editor` (default `nvim`), the program an artifact's view runs.
 

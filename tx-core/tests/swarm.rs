@@ -22,7 +22,7 @@ fn child_lists_running_sessions() {
         .map(|id| core.get_agent(id).unwrap().name)
         .collect();
     names.sort();
-    println!("\nTXC-SWARM {}", names.join(","));
+    println!("\nTX-SWARM {}", names.join(","));
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn swarm_outlives_its_core_and_targets_reach_the_right_pane() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let seen = stdout
         .lines()
-        .find_map(|l| l.strip_prefix("TXC-SWARM "))
+        .find_map(|l| l.strip_prefix("TX-SWARM "))
         .unwrap_or_else(|| panic!("{stdout}"));
     assert_eq!(seen, "alice,bob,tool");
 

@@ -7,7 +7,7 @@
 # client nested in one of the server's own panes never counts). The hook owns index 90 of
 # client-attached, so other hooks there stay. Sourced on a live server (`ui install` reloading)
 # with a non-nested client already attached, it marks the menu shown: that attach was the first.
-# Run by `run-shell` from the server's tmux.conf, which `txc ui install` writes.
+# Run by `run-shell` from the server's tmux.conf, which `tx ui install` writes.
 #
 # Both run in the background (`run-shell -b`) and swallow their output, so a failing menu never
 # holds up the attach or drops the client into a run-shell view. The menu learns the firing pane
@@ -17,11 +17,11 @@
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.
 set -u
 
-TXC=$(tmux show-option -gv @tx-bin 2>/dev/null)
+TX_BIN=$(tmux show-option -gv @tx-bin 2>/dev/null)
 ARGUMENTS=$(tmux show-option -gv @tx-arguments 2>/dev/null)
 [ -n "$ARGUMENTS" ] || exit 0
-[ -n "$TXC" ] || exit 0
-TX="$TXC $ARGUMENTS"
+[ -n "$TX_BIN" ] || exit 0
+TX="$TX_BIN $ARGUMENTS"
 
 CONF=$(mktemp -t tx-menu-keys.XXXXXX)
 trap 'rm -f "$CONF"' EXIT

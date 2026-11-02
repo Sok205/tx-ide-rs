@@ -10,7 +10,7 @@ keep running after the launching CLI exits; attaching shows the agent's native t
 |---|---|
 | `tx-core` | the library: `TxCore` and the public operations |
 | `tx-engine-claude`, `tx-engine-codex` | one `LlmEngine` each, depending only on `tx-core` |
-| `tx-core-cli` | `txc`, a thin CLI that registers the bundled engines |
+| `tx-core-cli` | `tx`, a thin CLI that registers the bundled engines |
 
 ## Layout
 

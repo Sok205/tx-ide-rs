@@ -4,7 +4,7 @@
 
 local M = {}
 
--- `txc ui install` writes tmux-nav under <data>/bin; $PATH fallback when it is not installed.
+-- `tx ui install` writes tmux-nav under <data>/bin; $PATH fallback when it is not installed.
 local tx_data_directory = vim.env.TX_DATA_DIR
   or (vim.env.XDG_DATA_HOME or vim.env.HOME .. "/.local/share") .. "/tx-ide"
 local navigator = vim.uv.fs_realpath(tx_data_directory .. "/bin/tmux-nav") or "tmux-nav"

@@ -147,7 +147,7 @@ require("config.diff-style")
 -- C-h/j/k/l across splits, panes, and nested sessions (see lua/config/tmux-nav.lua)
 require("config.tmux-nav").setup()
 
--- tx-client's nvim modules: `txc ui install` puts them under <data>/nvim, which a tx view
+-- tx-client's nvim modules: `tx ui install` puts them under <data>/nvim, which a tx view
 -- prepends to the runtimepath and loads (plugin/tx.lua) before this file runs. Outside a view
 -- this config prepends the same directory itself, so the keymaps exist in a plain nvim too.
 local tx_data_directory = vim.env.TX_DATA_DIR

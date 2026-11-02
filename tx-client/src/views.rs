@@ -1,5 +1,5 @@
 //! Views: the non-LLM tmux sessions tx-client owns (the home base, editors, diffviews, shells,
-//! the timeline, tutor and mockup viewers). A view has no core record and never shows in `txc ls`;
+//! the timeline, tutor and mockup viewers). A view has no core record and never shows in `tx ls`;
 //! its fields live in tmux session options only, so nothing goes stale when the server dies.
 //! Core marks its own sessions with `@tx-id`, and nothing here kills or renames one of those.
 
@@ -121,7 +121,7 @@ pub struct ViewRequest<'a> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViewError {
-    #[error("'{0}' is an agent's session; stop it through core (txc kill)")]
+    #[error("'{0}' is an agent's session; stop it through core (tx kill)")]
     OwnedByCore(String),
     #[error("'{0}' is not a view")]
     NotAView(String),

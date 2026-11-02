@@ -1,5 +1,5 @@
 //! tx-core plugin `assistant`: the `tx-assistant` agent session. `assistant warm` starts it
-//! unless it is running and prints its name; `txc ui attach` calls it to land the operator in
+//! unless it is running and prints its name; `tx ui attach` calls it to land the operator in
 //! the assistant. `assistant ask` delivers one line to it as the operator: prefix+/ (the
 //! `keys/assistant.tmux` fragment) parks the typed line in a paste buffer and runs
 //! `assistant ask --from-buffer --pane <firing pane>`; the line goes out as typed in that pane's
@@ -234,7 +234,7 @@ impl Verb for Assistant {
             _ => {
                 let _ = writeln!(
                     io.stderr,
-                    "usage: txc assistant warm | ask --from-buffer [--pane PANE] | ask TEXT…"
+                    "usage: tx assistant warm | ask --from-buffer [--pane PANE] | ask TEXT…"
                 );
                 Ok(2)
             }

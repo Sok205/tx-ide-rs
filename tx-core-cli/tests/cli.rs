@@ -1,4 +1,4 @@
-//! End-to-end over the built `txc` binary and a private tmux server.
+//! End-to-end over the built `tx` binary and a private tmux server.
 
 mod common;
 
@@ -26,7 +26,7 @@ fn usage_errors_exit_2_without_touching_state() {
     let cli = Cli::new();
     let stderr = cli.fails(&[], 2);
     assert!(
-        stderr.contains("missing verb") && stderr.contains("usage: txc"),
+        stderr.contains("missing verb") && stderr.contains("usage: tx"),
         "{stderr}"
     );
     assert!(cli.fails(&["create", "x"], 2).contains("--cwd"));
@@ -47,7 +47,7 @@ fn usage_errors_exit_2_without_touching_state() {
     );
     assert!(cli.fails(&["bogus"], 2).contains("bogus"));
     assert!(!cli.state().exists());
-    assert!(cli.ok(&["help"]).starts_with("usage: txc"));
+    assert!(cli.ok(&["help"]).starts_with("usage: tx"));
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn core_errors_exit_1() {
     let cli = Cli::new();
     let cwd = cli.repository("w");
     let stderr = cli.fails(&["show", "nope"], 1);
-    assert_eq!(stderr, "txc: no session \"nope\"\n");
+    assert_eq!(stderr, "tx: no session \"nope\"\n");
     // The engine's plugin is disabled: its kind has no adapter, so the create is refused.
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
     let stderr = cli.fails(
@@ -78,7 +78,7 @@ fn core_errors_exit_1() {
         ],
         1,
     );
-    assert_eq!(stderr, "txc: engine codex is disabled\n");
+    assert_eq!(stderr, "tx: engine codex is disabled\n");
 }
 
 /// A disabled engine plugin leaves its kind unregistered: `engines` does not list it, a create
@@ -97,7 +97,7 @@ fn a_disabled_engine_plugin_leaves_its_kind_unregistered_but_its_records_listed(
     assert!(cli.ok(&["show", "old-codex"]).contains("\"codex\""));
     assert_eq!(
         cli.fails(&["respawn", "old-codex"], 1),
-        "txc: engine codex is disabled\n"
+        "tx: engine codex is disabled\n"
     );
     // Re-enabled, the engine check passes and the Codex adapter itself answers: this record
     // never got a conversation to resume.
@@ -214,7 +214,7 @@ mod version_one {
 }
 
 /// Acceptance 1 and 2 of Storage PR 14: version-1 records refuse every verb with the pointer to
-/// `txc migrate`; `txc migrate` upgrades them row by row of the mapping table, moves the
+/// `tx migrate`; `tx migrate` upgrades them row by row of the mapping table, moves the
 /// non-agents to `legacy/`, backs the originals up, and reports; a second run has nothing to
 /// do; a key this build does not know survives a rename.
 #[test]
@@ -239,13 +239,13 @@ fn version_one_records_refuse_until_migrated_then_match_the_mapping() {
     assert_eq!(
         stderr,
         format!(
-            "txc: 7 version-1 record(s) in {}: run `txc migrate`\n",
+            "tx: 7 version-1 record(s) in {}: run `tx migrate`\n",
             sessions.display()
         )
     );
     assert!(
         cli.fails(&["show", "lead"], 1)
-            .contains("run `txc migrate`")
+            .contains("run `tx migrate`")
     );
 
     let report = cli.ok(&["migrate"]);
@@ -578,9 +578,9 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
     let cli = Cli::new();
     let repository = cli.repository("w");
     let path = cli.shim_path(&[("claude", "env > env.txt; exec cat > input.txt")]);
-    // `txc` with relative directory flags, run from the temp dir.
+    // `tx` with relative directory flags, run from the temp dir.
     let relative = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_txc"))
+        Command::new(env!("CARGO_BIN_EXE_tx"))
             .current_dir(cli.dir.path())
             .args([
                 "--config-dir",
@@ -656,7 +656,7 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
         cli.dir.path().join("run/tmux.sock").canonicalize().unwrap()
     );
     // From inside the session: no flags, only the exported environment.
-    let mut inner = Command::new(env!("CARGO_BIN_EXE_txc"));
+    let mut inner = Command::new(env!("CARGO_BIN_EXE_tx"));
     inner
         .args(["send", "me", "hello self"])
         .env("TX_TMUX_SOCKET", &socket)

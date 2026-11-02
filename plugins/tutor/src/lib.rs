@@ -1,4 +1,4 @@
-//! tx-core plugin `tutor`: the vimtutor-style walkthrough. `txc tutor start` scaffolds a
+//! tx-core plugin `tutor`: the vimtutor-style walkthrough. `tx tutor start` scaffolds a
 //! project from a lesson pack and opens the `tutor-<lang>` view; `check` verifies the current
 //! lesson and advances; `next` / `prev` / `goto` / `status` / `hint` / `reset` move around.
 //! Port of main's `verbs/tutor.rs` and `tutor/`. Progress lives in the plugin's data dir,
@@ -41,7 +41,7 @@ const KEYS_LINES: u16 = 15;
 const BASE_REQUIRES: [&str; 2] = ["git", "nvim"];
 const NVIM_COLORS: &str = "+set background=dark | colorscheme tokyonight-moon";
 
-const USAGE: &str = "usage: txc tutor start [LANG] [--dir DIR] [--detach] | check | next | prev | goto N | status | hint | reset [--hard]   (all but start take --lang LANG)";
+const USAGE: &str = "usage: tx tutor start [LANG] [--dir DIR] [--detach] | check | next | prev | goto N | status | hint | reset [--hard]   (all but start take --lang LANG)";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TutorPlugin;
@@ -76,16 +76,16 @@ fn socket_path(data: &Path, lang: &str) -> PathBuf {
 
 #[derive(Debug, thiserror::Error)]
 enum TutorError {
-    #[error("no {0} tutorial in progress; run `txc tutor start`")]
+    #[error("no {0} tutorial in progress; run `tx tutor start`")]
     NotStarted(String),
     #[error("missing required program(s): {0}")]
     Missing(String),
-    #[error("no lesson '{0}' (try `txc tutor status`)")]
+    #[error("no lesson '{0}' (try `tx tutor status`)")]
     NoLesson(String),
-    #[error("saved lesson '{0}' is not in the pack; run `txc tutor reset`")]
+    #[error("saved lesson '{0}' is not in the pack; run `tx tutor reset`")]
     StaleLesson(String),
     #[error(
-        "a {lang} tutorial is already in progress in {}; run `txc tutor reset --hard` to start \
+        "a {lang} tutorial is already in progress in {}; run `tx tutor reset --hard` to start \
          over there, or delete {} to start somewhere else",
         dir.display(),
         path.display()
@@ -158,7 +158,7 @@ fn parse_args(argv: &[String]) -> Option<(Action, Args)> {
     Some((action, args))
 }
 
-/// `txc tutor …`.
+/// `tx tutor …`.
 pub struct TutorVerb;
 
 impl Verb for TutorVerb {
@@ -300,8 +300,8 @@ impl<'a> Tutor<'a> {
         if !on_path("claude") {
             let _ = writeln!(
                 io.stderr,
-                "txc tutor: `claude` is not on PATH; lessons that need an agent worker will not \
-                 pass; skip them with `txc tutor goto N`"
+                "tx tutor: `claude` is not on PATH; lessons that need an agent worker will not \
+                 pass; skip them with `tx tutor goto N`"
             );
         }
         let mut progress = match saved {
@@ -479,8 +479,8 @@ impl<'a> Tutor<'a> {
         for program in lesson.requires.iter().filter(|program| !on_path(program)) {
             let _ = writeln!(
                 io.stderr,
-                "txc tutor: this lesson needs `{program}`, which is not on PATH; skip this \
-                 lesson with `txc tutor next`"
+                "tx tutor: this lesson needs `{program}`, which is not on PATH; skip this \
+                 lesson with `tx tutor next`"
             );
         }
         let sessions = || all_sessions(self.core).map_err(|error| error.to_string());
@@ -504,7 +504,7 @@ impl<'a> Tutor<'a> {
         if !report.passed() {
             writeln!(
                 io.stdout,
-                "Not yet: fix the ✗ items and run `txc tutor check` again."
+                "Not yet: fix the ✗ items and run `tx tutor check` again."
             )
             .map_err(failed)?;
             return Ok(1);

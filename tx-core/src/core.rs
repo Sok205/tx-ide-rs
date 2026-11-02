@@ -21,7 +21,7 @@ use crate::tmux::{Live, Tmux, TmuxError, exact};
 use crate::worktree::WorktreeManager;
 
 /// The version-1 layout's record directory (`<data>/sessions/<id>.json`); `TxCore::open`
-/// refuses while it still holds records, and `txc migrate` upgrades them.
+/// refuses while it still holds records, and `tx migrate` upgrades them.
 pub const SESSIONS_DIR: &str = "sessions";
 pub const LOCKS_DIR: &str = "locks";
 pub const PROFILES_DIR: &str = "profiles";
@@ -514,7 +514,7 @@ impl TxCore {
     /// Checks the socket path, creates the layout (`<data>/agents`, `<state>/locks`,
     /// `<state>/profiles`, `<run>` private to the user), writes a default `tmux.conf` if none.
     /// Does not start tmux. Refuses with `NeedsMigration` while `<data>/sessions/` still holds
-    /// version-1 records: only `txc migrate` ([`TxCore::open_for_migration`]) reads those.
+    /// version-1 records: only `tx migrate` ([`TxCore::open_for_migration`]) reads those.
     pub fn open(config: CoreConfig) -> Result<Self, CoreError> {
         config.check_socket_path()?;
         let sessions = config.directories.data.join(SESSIONS_DIR);
@@ -904,7 +904,7 @@ impl TxCore {
                 self.tmux.socket().to_string_lossy().into_owned(),
             ),
         ];
-        // So a `txc` / `txi` run inside the session opens this same core: tmux does not pass the
+        // So a `tx` / `txi` run inside the session opens this same core: tmux does not pass the
         // caller's `XDG_*` into sessions.
         for (key, directory) in self.config.directories.environment() {
             env.push((key.to_owned(), directory.to_string_lossy().into_owned()));
@@ -1507,7 +1507,7 @@ mod tests {
 
     fn dir() -> tempfile::TempDir {
         tempfile::Builder::new()
-            .prefix("txc")
+            .prefix("tx")
             .tempdir_in("/tmp")
             .unwrap()
     }

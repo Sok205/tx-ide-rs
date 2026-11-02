@@ -1,4 +1,4 @@
-//! `txc timeline` (the swimlane TUI, `--snapshot`, `health`), `_timeline-resident` (the TUI a
+//! `tx timeline` (the swimlane TUI, `--snapshot`, `health`), `_timeline-resident` (the TUI a
 //! popup attaches to), `_timeline-attach` (prefix+T: start or attach the resident) and
 //! `_timeline-json` (the payload as the artifact-browser's `/api/timeline` JSON, for parity
 //! diffs against main's `tx _timeline-json`).
@@ -25,10 +25,10 @@ const DEFAULT_SNAPSHOT_ROWS: u16 = 40;
 const RESIDENT_WINDOW: &str = "30m";
 
 const USAGE: &str = "\
-usage: txc timeline [--days N] [--last DURATION] [--snapshot [--cols N] [--rows N]] [--now EPOCH]
-       txc timeline health
+usage: tx timeline [--days N] [--last DURATION] [--snapshot [--cols N] [--rows N]] [--now EPOCH]
+       tx timeline health
 ";
-const JSON_USAGE: &str = "usage: txc _timeline-json [--days N] [--now EPOCH]\n";
+const JSON_USAGE: &str = "usage: tx _timeline-json [--days N] [--now EPOCH]\n";
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![
@@ -172,7 +172,7 @@ impl Verb for Timeline {
             Err(message) => {
                 say(
                     io.stderr,
-                    &format!("txc {}: {message}\n{USAGE}", self.name()),
+                    &format!("tx {}: {message}\n{USAGE}", self.name()),
                 )?;
                 return Ok(2);
             }
@@ -192,7 +192,7 @@ impl Verb for Timeline {
     }
 }
 
-/// `<txc> <cli_arguments> _timeline-resident --last 30m`, as argv.
+/// `<tx> <cli_arguments> _timeline-resident --last 30m`, as argv.
 fn resident_argv(core: &TxCore) -> Result<Vec<String>, VerbError> {
     let exe = std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
     let mut words = vec![exe.to_string_lossy().into_owned()];
@@ -248,7 +248,7 @@ impl Verb for TimelineAttach {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         if !argv.is_empty() {
-            say(io.stderr, "usage: txc _timeline-attach\n")?;
+            say(io.stderr, "usage: tx _timeline-attach\n")?;
             return Ok(2);
         }
         let ui = Ui::from_core(core);
@@ -308,7 +308,7 @@ impl Verb for TimelineJson {
             Err(message) => {
                 say(
                     io.stderr,
-                    &format!("txc _timeline-json: {message}\n{JSON_USAGE}"),
+                    &format!("tx _timeline-json: {message}\n{JSON_USAGE}"),
                 )?;
                 return Ok(2);
             }

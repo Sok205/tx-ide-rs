@@ -3,7 +3,7 @@
 # bind runs INSIDE the nested session, so $1 is its name and $2 the nested client.
 set -eu
 
-TXC=$(tmux show-option -gv @tx-bin)
+TX_BIN=$(tmux show-option -gv @tx-bin)
 ARGUMENTS=$(tmux show-option -gv @tx-arguments)
 # shellcheck disable=SC2086 # the core's directory flags, one word each
-exec "$TXC" $ARGUMENTS _artifact-menu "$1" "$2"
+exec "$TX_BIN" $ARGUMENTS _artifact-menu "$1" "$2"

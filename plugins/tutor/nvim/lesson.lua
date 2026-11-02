@@ -1,5 +1,5 @@
--- txc tutor: lesson buffers in the tutor view's nvim (loaded with `--cmd luafile`, before the
--- user's config). Globals set by `txc tutor start` just before loading this file:
+-- tx tutor: lesson buffers in the tutor view's nvim (loaded with `--cmd luafile`, before the
+-- user's config). Globals set by `tx tutor start` just before loading this file:
 --   vim.g.tx_tutor_lessons  autocmd pattern matching the pack's lesson files
 --   vim.g.tx_tutor_shell    tmux target of the view's shell pane
 --   vim.g.tx_tutor_tmux     the tmux argv prefix for the core's server (`tmux -S … -f …`)
@@ -38,7 +38,7 @@ end
 local function type_into_shell()
   local command = _G.tx_tutor_command()
   if not command then
-    vim.notify("txc tutor: put the cursor on a `command` (or a line in a code block)")
+    vim.notify("tx tutor: put the cursor on a `command` (or a line in a code block)")
     return
   end
   local argv = vim.deepcopy(vim.g.tx_tutor_tmux or { "tmux" })
@@ -54,7 +54,7 @@ if vim.g.tx_tutor_lessons then
       vim.diagnostic.enable(false, { bufnr = args.buf })
       vim.keymap.set("n", "<CR>", type_into_shell, {
         buffer = args.buf,
-        desc = "txc tutor: type this command into the shell",
+        desc = "tx tutor: type this command into the shell",
       })
     end,
   })

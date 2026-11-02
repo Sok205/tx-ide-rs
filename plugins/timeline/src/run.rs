@@ -3,7 +3,7 @@
 //!
 //! Enter jumps to the cursor lane's session. Run in a pane, the loop focuses the hosting pane
 //! itself. The resident (viewed through a popup) cannot reach the outer client, so it leaves the
-//! session name in [`GOTO_OPTION`] on its own tmux session and detaches; `txc _timeline-attach`,
+//! session name in [`GOTO_OPTION`] on its own tmux session and detaches; `tx _timeline-attach`,
 //! which runs on the outer client, picks it up and does the focusing. Every tmux call goes
 //! through `tx-client` against the core's own server.
 

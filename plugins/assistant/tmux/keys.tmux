@@ -2,21 +2,21 @@
 # keys: /
 # tx key plugin `assistant`: prefix+/ asks the tx-assistant from any pane. A command prompt takes
 # one line; the bind parks it in the paste buffer `tx-assistant-input` (no shell quoting of the
-# typed text) and `txc assistant ask --from-buffer --pane <firing pane>` reads it, warms the
+# typed text) and `tx assistant ask --from-buffer --pane <firing pane>` reads it, warms the
 # assistant and delivers it as the operator typing in that pane's session, behind the focus
 # envelope (run-shell expands `#{pane_id}` against the client that pressed the key). Run by
-# `run-shell` from the server's tmux.conf, which `txc ui install` writes.
+# `run-shell` from the server's tmux.conf, which `tx ui install` writes.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the `{ }`
 # block. Anything the user re-binds later in their own tmux.conf wins, since tmux is
 # last-write-wins.
 set -u
 
-TXC=$(tmux show-option -gv @tx-bin 2>/dev/null)
+TX_BIN=$(tmux show-option -gv @tx-bin 2>/dev/null)
 ARGUMENTS=$(tmux show-option -gv @tx-arguments 2>/dev/null)
 [ -n "$ARGUMENTS" ] || exit 0
-[ -n "$TXC" ] || exit 0
-TX="$TXC $ARGUMENTS"
+[ -n "$TX_BIN" ] || exit 0
+TX="$TX_BIN $ARGUMENTS"
 
 CONF=$(mktemp -t tx-assistant-keys.XXXXXX)
 trap 'rm -f "$CONF"' EXIT

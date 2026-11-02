@@ -1,5 +1,5 @@
 //! The roles and skills the core ships: `agents/…` resources (plugin id [`PLUGIN_ID`]) listed by
-//! `TxCore::resources` ahead of every plugin's, which `txc ui install` writes under
+//! `TxCore::resources` ahead of every plugin's, which `tx ui install` writes under
 //! `<data>/roles/`. One tree, `tx-core/agents/`, so a role is not tied to the plugin that first
 //! needed it; a plugin that registers a resource of the same name is refused as a duplicate.
 

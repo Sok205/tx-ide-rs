@@ -77,7 +77,7 @@ impl Cli {
         assert!(ok, "no matching argv in {:?}", self.argvs());
         found.unwrap()
     }
-    /// `txc` with the recording shim on PATH and the engines' homes inside the test dir.
+    /// `tx` with the recording shim on PATH and the engines' homes inside the test dir.
     fn op(&self, args: &[&str], extra: &[(&str, &str)]) -> std::process::Output {
         let path = self.argv_path();
         let home = self.dir.path().join("home");
@@ -97,7 +97,7 @@ impl Cli {
         let output = self.op(args, extra);
         assert!(
             output.status.success(),
-            "txc {args:?}: {}",
+            "tx {args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
@@ -170,7 +170,7 @@ fn doctor_fix_hooks_removes_only_the_retired_entries_and_is_idempotent() {
     let env = [("HOME", home.to_str().unwrap())];
     let block =
         |command: &str| json!({"matcher": "", "hooks": [{"type": "command", "command": command}]});
-    let ours = "'/opt/txc' _capture stop || exit 1";
+    let ours = "'/opt/tx' _capture stop || exit 1";
     let settings = claude.join("settings.json");
     std::fs::write(
         &settings,
@@ -305,7 +305,7 @@ fn fork_pane_usage_exits_2() {
         assert_eq!(output.status.code(), Some(2), "{args:?}");
         assert_eq!(
             String::from_utf8_lossy(&output.stderr),
-            "usage: txc _fork-pane PANE CLIENT [NAME]\n"
+            "usage: tx _fork-pane PANE CLIENT [NAME]\n"
         );
     }
 }
