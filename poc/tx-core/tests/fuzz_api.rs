@@ -120,6 +120,7 @@ fn session_with(parent: Option<AgentId>, tags: Vec<String>, state: LlmEngineStat
         state,
         created_at: 1.0,
         last_modified_at: 1.0,
+        last_activity_at: None,
         archived_at: None,
         tags,
         parent_id: parent,

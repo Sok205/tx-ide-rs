@@ -5,17 +5,20 @@
 use std::sync::Arc;
 
 use tx_core::{
-    AgentId, CoreError, ListFilter, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo,
+    Agent, AgentId, CoreError, ListFilter, LlmEngineState, Plugin, PluginError, Registry, TxCore,
+    Verb, VerbError, VerbIo, events,
 };
 
-use tx_client::render::tag_hex;
-use tx_client::tmux::Ui;
+use tx_client::render::{PickerEntry, activity_at, reltime, tag_hex};
+use tx_client::tmux::{DIM_FG_HEX, Ui, WORKING_HEX};
 
 pub const PLUGIN_ID: &str = "labels";
 
 const NAME_OPTION: &str = "@tx-name";
 const REMOTE_OPTION: &str = "@remote-session";
 const NOT_NESTED: &str = "#[fg=colour240,nobold]\u{2014}#[default]";
+/// Four middle sextants: the width of ` 1h `, so the bar fills the slot the resting age takes.
+const WORKING_BAR: &str = "\u{1FB0B}\u{1FB0B}\u{1FB0B}\u{1FB0B}";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LabelsPlugin;
@@ -203,5 +206,26 @@ fn nested_label(core: &TxCore, inner: &str) -> String {
             tag_hex(tag)
         ));
     }
+    label.push_str(&state_mark(&session, events::now()));
     label
+}
+
+/// The border's right end: a green bar while the agent works, the age since its last activity
+/// while it rests (`0m` for the first minute), nothing while it starts or after it ended.
+fn state_mark(session: &Agent, now: f64) -> String {
+    match session.state {
+        LlmEngineState::Working => {
+            format!("#[align=right]#[fg={WORKING_HEX}]{WORKING_BAR}#[default]")
+        }
+        LlmEngineState::Idle => {
+            let since = activity_at(PickerEntry::Agent(session));
+            let age = if now - since < 60.0 {
+                "0m".to_owned()
+            } else {
+                reltime(Some(since), now)
+            };
+            format!("#[align=right] #[fg={DIM_FG_HEX}]{age}#[default] ")
+        }
+        LlmEngineState::Starting | LlmEngineState::Ended => String::new(),
+    }
 }

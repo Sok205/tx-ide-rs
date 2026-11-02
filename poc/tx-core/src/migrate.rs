@@ -509,6 +509,7 @@ fn upgrade_one(core: &TxCore, path: &Path, record: &Map<String, Value>, id: &Age
         state,
         created_at,
         last_modified_at,
+        last_activity_at: None,
         archived_at: record.get("archived_at").and_then(Value::as_f64),
         tags: strings(record.get("tags")),
         parent_id: text_of(record, "parent").and_then(|parent| parent.parse().ok()),

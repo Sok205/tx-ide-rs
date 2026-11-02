@@ -841,6 +841,7 @@ impl TxCore {
             state: LlmEngineState::Starting,
             created_at,
             last_modified_at: created_at,
+            last_activity_at: None,
             archived_at: None,
             tags: opts.tags,
             parent_id: opts.parent,
@@ -1168,6 +1169,7 @@ impl TxCore {
             let state = match change.state {
                 Some(to) if to != current => {
                     session.state = to;
+                    session.last_activity_at = Some(now());
                     let detail = format!("{} → {}", current.as_str(), to.as_str());
                     changed.push(event(EventType::StateChanged, &session, None, detail));
                     to
@@ -1331,6 +1333,7 @@ impl TxCore {
                 return Ok(());
             };
             session.state = to;
+            session.last_activity_at = Some(now());
             self.save(&mut session)?;
             let detail = format!("{} → {}", current.as_str(), to.as_str());
             event(EventType::StateChanged, &session, None, detail)
@@ -1743,6 +1746,7 @@ mod tests {
             state,
             created_at: 1.0,
             last_modified_at: 1.0,
+            last_activity_at: None,
             archived_at: None,
             tags: tags.iter().map(|t| (*t).to_owned()).collect(),
             parent_id: parent.map(|p| p.parse().unwrap()),

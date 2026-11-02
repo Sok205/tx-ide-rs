@@ -27,8 +27,9 @@ trap 'rm -f "$CONF"' EXIT
 # A new window in a VIEW gets window-top pane borders (so nested panes carry a labelled border).
 # A view is marked by the @tx-view session option, so the hook reads it directly with `if-shell
 # -F` (non-empty/non-zero = true).
+# No trailing space after the label: its state mark is right-aligned and reaches tmux's inset.
 cat >>"$CONF" <<'EOF2'
-set -g pane-border-format " [#P] #(#{@tx-bin} #{@tx-arguments} _pane-label #D #{@tx-label-rev}) "
+set -g pane-border-format " [#P] #(#{@tx-bin} #{@tx-arguments} _pane-label #D #{@tx-label-rev})"
 set-hook -g after-new-window "if-shell -F '#{@tx-view}' 'setw pane-border-status top'"
 EOF2
 
