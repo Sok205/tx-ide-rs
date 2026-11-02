@@ -76,23 +76,14 @@ pub fn home(core: &TxCore) -> PathBuf {
     core.config().plugin_data_dir(PLUGIN_ID).join(HOME_DIR)
 }
 
-/// The assistant's repository, made with one commit when it does not exist yet. Git's own
-/// identity settings are not needed: the commit names tx.
+/// The assistant's repository, made with one commit when it does not exist yet, and trusted in
+/// Claude's config on every call (a changed `CLAUDE_CONFIG_DIR`, or a record written by an older
+/// build, is covered too). Git's own identity settings are not needed: the commit names tx.
 pub fn ensure_home(core: &TxCore) -> Result<PathBuf, CoreError> {
     let home = home(core);
-    if home.join(".git").is_dir() {
-        return Ok(home);
+    if !home.join(".git").is_dir() {
+        create_home(&home)?;
     }
-    std::fs::create_dir_all(&home).map_err(|source| io_error(&home, source))?;
-    let readme = home.join("README.md");
-    std::fs::write(
-        &readme,
-        "The tx-assistant's home repository. Each assistant runs in a worktree of it.\n",
-    )
-    .map_err(|source| io_error(&readme, source))?;
-    git(&home, &["init", "-q", "-b", "main"])?;
-    git(&home, &["add", "README.md"])?;
-    git(&home, &["commit", "-q", "-m", "tx-assistant home"])?;
     if let Err(error) = trust_project(&claude_config_file_from_env(), &home) {
         eprintln!(
             "tx: assistant: claude trust for {}: {error}",
@@ -100,6 +91,20 @@ pub fn ensure_home(core: &TxCore) -> Result<PathBuf, CoreError> {
         );
     }
     Ok(home)
+}
+
+fn create_home(home: &Path) -> Result<(), CoreError> {
+    std::fs::create_dir_all(home).map_err(|source| io_error(home, source))?;
+    let readme = home.join("README.md");
+    std::fs::write(
+        &readme,
+        "The tx-assistant's home repository. Each assistant runs in a worktree of it.\n",
+    )
+    .map_err(|source| io_error(&readme, source))?;
+    git(home, &["init", "-q", "-b", "main"])?;
+    git(home, &["add", "README.md"])?;
+    git(home, &["commit", "-q", "-m", "tx-assistant home"])?;
+    Ok(())
 }
 
 fn git(home: &Path, args: &[&str]) -> Result<(), CoreError> {
@@ -187,9 +192,17 @@ fn warm_lock(core: &TxCore) -> Result<File, CoreError> {
 }
 
 /// The running assistant; else the newest ended one, respawned in place (same name, same
-/// worktree); else a new one. One warm at a time.
+/// worktree); else a new one. One warm at a time. The outcome is left in `FAILURE_FILE` for
+/// every caller: the reason on failure, no file after a success.
 pub fn warm(core: &TxCore) -> Result<AgentId, CoreError> {
+    let warmed = start(core);
+    record_outcome(core, &warmed);
+    warmed
+}
+
+fn start(core: &TxCore) -> Result<AgentId, CoreError> {
     let _lock = warm_lock(core)?;
+    ensure_home(core)?;
     if let Some(id) = running(core)? {
         return Ok(id);
     }
@@ -273,9 +286,7 @@ impl Verb for Assistant {
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         match argv {
             [sub] if sub == "warm" => {
-                let warmed = warm(core);
-                record_outcome(core, &warmed);
-                let id = warmed?;
+                let id = warm(core)?;
                 let name = core.get_agent(&id)?.name;
                 writeln!(io.stdout, "{name}")
                     .map_err(|error| VerbError::Failed(format!("write: {error}")))?;

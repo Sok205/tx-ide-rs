@@ -10,11 +10,7 @@ fn warm_creates_once_and_reuses() {
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();
-    let config = cli.claude_config_dir();
-    let env = [
-        ("PATH", path.as_str()),
-        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
-    ];
+    let env = [("PATH", path.as_str())];
     let first = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(
         first.status.code(),
@@ -47,11 +43,7 @@ fn warm_respawns_a_vanished_assistant_in_place() {
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();
-    let config = cli.claude_config_dir();
-    let env = [
-        ("PATH", path.as_str()),
-        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
-    ];
+    let env = [("PATH", path.as_str())];
     assert_eq!(
         cli.run(&["assistant", "warm"], &env, "").status.code(),
         Some(0)
@@ -87,11 +79,7 @@ fn two_concurrent_warms_make_one_assistant() {
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();
-    let config = cli.claude_config_dir();
-    let env = [
-        ("PATH", path.as_str()),
-        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
-    ];
+    let env = [("PATH", path.as_str())];
     let barrier = std::sync::Barrier::new(2);
     let outputs: Vec<std::process::Output> = std::thread::scope(|scope| {
         let warms: Vec<_> = (0..2)
@@ -123,11 +111,7 @@ fn a_failed_warm_leaves_its_reason_in_the_plugin_dir() {
     require_tmux!();
     let cli = Cli::new();
     let path = cli.fake_claude_path();
-    let config = cli.claude_config_dir();
-    let env = [
-        ("PATH", path.as_str()),
-        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
-    ];
+    let env = [("PATH", path.as_str())];
     let failure = cli.state().join("plugins/assistant/warm.failed");
     let output = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(output.status.code(), Some(1));
@@ -145,33 +129,45 @@ fn a_failed_warm_leaves_its_reason_in_the_plugin_dir() {
 }
 
 #[test]
-fn ensure_home_seeds_claude_trust() {
+fn a_failed_ask_leaves_its_reason_like_warm() {
+    require_tmux!();
+    let cli = Cli::new();
+    let path = cli.fake_claude_path();
+    let env = [("PATH", path.as_str())];
+    let failure = cli.state().join("plugins/assistant/warm.failed");
+    let output = cli.run(&["assistant", "ask", "hello"], &env, "");
+    assert_eq!(output.status.code(), Some(1));
+    let reason = std::fs::read_to_string(&failure).unwrap();
+    assert!(reason.contains("COMMON"), "{reason:?}");
+}
+
+#[test]
+fn ensure_home_seeds_claude_trust_on_every_warm() {
     require_tmux!();
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();
-    let config = cli.claude_config_dir();
-    let config_file = config.join(".claude.json");
+    let config_file = cli.claude_config_dir().join(".claude.json");
     std::fs::write(&config_file, r#"{"projects":{}}"#).unwrap();
-    let env = [
-        ("PATH", path.as_str()),
-        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
-    ];
-    let output = cli.run(&["assistant", "warm"], &env, "");
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_file).unwrap()).unwrap();
+    let env = [("PATH", path.as_str())];
     let home = cli.state().join("plugins/assistant/home");
-    assert_eq!(
-        json["projects"][home.to_str().unwrap()]["hasTrustDialogAccepted"],
-        true,
-        "{json}"
-    );
+    let trusted = || {
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_file).unwrap()).unwrap();
+        json["projects"][home.to_str().unwrap()]["hasTrustDialogAccepted"] == true
+    };
+    for round in ["first", "second"] {
+        let output = cli.run(&["assistant", "warm"], &env, "");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(trusted(), "{round} warm");
+        std::fs::write(&config_file, r#"{"projects":{}}"#).unwrap();
+        assert!(!trusted());
+    }
 }
 
 #[test]
@@ -179,15 +175,7 @@ fn warm_without_the_roles_installed_fails() {
     require_tmux!();
     let cli = Cli::new();
     let path = cli.fake_claude_path();
-    let config = cli.claude_config_dir();
-    let output = cli.run(
-        &["assistant", "warm"],
-        &[
-            ("PATH", path.as_str()),
-            ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
-        ],
-        "",
-    );
+    let output = cli.run(&["assistant", "warm"], &[("PATH", &path)], "");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("COMMON"), "{stderr:?}");

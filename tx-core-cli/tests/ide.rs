@@ -676,14 +676,9 @@ fn ui_attach_without_the_roles_installed_opens_a_plain_home() {
     require_tmux!();
     let cli = Cli::new();
     let path = cli.fake_claude_path();
-    let config = cli.claude_config_dir();
     let output = cli.run(
         &["ui", "attach"],
-        &[
-            ("PATH", &path),
-            ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
-            ("TMUX", "/tmp/not-the-core.sock,1,0"),
-        ],
+        &[("PATH", &path), ("TMUX", "/tmp/not-the-core.sock,1,0")],
         "",
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -717,16 +712,7 @@ fn ui_attach_warms_the_assistant_when_home_already_exists() {
     ]) == "other"));
     let inside = format!("{},1,0", cli.sock().display());
     let path = cli.fake_claude_path();
-    let config = cli.claude_config_dir();
-    let output = cli.run(
-        &["ui", "attach"],
-        &[
-            ("TMUX", &inside),
-            ("PATH", &path),
-            ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
-        ],
-        "",
-    );
+    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside), ("PATH", &path)], "");
     assert_eq!(
         output.status.code(),
         Some(0),
