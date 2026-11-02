@@ -128,9 +128,6 @@ pub struct Context {
     pub pane_session: bool,
     pub history: Vec<Past>,
     pub keys: Vec<KeyHint>,
-    /// Running agents, and views (tx-client's non-LLM sessions), counted apart.
-    pub agents: usize,
-    pub views: usize,
     /// Ages are drawn against this, epoch seconds.
     pub now: f64,
 }
@@ -422,8 +419,6 @@ pub(crate) mod tests {
                 keys: vec!["X".into()],
                 text: "stop".into(),
             }],
-            agents: 2,
-            views: 1,
             now: 1000.0,
         }
     }

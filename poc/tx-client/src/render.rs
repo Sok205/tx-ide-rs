@@ -4,7 +4,7 @@
 use tx_core::Agent;
 
 use crate::tmux::Location;
-use crate::views::View;
+use crate::views::{View, ViewKind};
 
 pub const WARN_ANSI: &str = "\x1b[38;2;224;175;104m";
 pub const RESET_FG: &str = "\x1b[39m";
@@ -21,8 +21,8 @@ pub const SELECTION_BG: &str = "236";
 
 /// LOCATION column width, shared with the picker header.
 pub const LOCATION_W: usize = 25;
-/// ROLE column width (the longest role, the view kind `timeline`).
-pub const ROLE_W: usize = 8;
+/// ROLE column width (the longest role, `shell` / `other`).
+pub const ROLE_W: usize = 5;
 
 const NAMEW_OVERHEAD: i64 = 68;
 const NAMEW_FLOOR: i64 = 12;
@@ -150,23 +150,38 @@ impl<'a> PickerEntry<'a> {
     }
 }
 
-/// ROLE: `llm` for an agent, the kind for a view.
+/// ROLE, one of the four roles of `tx attach`: `llm` for an agent; `nvim`, `shell` or `other`
+/// for a view by its kind.
 pub fn role_of(entry: PickerEntry<'_>) -> &'static str {
     match entry {
         PickerEntry::Agent(_) => "llm",
-        PickerEntry::View(view) => view.kind.as_str(),
+        PickerEntry::View(view) => match view.kind {
+            ViewKind::Editor | ViewKind::Diff | ViewKind::Tour => "nvim",
+            ViewKind::Shell => "shell",
+            ViewKind::Home | ViewKind::Timeline | ViewKind::Tutor | ViewKind::Mockup => "other",
+        },
     }
 }
 
-/// When the record was last written: a state change, mostly, but also a rename or a tag.
-pub fn activity_at(session: &Agent) -> f64 {
-    session.last_modified_at
+/// Whether the picker lists `entry`: every agent and every view but the home base, which is
+/// where the picker is opened from.
+pub fn listed(entry: PickerEntry<'_>) -> bool {
+    !matches!(entry, PickerEntry::View(view) if view.kind == ViewKind::Home)
+}
+
+/// The picker's sort key: when an agent's record was last written (a state change, mostly, but
+/// also a rename or a tag); when a view was created (a view has no activity signal).
+pub fn activity_at(entry: PickerEntry<'_>) -> f64 {
+    match entry {
+        PickerEntry::Agent(session) => session.last_modified_at,
+        PickerEntry::View(view) => view.created_at,
+    }
 }
 
 /// IDLE: the last-turn age for an agent, `—` for a view (no activity signal).
 pub fn idle_cell(entry: PickerEntry<'_>, now: f64) -> String {
     match entry {
-        PickerEntry::Agent(session) => reltime(Some(activity_at(session)), now),
+        PickerEntry::Agent(_) => reltime(Some(activity_at(entry)), now),
         PickerEntry::View(_) => "—".into(),
     }
 }
@@ -178,9 +193,6 @@ pub struct Row<'a> {
     pub attached: &'a [Location],
 }
 
-/// What a view nested under its agent shows ahead of its name.
-pub const NESTED_MARK: &str = "  └ ";
-
 /// Truncate to `width` code points with a trailing `…`.
 fn trunc(text: &str, width: i64) -> String {
     if text.chars().count() as i64 > width {
@@ -190,17 +202,11 @@ fn trunc(text: &str, width: i64) -> String {
     }
 }
 
-/// One fzf row: `name \t plain_chips \t L \t target \t visual`. `nested`: a view shown under
-/// its agent, marked in the visual column only, so fields 1 to 4 stay what the binds read.
-fn picker_row(row: &Row<'_>, nested: bool, namew: i64, now: f64) -> String {
+/// One fzf row: `name \t plain_chips \t L \t target \t visual`; the binds read fields 1 to 4.
+fn picker_row(row: &Row<'_>, namew: i64, now: f64) -> String {
     let entry = row.entry;
     let role = role_of(entry);
-    let shown_name = if nested {
-        format!("{NESTED_MARK}{}", entry.name())
-    } else {
-        entry.name().to_owned()
-    };
-    let name_disp = trunc(&shown_name, namew);
+    let name_disp = trunc(entry.name(), namew);
     let pad = " ".repeat((namew - name_disp.chars().count() as i64).max(0) as usize);
     let colored_chips: String = entry
         .tags()
@@ -217,38 +223,15 @@ fn picker_row(row: &Row<'_>, nested: bool, namew: i64, now: f64) -> String {
     [entry.name(), &chips(entry.tags()), "L", row.target, &visual].join("\t")
 }
 
-/// The fzf picker feed: agents newest activity first (stable for ties), each followed by its
-/// views, oldest first; then every view without a listed agent, newest first.
+/// The fzf picker feed: one flat list, newest activity first (stable for ties).
 pub fn picker_rows(rows: &[Row<'_>], namew: i64, now: f64) -> String {
-    let mut agents: Vec<(&Row<'_>, &Agent)> = Vec::new();
-    let mut views: Vec<(&Row<'_>, &View)> = Vec::new();
-    for row in rows {
-        match row.entry {
-            PickerEntry::Agent(session) => agents.push((row, session)),
-            PickerEntry::View(view) => views.push((row, view)),
-        }
-    }
-    agents.sort_by(|(_, a), (_, b)| activity_at(b).total_cmp(&activity_at(a)));
-    views.sort_by(|(_, a), (_, b)| a.created_at.total_cmp(&b.created_at));
-    let mut lines = Vec::with_capacity(rows.len());
-    for (row, session) in &agents {
-        lines.push(picker_row(row, false, namew, now));
-        for (view_row, _) in views
-            .iter()
-            .filter(|(_, view)| view.parent_id.as_ref() == Some(&session.id))
-        {
-            lines.push(picker_row(view_row, true, namew, now));
-        }
-    }
-    let parented = |view: &View| {
-        agents
-            .iter()
-            .any(|(_, session)| view.parent_id.as_ref() == Some(&session.id))
-    };
-    for (row, _) in views.iter().rev().filter(|(_, view)| !parented(view)) {
-        lines.push(picker_row(row, false, namew, now));
-    }
-    lines.join("\n")
+    let mut sorted: Vec<&Row<'_>> = rows.iter().collect();
+    sorted.sort_by(|a, b| activity_at(b.entry).total_cmp(&activity_at(a.entry)));
+    sorted
+        .iter()
+        .map(|row| picker_row(row, namew, now))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -450,7 +433,7 @@ mod tests {
             "\x1b[39m",
             " ",
             "\x1b[38;5;167m",
-            "llm     ",
+            "llm  ",
             "\x1b[39m",
             " ",
             "\x1b[38;5;167m",
@@ -493,22 +476,17 @@ mod tests {
     }
 
     #[test]
-    fn views_sit_under_their_agent_and_orphans_come_last() {
+    fn agents_and_views_form_one_flat_list_by_activity() {
         let first = agent("first", NOW - 900.0);
         let mut second = agent("second", NOW - 800.0);
         second.last_modified_at = NOW - 5.0;
-        let gone = agent("gone", NOW - 700.0);
         let editor = view("plan-editor", ViewKind::Editor, Some(&first), NOW - 60.0);
-        let diff = view("plan-diff", ViewKind::Diff, Some(&first), NOW - 120.0);
+        let diff = view("plan-diff", ViewKind::Diff, Some(&first), NOW - 1200.0);
         let shell = view("sh", ViewKind::Shell, Some(&second), NOW - 30.0);
-        let home = view("home", ViewKind::Home, None, NOW - 1000.0);
-        let orphan = view("orphan", ViewKind::Shell, Some(&gone), NOW - 10.0);
-        let targets = ["$1", "$2", "$3", "$4", "$5", "$6", "$7"];
+        let targets = ["$1", "$2", "$3", "$4", "$5"];
         let entries = [
             PickerEntry::View(&editor),
-            PickerEntry::View(&home),
             PickerEntry::Agent(&first),
-            PickerEntry::View(&orphan),
             PickerEntry::View(&shell),
             PickerEntry::Agent(&second),
             PickerEntry::View(&diff),
@@ -525,15 +503,7 @@ mod tests {
         let out = picker_rows(&rows, 16, NOW);
         assert_eq!(
             names(&out),
-            [
-                "second",
-                "sh",
-                "first",
-                "plan-diff",
-                "plan-editor",
-                "orphan",
-                "home"
-            ]
+            ["second", "sh", "plan-editor", "first", "plan-diff"]
         );
         // Fields 1 to 4 stay plain: the binds read the name and the tmux target by position.
         let editor_line = out
@@ -542,15 +512,13 @@ mod tests {
             .unwrap();
         let fields: Vec<&str> = editor_line.split('\t').collect();
         assert_eq!(fields[..4], ["plan-editor", "", "L", "$1"]);
-        assert!(
-            fields[4].starts_with("  └ plan-editor    —"),
-            "{:?}",
-            fields[4]
-        );
-        assert!(visual(&out, "sh").starts_with("  └ sh "));
-        assert!(visual(&out, "orphan").starts_with("orphan "));
-        assert!(visual(&out, "home").starts_with("home "));
-        assert!(visual(&out, "first").starts_with("first "));
+        for name in names(&out) {
+            assert!(
+                visual(&out, name).starts_with(&format!("{name} ")),
+                "{name}"
+            );
+        }
+        assert!(!out.contains('└'), "{out:?}");
     }
 
     #[test]
@@ -558,16 +526,41 @@ mod tests {
         let parent = agent("a", NOW - 30.0);
         assert_eq!(role_of(PickerEntry::Agent(&parent)), "llm");
         assert_eq!(idle_cell(PickerEntry::Agent(&parent), NOW), "30s");
-        for kind in ViewKind::ALL {
+        let roles = [
+            (ViewKind::Home, "other"),
+            (ViewKind::Editor, "nvim"),
+            (ViewKind::Diff, "nvim"),
+            (ViewKind::Tour, "nvim"),
+            (ViewKind::Shell, "shell"),
+            (ViewKind::Timeline, "other"),
+            (ViewKind::Tutor, "other"),
+            (ViewKind::Mockup, "other"),
+        ];
+        assert_eq!(roles.map(|(kind, _)| kind), ViewKind::ALL);
+        for (kind, role) in roles {
             let shown = view("v", kind, Some(&parent), NOW - 100.0);
-            assert_eq!(role_of(PickerEntry::View(&shown)), kind.as_str());
-            assert!(kind.as_str().len() <= ROLE_W, "{kind}");
+            assert_eq!(role_of(PickerEntry::View(&shown)), role, "{kind}");
+            assert!(role.len() <= ROLE_W, "{kind}");
             assert_eq!(idle_cell(PickerEntry::View(&shown), NOW), "—");
         }
     }
 
     #[test]
-    fn a_view_row_shows_its_kind_age_and_tags() {
+    fn only_the_home_view_is_not_listed() {
+        let parent = agent("a", NOW);
+        assert!(listed(PickerEntry::Agent(&parent)));
+        for kind in ViewKind::ALL {
+            let shown = view("v", kind, None, NOW);
+            assert_eq!(
+                listed(PickerEntry::View(&shown)),
+                kind != ViewKind::Home,
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_view_row_shows_its_role_age_and_tags() {
         let mut shown = view("notes", ViewKind::Timeline, None, NOW - 120.0);
         shown.tags = vec!["qa".into()];
         let rows = [Row {
@@ -579,13 +572,13 @@ mod tests {
         let fields: Vec<&str> = out.split('\t').collect();
         assert_eq!(fields[..4], ["notes", " [qa]", "L", "$9"]);
         assert!(fields[4].contains("2m     "), "{:?}", fields[4]);
-        assert!(fields[4].contains("timeline"), "{:?}", fields[4]);
+        assert!(fields[4].contains("other"), "{:?}", fields[4]);
     }
 
     #[test]
     fn an_untouched_agent_reads_its_creation() {
         let session = agent("w", NOW - 90.0);
-        assert_eq!(activity_at(&session), NOW - 90.0);
+        assert_eq!(activity_at(PickerEntry::Agent(&session)), NOW - 90.0);
         assert_eq!(idle_cell(PickerEntry::Agent(&session), NOW), "1m");
     }
 }
