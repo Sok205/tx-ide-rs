@@ -814,3 +814,62 @@ fn ui_attach_with_home_disabled_opens_a_shell() {
             .contains("_home-perform")
     );
 }
+
+/// A home whose plugin was disabled after it held the floor: its pane keeps the hook of a verb
+/// that is gone and dies with the TUI; the next attach takes the floor apart and gives the pane
+/// its shell back.
+#[test]
+fn ui_attach_with_home_disabled_after_it_was_enabled_repairs_the_pane() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.write_yaml(&plugins_yaml_disabling("assistant"));
+    cli.in_outer_pane(&attach_command(&cli));
+    assert!(
+        cli.wait_for(10, || home_tui_shown(&cli)),
+        "no home TUI:\n{}",
+        home_pane(&cli)
+    );
+    let pane = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_id}"]);
+    let pane_format = |format: &str| cli.tmux_out(&["display-message", "-p", "-t", &pane, format]);
+    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
+    cli.ok(&["ui", "install"]);
+    assert!(
+        Command::new("kill")
+            .arg(pane_format("#{pane_pid}"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        cli.wait_for(5, || pane_format("#{pane_dead}") == "1"),
+        "the TUI did not die"
+    );
+    let inside = format!("{},1,0", cli.sock().display());
+    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside)], "");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let shell = Path::new(&std::env::var("SHELL").unwrap_or_else(|_| "sh".into()))
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        cli.wait_for(5, || pane_format("#{pane_dead}") == "0"
+            && pane_format("#{pane_current_command}") == shell),
+        "{} {}",
+        pane_format("#{pane_dead}"),
+        pane_format("#{pane_current_command}")
+    );
+    assert!(
+        !cli.tmux_out(&["show-hooks", "-p", "-t", &pane])
+            .contains("pane-died")
+    );
+    let option = |name: &str| cli.tmux_out(&["show-options", "-pv", "-t", &pane, name]);
+    assert_eq!(option("remain-on-exit"), "off");
+    assert_eq!(option("@tx-home-floor"), "");
+    assert_eq!(option("remain-on-exit-format"), "");
+}

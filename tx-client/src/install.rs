@@ -10,7 +10,7 @@ use std::process::Stdio;
 
 use tx_core::{Resource, TxCore, Verb, VerbError, VerbIo};
 
-use crate::tmux::Ui;
+use crate::tmux::{Ui, UiError};
 use crate::view_verb;
 use crate::views::{self, ViewKind, ViewRequest};
 
@@ -374,9 +374,13 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
 
 /// Hands `home` to the `home` plugin's floor (`_home-install`) when the plugin is active: the
 /// pane keeps the home TUI, which starts the assistant itself. Its stderr is passed through; a
-/// failure is reported and never stops the attach. Without the plugin the home is a plain shell.
-fn install_floor(core: &TxCore, io: &mut VerbIo<'_>) {
+/// failure is reported and never stops the attach. Without the plugin the home is a plain shell:
+/// a floor the plugin left before it was disabled is taken apart.
+fn install_floor(core: &TxCore, ui: &Ui, io: &mut VerbIo<'_>) {
     let Some(verb) = core.verb(HOME_INSTALL_VERB) else {
+        if let Err(error) = remove_floor(ui) {
+            let _ = writeln!(io.stderr, "tx ui attach: home: {error}");
+        }
         return;
     };
     let mut stdin = io::empty();
@@ -395,6 +399,30 @@ fn install_floor(core: &TxCore, io: &mut VerbIo<'_>) {
     if let Err(error) = result {
         let _ = writeln!(io.stderr, "tx ui attach: home: {error}");
     }
+}
+
+/// The floor pane of `home` back to tmux's defaults: its `pane-died` hook would run a verb that
+/// is gone, and `remain-on-exit` would keep it dead. A dead one gets the shell.
+fn remove_floor(ui: &Ui) -> Result<(), UiError> {
+    for pane in views::home_panes(ui, HOME_SESSION)?
+        .iter()
+        .filter(|pane| pane.floor)
+    {
+        let id = pane.id.as_str();
+        let steps: [&[&str]; 4] = [
+            &["set-hook", "-pu", "-t", id, "pane-died"],
+            &["set-option", "-p", "-t", id, "remain-on-exit", "off"],
+            &["set-option", "-pu", "-t", id, "remain-on-exit-format"],
+            &["set-option", "-pu", "-t", id, views::HOME_FLOOR_OPTION],
+        ];
+        for step in steps {
+            ui.run(step)?;
+        }
+        if pane.dead {
+            ui.respawn_pane(id, &views::default_shell())?;
+        }
+    }
+    Ok(())
 }
 
 /// Creates the `home` view on the core's server unless it is already there: a shell in a window
@@ -444,7 +472,7 @@ fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let ui = Ui::from_core(core);
     ensure_home(&ui)?;
     // Every attach: a home from an older install, or one whose floor was lost, gets it back.
-    install_floor(core, io);
+    install_floor(core, &ui, io);
     let env = std::env::var("TMUX").ok();
     match tmux_env_socket(env.as_deref()) {
         Some(socket) if Path::new(socket) == core.socket_path() => {
