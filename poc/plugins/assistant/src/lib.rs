@@ -2,12 +2,16 @@
 //! unless it is running and prints its name; `txc ui attach` calls it to land the operator in
 //! the assistant. `assistant ask` delivers one line to it as the operator: prefix+/ (the
 //! `keys/assistant.tmux` fragment) parks the typed line in a paste buffer and runs
-//! `assistant ask --from-buffer`. Ships the TX-ASSISTANT role as an `agents/` resource.
+//! `assistant ask --from-buffer --pane <firing pane>`; the line goes out as typed in that pane's
+//! session, behind the focus envelope (`focus`). Ships the TX-ASSISTANT role as an `agents/`
+//! resource.
 //!
 //! Every agent runs in a worktree of a git checkout, so the assistant has a small repository of
 //! its own under the plugin's data directory (`home/`), made on first use. A stopped assistant
 //! keeps its worktree, so the next one is `tx-assistant-2`: the running assistant is found by
 //! its role, and `warm` prints the name it really has.
+
+mod focus;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,7 +40,8 @@ pub const GREETING: &str = "You are starting up. Reply with the single word READ
 pub const HOME_DIR: &str = "home";
 /// The paste buffer prefix+/ fills on the core's server; `ask --from-buffer` reads and deletes it.
 pub const INPUT_BUFFER: &str = "tx-assistant-input";
-/// What the envelope names as where the operator typed, for a line that came through prefix+/.
+/// What the envelope names as where the operator typed, for a line with no firing pane to name
+/// (`ask TEXT…`, or a pane gone before it was read).
 pub const VIA: &str = "prefix+/";
 /// How long `ask` waits for a freshly started assistant to leave `starting`, so the line is typed
 /// into a running engine rather than a loading one.
@@ -152,19 +157,26 @@ pub fn warm(core: &TxCore) -> Result<AgentId, CoreError> {
     }
 }
 
-/// Delivers `text` to the running assistant (started when there is none) as the operator, via
-/// `via`. A new assistant is given `START_TIMEOUT` to report a state past `starting`; the line
-/// goes out either way, since the engine queues input typed while it works.
-pub fn ask(core: &TxCore, text: &str, via: &str) -> Result<AgentId, CoreError> {
+/// Delivers `text` to the running assistant (started when there is none) as the operator. Typed
+/// in `pane`: via that pane's session, behind its focus envelope; else via `VIA`. A new
+/// assistant is given `START_TIMEOUT` to report a state past `starting`; the line goes out either
+/// way, since the engine queues input typed while it works.
+pub fn ask(core: &TxCore, text: &str, pane: Option<&str>) -> Result<AgentId, CoreError> {
+    let (via, text) = match pane
+        .map(|pane| focus::focus(core, pane))
+        .transpose()?
+        .flatten()
+    {
+        Some(focus) => (focus.session_name, format!("{} {text}", focus.envelope)),
+        None => (VIA.to_owned(), text.to_owned()),
+    };
     let id = warm(core)?;
     let deadline = Instant::now() + START_TIMEOUT;
     while core.get_agent(&id)?.state == LlmEngineState::Starting && Instant::now() < deadline {
         std::thread::sleep(START_POLL);
     }
-    let options = SendOptions::from(Sender::User {
-        via: Some(via.to_owned()),
-    });
-    core.send_message(&id, text, options)?;
+    let options = SendOptions::from(Sender::User { via: Some(via) });
+    core.send_message(&id, &text, options)?;
     Ok(id)
 }
 
@@ -179,6 +191,16 @@ fn take_input_buffer(core: &TxCore) -> String {
     text
 }
 
+/// `ask` with the line prefix+/ parked; nothing when the line is blank.
+fn ask_from_buffer(core: &TxCore, pane: Option<&str>) -> Result<(), CoreError> {
+    let text = take_input_buffer(core);
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    ask(core, text.trim_end_matches('\n'), pane)?;
+    Ok(())
+}
+
 pub struct Assistant;
 
 impl Verb for Assistant {
@@ -187,10 +209,10 @@ impl Verb for Assistant {
     }
 
     fn usage(&self) -> &'static str {
-        "assistant warm | ask --from-buffer | ask TEXT…   start the tx-assistant session unless it \
-         is running and print its name (tx-assistant, or tx-assistant-2 … after a stop); deliver a \
-         line to it as the operator via prefix+/ (from the tx-assistant-input paste buffer, or the \
-         words given)"
+        "assistant warm | ask --from-buffer [--pane PANE] | ask TEXT…   start the tx-assistant \
+         session unless it is running and print its name (tx-assistant, or tx-assistant-2 … after \
+         a stop); deliver a line to it as the operator (from the tx-assistant-input paste buffer, \
+         or the words given): typed in PANE's session behind its focus envelope, else via prefix+/"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -203,21 +225,23 @@ impl Verb for Assistant {
                 Ok(0)
             }
             [sub, flag] if sub == "ask" && flag == "--from-buffer" => {
-                let text = take_input_buffer(core);
-                if text.trim().is_empty() {
-                    return Ok(0);
-                }
-                ask(core, text.trim_end_matches('\n'), VIA)?;
+                ask_from_buffer(core, None)?;
+                Ok(0)
+            }
+            [sub, flag, pane_flag, pane]
+                if sub == "ask" && flag == "--from-buffer" && pane_flag == "--pane" =>
+            {
+                ask_from_buffer(core, Some(pane))?;
                 Ok(0)
             }
             [sub, words @ ..] if sub == "ask" && !words.is_empty() => {
-                ask(core, &words.join(" "), VIA)?;
+                ask(core, &words.join(" "), None)?;
                 Ok(0)
             }
             _ => {
                 let _ = writeln!(
                     io.stderr,
-                    "usage: txc assistant warm | ask --from-buffer | ask TEXT…"
+                    "usage: txc assistant warm | ask --from-buffer [--pane PANE] | ask TEXT…"
                 );
                 Ok(2)
             }

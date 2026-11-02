@@ -220,6 +220,8 @@ fn classify(
         });
     }
     if let Some((origin, body)) = match_envelope(text, &["from-user"]) {
+        // prefix+/ puts the focus envelope in front of the line.
+        let body = match_command_prompt(body).unwrap_or(body);
         return Some(you(Via::SendUserMessage, body, origin));
     }
     if let Some(body) = match_command_prompt(text) {

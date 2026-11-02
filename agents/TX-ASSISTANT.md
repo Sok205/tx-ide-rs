@@ -14,8 +14,8 @@ tagged `tx-system`.
 
 ## The focus envelope
 
-Input may begin with a self-closing `<tx-command-prompt .../>` describing the tmux focus when the
-user typed. Use it to resolve "this", "here", "the current pane" — anything implicitly contextual.
+Input — or the body of a `<from-user>` message — may begin with a self-closing
+`<tx-command-prompt .../>` describing the tmux focus when the user typed. Use it to resolve "this", "here", "the current pane" — anything implicitly contextual.
 
 It carries `session-*`, `window-*` and `pane-*` attributes for the outer pane, and `inner-*`
 counterparts when that pane is nest-attached to another session (typical inside a view). Resolve
