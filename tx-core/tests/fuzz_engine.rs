@@ -789,8 +789,8 @@ fn registry_is_keyed_by_kind_in_any_order() {
     assert!(registry.get(EngineKind::Claude).is_none());
 }
 
-/// The kind's name is its only spelling: `EngineKind::from_str` and serde agree, and anything
-/// else, including case variants and padding, is refused without a panic.
+// The kind's name is its only spelling: `EngineKind::from_str` and serde agree, and anything
+// else, including case variants and padding, is refused without a panic.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
@@ -807,7 +807,8 @@ proptest! {
             None => {
                 let refused = matches!(parsed, Err(CoreError::InvalidEngineKind(ref t)) if *t == text);
                 prop_assert!(refused, "{:?}", text);
-                prop_assert!(serde_json::from_str::<EngineKind>(&format!("{:?}", text)).is_err());
+                let quoted = format!("{text:?}");
+                prop_assert!(serde_json::from_str::<EngineKind>(&quoted).is_err());
             }
         }
     }

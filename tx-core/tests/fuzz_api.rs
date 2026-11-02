@@ -45,7 +45,7 @@ fn kind(error: &CoreError) -> &'static str {
     }
 }
 
-fn kind() -> impl Strategy<Value = EngineKind> {
+fn engine_kind() -> impl Strategy<Value = EngineKind> {
     prop::sample::select(EngineKind::ALL.to_vec())
 }
 
@@ -209,7 +209,7 @@ proptest! {
         p1 in session_id(), p2 in session_id(),
         tags1 in texts(), tags2 in texts(),
         env in pairs(),
-        engine in kind(),
+        engine in engine_kind(),
     ) {
         let launch = LaunchOptions::agent(engine);
         let mut expected = CreateOptions::new(&name, &cwd, launch.clone());
@@ -241,7 +241,7 @@ proptest! {
     /// key, order is irrelevant.
     #[test]
     fn launch_options_agent_builder_sets_named_field_only(
-        engine in kind(),
+        engine in engine_kind(),
         roles1 in texts(), roles2 in texts(),
         m1 in text(), m2 in text(), e in text(), p in text(),
     ) {
@@ -394,7 +394,7 @@ fn engine_adapter_object_is_usable_from_another_thread() {
         }
     }
     let adapter: Box<dyn LlmEngine> = Box::new(Stub);
-    let id = std::thread::spawn(move || adapter.id().to_owned())
+    let id = std::thread::spawn(move || adapter.ext_key().to_owned())
         .join()
         .unwrap();
     assert_eq!(id, "stub");
