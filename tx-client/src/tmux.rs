@@ -372,6 +372,17 @@ impl Ui {
         format!("bash -c {}", shell_quote(&self.nest_attach_script(target)))
     }
 
+    /// A pane command that nest-attaches `target` and ends with the attach: the home's floor
+    /// brings its TUI back once the pane dies.
+    pub fn nest_attach_only_command(&self, target: &str) -> String {
+        let script = format!(
+            "set -m; TMUX= tmux -S {} attach -t {}",
+            shell_quote(&self.socket.to_string_lossy()),
+            shell_quote(target),
+        );
+        format!("bash -c {}", shell_quote(&script))
+    }
+
     /// Opens a `width`×`height` popup on `client` running `command`; returns when it closes.
     pub fn display_popup(
         &self,
@@ -763,6 +774,14 @@ mod tests {
         assert_eq!(
             ui().nest_attach_command("it's"),
             r#"bash -c 'set -m; TMUX= tmux -S '\''/s/tmux.sock'\'' attach -t '\''it'\''\'\'''\''s'\''; exec ${SHELL:-zsh}'"#
+        );
+    }
+
+    #[test]
+    fn nest_attach_only_command_has_no_trailing_shell() {
+        assert_eq!(
+            ui().nest_attach_only_command("$3"),
+            r#"bash -c 'set -m; TMUX= tmux -S '\''/s/tmux.sock'\'' attach -t '\''$3'\'''"#
         );
     }
 }
