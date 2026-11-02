@@ -13,7 +13,9 @@ use std::time::Duration;
 
 use common::{Harness, agent, cwd_of, typed, wait_for};
 use proptest::prelude::*;
-use tx_core::{AgentId, CoreError, EngineKind, ListFilter, RefreshResult, SendOptions, TxCore};
+use tx_core::{
+    AgentId, CoreError, ListFilter, LlmEngineState, RefreshResult, SendOptions, TxCore,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -259,7 +261,7 @@ fn check_model(
     let running = sorted(core.list_agents(&ListFilter::new().running()).unwrap());
     prop_assert_eq!(
         running,
-        model.listed(false, |rec| rec.state != LlmEngineState::Ended),
+        model.listed(false, |rec| !rec.ended),
         "step {}: running filter",
         step
     );

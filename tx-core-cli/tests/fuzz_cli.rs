@@ -906,19 +906,19 @@ fn data_dir_flag_beats_exported_beats_xdg_beats_home() {
     let all = [("TX_DATA_DIR", exported.as_path()), ("XDG_DATA_HOME", &xdg)];
     let output = run(&["--data-dir", flag.to_str().unwrap(), "engines"], &all);
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(flag.join("sessions").is_dir());
+    assert!(flag.join("agents").is_dir());
     assert!(!exported.exists() && !xdg.exists());
 
     assert!(run(&["engines"], &all).status.success());
-    assert!(exported.join("sessions").is_dir());
+    assert!(exported.join("agents").is_dir());
     assert!(!xdg.exists());
 
     assert!(run(&["engines"], &all[1..]).status.success());
-    assert!(xdg.join("tx-ide/sessions").is_dir());
+    assert!(xdg.join("tx-ide/agents").is_dir());
     assert!(!home.join(".local/share").exists());
 
     assert!(run(&["engines"], &[]).status.success());
-    assert!(home.join(".local/share/tx-ide/sessions").is_dir());
+    assert!(home.join(".local/share/tx-ide/agents").is_dir());
 
     // An empty exported value means unset, not "the current directory".
     let scratch = root.path().join("scratch");
@@ -984,7 +984,7 @@ fn long_socket_path_fails_before_touching_state_and_socket_overrides_it() {
     let args = with(&just_fits, &["engines"]);
     let output = run(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(just_fits.is_dir() && data.join("sessions").is_dir());
+    assert!(just_fits.is_dir() && data.join("agents").is_dir());
 
     let short = root.path().join("s.sock");
     let args = with(&too_long, &["--socket", short.to_str().unwrap(), "engines"]);

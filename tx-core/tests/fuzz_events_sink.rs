@@ -16,7 +16,9 @@ use std::time::Duration;
 use common::{Harness, agent, exiting, wait_for};
 use proptest::prelude::*;
 use serde_json::Value;
-use tx_core::{AgentId, CoreError, Event, EventSink, EventType, Locks, SendOptions, TxCore};
+use tx_core::{
+    AgentId, CoreError, Event, EventSink, EventType, LlmEngineState, Locks, SendOptions, TxCore,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
