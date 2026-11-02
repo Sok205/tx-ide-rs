@@ -6,7 +6,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
+
+/// How long a failed git lookup stands before the worktree is looked up again: a repository that
+/// appears later, or a git that failed to spawn once, is noticed within this window.
+const FAILED_LOOKUP_RETRY: Duration = Duration::from_secs(1);
 
 /// Modification time and length: a rewritten `HEAD` changes at least one of them.
 type HeadStamp = (SystemTime, u64);
@@ -15,6 +19,8 @@ struct Entry {
     main_checkout: PathBuf,
     /// The worktree's own git directory, where its `HEAD` lives; `None` when git failed.
     git_directory: Option<PathBuf>,
+    /// When the lookup failed, if it did.
+    failed_at: Option<Instant>,
     head_stamp: Option<HeadStamp>,
     branch: Option<String>,
 }
@@ -58,9 +64,17 @@ impl ProjectCache {
     }
 
     fn entry(&mut self, worktree: &Path) -> &mut Entry {
-        self.entries
+        let entry = self
+            .entries
             .entry(worktree.to_owned())
-            .or_insert_with(|| look_up(worktree))
+            .or_insert_with(|| look_up(worktree));
+        if entry
+            .failed_at
+            .is_some_and(|at| at.elapsed() >= FAILED_LOOKUP_RETRY)
+        {
+            *entry = look_up(worktree);
+        }
+        entry
     }
 }
 
@@ -68,9 +82,13 @@ fn look_up(worktree: &Path) -> Entry {
     let fallback = || Entry {
         main_checkout: worktree.parent().unwrap_or(worktree).to_owned(),
         git_directory: None,
+        failed_at: Some(Instant::now()),
         head_stamp: None,
         branch: None,
     };
+    if worktree.as_os_str().is_empty() {
+        return fallback();
+    }
     let Some(output) = git(worktree, &["rev-parse", "--git-dir", "--git-common-dir"]) else {
         return fallback();
     };
@@ -87,6 +105,7 @@ fn look_up(worktree: &Path) -> Entry {
     Entry {
         main_checkout: main_checkout.to_owned(),
         git_directory: Some(git_directory),
+        failed_at: None,
         head_stamp: None,
         branch: None,
     }
@@ -194,6 +213,32 @@ mod tests {
         assert_eq!(cache.branch(&main), None);
         run_git(&main, &["checkout", "main"]);
         assert_eq!(cache.branch(&main).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn an_empty_path_is_not_a_repository() {
+        let mut cache = ProjectCache::new();
+        assert_eq!(cache.main_checkout(Path::new("")), Path::new(""));
+        assert_eq!(cache.branch(Path::new("")), None);
+    }
+
+    #[test]
+    fn a_failed_lookup_is_retried_after_the_retry_window() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("later");
+        std::fs::create_dir(&directory).unwrap();
+        let mut cache = ProjectCache::new();
+        assert_eq!(cache.main_checkout(&directory), root.path());
+        assert_eq!(cache.branch(&directory), None);
+        run_git(&directory, &["init", "-b", "main"]);
+        run_git(&directory, &["commit", "--allow-empty", "-m", "first"]);
+        assert_eq!(cache.main_checkout(&directory), root.path());
+        std::thread::sleep(FAILED_LOOKUP_RETRY + std::time::Duration::from_millis(100));
+        assert_eq!(
+            cache.main_checkout(&directory),
+            directory.canonicalize().unwrap()
+        );
+        assert_eq!(cache.branch(&directory).as_deref(), Some("main"));
     }
 
     #[test]

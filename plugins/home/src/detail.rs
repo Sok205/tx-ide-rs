@@ -26,35 +26,36 @@ struct Scan {
 
 fn scan(transcript: &Path) -> Scan {
     let mut scan = Scan::default();
-    let Ok(text) = std::fs::read_to_string(transcript) else {
+    let Ok(bytes) = std::fs::read(transcript) else {
         return scan;
     };
+    let text = String::from_utf8_lossy(&bytes);
     let mut rows = Vec::new();
     for line in text.lines() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         scan.metadata.update(&entry);
-        rows.clear();
         parse_entry(&entry, &mut rows);
-        for row in &rows {
-            if row.kind.is_message() {
-                scan.chats += 1;
-            }
-            let slot = match row.kind {
-                Kind::User => &mut scan.last_user,
-                Kind::Agent => &mut scan.last_agent,
-                _ => continue,
-            };
-            *slot = first_line(&row.text);
-        }
     }
+    scan.chats = rows.iter().filter(|row| row.kind.is_message()).count();
+    let newest = |kind: Kind| {
+        rows.iter()
+            .rev()
+            .filter(|row| row.kind == kind)
+            .find_map(|row| first_line(&row.text))
+    };
+    scan.last_user = newest(Kind::User);
+    scan.last_agent = newest(Kind::Agent);
     scan
 }
 
+/// The first non-empty line, split at any line break, cut to [`LINE_CAP`].
 fn first_line(text: &str) -> Option<String> {
-    let line = text.lines().next()?.trim();
-    (!line.is_empty()).then(|| cap(line, LINE_CAP))
+    text.split(['\n', '\r', '\u{b}', '\u{c}', '\u{2028}', '\u{2029}'])
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| cap(line, LINE_CAP))
 }
 
 /// The newest thing the human typed and the newest line the agent said, each cut to its first
@@ -64,7 +65,7 @@ pub fn last_exchange(transcript: &Path) -> (Option<String>, Option<String>) {
     (scan.last_user, scan.last_agent)
 }
 
-/// `tx artifact ls --session <id>` run in-process, counted by its kind column (the fourth);
+/// `tx artifact ls --session <id>` run in-process, counted by its kind column (the fourth) on lines shaped like an artifact row;
 /// empty when the verb is missing or fails.
 pub fn artifact_counts(core: &TxCore, id: &str) -> Vec<(String, usize)> {
     let Some(verb) = core.verb(ARTIFACT_VERB) else {
@@ -94,7 +95,13 @@ pub fn artifact_counts(core: &TxCore, id: &str) -> Vec<(String, usize)> {
 fn count_kinds(listing: &str) -> Vec<(String, usize)> {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for line in listing.lines() {
-        if let Some(kind) = line.split_whitespace().nth(3) {
+        let mut columns = line.split_whitespace().skip(1);
+        let is_row = columns.next().is_some_and(|revisions| {
+            revisions
+                .strip_suffix('r')
+                .is_some_and(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()))
+        });
+        if let (true, Some(kind)) = (is_row, columns.nth(1)) {
             *counts.entry(kind.to_owned()).or_default() += 1;
         }
     }
@@ -193,6 +200,61 @@ mod tests {
         );
         assert!(count_kinds("ARTIFACTS\n  (none)").is_empty());
         assert!(count_kinds("").is_empty());
+    }
+
+    #[test]
+    fn a_screenshot_paste_is_one_message_with_the_typed_text_first() {
+        let file = transcript(&[
+            r#"{"type":"user","timestamp":"2026-10-11T08:00:00Z","message":{"content":"look at this"}}"#,
+            r#"{"type":"user","timestamp":"2026-10-11T08:00:00Z","message":{"content":[{"type":"text","text":"[Image: source: x]"}]}}"#,
+        ]);
+        assert_eq!(
+            last_exchange(file.path()).0.as_deref(),
+            Some("look at this")
+        );
+        assert_eq!(scan(file.path()).chats, 1);
+    }
+
+    #[test]
+    fn the_first_line_is_the_first_non_empty_one() {
+        assert_eq!(first_line("\n\nsecond").as_deref(), Some("second"));
+        assert_eq!(first_line("\n \n"), None);
+    }
+
+    #[test]
+    fn a_line_with_an_invalid_byte_does_not_discard_the_transcript() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut bytes = br#"{"type":"user","timestamp":"2026-10-11T08:00:00Z","message":{"content":"question"}}"#.to_vec();
+        bytes.extend(b"\n\xff\xfe broken\n");
+        bytes.extend(br#"{"type":"assistant","timestamp":"2026-10-11T08:00:01Z","message":{"content":[{"type":"text","text":"answer"}]}}"#);
+        std::fs::write(file.path(), bytes).unwrap();
+        assert_eq!(
+            last_exchange(file.path()),
+            (Some("question".to_owned()), Some("answer".to_owned()))
+        );
+    }
+
+    #[test]
+    fn every_line_break_ends_the_first_line() {
+        for separator in ["\r", "\u{2028}", "\u{2029}", "\x0b", "\x0c", "\r\n", "\n"] {
+            assert_eq!(
+                first_line(&format!("ab{separator}cd")).as_deref(),
+                Some("ab"),
+                "{separator:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_artifact_rows_are_counted() {
+        let listing = "ARTIFACTS\n  1a2b3c4d    2r     3m  diff      A title with\na newline in it  [me]\n  \
+                       5e6f7a8b    1r     1h  document  Plan\n\
+                       error: could not read the store\n\
+                       tx artifact: no such session, really\n";
+        assert_eq!(
+            count_kinds(listing),
+            [("diff".to_owned(), 1), ("document".to_owned(), 1)]
+        );
     }
 
     #[test]

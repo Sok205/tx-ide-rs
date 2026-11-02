@@ -2,7 +2,8 @@
 //! plugin status and the cheat sheet from the core's registry. Reads only; another plugin is seen through its status, its resources and
 //! `Agent.ext` (D3).
 
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 use tx_client::tmux::Ui;
 use tx_client::views::ViewKind;
@@ -107,12 +108,7 @@ pub fn context(
         .into_iter()
         .filter(|view| view.kind != ViewKind::Home)
         .map(|view| ViewRow {
-            project: projects
-                .iter()
-                .enumerate()
-                .filter(|(_, project)| view.working_directory.starts_with(&project.path))
-                .max_by_key(|(_, project)| project.path.components().count())
-                .map(|(index, _)| index),
+            project: project_of(&projects, &view.working_directory),
             parent: view.parent_id.map(|parent| parent.to_string()),
             name: view.name,
         })
@@ -146,10 +142,27 @@ pub fn context(
             })
             .collect(),
         now: tx_core::events::now(),
-        home_directory: std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default(),
+        home_directory: home_directory(std::env::var_os("HOME")),
     })
+}
+
+/// `$HOME`, else the root.
+fn home_directory(home: Option<OsString>) -> PathBuf {
+    home.map_or_else(|| PathBuf::from("/"), PathBuf::from)
+}
+
+/// The innermost project whose path prefixes `directory`. Project paths are canonical, so the
+/// directory is too (the raw path when it cannot be).
+fn project_of(projects: &[Project], directory: &Path) -> Option<usize> {
+    let directory = directory
+        .canonicalize()
+        .unwrap_or_else(|_| directory.to_owned());
+    projects
+        .iter()
+        .enumerate()
+        .filter(|(_, project)| directory.starts_with(&project.path))
+        .max_by_key(|(_, project)| project.path.components().count())
+        .map(|(index, _)| index)
 }
 
 /// The records `filter` lists; `live` ones are refreshed against their engine first. A record
@@ -242,6 +255,37 @@ mod tests {
     fn a_fragment_without_keys_has_no_hint() {
         assert_eq!(key_hint("x", "#!/bin/sh\n# keys: none\n# words\n"), None);
         assert_eq!(key_hint("x", "#!/bin/sh\n# words\n"), None);
+    }
+
+    #[test]
+    fn an_unset_home_is_the_root() {
+        assert_eq!(home_directory(None), Path::new("/"));
+        assert_eq!(
+            home_directory(Some("/Users/x".into())),
+            Path::new("/Users/x")
+        );
+    }
+
+    #[test]
+    fn a_view_under_a_symlinked_path_finds_its_project() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real/project");
+        std::fs::create_dir_all(real.join("sub")).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(root.path().join("real"), &link).unwrap();
+        let projects = [
+            Project {
+                name: "outer".into(),
+                path: root.path().canonicalize().unwrap(),
+            },
+            Project {
+                name: "project".into(),
+                path: real.canonicalize().unwrap(),
+            },
+        ];
+        assert_eq!(project_of(&projects, &link.join("project/sub")), Some(1));
+        assert_eq!(project_of(&projects, &link), Some(0));
+        assert_eq!(project_of(&projects, Path::new("/nowhere/at/all")), None);
     }
 
     #[test]
