@@ -307,7 +307,7 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 | plugin | contributes |
 |---|---|
 | `engine-claude`, `engine-codex` | one engine each |
-| `ide` | `txc ui install\|attach`, `txc ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> …]\|ls\|close <name>` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme and the status line: the agents from `txc ls --json` counted by state, system resources, the clock), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, pane-border look), `bin/tmux-nav`, `bin/tmux-agents-status`, `bin/tmux-system-resources` |
+| `ide` | `txc ui install\|attach`, `txc ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> …]\|ls\|close <name>` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme and the status line: system resources, the clock, the session name), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
 | `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label, the after-new-window hook) |
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
