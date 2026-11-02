@@ -44,10 +44,6 @@ verbs:
                                                                     and conversation; prints its id and name
   engines                                                           the engines whose plugin is enabled (claude, codex)
   plugins                                                           id and active|disabled per plugin
-  migrate [--from DIR]                                              move a version-1 home (default
-                                                                    $TX_CORE_HOME, else ~/.tx-core) into
-                                                                    the directories below, once, and
-                                                                    upgrade its version-1 records
 
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
@@ -152,9 +148,6 @@ pub enum Verb {
     },
     Engines,
     Plugins,
-    Migrate {
-        from: Option<PathBuf>,
-    },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
     Plugin {
         name: String,
@@ -315,16 +308,6 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("help" | "--help" | "-h") => Verb::Help,
         Some("engines") => Verb::Engines,
         Some("plugins") => Verb::Plugins,
-        Some("migrate") => {
-            let from = match cursor.peek() {
-                Some("--from") => {
-                    cursor.next();
-                    Some(cursor.value("--from")?.into())
-                }
-                _ => None,
-            };
-            Verb::Migrate { from }
-        }
         Some("create") => parse_create(&mut cursor)?,
         Some("fork") => parse_fork(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
@@ -533,18 +516,6 @@ mod tests {
             }
         );
         assert_eq!(parse_str("plugins").unwrap().verb, Verb::Plugins);
-        assert_eq!(
-            parse_str("migrate").unwrap().verb,
-            Verb::Migrate { from: None }
-        );
-        assert_eq!(
-            parse_str("migrate --from /old").unwrap().verb,
-            Verb::Migrate {
-                from: Some("/old".into())
-            }
-        );
-        assert!(parse_str("migrate --from").is_err());
-        assert!(parse_str("migrate /old").is_err());
     }
 
     #[test]

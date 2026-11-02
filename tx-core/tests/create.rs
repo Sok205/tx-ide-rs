@@ -67,7 +67,6 @@ fn an_agent_runs_detached_with_the_tx_environment() {
     ] {
         assert_eq!(get(&env, key), Some(directory.to_str().unwrap()), "{key}");
     }
-    assert_eq!(get(&env, "TX_CORE_HOME"), None);
     let location = core.get_execution_location(&id).unwrap();
     assert_eq!(location.socket, h.socket());
     assert!(location.session_target.starts_with('$'));

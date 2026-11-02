@@ -20,9 +20,6 @@ use crate::store::{AgentStore, SkippedRecord, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 use crate::worktree::WorktreeManager;
 
-/// The version-1 layout's record directory (`<data>/sessions/<id>.json`); `TxCore::open`
-/// refuses while it still holds records, and `tx migrate` upgrades them.
-pub const SESSIONS_DIR: &str = "sessions";
 pub const LOCKS_DIR: &str = "locks";
 pub const PROFILES_DIR: &str = "profiles";
 pub const LOG_FILE: &str = "log.jsonl";
@@ -504,29 +501,9 @@ impl std::fmt::Debug for TxCore {
 impl TxCore {
     /// Checks the socket path, creates the layout (`<data>/agents`, `<state>/locks`,
     /// `<state>/profiles`, `<run>` private to the user), writes a default `tmux.conf` if none.
-    /// Does not start tmux. Refuses with `NeedsMigration` while `<data>/sessions/` still holds
-    /// version-1 records: only `tx migrate` ([`TxCore::open_for_migration`]) reads those.
+    /// Does not start tmux.
     pub fn open(config: CoreConfig) -> Result<Self, CoreError> {
         config.check_socket_path()?;
-        let sessions = config.directories.data.join(SESSIONS_DIR);
-        let records = crate::migrate::version_one_records(&config.directories.data)
-            .map_err(store_io(&sessions))?;
-        if !records.is_empty() {
-            return Err(CoreError::NeedsMigration {
-                directory: sessions,
-                records: records.len(),
-            });
-        }
-        Self::open_unchecked(config)
-    }
-
-    /// [`TxCore::open`] without the version-1 check, for the migration itself.
-    pub fn open_for_migration(config: CoreConfig) -> Result<Self, CoreError> {
-        config.check_socket_path()?;
-        Self::open_unchecked(config)
-    }
-
-    fn open_unchecked(config: CoreConfig) -> Result<Self, CoreError> {
         let directories = &config.directories;
         for dir in [
             directories.data.join(AGENTS_DIR),
@@ -558,18 +535,6 @@ impl TxCore {
 
     pub fn config(&self) -> &CoreConfig {
         &self.config
-    }
-
-    pub(crate) fn store(&self) -> &AgentStore {
-        &self.store
-    }
-
-    pub(crate) fn engines(&self) -> &EngineRegistry {
-        &self.engines
-    }
-
-    pub(crate) fn locks(&self) -> &Locks {
-        &self.locks
     }
 
     /// `<state>/profiles/<id>.md`: the composed role prompt a session was launched with.
@@ -628,8 +593,7 @@ impl TxCore {
     }
 
     /// The ids of the process records in the store: written before PR 11, when core still
-    /// held non-LLM sessions. Every read skips them (a front end reports them at startup);
-    /// Storage PR 14's migration moves them out.
+    /// held non-LLM sessions. Every read skips them (a front end reports them at startup).
     pub fn skipped_records(&self) -> Result<Vec<SkippedRecord>, CoreError> {
         Ok(self.store.skipped()?)
     }

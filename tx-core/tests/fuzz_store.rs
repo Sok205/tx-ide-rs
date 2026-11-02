@@ -613,27 +613,6 @@ proptest! {
     }
 }
 
-/// A version-1 record where a version-2 one belongs is refused with the pointer to
-/// `tx migrate`, whatever else it says, and never skipped.
-#[test]
-fn version_one_records_need_migration() {
-    let (_dir, store) = store();
-    store.save(&session("a", 1.0)).unwrap();
-    let agent = "{\"version\": 1, \"id\": \"p\", \"name\": \"n\", \"parent\": null, \"tags\": [], \"cwd\": \"/\", \"created_at\": 1, \"ended_at\": null, \"lifecycle\": \"running\", \"launch\": {\"kind\": \"agent\", \"engine\": \"claude\", \"profile\": []}}";
-    plant(&store, "p", agent);
-    let odd = "{\"version\": 1, \"id\": \"q\", \"name\": \"n\", \"created_at\": \"1\", \"lifecycle\": \"Running\", \"launch\": {\"kind\": \"process\"}}";
-    plant(&store, "q", odd);
-    for id in ["p", "q"] {
-        let error = store.load(&sid(id)).unwrap_err();
-        assert!(
-            matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::NeedsMigration(1)) } if *file == record_name(id)),
-            "{error:?}"
-        );
-    }
-    assert!(store.all().is_err());
-    assert!(store.skipped().is_err());
-}
-
 /// A record naming an engine this build lacks is skipped and named, not an error.
 #[test]
 fn unknown_engine_records_are_skipped_and_named() {

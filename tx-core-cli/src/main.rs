@@ -5,7 +5,6 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
 
-use std::path::PathBuf;
 use tx_client::tmux::Ui;
 use tx_core::{
     AgentId, CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, RefreshResult,
@@ -13,10 +12,7 @@ use tx_core::{
 };
 use tx_core_cli::args::{self, Invocation, Verb};
 
-use tx_core_cli::setup::{
-    Failure, VERSION_ONE_HOME, VERSION_ONE_HOME_ENV, absolute, core_config, open,
-    open_for_migration_with, preview_verbs, process_environment,
-};
+use tx_core_cli::setup::{Failure, open, preview_verbs};
 
 fn main() -> ExitCode {
     let args: Result<Vec<String>, args::UsageError> = std::env::args_os()
@@ -85,9 +81,6 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         }
         return Ok(ExitCode::SUCCESS);
     }
-    if let Verb::Migrate { from } = &invocation.verb {
-        return migrate(&invocation.global, from.clone());
-    }
     if let Verb::Plugin { name, .. } = &invocation.verb
         && !preview_verbs(&invocation.global)?
             .iter()
@@ -100,7 +93,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     let core = open(&invocation.global)?;
     let mut out = std::io::stdout().lock();
     match invocation.verb {
-        Verb::Help | Verb::Migrate { .. } => unreachable!(),
+        Verb::Help => unreachable!(),
         Verb::Engines => {
             for kind in core.engine_kinds() {
                 writeln!(out, "{kind}").ok();
@@ -313,89 +306,4 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         }
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// Moves a version-1 home into the five directories (when `--from` names one, or the default
-/// old home is still there to move), then upgrades every version-1 record in the data directory
-/// to version 2, and prints what happened. After a move the server config is regenerated with
-/// `ui install`: the moved one embeds the old paths.
-fn migrate(global: &args::Global, from: Option<PathBuf>) -> Result<ExitCode, Failure> {
-    let explicit = from.is_some();
-    let from = absolute(from.unwrap_or_else(|| {
-        process_environment(VERSION_ONE_HOME_ENV)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                process_environment("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(VERSION_ONE_HOME)
-            })
-    }));
-    let config = core_config(global)?;
-    let mut out = std::io::stdout().lock();
-    let move_home = explicit
-        || (from.join(tx_core::core::SESSIONS_DIR).is_dir()
-            && !from.join(tx_core::migrate::MOVED_TO_FILE).exists());
-    if move_home {
-        let report = tx_core::migrate::migrate_home(&from, &config.directories)
-            .map_err(Failure::Migration)?;
-        for (moved_from, moved_to) in &report.moved {
-            writeln!(
-                out,
-                "moved\t{}\t{}",
-                moved_from.display(),
-                moved_to.display()
-            )
-            .ok();
-        }
-        for left in &report.left {
-            writeln!(out, "left\t{}", left.display()).ok();
-        }
-    }
-    let core = open_for_migration_with(global, config)?;
-    let records = tx_core::migrate::upgrade_records(&core).map_err(Failure::Migration)?;
-    for (id, name) in &records.migrated {
-        writeln!(out, "migrated\t{id}\t{name}").ok();
-    }
-    for (id, name) in &records.without_conversation {
-        writeln!(out, "migrated-no-conversation\t{id}\t{name}").ok();
-    }
-    for (file, reason) in &records.legacy {
-        writeln!(out, "legacy\t{file}\t{reason}").ok();
-    }
-    for id in &records.skipped {
-        writeln!(out, "skipped\t{id}\talready at version 2").ok();
-    }
-    for (id, reason) in &records.deferred {
-        writeln!(out, "deferred\t{id}\t{reason}").ok();
-    }
-    if !move_home {
-        if records.is_empty() {
-            writeln!(out, "nothing to do").ok();
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
-    let Some(install) = core.verb("ui") else {
-        writeln!(
-            out,
-            "the ide plugin is disabled; run `tx ui install` once it is enabled"
-        )
-        .ok();
-        return Ok(ExitCode::SUCCESS);
-    };
-    drop(out);
-    let (mut stdin, mut stdout, mut stderr) = (
-        std::io::stdin().lock(),
-        std::io::stdout().lock(),
-        std::io::stderr().lock(),
-    );
-    let mut io = tx_core::VerbIo {
-        stdin: &mut stdin,
-        stdout: &mut stdout,
-        stderr: &mut stderr,
-    };
-    let code = install
-        .run(&core, &mut io, &["install".to_owned()])
-        .map_err(Failure::Verb)?;
-    Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }

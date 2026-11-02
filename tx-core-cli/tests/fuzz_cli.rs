@@ -875,7 +875,6 @@ fn sandboxed(root: &Path) -> Command {
         .env_remove("TX_SESSION_ID")
         .env_remove("TX_TMUX_SOCKET")
         .env_remove("TX_APPNAME")
-        .env_remove("TX_CORE_HOME")
         .env_remove("XDG_RUNTIME_DIR");
     for (key, xdg) in [
         ("TX_CONFIG_DIR", "XDG_CONFIG_HOME"),

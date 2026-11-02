@@ -45,7 +45,7 @@ You report evidence.
 - **Agents under test:** Claude `--model sonnet` and Codex `--model gpt-6.1-sol`, set explicitly.
   Short prompts.
 - **Prove behaviour, not command success:** for example, tell an agent a secret word, then fork,
-  respawn or migrate it and ask for the word back. Watch `state` move
+  or respawn it and ask for the word back. Watch `state` move
   `starting → working → idle` while it really works.
 - Run the repository checks too: `cargo test --workspace` and
   `cargo clippy --workspace --all-targets -- -D warnings` against the branch.

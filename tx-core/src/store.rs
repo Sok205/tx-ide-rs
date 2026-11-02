@@ -346,10 +346,10 @@ mod tests {
         assert!(empty.skipped().unwrap().is_empty());
     }
 
-    /// A version-1 file placed where a record belongs is unreadable by name, with the pointer
-    /// to `tx migrate`: never a silent skip, never a serde error.
+    /// A version-1 file placed where a record belongs is unreadable as an unsupported version:
+    /// never a silent skip, never a serde error.
     #[test]
-    fn a_version_one_record_is_unreadable_with_the_migrate_hint() {
+    fn a_version_one_record_is_unreadable() {
         let (_dir, store) = store();
         std::fs::create_dir_all(store.agent_dir(&sid("v"))).unwrap();
         std::fs::write(
@@ -359,12 +359,12 @@ mod tests {
         .unwrap();
         let error = store.load(&sid("v")).unwrap_err();
         assert!(
-            matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::NeedsMigration(1)) } if file == "v/agent.json"),
+            matches!(&error, StoreError::Unreadable { file, source: ReadError::Record(RecordError::UnsupportedVersion(1)) } if file == "v/agent.json"),
             "{error:?}"
         );
         assert_eq!(
             error.to_string(),
-            "unreadable record v/agent.json: record version 1: run `tx migrate`"
+            "unreadable record v/agent.json: record version 1 is not supported (this build reads version 2)"
         );
         assert!(matches!(
             store.all().unwrap_err(),

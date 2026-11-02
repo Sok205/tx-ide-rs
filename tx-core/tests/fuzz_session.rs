@@ -527,7 +527,6 @@ proptest! {
         let result = Agent::from_json(&Value::Object(value).to_string());
         match version.as_u64() {
             Some(RECORD_VERSION) => prop_assert!(result.is_ok(), "{result:?}"),
-            Some(1) => prop_assert!(matches!(result, Err(RecordError::NeedsMigration(1))), "{result:?}"),
             Some(other) => prop_assert!(matches!(result, Err(RecordError::UnsupportedVersion(v)) if v == other), "{result:?}"),
             None => {
                 let expected = version.to_string();

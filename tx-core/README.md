@@ -29,9 +29,7 @@ reads the environment.
 <run>/tmux.sock             the private server (must stay ≤ 100 bytes; set CoreConfig::tmux_socket)
 ```
 
-`tx_core::migrate::migrate_home` moves a version-1 home (everything in one directory) into them,
-and `tx_core::migrate::upgrade_records` turns the version-1 records left in `<data>/sessions/`
-into version-2 ones; `TxCore::open` refuses while any are there.
+A record at any version other than 2 is unreadable.
 
 Disk is the record. tmux holds only the session option `@tx-id`; `$N` / `%N` targets are looked
 up by it on every call and never stored, so a rename behind core's back changes nothing.
