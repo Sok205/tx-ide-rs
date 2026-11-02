@@ -17,7 +17,7 @@ The drawer is a square in the page's top-right corner. It follows rustdoc's font
 ## Build
 
 ```sh
-python3 scripts/structure/build.py . /tmp/tx-core-docs "tx-core @ $(git rev-parse --short HEAD)"
+python3 docs-site/build.py . /tmp/tx-core-docs "tx-core @ $(git rev-parse --short HEAD)"
 open /tmp/tx-core-docs/internal/tx_core/index.html
 ```
 
@@ -29,19 +29,15 @@ The site directory gets:
 - `index.html`: forwards to the internal docs.
 - `.nojekyll`.
 
-## Publish a snapshot to GitHub Pages
+## Hosting
 
-The `gh-pages` branch holds a built site; Pages serves it from there (Settings → Pages → Deploy from a branch → `gh-pages`, `/ (root)`). To refresh it:
+`.github/workflows/docs-site.yml` builds the site on every push to `main` (and on a manual run
+from the Actions tab) and deploys it to GitHub Pages: <https://sok205.github.io/tx-ide-rs/>.
 
-```sh
-python3 scripts/structure/build.py . /tmp/tx-core-docs "tx-core @ $(git rev-parse --short HEAD)"
-git worktree add /tmp/tx-core-pages gh-pages
-rsync -a --delete --exclude .git /tmp/tx-core-docs/ /tmp/tx-core-pages/
-git -C /tmp/tx-core-pages add -A
-git -C /tmp/tx-core-pages commit -m "docs: tx-core snapshot"
-git -C /tmp/tx-core-pages push origin gh-pages
-git worktree remove /tmp/tx-core-pages
-```
+`graph.py`'s `LAYOUT_ROWS` places every tx-core module in the Modules view. `build.py` stops with
+an error when it no longer matches the `pub mod` lines of `tx-core/src/lib.rs`, so adding,
+renaming or removing a module means adding, renaming or removing it there too (and in
+`MODULE_COLORS`).
 
 ## How it works
 
