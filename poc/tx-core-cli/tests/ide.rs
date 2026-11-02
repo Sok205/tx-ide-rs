@@ -36,7 +36,7 @@ fn expected_conf(cli: &Cli) -> String {
         "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
-         set -g detach-on-destroy off\n\
+         set -g detach-on-destroy on\n\
          set -g @tx-bin \"{}\"\n\
          set -g @tx-data \"{state}\"\n\
          set -g @tx-arguments \"{arguments}\"\n\

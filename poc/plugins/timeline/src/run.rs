@@ -39,6 +39,10 @@ pub fn focus_session_pane(tmux: &Ui, name: &str) -> Result<(), String> {
     let client = tmux
         .display_message("#{client_name}", None)
         .ok_or_else(|| "not inside tmux".to_owned())?;
+    // The caller's client may be nested in a view's pane; the terminal is the one to move.
+    let (client, _) = tmux
+        .outer_client(&client)
+        .ok_or_else(|| "no terminal client to move".to_owned())?;
     let pane = tmux
         .pane_for_session(name, "")
         .ok_or_else(|| "not attached to any pane".to_owned())?;
