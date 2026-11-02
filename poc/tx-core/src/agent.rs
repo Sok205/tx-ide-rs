@@ -102,6 +102,12 @@ pub struct Agent {
     pub created_at: f64,
     /// When the record was last written; core stamps it on every save.
     pub last_modified_at: f64,
+    /// When the agent last did something: today, when its `state` last moved. Core stamps it in
+    /// the save that moves the state. Metadata edits (a rename, tags, `ext`, archiving) are not
+    /// activity and leave it alone; they move `last_modified_at` only. `None` until the first
+    /// state move.
+    #[serde(default)]
+    pub last_activity_at: Option<f64>,
     /// When the agent was archived: hidden from listings and its name freed, with nothing
     /// deleted. `None` for an unarchived record; a respawn clears it.
     #[serde(default)]
@@ -158,6 +164,9 @@ impl Agent {
         }
         if !self.last_modified_at.is_finite() {
             return Err(RecordError::NonFiniteTime("last_modified_at"));
+        }
+        if self.last_activity_at.is_some_and(|at| !at.is_finite()) {
+            return Err(RecordError::NonFiniteTime("last_activity_at"));
         }
         if self.archived_at.is_some_and(|at| !at.is_finite()) {
             return Err(RecordError::NonFiniteTime("archived_at"));
@@ -235,6 +244,7 @@ mod tests {
             state: LlmEngineState::Working,
             created_at: 1727000000.5,
             last_modified_at: 1727000000.5,
+            last_activity_at: None,
             archived_at: None,
             tags: vec!["a".into(), "b".into()],
             parent_id: Some(sid("p")),
@@ -254,6 +264,7 @@ mod tests {
             state: LlmEngineState::Ended,
             created_at: 1.0,
             last_modified_at: 2.0,
+            last_activity_at: None,
             archived_at: Some(3.0),
             tags: vec![],
             parent_id: None,
@@ -308,6 +319,7 @@ mod tests {
                 "state",
                 "created_at",
                 "last_modified_at",
+                "last_activity_at",
                 "archived_at",
                 "tags",
                 "parent_id",

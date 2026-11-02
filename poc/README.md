@@ -128,7 +128,7 @@ whose engine plugin is disabled is left for a later run (`deferred`). The report
 
 | home | what |
 |---|---|
-| disk (`agents/<id>/agent.json`, record version 2) | the record: id, name, engine (`claude` \| `codex`), working_directory, roles, state, timestamps (`last_modified_at` is stamped on every write; `archived_at` when hidden), tags, parent_id, `ext`; keys this build does not know are kept and written back. The snapshot every read returns. |
+| disk (`agents/<id>/agent.json`, record version 2) | the record: id, name, engine (`claude` \| `codex`), working_directory, roles, state, timestamps (`last_modified_at` is stamped on every write, `last_activity_at` on every state move; `archived_at` when hidden), tags, parent_id, `ext`; keys this build does not know are kept and written back. The snapshot every read returns. |
 | tmux | the link only: session option `@tx-id` = record id |
 | looked up on demand | `#{session_id}` (`$N`) and `#{pane_id}` (`%N`) found by `@tx-id`, so a rename in tmux cannot break them |
 
@@ -142,8 +142,11 @@ side.
 An agent record carries `state` (an `LlmEngineState`): `starting`, `idle`, `working` or
 `ended`. Idle means it is the operator's move, whether the turn finished or stopped on an approval
 or a question; the next tool hook moves it back to `working`. The vocabulary is core's; when to
-move between states is the adapter's. How long ago anything happened is the record-wide
-`last_modified_at`.
+move between states is the adapter's. `last_activity_at` is stamped in the save that moves the
+state, and only there: how long an agent has been working or resting. A rename, a tag or an `ext`
+write leaves it alone and moves only the record-wide `last_modified_at`, which every write stamps.
+The picker's IDLE column and the pane-border age read `last_activity_at`, falling back to
+`last_modified_at` for a record that has not moved state since this field arrived.
 
 At launch the adapter wires the hooks it needs into the CLI's own command line (Claude
 `--settings '{"hooks":…}'`, Codex `-c hooks.<Event>=…`), each running `CoreConfig::hook_command`
@@ -308,7 +311,7 @@ like its verbs (D8 in `../docs/superpowers/specs/2026-10-19-poc-key-plugins-desi
 |---|---|
 | `engine-claude`, `engine-codex` | one engine each |
 | `ide` | `txc ui install\|attach`, `txc ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> …]\|ls\|close <name>` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme and the status line: system resources, the clock, the session name), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
-| `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label, the after-new-window hook) |
+| `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label with its right-aligned state mark: a green bar while working, the age since the last activity while idle; the after-new-window hook) |
 | `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
 | `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |

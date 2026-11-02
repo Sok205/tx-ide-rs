@@ -169,11 +169,12 @@ pub fn listed(entry: PickerEntry<'_>) -> bool {
     !matches!(entry, PickerEntry::View(view) if view.kind == ViewKind::Home)
 }
 
-/// The picker's sort key: when an agent's record was last written (a state change, mostly, but
-/// also a rename or a tag); when a view was created (a view has no activity signal).
+/// The picker's sort key: when an agent last did something (its last record write for a record
+/// that has not moved state since `last_activity_at` arrived); when a view was created (a view
+/// has no activity signal).
 pub fn activity_at(entry: PickerEntry<'_>) -> f64 {
     match entry {
-        PickerEntry::Agent(session) => session.last_modified_at,
+        PickerEntry::Agent(session) => session.last_activity_at.unwrap_or(session.last_modified_at),
         PickerEntry::View(view) => view.created_at,
     }
 }
@@ -265,6 +266,7 @@ mod tests {
             state: tx_core::LlmEngineState::Idle,
             created_at,
             last_modified_at: created_at,
+            last_activity_at: None,
             archived_at: None,
             tags: vec![],
             parent_id: None,
