@@ -1,5 +1,5 @@
 //! The floor: the home pane's TUI comes back whenever what runs there ends. tmux holds it, not a
-//! parent process: `remain-on-exit` keeps the dead pane, the window's `pane-died` hook runs
+//! parent process: `remain-on-exit` keeps the dead pane, the pane's own `pane-died` hook runs
 //! `_home-perform` for it, and that respawns the pane with the choice the TUI left in its choice
 //! file, else with the TUI. Other plugins' `respawn-pane -k` into the pane does not fire the hook;
 //! their program's end does.
@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 
 use tx_client::tmux::{Ui, UiError};
 
-/// Foreground commands of a home pane that the TUI may replace: a shell, or a nested client.
-pub const HOSTING_COMMANDS: [&str; 6] = ["zsh", "bash", "sh", "fish", "dash", "tmux"];
+/// Foreground commands of a home pane that the TUI may replace: a shell. A nested client
+/// (`tmux`) is left alone: the operator is inside a session, and the floor comes back when they
+/// leave it.
+pub const HOSTING_COMMANDS: [&str; 5] = ["zsh", "bash", "sh", "fish", "dash"];
 
 /// What `pane`'s files are named after: its digits (`%12` → `12`), so no pane id can reach
 /// outside the plugin's directory.
@@ -27,8 +29,8 @@ pub fn last_path(directory: &Path, pane: &str) -> PathBuf {
     directory.join(format!("last.{}", pane_key(pane)))
 }
 
-/// Whether the TUI takes over a pane: it is dead, or it runs a shell or a nested client (an
-/// older install's home). An editor or any other program is left alone.
+/// Whether the TUI takes over a pane: it is dead, or it runs a shell (an older install's home
+/// after its nested attach ended). A nested client, an editor or any other program is left alone.
 pub fn takes_floor(dead: bool, command: &str) -> bool {
     dead || HOSTING_COMMANDS.contains(&command)
 }
@@ -59,8 +61,9 @@ pub fn hook_command(tx: &str) -> String {
     format!("run-shell -b {}", tmux_quote(&shell))
 }
 
-/// The floor on `session`'s window: `remain-on-exit`, the hook, and the TUI (`tui(pane)`, a
-/// pane command) in the pane when [`takes_floor`].
+/// The floor on `session`'s pane: `remain-on-exit` and the hook as pane options (a split pane
+/// in the window keeps its own life), and the TUI (`tui(pane)`, a pane command) in the pane when
+/// [`takes_floor`].
 pub fn install(
     ui: &Ui,
     session: &str,
@@ -68,8 +71,6 @@ pub fn install(
     tui: impl FnOnce(&str) -> String,
 ) -> Result<(), UiError> {
     let target = format!("={session}:");
-    ui.run(&["set-window-option", "-t", &target, "remain-on-exit", "on"])?;
-    ui.run(&["set-hook", "-w", "-t", &target, "pane-died", hook])?;
     let pane = ui.run(&[
         "display-message",
         "-p",
@@ -85,6 +86,8 @@ pub fn install(
             stderr: format!("unexpected output {pane:?}"),
         });
     };
+    ui.run(&["set-option", "-p", "-t", pane, "remain-on-exit", "on"])?;
+    ui.run(&["set-hook", "-p", "-t", pane, "pane-died", hook])?;
     if takes_floor(dead == "1", command) {
         ui.respawn_pane(pane, &tui(pane))?;
     }
@@ -116,7 +119,7 @@ mod tests {
     fn the_tui_takes_a_dead_pane_or_a_shell_only() {
         assert!(takes_floor(true, "nvim"));
         assert!(takes_floor(false, "zsh"));
-        assert!(takes_floor(false, "tmux"));
+        assert!(!takes_floor(false, "tmux"));
         assert!(!takes_floor(false, "nvim"));
         assert!(!takes_floor(false, "tx"));
         assert!(!takes_floor(false, ""));

@@ -27,8 +27,9 @@ pub const NVIM_RESOURCE: &str = "nvim";
 /// `<data>/roles/`, since `<data>/agents/` holds agent records.
 const ROLES_RESOURCE: &str = "agents";
 const ROLES_DIR: &str = "roles";
-/// The verb that starts the assistant session; `home` nests into it when the plugin is active.
-const ASSISTANT_VERB: &str = "assistant";
+/// The home plugin's verb that puts the home TUI into the view's pane; absent when the plugin
+/// is disabled.
+const HOME_INSTALL_VERB: &str = "_home-install";
 
 /// `@tx-data` locates `bin/` and `keys/`; `@tx-arguments` is what every `tx` a key fragment
 /// runs carries (the core's `cli_arguments()`, words split by spaces: `install` refuses unsafe
@@ -371,10 +372,13 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     Ok(0)
 }
 
-/// The assistant's name from `assistant warm` when the plugin is active and the session came
-/// up; its stderr is passed through, a failure is reported, and `None` means a plain home.
-fn warm_assistant(core: &TxCore, io: &mut VerbIo<'_>) -> Option<String> {
-    let verb = core.verb(ASSISTANT_VERB)?;
+/// Hands `home` to the `home` plugin's floor (`_home-install`) when the plugin is active: the
+/// pane keeps the home TUI, which starts the assistant itself. Its stderr is passed through; a
+/// failure is reported and never stops the attach. Without the plugin the home is a plain shell.
+fn install_floor(core: &TxCore, io: &mut VerbIo<'_>) {
+    let Some(verb) = core.verb(HOME_INSTALL_VERB) else {
+        return;
+    };
     let mut stdin = io::empty();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -385,43 +389,28 @@ fn warm_assistant(core: &TxCore, io: &mut VerbIo<'_>) -> Option<String> {
             stdout: &mut stdout,
             stderr: &mut stderr,
         },
-        &["warm".to_owned()],
+        &[HOME_SESSION.to_owned()],
     );
     let _ = io.stderr.write_all(&stderr);
-    match result {
-        Ok(0) => String::from_utf8(stdout)
-            .ok()
-            .map(|name| name.trim().to_owned())
-            .filter(|name| !name.is_empty()),
-        Ok(_) => None,
-        Err(error) => {
-            let _ = writeln!(io.stderr, "tx ui attach: assistant: {error}");
-            None
-        }
+    if let Err(error) = result {
+        let _ = writeln!(io.stderr, "tx ui attach: home: {error}");
     }
 }
 
-/// Creates the `home` view on the core's server unless it is already there. A new home's pane
-/// nest-attaches `assistant` (a live session name) when there is one.
-fn ensure_home(ui: &Ui, assistant: Option<&str>) -> Result<(), VerbError> {
+/// Creates the `home` view on the core's server unless it is already there: a shell in a window
+/// named `home`, with the status bar and the pane-border labels on.
+fn ensure_home(ui: &Ui) -> Result<(), VerbError> {
     if ui.has_session(HOME_SESSION) {
         return Ok(());
     }
-    let nest = assistant
-        .and_then(|name| ui.live_targets().get(name).cloned())
-        .map(|target| ui.nest_attach_script(&target));
-    let (program, arguments) = match &nest {
-        Some(script) => ("bash".to_owned(), vec!["-c".to_owned(), script.clone()]),
-        None => (views::default_shell(), Vec::new()),
-    };
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_owned());
     views::open(
         ui,
         &ViewRequest {
             name: HOME_SESSION,
             kind: ViewKind::Home,
-            program: &program,
-            arguments: &arguments,
+            program: &views::default_shell(),
+            arguments: &[],
             working_directory: Path::new(&home),
             tags: &[],
             parent_id: None,
@@ -430,7 +419,7 @@ fn ensure_home(ui: &Ui, assistant: Option<&str>) -> Result<(), VerbError> {
     )
     .map_err(|e| VerbError::Failed(e.to_string()))?;
     let target = format!("={HOME_SESSION}:");
-    let steps: [&[&str]; 2] = [
+    let steps: [&[&str]; 3] = [
         &["set-option", "-t", &target, "status", "on"],
         &[
             "set-window-option",
@@ -439,6 +428,7 @@ fn ensure_home(ui: &Ui, assistant: Option<&str>) -> Result<(), VerbError> {
             "pane-border-status",
             "top",
         ],
+        &["rename-window", "-t", &target, HOME_SESSION],
     ];
     for step in steps {
         ui.run(step).map_err(|e| VerbError::Failed(e.to_string()))?;
@@ -452,9 +442,9 @@ const TERMINAL_FLAG: &str = "no-detach-on-destroy";
 
 fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let ui = Ui::from_core(core);
-    // Always: the assistant is part of the IDE being up, whether or not `home` is new.
-    let assistant = warm_assistant(core, io);
-    ensure_home(&ui, assistant.as_deref())?;
+    ensure_home(&ui)?;
+    // Every attach: a home from an older install, or one whose floor was lost, gets it back.
+    install_floor(core, io);
     let env = std::env::var("TMUX").ok();
     match tmux_env_socket(env.as_deref()) {
         Some(socket) if Path::new(socket) == core.socket_path() => {

@@ -388,11 +388,12 @@ fn home_install_turns_a_shell_home_into_the_tui() {
         "{}",
         home_command(&cli)
     );
-    let hooks = cli.tmux_out(&["show-hooks", "-w", "-t", "=home:"]);
+    let pane = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_id}"]);
+    let hooks = cli.tmux_out(&["show-hooks", "-p", "-t", &pane]);
     assert!(hooks.contains("pane-died"), "{hooks}");
     assert!(hooks.contains("_home-perform"), "{hooks}");
     assert_eq!(
-        cli.tmux_out(&["show-window-options", "-vt", "=home:", "remain-on-exit"]),
+        cli.tmux_out(&["show-options", "-pv", "-t", &pane, "remain-on-exit"]),
         "on"
     );
     // A second install leaves the running TUI alone.
