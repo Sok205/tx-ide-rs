@@ -585,7 +585,9 @@ impl Nav<'_> {
                 }
             },
             Mode::Popup => {
-                let outer = tm::outer_client(&self.ui, client)
+                let outer = self
+                    .ui
+                    .outer_client(client)
                     .map_or_else(|| client.to_owned(), |(outer, _)| outer);
                 let prefix =
                     tm::global_option(&self.ui, "prefix").unwrap_or_else(|| "C-b".to_owned());

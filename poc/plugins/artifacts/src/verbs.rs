@@ -619,10 +619,7 @@ impl Ctx<'_, '_> {
             .map(PathBuf::from);
         let ui = Ui::from_core(self.core);
         if let Some(shown) = views::live_view(&ui, &artifact_id)? {
-            let switched = ui.inside()
-                && ui
-                    .quiet(&["switch-client", "-t", &format!("={}", shown.name)])
-                    .0;
+            let switched = ui.inside() && ui.switch_client(&shown.name).is_ok();
             let note = if switched { "; switched to it" } else { "" };
             self.print(&format!(
                 "Artifact {artifact_id} is already open in nvim view '{}'{note}",

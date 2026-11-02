@@ -452,7 +452,7 @@ fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let env = std::env::var("TMUX").ok();
     match tmux_env_socket(env.as_deref()) {
         Some(socket) if Path::new(socket) == core.socket_path() => {
-            ui.run(&["switch-client", "-t", &format!("={HOME_SESSION}")])
+            ui.switch_client(HOME_SESSION)
                 .map_err(|e| VerbError::Failed(e.to_string()))?;
             return Ok(0);
         }
