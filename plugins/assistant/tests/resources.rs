@@ -38,7 +38,9 @@ fn the_key_fragment_is_a_resource_and_the_role_comes_from_the_core() {
 
 #[test]
 fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
-    let (_dir, core) = core(&PluginConfig::default());
+    let (dir, core) = core(&PluginConfig::default());
+    // Trust seeding reads Claude's config file from the environment; keep it off the real HOME.
+    unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", dir.path().join("claude-config")) };
     let options = create_options(&core).unwrap();
     assert_eq!(options.name, "tx-assistant");
     let home = core.config().plugin_data_dir("assistant").join("home");

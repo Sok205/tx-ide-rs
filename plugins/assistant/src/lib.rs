@@ -8,11 +8,13 @@
 //!
 //! Every agent runs in a worktree of a git checkout, so the assistant has a small repository of
 //! its own under the plugin's data directory (`home/`), made on first use. A stopped assistant
-//! keeps its worktree, so the next one is `tx-assistant-2`: the running assistant is found by
-//! its role, and `warm` prints the name it really has.
+//! keeps its worktree and its name: `warm` finds the running assistant by its role, else
+//! respawns the newest ended one in place, else creates it. Concurrent warms take turns on a lock
+//! file, so they never make two.
 
 mod focus;
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -24,6 +26,8 @@ use tx_core::{
     LlmEngineState, Plugin, PluginError, Registry, SendOptions, Sender, TxCore, Verb, VerbError,
     VerbIo,
 };
+use tx_engine_claude::claude_config_file_from_env;
+use tx_engine_claude::trust::trust_project;
 
 pub const PLUGIN_ID: &str = "assistant";
 pub const SESSION_NAME: &str = "tx-assistant";
@@ -38,6 +42,11 @@ pub const GREETING: &str = "You are starting up. Reply with the single word READ
 /// Under the plugin's data directory: the assistant's own repository, the checkout its
 /// worktrees branch from.
 pub const HOME_DIR: &str = "home";
+/// Under the plugin's data directory: the reason the last `assistant warm` failed, removed when a
+/// warm succeeds. The home header reads it.
+pub const FAILURE_FILE: &str = "warm.failed";
+/// Under the plugin's data directory: held for the length of a warm.
+const WARM_LOCK_FILE: &str = "warm.lock";
 /// The paste buffer prefix+/ fills on the core's server; `ask --from-buffer` reads and deletes it.
 pub const INPUT_BUFFER: &str = "tx-assistant-input";
 /// What the envelope names as where the operator typed, for a line with no firing pane to name
@@ -84,6 +93,12 @@ pub fn ensure_home(core: &TxCore) -> Result<PathBuf, CoreError> {
     git(&home, &["init", "-q", "-b", "main"])?;
     git(&home, &["add", "README.md"])?;
     git(&home, &["commit", "-q", "-m", "tx-assistant home"])?;
+    if let Err(error) = trust_project(&claude_config_file_from_env(), &home) {
+        eprintln!(
+            "tx: assistant: claude trust for {}: {error}",
+            home.display()
+        );
+    }
     Ok(home)
 }
 
@@ -131,8 +146,7 @@ fn is_assistant(session: &Agent) -> bool {
 }
 
 /// The running assistant's id, after a liveness check; `None` when there is none. Found by its
-/// tag and role, not its name: a restart after a stop is `tx-assistant-2`, the stopped one
-/// keeping its name and its worktree.
+/// tag and role, not its name.
 pub fn running(core: &TxCore) -> Result<Option<AgentId>, CoreError> {
     let filter = ListFilter::new().tag(TAG).running();
     for id in core.list_agents(&filter)? {
@@ -144,11 +158,43 @@ pub fn running(core: &TxCore) -> Result<Option<AgentId>, CoreError> {
     Ok(None)
 }
 
-/// The running assistant, started when there is none. Nothing is removed: a new assistant is a
-/// new agent, with its own worktree (respawn in place will reuse the stopped one's instead).
+/// The newest ended, unarchived assistant, by tag and role; `None` when there is none.
+pub fn latest_ended(core: &TxCore) -> Result<Option<AgentId>, CoreError> {
+    let filter = ListFilter::new().tag(TAG).ended();
+    let mut newest: Option<Agent> = None;
+    for id in core.list_agents(&filter)? {
+        let session = core.get_agent(&id)?;
+        if is_assistant(&session)
+            && newest
+                .as_ref()
+                .is_none_or(|best| session.last_modified_at > best.last_modified_at)
+        {
+            newest = Some(session);
+        }
+    }
+    Ok(newest.map(|session| session.id))
+}
+
+/// The lock file `warm` holds, taken (waiting for another warm to finish) and released when the
+/// returned file is dropped.
+fn warm_lock(core: &TxCore) -> Result<File, CoreError> {
+    let directory = core.config().plugin_data_dir(PLUGIN_ID);
+    std::fs::create_dir_all(&directory).map_err(|source| io_error(&directory, source))?;
+    let path = directory.join(WARM_LOCK_FILE);
+    let lock = File::create(&path).map_err(|source| io_error(&path, source))?;
+    lock.lock().map_err(|source| io_error(&path, source))?;
+    Ok(lock)
+}
+
+/// The running assistant; else the newest ended one, respawned in place (same name, same
+/// worktree); else a new one. One warm at a time.
 pub fn warm(core: &TxCore) -> Result<AgentId, CoreError> {
-    match running(core)? {
-        Some(id) => Ok(id),
+    let _lock = warm_lock(core)?;
+    if let Some(id) = running(core)? {
+        return Ok(id);
+    }
+    match latest_ended(core)? {
+        Some(id) => Ok(core.respawn_agent(&id)?.id),
         None => core.create_agent(create_options(core)?),
     }
 }
@@ -194,6 +240,22 @@ fn ask_from_buffer(core: &TxCore, pane: Option<&str>) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Leaves the reason a warm failed in `FAILURE_FILE`, or removes the file after a warm that
+/// worked. Best effort: the file is a hint for the home header.
+fn record_outcome(core: &TxCore, warmed: &Result<AgentId, CoreError>) {
+    let directory = core.config().plugin_data_dir(PLUGIN_ID);
+    let file = directory.join(FAILURE_FILE);
+    match warmed {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&file);
+        }
+        Err(error) => {
+            let _ = std::fs::create_dir_all(&directory);
+            let _ = std::fs::write(&file, error.to_string());
+        }
+    }
+}
+
 pub struct Assistant;
 
 impl Verb for Assistant {
@@ -203,15 +265,17 @@ impl Verb for Assistant {
 
     fn usage(&self) -> &'static str {
         "assistant warm | ask --from-buffer [--pane PANE] | ask TEXT…   start the tx-assistant \
-         session unless it is running and print its name (tx-assistant, or tx-assistant-2 … after \
-         a stop); deliver a line to it as the operator (from the tx-assistant-input paste buffer, \
+         session unless it is running (a stopped one is respawned in place) and print its name; \
+         deliver a line to it as the operator (from the tx-assistant-input paste buffer, \
          or the words given): typed in PANE's session behind its focus envelope, else via prefix+/"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         match argv {
             [sub] if sub == "warm" => {
-                let id = warm(core)?;
+                let warmed = warm(core);
+                record_outcome(core, &warmed);
+                let id = warmed?;
                 let name = core.get_agent(&id)?.name;
                 writeln!(io.stdout, "{name}")
                     .map_err(|error| VerbError::Failed(format!("write: {error}")))?;

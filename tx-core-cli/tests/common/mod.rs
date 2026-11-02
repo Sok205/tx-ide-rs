@@ -221,6 +221,13 @@ impl Cli {
     pub fn fake_claude_path(&self) -> String {
         self.shim_path(&[("claude", "exec sleep 60")])
     }
+    /// `<dir>/claude-config`, made: pass it as `CLAUDE_CONFIG_DIR` to anything that warms the
+    /// assistant, so trust seeding never reaches the operator's own `~/.claude.json`.
+    pub fn claude_config_dir(&self) -> PathBuf {
+        let dir = self.dir.path().join("claude-config");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
     /// A git repository with one commit under `<dir>/<name>`: an agent's starting checkout.
     pub fn repository(&self, name: &str) -> PathBuf {
         repository_at(&self.dir.path().join(name))

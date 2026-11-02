@@ -10,7 +10,11 @@ fn warm_creates_once_and_reuses() {
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();
-    let env = [("PATH", path.as_str())];
+    let config = cli.claude_config_dir();
+    let env = [
+        ("PATH", path.as_str()),
+        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
+    ];
     let first = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(
         first.status.code(),
@@ -38,12 +42,16 @@ fn warm_creates_once_and_reuses() {
 }
 
 #[test]
-fn warm_restarts_a_vanished_assistant() {
+fn warm_respawns_a_vanished_assistant_in_place() {
     require_tmux!();
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();
-    let env = [("PATH", path.as_str())];
+    let config = cli.claude_config_dir();
+    let env = [
+        ("PATH", path.as_str()),
+        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
+    ];
     assert_eq!(
         cli.run(&["assistant", "warm"], &env, "").status.code(),
         Some(0)
@@ -56,34 +64,114 @@ fn warm_restarts_a_vanished_assistant() {
             .status
             .success()
     );
-    let restarted = cli.run(&["assistant", "warm"], &env, "");
-    assert_eq!(restarted.status.code(), Some(0));
-    // The ended assistant keeps its name and its worktree, untouched; the new one is the next
-    // free name, in a worktree of its own, and `warm` says which.
+    let respawned = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(
-        String::from_utf8_lossy(&restarted.stdout),
-        "tx-assistant-2\n"
+        respawned.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&respawned.stderr)
     );
-    let listed = cli.ok(&["ls", "--tag", "tx-system"]);
-    assert_eq!(listed.lines().count(), 2, "{listed:?}");
-    assert_ne!(listed, first);
-    assert_eq!(state_of(&cli, "tx-assistant"), "ended");
+    assert_eq!(String::from_utf8_lossy(&respawned.stdout), "tx-assistant\n");
+    assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]), first);
+    assert_ne!(state_of(&cli, "tx-assistant"), "ended");
     assert_eq!(cwd_of(&cli, "tx-assistant"), first_cwd);
     assert_eq!(
         std::fs::read_to_string(first_cwd.join("note.txt")).unwrap(),
         "keep me\n"
     );
-    assert_ne!(state_of(&cli, "tx-assistant-2"), "ended");
-    let second_cwd = cwd_of(&cli, "tx-assistant-2");
-    assert_ne!(second_cwd, first_cwd);
-    assert!(
-        second_cwd.ends_with("home--tx-assistant-2"),
-        "{second_cwd:?}"
+}
+
+#[test]
+fn two_concurrent_warms_make_one_assistant() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    let path = cli.fake_claude_path();
+    let config = cli.claude_config_dir();
+    let env = [
+        ("PATH", path.as_str()),
+        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
+    ];
+    let barrier = std::sync::Barrier::new(2);
+    let outputs: Vec<std::process::Output> = std::thread::scope(|scope| {
+        let warms: Vec<_> = (0..2)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut command = cli.command(&["assistant", "warm"], &env);
+                    barrier.wait();
+                    command.output().unwrap()
+                })
+            })
+            .collect();
+        warms.into_iter().map(|warm| warm.join().unwrap()).collect()
+    });
+    for output in &outputs {
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "tx-assistant\n");
+    }
+    let listed = cli.ok(&["ls", "--tag", "tx-system"]);
+    assert_eq!(listed.lines().count(), 1, "{listed:?}");
+}
+
+#[test]
+fn a_failed_warm_leaves_its_reason_in_the_plugin_dir() {
+    require_tmux!();
+    let cli = Cli::new();
+    let path = cli.fake_claude_path();
+    let config = cli.claude_config_dir();
+    let env = [
+        ("PATH", path.as_str()),
+        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
+    ];
+    let failure = cli.state().join("plugins/assistant/warm.failed");
+    let output = cli.run(&["assistant", "warm"], &env, "");
+    assert_eq!(output.status.code(), Some(1));
+    let reason = std::fs::read_to_string(&failure).unwrap();
+    assert!(reason.contains("COMMON"), "{reason:?}");
+    cli.ok(&["ui", "install"]);
+    let output = cli.run(&["assistant", "warm"], &env, "");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    // Warm again: the running one is found by its role, not by the name `tx-assistant`.
-    let again = cli.run(&["assistant", "warm"], &env, "");
-    assert_eq!(String::from_utf8_lossy(&again.stdout), "tx-assistant-2\n");
-    assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]), listed);
+    assert!(!failure.exists());
+}
+
+#[test]
+fn ensure_home_seeds_claude_trust() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["ui", "install"]);
+    let path = cli.fake_claude_path();
+    let config = cli.claude_config_dir();
+    let config_file = config.join(".claude.json");
+    std::fs::write(&config_file, r#"{"projects":{}}"#).unwrap();
+    let env = [
+        ("PATH", path.as_str()),
+        ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
+    ];
+    let output = cli.run(&["assistant", "warm"], &env, "");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_file).unwrap()).unwrap();
+    let home = cli.state().join("plugins/assistant/home");
+    assert_eq!(
+        json["projects"][home.to_str().unwrap()]["hasTrustDialogAccepted"],
+        true,
+        "{json}"
+    );
 }
 
 #[test]
@@ -91,7 +179,15 @@ fn warm_without_the_roles_installed_fails() {
     require_tmux!();
     let cli = Cli::new();
     let path = cli.fake_claude_path();
-    let output = cli.run(&["assistant", "warm"], &[("PATH", &path)], "");
+    let config = cli.claude_config_dir();
+    let output = cli.run(
+        &["assistant", "warm"],
+        &[
+            ("PATH", path.as_str()),
+            ("CLAUDE_CONFIG_DIR", config.to_str().unwrap()),
+        ],
+        "",
+    );
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("COMMON"), "{stderr:?}");
