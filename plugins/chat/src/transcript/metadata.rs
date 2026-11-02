@@ -49,8 +49,12 @@ impl Metadata {
                     if let Some(input) = usage["input_tokens"].as_u64() {
                         self.context_tokens = Some(
                             input
-                                + usage["cache_creation_input_tokens"].as_u64().unwrap_or(0)
-                                + usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
+                                .saturating_add(
+                                    usage["cache_creation_input_tokens"].as_u64().unwrap_or(0),
+                                )
+                                .saturating_add(
+                                    usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
+                                ),
                         );
                     }
                 }
@@ -114,6 +118,14 @@ mod tests {
         assert_eq!(metadata.model.as_deref(), Some("claude-opus-4"));
         assert_eq!(metadata.effort.as_deref(), Some("high"));
         assert_eq!(metadata.summary(), "claude-opus-4 · effort high · ctx 15");
+    }
+
+    #[test]
+    fn huge_usage_numbers_saturate_instead_of_overflowing() {
+        let mut metadata = Metadata::default();
+        metadata.update(&json!({"type": "assistant", "message": {
+            "model": "m", "usage": {"input_tokens": 18446744073709551615u64, "cache_read_input_tokens": 1}}}));
+        assert_eq!(metadata.context_tokens, Some(u64::MAX));
     }
 
     #[test]
