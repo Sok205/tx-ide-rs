@@ -1,4 +1,4 @@
-//! `txc mockup`: the session dir, the `mockup-<agent>` view, switching and the viewer.
+//! `tx mockup`: the session dir, the `mockup-<agent>` view, switching and the viewer.
 
 mod common;
 
@@ -12,7 +12,7 @@ fn project(cli: &Cli) -> PathBuf {
     dir
 }
 
-/// `txc mockup start --project <proj> --for a`, returning the printed JSON line.
+/// `tx mockup start --project <proj> --for a`, returning the printed JSON line.
 fn start(cli: &Cli) -> serde_json::Value {
     let project = project(cli);
     let out = cli.ok(&[
@@ -94,7 +94,7 @@ fn show_before_start_exits_1() {
     cli.create("a");
     let stderr = cli.fails(&["mockup", "show", "--for", "a"], 1);
     assert!(
-        stderr.contains("txc mockup: run 'txc mockup start' first"),
+        stderr.contains("tx mockup: run 'tx mockup start' first"),
         "{stderr}"
     );
 }
@@ -161,7 +161,7 @@ fn no_agent_exits_2() {
         2,
     );
     assert!(
-        stderr.contains("txc mockup: no agent session (use --for)"),
+        stderr.contains("tx mockup: no agent session (use --for)"),
         "{stderr}"
     );
 }

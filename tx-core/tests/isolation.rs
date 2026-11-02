@@ -30,7 +30,7 @@ fn private_server_never_touches_the_default_one_or_the_home_conf() {
     require_tmux!();
     let before = probe_server_sessions();
     let home = tempfile::Builder::new()
-        .prefix("txc-home")
+        .prefix("tx-home")
         .tempdir_in("/tmp")
         .unwrap();
     std::fs::write(
@@ -93,7 +93,7 @@ fn child_create() {
 #[test]
 fn overlong_socket_path_fails_before_any_file_exists() {
     let root = tempfile::Builder::new()
-        .prefix("txc")
+        .prefix("tx")
         .tempdir_in("/tmp")
         .unwrap();
     let home = root.path().join("d".repeat(110));

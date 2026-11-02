@@ -34,7 +34,7 @@ pub struct Skipped {
 impl Skipped {
     pub fn warning(&self) -> String {
         format!(
-            "txc artifact: skipping unreadable artifact {}: {}",
+            "tx artifact: skipping unreadable artifact {}: {}",
             self.name, self.error
         )
     }
@@ -418,7 +418,7 @@ mod tests {
         assert_eq!(ids, ["b-good", "good"]);
         let warnings: Vec<String> = scan.skipped.iter().map(Skipped::warning).collect();
         assert_eq!(warnings.len(), 2);
-        assert!(warnings[0].starts_with("txc artifact: skipping unreadable artifact bad.json: "));
+        assert!(warnings[0].starts_with("tx artifact: skipping unreadable artifact bad.json: "));
         assert!(warnings[1].contains("old.json: record artifact_schema_version=1"));
     }
 

@@ -17,7 +17,7 @@ def parse_arguments() -> argparse.Namespace:
 
 def main() -> None:
     arguments = parse_arguments()
-    # The tour runtime is tx-client's lua/tx-tour.lua, on every txc nvim view's runtimepath.
+    # The tour runtime is tx-client's lua/tx-tour.lua, on every tx nvim view's runtimepath.
     lua_expression = "require('tx-tour')(_A.stops)"
     lua_arguments = {"stops": str(arguments.stops.resolve())}
     remote_expression = (

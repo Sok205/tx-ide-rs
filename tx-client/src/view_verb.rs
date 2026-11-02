@@ -1,4 +1,4 @@
-//! `txc ui view open|ls|close`: the views store from a shell. `ls` first closes the views whose
+//! `tx ui view open|ls|close`: the views store from a shell. `ls` first closes the views whose
 //! agent is gone (decision V3: orphans go on listing, not through events).
 
 use std::path::PathBuf;
@@ -8,9 +8,9 @@ use tx_core::{AgentId, TxCore, VerbError, VerbIo};
 use crate::tmux::Ui;
 use crate::views::{self, ViewKind, ViewRequest};
 
-const USAGE: &str = "usage: txc ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> [<argument>…]]\n\
-                     \x20      txc ui view ls\n\
-                     \x20      txc ui view close <name>";
+const USAGE: &str = "usage: tx ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> [<argument>…]]\n\
+                     \x20      tx ui view ls\n\
+                     \x20      tx ui view close <name>";
 
 #[derive(Debug, PartialEq, Eq)]
 struct OpenArguments {
@@ -150,7 +150,7 @@ fn close(ui: &Ui, io: &mut VerbIo<'_>, name: &str) -> Result<i32, VerbError> {
     match views::close(ui, name) {
         Ok(()) => Ok(0),
         Err(error) => {
-            let _ = writeln!(io.stderr, "txc ui view close: {error}");
+            let _ = writeln!(io.stderr, "tx ui view close: {error}");
             Ok(1)
         }
     }

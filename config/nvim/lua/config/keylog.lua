@@ -157,7 +157,7 @@ end
 
 function M.setup()
   if vim.env.TMUX then
-    local out = vim.fn.systemlist("txc whoami 2>/dev/null || tmux display-message -p '#S'")
+    local out = vim.fn.systemlist("tx whoami 2>/dev/null || tmux display-message -p '#S'")
     if vim.v.shell_error == 0 and out[1] then session = out[1] end
   end
 

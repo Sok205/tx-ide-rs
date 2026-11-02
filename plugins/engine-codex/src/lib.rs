@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn hook_command_wires_every_event_as_a_config_override() {
         let (_dir, profile) = profile("", &[]);
-        let hook_command = ["/x\"y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
+        let hook_command = ["/x\"y/tx".to_owned(), "chat".to_owned(), "hook".to_owned()];
         let session = record(serde_json::Value::Null);
         let plan = adapter()
             .start(
@@ -1008,7 +1008,7 @@ mod tests {
         assert_eq!(overrides.len(), HOOK_EVENTS.len());
         assert_eq!(
             overrides[4],
-            r#"hooks.Stop=[{matcher="",hooks=[{type="command",command="'/x\"y/txc' 'chat' 'hook' 'Stop' || exit 1"}]}]"#
+            r#"hooks.Stop=[{matcher="",hooks=[{type="command",command="'/x\"y/tx' 'chat' 'hook' 'Stop' || exit 1"}]}]"#
         );
         assert_eq!(
             &plan.args[plan.args.len() - 2..],
@@ -1020,7 +1020,7 @@ mod tests {
     fn plugin_registers_the_engine() {
         use tx_core::{CoreConfig, Plugin, PluginConfig, TxCore};
         let dir = tempfile::Builder::new()
-            .prefix("txc")
+            .prefix("tx")
             .tempdir_in("/tmp")
             .unwrap();
         let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
@@ -1268,7 +1268,7 @@ mod tests {
         }
     }
 
-    /// `txc migrate`: the version-1 launch's options (an effort Codex does not accept dropped),
+    /// `tx migrate`: the version-1 launch's options (an effort Codex does not accept dropped),
     /// and the conversation the chat plugin captured with its rollout; a resume id alone names
     /// the conversation without a path, since nothing can rebuild a rollout's name.
     #[test]

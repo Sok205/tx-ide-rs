@@ -593,7 +593,7 @@ mod tests {
         fn start() -> Option<Self> {
             Command::new("tmux").arg("-V").output().ok()?;
             let dir = tempfile::Builder::new()
-                .prefix("txc")
+                .prefix("tx")
                 .tempdir_in("/tmp")
                 .ok()?;
             let conf = dir.path().join("tmux.conf");

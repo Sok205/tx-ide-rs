@@ -5,7 +5,7 @@
 //! one line; reads (`content`, `diff`, `opened`) log a read-visibility line; queries do not log.
 //!
 //! Writes to one artifact are serialised by a flock on `.locks/<id>.lock`, held from loading the
-//! record to saving it, so two `txc` processes modifying at once produce two contiguous revs.
+//! record to saving it, so two `tx` processes modifying at once produce two contiguous revs.
 //!
 //! A diff's content is its patch (`kinds`): created from the worktree, re-snapshotted as a new
 //! revision by `modify` and by `open`; the worktree's repository is recorded with it. The close step an `open` leaves behind (a temporary
@@ -34,7 +34,7 @@ pub const WORKTREES_DIR: &str = ".worktrees";
 /// Beside an artifact's working copy: its pending close steps, by view name.
 pub const CLEANUP_FILE: &str = ".cleanup.json";
 
-/// A precondition failed; the verb prints `txc artifact: <error>`, exit 1.
+/// A precondition failed; the verb prints `tx artifact: <error>`, exit 1.
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
     #[error("artifact '{0}' not found")]
@@ -42,7 +42,7 @@ pub enum ArtifactError {
     /// A crash orphan holds the slot the next rev needs.
     #[error(
         "artifact {id}: rev {rev} is already claimed by a file the history does not know (a crashed \
-         write left an orphan; `txc artifact doctor --repair` clears it). Retry after the repair."
+         write left an orphan; `tx artifact doctor --repair` clears it). Retry after the repair."
     )]
     Conflict { id: String, rev: u64 },
     #[error("artifact id prefix '{token}' is ambiguous ({count} matches); use more characters")]
@@ -54,7 +54,7 @@ pub enum ArtifactError {
     #[error("artifact {id} revision {rev} is not utf-8 text; cannot diff")]
     NotText { id: String, rev: i64 },
     #[error(
-        "artifact {0} is a diff; its patch comes from the worktree, not a file (`txc artifact \
+        "artifact {0} is a diff; its patch comes from the worktree, not a file (`tx artifact \
          modify <id>` re-snapshots it)"
     )]
     NotEditable(String),
@@ -489,7 +489,7 @@ impl ArtifactService {
     }
 
     /// Remember the close step an `open` left behind, keyed by the view that needs it, so the
-    /// close can run from whichever `txc` process sees that view gone.
+    /// close can run from whichever `tx` process sees that view gone.
     pub fn record_cleanup(&self, artifact_id: &str, view: &str, cleanup: Cleanup) -> Result<()> {
         let _lock = self.lock(artifact_id)?;
         let artifact = self.require(artifact_id)?;
@@ -517,7 +517,7 @@ impl ArtifactService {
         Ok(true)
     }
 
-    /// Run every pending close step of an artifact now (`txc artifact close`); how many ran.
+    /// Run every pending close step of an artifact now (`tx artifact close`); how many ran.
     pub fn close_all(&self, artifact_id: &str) -> Result<usize> {
         let artifact = self.require(artifact_id)?;
         let views: Vec<String> = self.pending_cleanups(&artifact)?.into_keys().collect();
@@ -767,7 +767,7 @@ impl ArtifactService {
         if self.current_is_dirty(artifact)? {
             return Ok(vec![format!(
                 "{}: working copy differs from last rev {} (dirty: un-snapshotted edits; close \
-                 with `txc artifact modify`)",
+                 with `tx artifact modify`)",
                 artifact.id,
                 artifact.latest_rev()
             )]);

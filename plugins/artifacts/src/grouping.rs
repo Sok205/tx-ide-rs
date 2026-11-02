@@ -41,7 +41,7 @@ const EDIT_PLUGIN: &str = "edit";
 /// `ext["artifacts"]` on a session record.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ext {
-    /// The group override `txc group` sets.
+    /// The group override `tx group` sets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
 }
@@ -63,7 +63,7 @@ fn non_empty(value: Option<&Value>) -> Option<&str> {
     value?.as_str().filter(|group| !group.is_empty())
 }
 
-/// The session's own override: the prefix+e editor's, else `txc group`'s.
+/// The session's own override: the prefix+e editor's, else `tx group`'s.
 pub fn own_group(session: &Agent) -> Option<String> {
     let edit = session
         .ext

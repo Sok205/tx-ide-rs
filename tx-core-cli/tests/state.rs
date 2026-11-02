@@ -82,7 +82,7 @@ fn the_wired_hooks_move_a_claude_session() {
     let id = cli.create_claude("a");
     assert_eq!(cli.state_of("a"), "starting");
 
-    // The adapter wired every hook to this very txc, through `--settings`.
+    // The adapter wired every hook to this very tx, through `--settings`.
     let argv = cli.claude_argv();
     let at = argv.iter().position(|arg| arg == "--settings").unwrap();
     let settings: Value = serde_json::from_str(&argv[at + 1]).unwrap();

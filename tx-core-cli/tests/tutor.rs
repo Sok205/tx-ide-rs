@@ -1,4 +1,4 @@
-//! `txc tutor`: the scaffold, the `tutor-<lang>` view, progress and lesson checks.
+//! `tx tutor`: the scaffold, the `tutor-<lang>` view, progress and lesson checks.
 
 mod common;
 
@@ -30,7 +30,7 @@ impl Tutor {
         let output = self.run(args, stdin);
         assert!(
             output.status.success(),
-            "txc {args:?}: {}{}",
+            "tx {args:?}: {}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
@@ -90,7 +90,7 @@ fn misuse_is_exit_2() {
     let cli = Cli::new();
     for args in [&["tutor"][..], &["tutor", "fly"], &["tutor", "goto"]] {
         let stderr = cli.fails(args, 2);
-        assert!(stderr.starts_with("usage: txc tutor"), "{stderr}");
+        assert!(stderr.starts_with("usage: tx tutor"), "{stderr}");
     }
 }
 
@@ -112,7 +112,7 @@ fn every_action_but_start_needs_a_tutorial_in_progress() {
     for action in ["check", "next", "prev", "status", "hint", "reset"] {
         let stderr = cli.fails(&["tutor", action], 1);
         assert!(
-            stderr.contains("no python tutorial in progress; run `txc tutor start`"),
+            stderr.contains("no python tutorial in progress; run `tx tutor start`"),
             "{action}: {stderr}"
         );
     }
@@ -165,7 +165,7 @@ fn start_refuses_when_a_required_program_is_missing() {
     assert!(!project.exists(), "nothing scaffolded");
 }
 
-/// Gate (adapted from `tx start --tutor python`): `txc tutor start python` scaffolds the
+/// Gate (adapted from `tx start --tutor python`): `tx tutor start python` scaffolds the
 /// project and opens the tutor view.
 #[test]
 fn tutor_start_python_scaffolds_and_opens_the_tutor_view() {

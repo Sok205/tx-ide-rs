@@ -30,7 +30,7 @@ const ROLES_DIR: &str = "roles";
 /// The verb that starts the assistant session; `home` nests into it when the plugin is active.
 const ASSISTANT_VERB: &str = "assistant";
 
-/// `@tx-data` locates `bin/` and `keys/`; `@tx-arguments` is what every `txc` a key fragment
+/// `@tx-data` locates `bin/` and `keys/`; `@tx-arguments` is what every `tx` a key fragment
 /// runs carries (the core's `cli_arguments()`, words split by spaces: `install` refuses unsafe
 /// paths). `detach-on-destroy on` detaches the clients of an ending session: a client nested in a
 /// view's pane goes, and the pane falls back to a shell. The terminal is kept in tmux by its own
@@ -39,7 +39,7 @@ fn conf_text(exe: &Path, data: &Path, arguments: &[String], others: &[&str]) -> 
     let data = data.display();
     let arguments = arguments.join(" ");
     let mut text = format!(
-        "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
+        "# tx-core server config, written by `tx ui install`. Re-run to update.\n\
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
          set -g detach-on-destroy on\n\
@@ -153,7 +153,7 @@ fn fail(io: &mut VerbIo<'_>, message: &str) -> Result<i32, VerbError> {
 }
 
 fn usage(io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
-    let _ = writeln!(io.stderr, "usage: txc ui install | attach | view <open|ls|close> …");
+    let _ = writeln!(io.stderr, "usage: tx ui install | attach | view <open|ls|close> …");
     Ok(2)
 }
 
@@ -192,7 +192,7 @@ impl Verb for ResourceVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [name] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _resource NAME");
+            let _ = writeln!(io.stderr, "usage: tx _resource NAME");
             return Ok(2);
         };
         match core.resources("").into_iter().find(|r| &r.name == name) {
@@ -202,7 +202,7 @@ impl Verb for ResourceVerb {
                     .map_err(|e| VerbError::Failed(format!("write: {e}")))?;
                 Ok(0)
             }
-            None => fail(io, &format!("txc _resource: no such resource: {name}")),
+            None => fail(io, &format!("tx _resource: no such resource: {name}")),
         }
     }
 }
@@ -279,7 +279,7 @@ fn prune(dir: &Path, keep: &HashSet<PathBuf>) -> io::Result<()> {
 fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let exe = std::env::current_exe()
         .and_then(|exe| exe.canonicalize())
-        .map_err(|e| VerbError::Failed(format!("cannot resolve the txc binary: {e}")))?;
+        .map_err(|e| VerbError::Failed(format!("cannot resolve the tx binary: {e}")))?;
     let config = core.config();
     let data = &config.directories.data;
     let arguments = config.cli_arguments();
@@ -290,7 +290,7 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
         return fail(
             io,
             &format!(
-                "txc ui install: path contains unsafe characters: {}",
+                "tx ui install: path contains unsafe characters: {}",
                 path.display()
             ),
         );
@@ -301,7 +301,7 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
             return fail(
                 io,
                 &format!(
-                    "txc ui install: {} is a symlink; refusing to prune",
+                    "tx ui install: {} is a symlink; refusing to prune",
                     dir.display()
                 ),
             );
@@ -395,7 +395,7 @@ fn warm_assistant(core: &TxCore, io: &mut VerbIo<'_>) -> Option<String> {
             .filter(|name| !name.is_empty()),
         Ok(_) => None,
         Err(error) => {
-            let _ = writeln!(io.stderr, "txc ui attach: assistant: {error}");
+            let _ = writeln!(io.stderr, "tx ui attach: assistant: {error}");
             None
         }
     }
@@ -469,7 +469,7 @@ fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
         Some(socket) => {
             let _ = writeln!(
                 io.stderr,
-                "txc ui attach: nesting inside another tmux (socket {socket}); its prefix wins \u{2014} press the prefix twice to reach the IDE's keys"
+                "tx ui attach: nesting inside another tmux (socket {socket}); its prefix wins \u{2014} press the prefix twice to reach the IDE's keys"
             );
         }
         None => {}
@@ -497,16 +497,16 @@ mod tests {
     fn conf_text_is_exact() {
         assert_eq!(
             conf_text(
-                Path::new("/opt/txc"),
+                Path::new("/opt/tx"),
                 Path::new("/s/data"),
                 &words(&["--data-dir", "/s/data", "--run-dir", "/r"]),
                 &["kill", "labels"]
             ),
-            "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
+            "# tx-core server config, written by `tx ui install`. Re-run to update.\n\
              set -s exit-empty on\n\
              set -g history-limit 50000\n\
              set -g detach-on-destroy on\n\
-             set -g @tx-bin \"/opt/txc\"\n\
+             set -g @tx-bin \"/opt/tx\"\n\
              set -g @tx-data \"/s/data\"\n\
              set -g @tx-arguments \"--data-dir /s/data --run-dir /r\"\n\
              source-file \"/s/data/conf/tmux.conf\"\n\
@@ -599,7 +599,7 @@ mod tests {
             assert!(is_unsafe_path(Path::new(bad)), "{bad:?}");
         }
         for good in [
-            "/opt/txc",
+            "/opt/tx",
             "/Users/x/Rust-Roverprojects/poc_1/a.b",
             "/s/state",
         ] {

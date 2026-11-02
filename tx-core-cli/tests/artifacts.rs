@@ -1,4 +1,4 @@
-//! The artifacts plugin through the binary: `txc artifact …`, `txc group`, and prefix+a.
+//! The artifacts plugin through the binary: `tx artifact …`, `tx group`, and prefix+a.
 
 mod common;
 
@@ -25,13 +25,13 @@ fn ok_as(cli: &Cli, actor: &str, args: &[&str]) -> String {
     let output = run_as(cli, actor, args);
     assert!(
         output.status.success(),
-        "txc {args:?}: {}",
+        "tx {args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// `txc artifact create <file>`; returns the new id.
+/// `tx artifact create <file>`; returns the new id.
 fn create(cli: &Cli, actor: &str, name: &str, body: &str) -> String {
     let file = write_file(cli, name, body);
     let out = ok_as(cli, actor, &["artifact", "create", &file]);
@@ -71,7 +71,7 @@ fn help_lists_the_verbs() {
     }
     let usage = cli.ok(&["artifact", "help"]);
     assert!(
-        usage.starts_with("usage: txc artifact <subcommand>"),
+        usage.starts_with("usage: tx artifact <subcommand>"),
         "{usage}"
     );
 }
@@ -153,7 +153,7 @@ fn create_modify_show_diff_and_ls() {
 fn artifact_errors_exit_1_and_usage_exits_2() {
     let cli = Cli::new();
     let stderr = cli.fails(&["artifact", "show", "nope"], 1);
-    assert_eq!(stderr, "txc artifact: artifact 'nope' not found\n");
+    assert_eq!(stderr, "tx artifact: artifact 'nope' not found\n");
     let stderr = cli.fails(&["artifact", "show", "../x"], 1);
     assert!(stderr.contains("not found"), "{stderr}");
     let stderr = cli.fails(&["artifact", "create", "/no/such/file"], 2);

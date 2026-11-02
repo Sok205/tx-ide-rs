@@ -5,19 +5,19 @@ process (Claude Code, Codex) in its own worktree with a durable record, inside a
 on tx's **own** tmux server. Agents keep running after the CLI that launched them exits; attaching
 shows the agent's native terminal; detaching leaves it running. Views (nvim, shells, diffviews) sit
 beside them; a picker, a timeline, artifacts, a tutor and a one-line assistant are plugins. The
-front end is `txc`.
+front end is `tx`.
 
 The repository is one Cargo workspace: the `tx-core` library, the `tx-client` tmux/nvim layer, the
-plugins, the `txc`/`txi` binaries, the shipped roles (`tx-core/agents/`) and the operator's own
+plugins, the `tx`/`txi` binaries, the shipped roles (`tx-core/agents/`) and the operator's own
 nvim and tmux config (`config/`).
 
 ## Install
 
 ```bash
 git clone <this-repo> ~/tx-ide-rs
-~/tx-ide-rs/install            # cargo install txc and txi; txc ui install; link ~/.config/nvim and ~/.tmux.conf
+~/tx-ide-rs/install            # cargo install tx and txi; tx ui install; link ~/.config/nvim and ~/.tmux.conf
 ~/tx-ide-rs/install --dry-run  # print every change first
-txc ui attach                  # the IDE
+tx ui attach                  # the IDE
 ```
 
 Needs Rust 1.92+, tmux, fzf, git, jq, and at least one engine CLI (`claude`, `codex`); `nvim` for
@@ -28,13 +28,14 @@ views. The rest of this file is the full reference (directories, verbs, keys, pl
 ```bash
 cargo test --workspace                                  # needs tmux on PATH; uses private sockets
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p tx-core-cli -- help                        # the txc binary
+cargo run -p tx-core-cli -- help                        # the tx binary
 ```
 
 The tx-core API docs with a structure graph, built by `docs-site/`, are hosted at
-<https://sok205.github.io/tx-ide-rs/>. The previous implementation (the `tx` binary
-under `crates/`, its bash helpers and installer) was removed after the switch to `txc`; it is
-reachable at the tag `old-tx-final`.
+<https://sok205.github.io/tx-ide-rs/>. The previous implementation (an
+earlier `tx` binary under `crates/`, its bash helpers and installer) was removed after the switch
+to this one; it is reachable at the tag `old-tx-final`. This `tx` was called `txc` until the old
+one was gone; `install` leaves a `txc -> tx` link so anything still calling the old name works.
 
 ## Crates
 
@@ -44,24 +45,24 @@ reachable at the tag `old-tx-final`.
 | `plugins/engine-claude` (`tx-engine-claude`) | plugin: the `LlmEngine` for Claude Code | tx-core |
 | `plugins/engine-codex` (`tx-engine-codex`) | plugin: the `LlmEngine` for Codex | tx-core |
 | `plugins/labels` (`tx-labels`) | plugin: session labels (prefix+s, pane-border labels), `whoami` | tx-core, tx-client |
-| `plugins/kill` (`tx-kill`) | plugin: `txc kill`, prefix+X | tx-core, tx-client |
-| `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `txc pick`, prefix+t | tx-core, tx-client |
+| `plugins/kill` (`tx-kill`) | plugin: `tx kill`, prefix+X | tx-core, tx-client |
+| `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `tx pick`, prefix+t | tx-core, tx-client |
 | `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `chat ls` (the engine's conversation), `doctor --fix-hooks`, prefix+f (through core's fork); the peer-message parser the timeline uses | tx-core, tx-client |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-client |
-| `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `txc _new-agent`, prefix+n | tx-core, tx-client |
-| `plugins/assistant` (`tx-assistant`) | plugin: `txc assistant warm\|ask`, the `tx-assistant` session `ui attach` lands in and prefix+/ asks from any pane | tx-core, tx-client |
-| `plugins/mockup` (`tx-mockup`) | plugin: `txc mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-client, ratatui |
-| `plugins/tutor` (`tx-tutor`) | plugin: `txc tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships its `packs/` lesson packs | tx-core, tx-client, toml, libc |
-| `plugins/artifacts` (`tx-artifacts`) | plugin: `txc artifact create\|modify\|group\|ls\|show\|diff\|open\|path\|archive\|unarchive\|close\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`, of kind `document`, `diff` or another plugin's), `txc group` (effort groups), prefix+a | tx-core, tx-client |
-| `plugins/tour` (`tx-tour`) | plugin: `txc tour create <stops.lua> --title T [--cwd W]\|open <id> [--tag T]`, code tours as artifacts of kind `tour` opened as nvim views of their stops | tx-core, tx-client, tx-artifacts |
-| `plugins/timeline` (`tx-timeline`) | plugin: `txc timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-client, tx-chat (message parser), ratatui |
-| `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `txc menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-client, ratatui, tempfile |
-| `tx-client` | library: the socket-bound `tmux::Ui` helper, the `views` store (the non-LLM tmux sessions the client owns, kept in tmux session options), the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins; also plugin `ide`: `txc ui install\|attach\|view`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core |
-| `tx-core-cli` | `txc`: a thin CLI over the library; registers the bundled plugins. `txi`: the internal binary the engines' wired hooks run (`txi hook <Event>`) | tx-core and every plugin above |
+| `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `tx _new-agent`, prefix+n | tx-core, tx-client |
+| `plugins/assistant` (`tx-assistant`) | plugin: `tx assistant warm\|ask`, the `tx-assistant` session `ui attach` lands in and prefix+/ asks from any pane | tx-core, tx-client |
+| `plugins/mockup` (`tx-mockup`) | plugin: `tx mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-client, ratatui |
+| `plugins/tutor` (`tx-tutor`) | plugin: `tx tutor start\|check\|next\|prev\|goto\|status\|hint\|reset`, the vimtutor-style walkthrough in a `tutor-<lang>` view; ships its `packs/` lesson packs | tx-core, tx-client, toml, libc |
+| `plugins/artifacts` (`tx-artifacts`) | plugin: `tx artifact create\|modify\|group\|ls\|show\|diff\|open\|path\|archive\|unarchive\|close\|doctor` (durable versioned deliverables in `<data>/plugins/artifacts/`, of kind `document`, `diff` or another plugin's), `tx group` (effort groups), prefix+a | tx-core, tx-client |
+| `plugins/tour` (`tx-tour`) | plugin: `tx tour create <stops.lua> --title T [--cwd W]\|open <id> [--tag T]`, code tours as artifacts of kind `tour` opened as nvim views of their stops | tx-core, tx-client, tx-artifacts |
+| `plugins/timeline` (`tx-timeline`) | plugin: `tx timeline` (swimlanes of session activity, `--snapshot`, `health`), the resident popup behind prefix+T, `_timeline-json` (main's `/api/timeline` payload) | tx-core, tx-client, tx-chat (message parser), ratatui |
+| `plugins/menu` (`tx-menu`) | plugin: the tx-ide start menu `tx menu` (prefix+m, and once per server on the first attach): the shimmering `TX` title screen, every action one key away, the recent past sessions | tx-core, tx-client, ratatui, tempfile |
+| `tx-client` | library: the socket-bound `tmux::Ui` helper, the `views` store (the non-LLM tmux sessions the client owns, kept in tmux session options), the row renderer (`render`), the modal editor (`editor`) and the fzf one-line prompt (`prompt`) shared by the key plugins; also plugin `ide`: `tx ui install\|attach\|view`; composes the server's `tmux.conf` from plugin resources; the theme, navigation keys and helper scripts | tx-core |
+| `tx-core-cli` | `tx`: a thin CLI over the library; registers the bundled plugins. `txi`: the internal binary the engines' wired hooks run (`txi hook <Event>`) | tx-core and every plugin above |
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
-carries everything; only `txc` / `txi` touch `std::env`. Without `--profile-dir` / `--skill-dir`,
-`txc` resolves roles from `<data>/roles` (the roles the core ships from `tx-core/agents/` — COMMON, DEVELOPER, ORCHESTRATOR, QA, TX-ASSISTANT, the COMMON.local overlay and the tx-* skills — plus any a plugin adds, written by `ui install`) and
+carries everything; only `tx` / `txi` touch `std::env`. Without `--profile-dir` / `--skill-dir`,
+`tx` resolves roles from `<data>/roles` (the roles the core ships from `tx-core/agents/` — COMMON, DEVELOPER, ORCHESTRATOR, QA, TX-ASSISTANT, the COMMON.local overlay and the tx-* skills — plus any a plugin adds, written by `ui install`) and
 then `<config>/roles` (yours, never pruned, overriding a shipped role of the same name), with
 skills under each one's `skills/`.
 
@@ -80,16 +81,16 @@ match `[A-Za-z0-9_.-]+`. Each directory resolves, first match wins:
 | run | `--run-dir` | `TX_RUN_DIR` | `$XDG_RUNTIME_DIR/<app>` | `$TMPDIR/<app>.$USER` (else `/tmp`) | `tmux.sock` (the directory is mode 0700) |
 
 Core exports all five, and `TX_APPNAME`, into every session it launches: tmux does not pass the
-caller's `XDG_*` on, and this is how a `txc` or a `txi hook` inside a session opens the same core.
-A plugin that re-invokes `txc` (key bindings, popups, detached children) passes
+caller's `XDG_*` on, and this is how a `tx` or a `txi hook` inside a session opens the same core.
+A plugin that re-invokes `tx` (key bindings, popups, detached children) passes
 `CoreConfig::cli_arguments()`, the five flags plus `--socket` when it is overridden; the tmux key
 fragments read the same words from the server option `@tx-arguments`.
 
 `--state-dir` used to name the one directory everything lived in (`~/.tx-core`, or
-`$TX_CORE_HOME`). It now names only the state directory, and `txc` refuses it, pointing at
-`txc migrate`, when it is the only directory flag and names a directory with `sessions/` in it.
+`$TX_CORE_HOME`). It now names only the state directory, and `tx` refuses it, pointing at
+`tx migrate`, when it is the only directory flag and names a directory with `sessions/` in it.
 
-`txc migrate [--from DIR]` moves such a version-1 home (default `$TX_CORE_HOME`, else
+`tx migrate [--from DIR]` moves such a version-1 home (default `$TX_CORE_HOME`, else
 `~/.tx-core`) once: `agents/` to `<data>/roles/`, `user-agents/` to `<config>/roles/`,
 `plugins.yaml` to config, `sessions/`, `log.jsonl`, `plugins/`, `bin/`, `keys/`, `conf/` and
 `tmux.conf` to data, `profiles/` to state; `locks/` and the socket stay. It refuses while the old
@@ -99,10 +100,10 @@ filesystem and copies then deletes across filesystems, writes `<data>/MIGRATED-F
 `<old>/MOVED-TO`, keeps the old directory, and finishes with `ui install`, since the moved
 `tmux.conf` names the old paths.
 
-The same `txc migrate` then upgrades every version-1 record left in `<data>/sessions/<id>.json`
+The same `tx migrate` then upgrades every version-1 record left in `<data>/sessions/<id>.json`
 (moved from the old home, or written by a build before record version 2) to
-`<data>/agents/<id>/agent.json`. Until that runs, every other `txc` verb refuses with
-`N version-1 record(s) in <data>/sessions: run \`txc migrate\``: the mapping needs the engine
+`<data>/agents/<id>/agent.json`. Until that runs, every other `tx` verb refuses with
+`N version-1 record(s) in <data>/sessions: run \`tx migrate\``: the mapping needs the engine
 plugins and moves files, so nothing upgrades in memory. Per record: `cwd` → `working_directory`,
 `parent` → `parent_id`, `launch.profile` → `roles`, `launch.engine` → `engine`;
 `lifecycle: exited|stopped` → `state: ended`, a running record keeps its `state` (`starting`
@@ -122,7 +123,7 @@ whose engine plugin is disabled is left for a later run (`deferred`). The report
 ## Architecture
 
 ```
-            txc (CLI)             your program / IDE
+            tx (CLI)             your program / IDE
                  \                     /
                   v                   v
           +---------------------------------+
@@ -154,7 +155,7 @@ whose engine plugin is disabled is left for a later run (`deferred`). The report
 
 There is no lifecycle field: an agent is running while `state` is not `ended`, and `ended` is
 final until a respawn; the event log says whether it exited (vanished) or was stopped
-(`stop_agent`). `ListFilter::running()` / `ended()` and `txc ls --running` / `--ended` pick a
+(`stop_agent`). `ListFilter::running()` / `ended()` and `tx ls --running` / `--ended` pick a
 side.
 
 ### Agent state: the engine adapter decides, core applies
@@ -170,9 +171,9 @@ The picker's IDLE column and the pane-border age read `last_activity_at`, fallin
 
 At launch the adapter wires the hooks it needs into the CLI's own command line (Claude
 `--settings '{"hooks":…}'`, Codex `-c hooks.<Event>=…`), each running `CoreConfig::hook_command`
-plus the CLI's event name. For `txc` that is `txi hook <Event>`: `txi` is a second binary of
-`tx-core-cli`, installed next to `txc`, the internal entry point machines run (nothing in it is
-listed in `txc help`). It hands the payload to `TxCore::hook`, which asks
+plus the CLI's event name. For `tx` that is `txi hook <Event>`: `txi` is a second binary of
+`tx-core-cli`, installed next to `tx`, the internal entry point machines run (nothing in it is
+listed in `tx help`). It hands the payload to `TxCore::hook`, which asks
 `LlmEngine::on_hook(state, &hook)` for the new state (`None`: nothing changes) and writes it
 under the session lock, logging `state-changed` (`from → to`) when the state moved.
 Core owns what the adapter cannot see: a new agent starts `starting`, and an exited or stopped one
@@ -200,7 +201,7 @@ with a role already did, through `-c developer_instructions`; only role-less one
    removed; after step 5, the tmux session is killed and the profile file removed: no orphans.
 
 Env layering, later wins: `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the five `TX_*_DIR`, then
-`CoreConfig::env` (where `txc` puts `TX_APPNAME`),
+`CoreConfig::env` (where `tx` puts `TX_APPNAME`),
 then `CreateOptions::env`, then the engine plan's env.
 
 ### Liveness and messaging
@@ -298,13 +299,13 @@ on an event, re-read the session with `get_agent`. Lines are never torn, so `tai
 ### From inside an agent
 
 Every session carries `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the five `TX_*_DIR` and `TX_APPNAME`, so an agent can
-run `txc send <name> …` and the message arrives as `<from-agent session="…">`. `txc` treats the
+run `tx send <name> …` and the message arrives as `<from-agent session="…">`. `tx` treats the
 caller as an agent only when `$TMUX` names tx's own socket; anywhere else the sender is the user.
 
 ## Plugins
 
 Everything but the core is a plugin: a crate under `plugins/<id>/` implementing `tx_core::Plugin`,
-which fills any of four slots — engines, event sinks, verbs, resources (`tx-core/src/plugin.rs`). `txc`
+which fills any of four slots — engines, event sinks, verbs, resources (`tx-core/src/plugin.rs`). `tx`
 links them through `tx-core-cli/src/plugins.rs::MANIFEST` and switches them in
 `<config>/plugins.yaml` (`--plugins FILE` overrides):
 
@@ -316,8 +317,8 @@ plugins:
 ```
 
 Missing file = everything on; an unknown id or a malformed file is a usage error. The id of a
-retired plugin (`hooks`) is skipped, so an older file keeps loading. `txc plugins`
-lists ids and status; `txc help` lists plugin verbs. Plugins keep per-session data in the
+retired plugin (`hooks`) is skipped, so an older file keeps loading. `tx plugins`
+lists ids and status; `tx help` lists plugin verbs. Plugins keep per-session data in the
 record's `ext.<id>` object via `TxCore::update_ext`.
 
 A resource is a named static blob a plugin publishes with `Registry::resource(name, bytes)`
@@ -329,10 +330,10 @@ like its verbs.
 | plugin | contributes |
 |---|---|
 | `engine-claude`, `engine-codex` | one engine each |
-| `ide` | `txc ui install\|attach`, `txc ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> …]\|ls\|close <name>` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme and the status line: system resources, the clock, the session name), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
+| `ide` | `tx ui install\|attach`, `tx ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> …]\|ls\|close <name>` (and the hidden `_resource <name>`); resources `conf/tmux.conf` (theme and the status line: system resources, the clock, the session name), `keys/ide.tmux` (navigation keys, C-u / C-d, M-digits, pane-border look), `bin/tmux-nav`, `bin/tmux-system-resources` |
 | `labels` | `whoami` and the internal `_relabel`, `_pane-label`, `_pane-info`, `_tmux-name`; resource `keys/labels.tmux` (prefix+s, the pane-border label with its right-aligned state mark: a green bar while working, the age since the last activity while idle; the after-new-window hook) |
-| `kill` | `txc kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
-| `picker` | `txc pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
+| `kill` | `tx kill <name>`; resources `keys/kill.tmux` (prefix+X) and `bin/tmux-kill-tx-session` |
+| `picker` | `tx pick` (the fzf session picker) and the internal `_list`; resource `keys/picker.tmux` (prefix+t). Its Ctrl-T and Ctrl-D / Y binds appear only while `edit` and `kill` are active |
 | `edit` | the internal `_edit-session` and `_edit-tag`; resources `keys/edit.tmux` (prefix+e) and `bin/tmux-edit-tx-session`; owns `ext.edit` (`{"group": …}`) |
 | `spawn` | the internal `_new-agent <pane> <client>` (the form, then `create_agent`); resources `keys/spawn.tmux` (prefix+n), `bin/tmux-new-agent` |
 | `chat` | `chat ls <session>` (the current conversation, `TxCore::conversation`), `doctor --fix-hooks` (see "Upgrading" below), and the internal `_fork-pane` (prefix+f: `TxCore::fork_agent` with the name from the popup); resources `keys/chat.tmux` (prefix+f) and `bin/tmux-fork-tx-session` |
@@ -340,10 +341,10 @@ like its verbs.
 | `mockup` | `mockup start --project DIR` (session dir under `<project>/.superpowers/mockup/<id>`, the `mockup-<agent>` view), `show` (switch the operator's outermost client there), `wait`, `stop`, and the internal `_mockup-view`; owns `ext.mockup` (`{"dir": …}`); its skill and the COMMON overlay are shipped by the core |
 | `tutor` | `tutor start [LANG] [--dir DIR] [--detach]` (scaffold `~/tx-tutor/<lang>` as a git repo, open the `tutor-<lang>` view: lesson nvim, key cheat sheet, two shells), `check` (run the lesson's http / tx / file / command / confirm checks, advance), `next`, `prev`, `goto N`, `status`, `hint`, `reset [--hard]`; progress in `<data>/plugins/tutor/<lang>.json`; resources `tutor/**` (the plugin's `packs/` tree, materialised under `<data>/plugins/tutor/packs/`, plus its own `lesson.lua` bound to the core's socket). `tx` checks read the record's `status.state`; `chat_origin` matches nothing until a chat plugin exists |
 
-| `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"group": …}`; a legacy `bound` on records written before artifact views is read until the process launch leaves core); every artifact has a kind: a `document` (a file, edited in place under `artifact path <id>` and snapshotted by `artifact modify <id>`) opens in a tx-client view of kind `editor`; a `diff` (`create --kind diff [--cwd W] [--base SHA]`: `git diff <base>` of worktree W plus its untracked files, the base pinned to a commit at create, the patch being the artifact's versioned content `current.patch` that `modify` and `open` re-snapshot) opens in a view of kind `diff` running `nvim -c "DiffviewOpen <base>"` in the worktree, or when the worktree is gone in a temporary detached worktree at the base with the patch applied (made from the worktree's git common directory, recorded as `repository` at create, else a sibling checkout; its close step is kept in `<id>/.cleanup.json` by view name and run by `artifact close <id>`, by `doctor --repair`, or by the next `open` once the view has ended), or when no checkout exists as the patch in an editor; any other kind (a `tour`) is opened by convention, `txc <kind> open <id>` run in-process by the plugin registering that verb, else "no opener for kind"; the view is bound to the artifact (`@tx-view-bound`) and found again by that binding, so `artifact open` and prefix+a on an artifact already open show its view instead of starting another (`artifact open` switches the client to it when run inside the server, else prints its name); `archive <id>` hides a finished artifact from prefix+a and `ls` (content kept; `ls --archived` includes it, `unarchive` brings it back), `ls --kind K` filters by kind; `group <view>` prints a view's resolved group (its parent agent's override, else its artifact's) and refuses to set one; and the store `<data>/plugins/artifacts/` (`<id>.json` with `kind` and `archived`, both optional on read so older records are documents; `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl`, `.locks/` and `.worktrees/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
+| `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"group": …}`; a legacy `bound` on records written before artifact views is read until the process launch leaves core); every artifact has a kind: a `document` (a file, edited in place under `artifact path <id>` and snapshotted by `artifact modify <id>`) opens in a tx-client view of kind `editor`; a `diff` (`create --kind diff [--cwd W] [--base SHA]`: `git diff <base>` of worktree W plus its untracked files, the base pinned to a commit at create, the patch being the artifact's versioned content `current.patch` that `modify` and `open` re-snapshot) opens in a view of kind `diff` running `nvim -c "DiffviewOpen <base>"` in the worktree, or when the worktree is gone in a temporary detached worktree at the base with the patch applied (made from the worktree's git common directory, recorded as `repository` at create, else a sibling checkout; its close step is kept in `<id>/.cleanup.json` by view name and run by `artifact close <id>`, by `doctor --repair`, or by the next `open` once the view has ended), or when no checkout exists as the patch in an editor; any other kind (a `tour`) is opened by convention, `tx <kind> open <id>` run in-process by the plugin registering that verb, else "no opener for kind"; the view is bound to the artifact (`@tx-view-bound`) and found again by that binding, so `artifact open` and prefix+a on an artifact already open show its view instead of starting another (`artifact open` switches the client to it when run inside the server, else prints its name); `archive <id>` hides a finished artifact from prefix+a and `ls` (content kept; `ls --archived` includes it, `unarchive` brings it back), `ls --kind K` filters by kind; `group <view>` prints a view's resolved group (its parent agent's override, else its artifact's) and refuses to set one; and the store `<data>/plugins/artifacts/` (`<id>.json` with `kind` and `archived`, both optional on read so older records are documents; `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl`, `.locks/` and `.worktrees/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
 | `tour` | `tour create <stops.lua> --title T [--cwd W]` checks the stops with `nvim --clean -l` (they must load as a Lua list) and registers an artifact of kind `tour` (`{"kind": "tour", "worktree": <absolute W, default cwd>, "stops": "current.lua"}`) through the artifacts service; `tour open <id> [--tag T]`, also what `artifact open` and prefix+a run for a tour, shows the view already bound to it, else starts a view of kind `tour` running nvim in the worktree with `require("tx-tour")(<current.lua>)` on `VimEnter` (after tx-client's runtimepath `-c`), or fails with "tour worktree `<W>` is gone"; a tour is revised like a document (`artifact path` + `artifact modify`). The stops file is Lua run inside nvim at create and at every open: it is as trusted as whoever wrote it |
 | `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads each record's transcript through `TxCore::conversation` (the engine names it), model and effort from the engine data, `status` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
-| `menu` | `menu` and the internal `_menu-open <pane> <client>` (the menu in an 80% popup; after it closes, runs the choice through `txc` / tmux: `_new-agent`, `pick`, `_fork-pane`, `_timeline-attach`, `_artifact-menu`, `tutor start`, `assistant warm` + `switch-client`, `resume`), `_menu-first` (the client-attached hook: test-and-sets the server option `@tx-menu-shown`, skips clients nested in the server's own panes) and `_menu-tui`; items of disabled plugins are hidden; reads `TxCore::conversation` (the chat count of a past session) and the other plugins' `keys/*.tmux` (the cheat sheet); resource `keys/menu.tmux` (prefix+m, hook `client-attached`) |
+| `menu` | `menu` and the internal `_menu-open <pane> <client>` (the menu in an 80% popup; after it closes, runs the choice through `tx` / tmux: `_new-agent`, `pick`, `_fork-pane`, `_timeline-attach`, `_artifact-menu`, `tutor start`, `assistant warm` + `switch-client`, `resume`), `_menu-first` (the client-attached hook: test-and-sets the server option `@tx-menu-shown`, skips clients nested in the server's own panes) and `_menu-tui`; items of disabled plugins are hidden; reads `TxCore::conversation` (the chat count of a past session) and the other plugins' `keys/*.tmux` (the cheat sheet); resource `keys/menu.tmux` (prefix+m, hook `client-attached`) |
 
 The picker's role column reads `ext.spawn.kind`, which a later plugin writes; until then every
 process session shows `shell`.
@@ -364,28 +365,28 @@ refreshed to `Exited` and the assistant started again.
 Each engine records its conversation in its own engine data (`ext.claude`, `ext.codex`:
 `conversation_id`, `transcript_path`) from the hooks it wires per launch, and core archives the
 transcript under the data dir. Readers ask core: `TxCore::conversation(id)` hands the record to its
-engine, which names the conversation; `txc chat ls <session>` prints it. Fork is core's:
-`txc fork SOURCE --prompt T` branches the source's conversation into a new agent in its own
+engine, which names the conversation; `tx chat ls <session>` prints it. Fork is core's:
+`tx fork SOURCE --prompt T` branches the source's conversation into a new agent in its own
 worktree. prefix+f forks the session in the active pane through `_fork-pane`; the outcome is on
 the status line.
 
 ### Upgrading from a version with `chat hooks` / `history-hooks`
 
-Older versions captured chats with globally installed agent hooks (`txc chat hooks install`, which
-ran `_chat-hook`, and `txc history-hooks install`, which ran `_history-ingest` and mirrored
+Older versions captured chats with globally installed agent hooks (`tx chat hooks install`, which
+ran `_chat-hook`, and `tx history-hooks install`, which ran `_history-ingest` and mirrored
 transcripts under `plugins/history/`). Those verbs are gone, so the entries they added to
 `~/.claude/settings.json` and `~/.codex/hooks.json` now call a verb that no longer exists. Remove
 them once:
 
 ```
-txc doctor --fix-hooks
+tx doctor --fix-hooks
 ```
 
 It reads the sidecars the old installs wrote (`.tx-chat-managed.json`,
 `.tx-history-managed.json` next to each hook file) and removes exactly the entries they recorded;
 when nothing else changed since the install it restores the backup taken then. Backups are kept,
 and a second run does nothing. Without a sidecar, delete the hook blocks whose command runs
-`txc _chat-hook` or `txc _history-ingest` by hand. `ext.chat`, `ext.history` and
+`tx _chat-hook` or `tx _history-ingest` by hand. `ext.chat`, `ext.history` and
 `plugins/history/` already on disk are left as they are; nothing reads them any more.
 
 ## Running the IDE
@@ -393,17 +394,17 @@ and a second run does nothing. Without a sidecar, delete the hook blocks whose c
 Needs tmux, `fzf` and `curl` (the picker reloads itself through fzf's `--listen` port).
 
 ```
-txc ui install    # writes <data>/{bin,keys,conf,roles}/* and <data>/tmux.conf
-txc ui attach     # attaches this terminal to the core server's `home` session
+tx ui install    # writes <data>/{bin,keys,conf,roles}/* and <data>/tmux.conf
+tx ui attach     # attaches this terminal to the core server's `home` session
 ```
 
 ### Installing, and the switch from the old `tx`
 
-`install` makes txc the daily driver in one run; `install --dry-run` prints every file
+`install` makes tx the daily driver in one run; `install --dry-run` prints every file
 change it would make and changes nothing. It is idempotent: a second run finds nothing to do.
 
 ```
-./install             # cargo install --path tx-core-cli (txc, txi); txc ui install; the config links; the switch
+./install             # cargo install --path tx-core-cli (tx, txi, a txc link); tx ui install; the config links; the switch
 ./install --dry-run
 ```
 
@@ -421,7 +422,7 @@ sets `@tx-ide-bin tx-old`, which the old tmux fragment reads for its prefix+t / 
 entries whose command lives under `~/.tx-ide/hooks/` leave `~/.claude/settings.json` and
 `~/.codex/hooks.json`, with the old Claude `statusLine`, after a `<file>.bak.<stamp>` copy of
 each; every other entry stays byte for byte (the old uninstall is not run: it would restore the
-pre-tx hooks its marker recorded). `txc doctor --fix-hooks` then removes what older txc versions
+pre-tx hooks its marker recorded). `tx doctor --fix-hooks` then removes what older tx versions
 wired. The script never touches a tmux server or `~/.tx-ide`'s data; it ends with what is left to do by
 hand (restart the old default server so it stops sourcing the old fragment). `$HOME`, `$CARGO_INSTALL_ROOT`,
 `$TX_APPNAME`, `$TX_IDE_HOME`, `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honoured, so the whole
@@ -431,8 +432,8 @@ run can be rehearsed against copies under a throwaway `HOME` (with `$RUSTUP_HOME
 `ui install` materialises the core's roles and each active plugin's resources under `<data>/{bin,keys,conf,roles}` and
 writes `<data>/tmux.conf`, which sets `@tx-bin`, `@tx-data` and `@tx-arguments` and runs
 `keys/ide.tmux` and then every other active plugin's `keys/<id>.tmux`. The key bindings and
-`bin/*` find `txc`, its directories and the helper scripts through those server options, so re-run `ui install` after rebuilding `txc`. Files in those
-directories that no active plugin provides are deleted, so `txc` needs nothing from the source
+`bin/*` find `tx`, its directories and the helper scripts through those server options, so re-run `ui install` after rebuilding `tx`. Files in those
+directories that no active plugin provides are deleted, so `tx` needs nothing from the source
 tree at run time. It refuses a binary or directory path containing whitespace, a backslash, a
 backtick or any of `"'$#;`, since the paths are spliced into tmux config lines.
 
@@ -451,27 +452,27 @@ is printed to stderr and `home` opens as a plain view. To try the IDE, press pre
 open a shell (or any program) as a view and attach:
 
 ```
-txc ui view open demo --kind shell --cwd ~/code/project -- zsh
-txc ui attach     # then prefix+t
+tx ui view open demo --kind shell --cwd ~/code/project -- zsh
+tx ui attach     # then prefix+t
 ```
 
-`txc ui view open … -- PROGRAM` is the way to start a shell or any other non-LLM program on the
-core's server; `txc create` starts agents only (`--engine` and `--prompt` are required). A
+`tx ui view open … -- PROGRAM` is the way to start a shell or any other non-LLM program on the
+core's server; `tx create` starts agents only (`--engine` and `--prompt` are required). A
 record with `"kind": "process"` left on disk by an older build is skipped by every read and
-named on stderr when `txc` opens the core, until Storage PR 14's migration moves it.
+named on stderr when `tx` opens the core, until Storage PR 14's migration moves it.
 
 **Views.** Every non-LLM tmux session on the core's server is a tx-client *view*: the `home`
 base, the `tutor-<lang>`, `mockup-<agent>` and `tx-timeline` viewers, an artifact's nvim
-(`txc artifact open`, prefix+a: kind `editor`, `diff` for a diff artifact's diffview, or `tour` for a tour,
+(`tx artifact open`, prefix+a: kind `editor`, `diff` for a diff artifact's diffview, or `tour` for a tour,
 `@tx-view-bound <artifact id>`, parent the opening
-agent), and the shells and editors `txc ui view open` starts. A view has no core record and never shows in `txc ls`; its fields live
+agent), and the shells and editors `tx ui view open` starts. A view has no core record and never shows in `tx ls`; its fields live
 in tmux session options only (`@tx-view 1`, `@tx-view-kind home|editor|diff|tour|shell|timeline|tutor|mockup`,
 `@tx-view-parent <agent id>`, `@tx-view-bound`, `@tx-view-tags`, `@tx-view-created`), so nothing
-goes stale when the server dies. `txc ui view ls` first closes the views whose parent agent is
+goes stale when the server dies. `tx ui view ls` first closes the views whose parent agent is
 gone (no longer running), then lists the rest. Closing and renaming go through the
 `views` guard, which refuses any session core marked with `@tx-id`: an agent is stopped only
-through `txc kill`. prefix+X closes a shell, editor, timeline, tutor or mockup view after a
-confirmation, keeps refusing the home base, and kills an agent through `txc kill` as before.
+through `tx kill`. prefix+X closes a shell, editor, timeline, tutor or mockup view after a
+confirmation, keeps refusing the home base, and kills an agent through `tx kill` as before.
 
 The prefix is `C-a`.
 

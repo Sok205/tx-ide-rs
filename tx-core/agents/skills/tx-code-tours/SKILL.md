@@ -5,7 +5,7 @@ description: Use when the user asks for a tour or walkthrough of code. Investiga
 
 # Code tours with nvim diagnostics
 
-Show reasoning on the code using the shipped `tx-tour` runtime (`lua/tx-tour.lua`, which txc
+Show reasoning on the code using the shipped `tx-tour` runtime (`lua/tx-tour.lua`, which tx
 puts on the runtimepath of every nvim view). Do not inline the runtime or use the
 JSON/`:TourApply` workflow.
 
@@ -34,21 +34,21 @@ Its result controls every downstream match.]],
 The usual way: a tour artifact the user opens whenever they want, in a bound nvim view:
 
 ```bash
-txc tour create /tmp/code-tour/stops.lua --title "<topic> tour" --cwd <worktree>   # prints the id
-txc artifact open <id>
+tx tour create /tmp/code-tour/stops.lua --title "<topic> tour" --cwd <worktree>   # prints the id
+tx artifact open <id>
 ```
 
-`txc tour create` checks that the file loads and returns a list. The view starts nvim in the
-worktree at stop 1. To revise the tour, edit `current.lua` under `txc artifact path <id>` in place
-and run `txc artifact modify <id>`; there is no `tour modify`.
+`tx tour create` checks that the file loads and returns a list. The view starts nvim in the
+worktree at stop 1. To revise the tour, edit `current.lua` under `tx artifact path <id>` in place
+and run `tx artifact modify <id>`; there is no `tour modify`.
 
 ## Or apply it into a running nvim
 
 When the operator already has an nvim view open, apply the tour there over RPC instead. If none
-exists, read the `tx-sessions` skill and open one through `txc ui view open`. Never create or
+exists, read the `tx-sessions` skill and open one through `tx ui view open`. Never create or
 mutate views with raw tmux.
 
-Find the view's name with `txc ui view ls`, then inspect its pane read-only on txc's tmux server
+Find the view's name with `tx ui view ls`, then inspect its pane read-only on tx's tmux server
 (`$TX_RUN_DIR/tmux.sock`) to find the nvim socket:
 
 ```bash

@@ -91,7 +91,7 @@ impl Verb for TmuxName {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let Some(token) = argv.first() else {
-            let _ = writeln!(io.stderr, "usage: txc _tmux-name <name>");
+            let _ = writeln!(io.stderr, "usage: tx _tmux-name <name>");
             return Ok(2);
         };
         let Some(id) = resolve_or_not_found(core, token)? else {
@@ -150,7 +150,7 @@ impl Verb for Whoami {
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, _argv: &[String]) -> Result<i32, VerbError> {
         let ui = Ui::from_core(core);
         if !ui.inside() {
-            let _ = writeln!(io.stderr, "txc whoami: not inside the tx tmux server");
+            let _ = writeln!(io.stderr, "tx whoami: not inside the tx tmux server");
             return Ok(1);
         }
         let raw = ui

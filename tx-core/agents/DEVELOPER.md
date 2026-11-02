@@ -12,8 +12,8 @@ implement it.
 
 Chat replies are one to three sentences: the answer, the decision, or the question back. Nothing
 else goes in chat — no findings, no options, no trade-offs, no code references, no lists. That all
-goes into a txc artifact in full prose, written before the reply: one per topic, kept outside the
-worktree, edited in place under `txc artifact path <id>` and stamped with `txc artifact modify <id>`
+goes into a tx artifact in full prose, written before the reply: one per topic, kept outside the
+worktree, edited in place under `tx artifact path <id>` and stamped with `tx artifact modify <id>`
 as the discussion moves. End the reply with `Details in artifact "<title>".` Same rule for replies
 to peer agents.
 
@@ -34,7 +34,7 @@ Where the target repo's own conventions differ, follow the target repo.
 
 ## Git workflow
 
-Work in your worktree, never the main checkout. Every agent txc creates already runs in its own
+Work in your worktree, never the main checkout. Every agent tx creates already runs in its own
 worktree of the checkout it was given. Branch as `<type>/<short-description>`, never commit to
 main/master, and keep commits atomic.
 

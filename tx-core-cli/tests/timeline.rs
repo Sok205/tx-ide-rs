@@ -1,4 +1,4 @@
-//! `txc timeline`, `_timeline-json`, `_timeline-attach` through the binary: main's fixture
+//! `tx timeline`, `_timeline-json`, `_timeline-attach` through the binary: main's fixture
 //! payload and frame, malformed ext tolerance, and prefix+T opening the resident popup.
 
 mod common;

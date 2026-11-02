@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn a_fragment_hint_is_its_keys_and_first_sentence() {
         let text = "#!/usr/bin/env bash\n# keys: t\n# tx key plugin `picker`: prefix+t opens the \
-                    tx session picker in a popup. `txc pick` finds the\n# pane to nest into.\n\
+                    tx session picker in a popup. `tx pick` finds the\n# pane to nest into.\n\
                     #\n# The popup is wide.\nset -u\n";
         assert_eq!(
             key_hint("picker", text),

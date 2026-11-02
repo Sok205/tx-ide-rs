@@ -84,7 +84,7 @@ pub struct CoreConfig {
     pub profile_dirs: Vec<PathBuf>,
     /// Skill search dirs, in order; a later dir overrides an earlier one.
     pub skill_dirs: Vec<PathBuf>,
-    /// The argv prefix the hooks an engine wires run (`[txc, "chat", "hook"]`). Empty: none.
+    /// The argv prefix the hooks an engine wires run (`[tx, "chat", "hook"]`). Empty: none.
     pub hook_command: Vec<String>,
 }
 
@@ -169,7 +169,7 @@ impl CoreConfig {
         self.directories.data.join(WORKTREES_DIR)
     }
 
-    /// The flags a re-invocation of `txc` / `txi` needs to open this same core: the five
+    /// The flags a re-invocation of `tx` / `txi` needs to open this same core: the five
     /// directories, and the socket when it is overridden.
     pub fn cli_arguments(&self) -> Vec<String> {
         let mut arguments = Vec::new();
@@ -206,42 +206,42 @@ mod tests {
 
     #[test]
     fn paths_follow_the_directories() {
-        let config = CoreConfig::new(Directories::under("/tmp/txc"));
+        let config = CoreConfig::new(Directories::under("/tmp/tx"));
         assert_eq!(
             config.socket_path(),
-            PathBuf::from("/tmp/txc/run/tmux.sock")
+            PathBuf::from("/tmp/tx/run/tmux.sock")
         );
         assert_eq!(
             config.tmux_conf_path(),
-            PathBuf::from("/tmp/txc/data/tmux.conf")
+            PathBuf::from("/tmp/tx/data/tmux.conf")
         );
         assert_eq!(
             config.plugin_data_dir("chat"),
-            PathBuf::from("/tmp/txc/data/plugins/chat")
+            PathBuf::from("/tmp/tx/data/plugins/chat")
         );
         assert_eq!(
             config.worktrees_dir(),
-            PathBuf::from("/tmp/txc/data/worktrees")
+            PathBuf::from("/tmp/tx/data/worktrees")
         );
         let id = AgentId::mint();
         assert_eq!(
             config.agent_dir(&id),
-            PathBuf::from(format!("/tmp/txc/data/agents/{id}"))
+            PathBuf::from(format!("/tmp/tx/data/agents/{id}"))
         );
         assert_eq!(
             config.archive_directory(&id),
-            PathBuf::from(format!("/tmp/txc/data/agents/{id}/archive"))
+            PathBuf::from(format!("/tmp/tx/data/agents/{id}/archive"))
         );
     }
 
     #[test]
     fn explicit_socket_wins() {
-        let mut config = CoreConfig::new(Directories::under("/tmp/txc"));
+        let mut config = CoreConfig::new(Directories::under("/tmp/tx"));
         config.tmux_socket = Some("/tmp/s.sock".into());
         assert_eq!(config.socket_path(), PathBuf::from("/tmp/s.sock"));
         assert_eq!(
             config.tmux_conf_path(),
-            PathBuf::from("/tmp/txc/data/tmux.conf")
+            PathBuf::from("/tmp/tx/data/tmux.conf")
         );
     }
 

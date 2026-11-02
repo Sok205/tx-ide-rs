@@ -5,8 +5,8 @@
 //!
 //! The project is the firing pane's directory (the poc has no projects config). The roles are
 //! the `*.md` files in the core's profile dirs minus COMMON, which every agent gets. The plugin
-//! ships the txc editions of the COMMON, DEVELOPER, ORCHESTRATOR and QA roles and their skills
-//! (`agents/` in this crate) as `agents/` resources, which `txc ui install` materialises under
+//! ships the tx editions of the COMMON, DEVELOPER, ORCHESTRATOR and QA roles and their skills
+//! (`agents/` in this crate) as `agents/` resources, which `tx ui install` materialises under
 //! `<data>/roles/`.
 
 use std::fs;
@@ -269,7 +269,7 @@ impl Verb for NewAgent {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [pane, client] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc _new-agent <pane> <client>");
+            let _ = writeln!(io.stderr, "usage: tx _new-agent <pane> <client>");
             return Ok(2);
         };
         let ui = Ui::from_core(core);

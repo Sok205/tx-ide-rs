@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # prefix+X: confirm-then-kill the session in the active pane, tmux-native style.
 # Mirrors the stock prefix+x / prefix+& UX (a `confirm-before` status-line prompt),
-# but an agent's kill goes through `txc kill` — record marked EXITED + logged — never a
+# but an agent's kill goes through `tx kill` — record marked EXITED + logged — never a
 # raw `kill-session` that would leave the store stale (COMMON.md), and a view's close
-# goes through `txc ui view close`, which refuses an agent's session.
+# goes through `tx ui view close`, which refuses an agent's session.
 #
 # Target: the session attached INSIDE the pane when it hosts a nested `tmux attach`
 # (the same pane→client join the border label uses), else the outer session itself
@@ -12,7 +12,7 @@
 # pane hosting nothing nested there is no session to kill.
 #
 # The prompt shows the store-owned DISPLAY name (a PROCESS is tmux-named by its id);
-# the kill targets the tmux name, which `txc kill` resolves either way.
+# the kill targets the tmux name, which `tx kill` resolves either way.
 set -eu
 
 TX="$(tmux show-option -gv @tx-bin) $(tmux show-option -gv @tx-arguments)"

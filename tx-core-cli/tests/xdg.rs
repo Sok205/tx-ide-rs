@@ -1,4 +1,4 @@
-//! Where `txc` keeps its files: the five XDG directories under `tx-ide` (or `$TX_APPNAME`), and
+//! Where `tx` keeps its files: the five XDG directories under `tx-ide` (or `$TX_APPNAME`), and
 //! the one-time move of a version-1 home. Every process runs in a sandbox: `HOME`, `TMPDIR` and
 //! every directory live under a temp root, and no `XDG_*` or `TX_*` of the caller leaks in.
 //! Agents run a fake `claude` (a shim that just stays alive).
@@ -37,7 +37,7 @@ impl Sandbox {
     }
 
     fn command(&self, environment: &[(&str, &str)]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_txc"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .env("HOME", self.home())
             .env("TMPDIR", self.path().join("tmp"))
@@ -76,7 +76,7 @@ impl Sandbox {
         let output = self.run(args, environment);
         assert!(
             output.status.success(),
-            "txc {args:?}: {}",
+            "tx {args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
@@ -275,7 +275,7 @@ fn a_lone_state_dir_flag_on_a_version_one_home_points_at_migrate() {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         format!(
-            "txc: {} is a version-1 home; run `txc migrate --from {}`\n",
+            "tx: {} is a version-1 home; run `tx migrate --from {}`\n",
             old.display(),
             old.display()
         )

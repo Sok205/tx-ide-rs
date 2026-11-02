@@ -281,7 +281,7 @@ impl Nav<'_> {
                 &width.to_string(),
                 &height.to_string(),
                 &listing.title,
-                &self.txc_command(&[PICK_VERB, session, client])?,
+                &self.tx_command(&[PICK_VERB, session, client])?,
             )
             .map_err(failed)?;
         Ok(0)
@@ -336,7 +336,7 @@ impl Nav<'_> {
             Pick::Popup(index) => (Mode::Popup, index),
         };
         let target = &listing.targets[index];
-        let command = self.txc_command(&[
+        let command = self.tx_command(&[
             GO_VERB,
             session,
             client,
@@ -407,9 +407,9 @@ impl Nav<'_> {
         views::live_view(&self.ui, artifact_id)
     }
 
-    /// `<txc> <cli_arguments> argv…`, shell-quoted: `run-shell` and the popup run in the
+    /// `<tx> <cli_arguments> argv…`, shell-quoted: `run-shell` and the popup run in the
     /// server's environment, which knows neither the directories nor the socket.
-    fn txc_command(&self, argv: &[&str]) -> Result<String, VerbError> {
+    fn tx_command(&self, argv: &[&str]) -> Result<String, VerbError> {
         let exe =
             std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
         let mut words = vec![shell_quote(&exe.to_string_lossy())];
@@ -465,7 +465,7 @@ impl Nav<'_> {
         self.show(session, client, mode, &shown)
     }
 
-    /// Open-by-convention, as `artifact open` does: runs `txc <kind> open <id> [--tag …]`
+    /// Open-by-convention, as `artifact open` does: runs `tx <kind> open <id> [--tag …]`
     /// in-process, then finds the view it bound to the artifact. A missing opener or a failed
     /// open goes to the client's status line (`None`).
     fn open_by_convention(
@@ -478,7 +478,7 @@ impl Nav<'_> {
         let Some(verb) = self.core.verb(kind) else {
             self.ui.display_status(
                 client,
-                &format!("prefix+a: no opener for kind `{kind}` (expected verb `txc {kind} open`)"),
+                &format!("prefix+a: no opener for kind `{kind}` (expected verb `tx {kind} open`)"),
             );
             return Ok(None);
         };

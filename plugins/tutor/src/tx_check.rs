@@ -82,7 +82,7 @@ pub fn evaluate(check: &TxCheck, sessions: &[Agent]) -> Result<(), String> {
         hits.len()
     );
     if check.session.chat_origin.is_some() {
-        reason.push_str("\nchat origins are not tracked by txc yet (no chat plugin); skip this lesson with `txc tutor next`");
+        reason.push_str("\nchat origins are not tracked by tx yet (no chat plugin); skip this lesson with `tx tutor next`");
     }
     Err(reason)
 }

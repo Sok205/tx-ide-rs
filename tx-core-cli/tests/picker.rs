@@ -65,7 +65,7 @@ fn pick_nests_into_a_view_pane() {
             .status
             .success()
     );
-    // A home base, as `txc ui attach` marks it: its shell pane hosts nested attaches.
+    // A home base, as `tx ui attach` marks it: its shell pane hosts nested attaches.
     for (option, value) in [("@tx-view", "1"), ("@tx-view-kind", "home")] {
         let set = cli.tmux(&["set-option", "-t", "=Views:", option, value]);
         assert!(
@@ -79,7 +79,7 @@ fn pick_nests_into_a_view_pane() {
     // set while the pane's foreground process is still the shell.
     let pick = format!(
         "FZF_DEFAULT_OPTS='--filter=inner' {} {} pick",
-        env!("CARGO_BIN_EXE_txc"),
+        env!("CARGO_BIN_EXE_tx"),
         cli.arguments()
     );
     assert!(

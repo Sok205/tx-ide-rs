@@ -1,4 +1,4 @@
-//! plugins.yaml drives what txc links; plugin verbs dispatch after the built-ins.
+//! plugins.yaml drives what tx links; plugin verbs dispatch after the built-ins.
 
 mod common;
 
@@ -15,7 +15,7 @@ impl Cli {
     fn new() -> Self {
         Self {
             dir: tempfile::Builder::new()
-                .prefix("txc")
+                .prefix("tx")
                 .tempdir_in("/tmp")
                 .unwrap(),
         }
@@ -28,7 +28,7 @@ impl Cli {
         std::fs::write(self.state().join("plugins.yaml"), text).unwrap();
     }
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_txc"))
+        Command::new(env!("CARGO_BIN_EXE_tx"))
             .args(common::directory_flags(&self.state()))
             .args(args)
             .env_remove("TMUX")
@@ -40,7 +40,7 @@ impl Cli {
         let output = self.run(args);
         assert!(
             output.status.success(),
-            "txc {args:?}: {}",
+            "tx {args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
@@ -50,7 +50,7 @@ impl Cli {
         assert_eq!(
             output.status.code(),
             Some(code),
-            "txc {args:?}: {}",
+            "tx {args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stderr).into_owned()

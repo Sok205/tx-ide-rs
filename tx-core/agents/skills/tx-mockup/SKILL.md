@@ -6,7 +6,7 @@ description: Use when brainstorming needs to show the operator a screen, layout,
 # tx-mockup
 
 The terminal replacement for the brainstorming browser companion. No HTML, no server, no
-browser tab: write a JSON description, run `txc mockup show`, and the operator sees it
+browser tab: write a JSON description, run `tx mockup show`, and the operator sees it
 rendered with ratatui in a view named `mockup-<your-session-name>`.
 
 ## When to use
@@ -25,11 +25,11 @@ question. "Which of these start menu layouts?" is a mockup.
 ## The loop
 
 1. **Start** once per brainstorm, after the operator agrees to a visual:
-   `txc mockup start --project <project-dir>`. It prints one JSON line,
+   `tx mockup start --project <project-dir>`. It prints one JSON line,
    `{"view":…,"content_dir":…,"state_dir":…}`. Keep both dirs. Remind the operator to add
    `.superpowers/` to `.gitignore` if it is not there.
 2. **Write** `<content_dir>/<semantic-name>.json` with your file tool, then run
-   `txc mockup show`. The operator's terminal switches to the view. Give a one-line summary of
+   `tx mockup show`. The operator's terminal switches to the view. Give a one-line summary of
    what is on screen and end your turn.
 3. **Read** on your next turn. When the operator confirms or dismisses, the viewer sends you
    a message: `mockup: picked <id> (<title>)` or `mockup: dismissed` (`mockup: confirmed` for
@@ -39,9 +39,9 @@ question. "Which of these start menu layouts?" is a mockup.
    message means they never pressed a key.
 4. **Iterate or advance**: feedback on the current screen goes into a new file
    (`layout-v2.json`). Only move on once the current question is settled.
-5. **Wait** when the conversation returns to text: `txc mockup wait` puts up a
+5. **Wait** when the conversation returns to text: `tx mockup wait` puts up a
    "continuing in terminal…" screen and does not switch the operator.
-6. **Stop** at the end: `txc mockup stop`. The files stay on disk.
+6. **Stop** at the end: `tx mockup stop`. The files stay on disk.
 
 If `show` prints `mockup ready in view <name>` the operator has no attached client. Relay
 that line verbatim so they can switch to the view by hand.

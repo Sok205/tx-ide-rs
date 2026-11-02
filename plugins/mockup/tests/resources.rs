@@ -6,7 +6,7 @@ use tx_mockup::MockupPlugin;
 
 fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
     let dir = tempfile::Builder::new()
-        .prefix("txc")
+        .prefix("tx")
         .tempdir_in("/tmp")
         .unwrap();
     let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
@@ -35,7 +35,7 @@ fn the_skill_and_overlay_come_from_the_core() {
 
     let skill = std::str::from_utf8(find("agents/skills/tx-mockup/SKILL.md").bytes).unwrap();
     assert!(skill.contains("name: tx-mockup"), "{skill}");
-    assert!(skill.contains("txc mockup show"), "{skill}");
+    assert!(skill.contains("tx mockup show"), "{skill}");
     assert!(skill.contains("\"frames\""), "{skill}");
 }
 

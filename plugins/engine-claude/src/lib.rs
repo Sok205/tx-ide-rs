@@ -1152,7 +1152,7 @@ mod tests {
     fn hook_command_wires_every_event_through_settings() {
         let (dir, profile) = profile("", &[]);
         let session = record(dir.path(), serde_json::Value::Null);
-        let hook_command = ["/x y/txc".to_owned(), "chat".to_owned(), "hook".to_owned()];
+        let hook_command = ["/x y/tx".to_owned(), "chat".to_owned(), "hook".to_owned()];
         let plan = adapter()
             .start(
                 &LaunchRequest::new(&session, &profile).hook_command(&hook_command),
@@ -1175,7 +1175,7 @@ mod tests {
             settings["hooks"]["Stop"],
             serde_json::json!([{"matcher": "", "hooks": [{
                 "type": "command",
-                "command": "'/x y/txc' 'chat' 'hook' 'Stop' || exit 1",
+                "command": "'/x y/tx' 'chat' 'hook' 'Stop' || exit 1",
                 "timeout": 10,
             }]}])
         );
@@ -1198,7 +1198,7 @@ mod tests {
     fn plugin_registers_the_engine() {
         use tx_core::{CoreConfig, Plugin, PluginConfig, TxCore};
         let dir = tempfile::Builder::new()
-            .prefix("txc")
+            .prefix("tx")
             .tempdir_in("/tmp")
             .unwrap();
         let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
@@ -1435,7 +1435,7 @@ mod tests {
         }
     }
 
-    /// `txc migrate`: the version-1 launch's options (an effort Claude does not know dropped),
+    /// `tx migrate`: the version-1 launch's options (an effort Claude does not know dropped),
     /// and the conversation: the chat plugin's active capture with its transcript, else the
     /// launch's `resume` with the transcript where Claude writes it for the record's `cwd`.
     #[test]

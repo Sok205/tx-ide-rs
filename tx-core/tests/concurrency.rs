@@ -25,9 +25,9 @@ fn child_entry() {
     let mut core = TxCore::open(CoreConfig::new(Directories::under(parts[1]))).unwrap();
     core.register_engine(Box::new(ShellStub)).unwrap();
     match core.create_agent(agent(parts[2], std::path::Path::new(parts[3]))) {
-        Ok(id) => println!("\nTXC-VERDICT ok {id}"),
-        Err(CoreError::NameTaken(_)) => println!("\nTXC-VERDICT err NameTaken"),
-        Err(other) => println!("\nTXC-VERDICT err {other:?}"),
+        Ok(id) => println!("\nTX-VERDICT ok {id}"),
+        Err(CoreError::NameTaken(_)) => println!("\nTX-VERDICT err NameTaken"),
+        Err(other) => println!("\nTX-VERDICT err {other:?}"),
     }
 }
 
@@ -62,7 +62,7 @@ fn concurrent_create_from_eight_processes_yields_eight_distinct_names() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let line = stdout
             .lines()
-            .find_map(|line| line.strip_prefix("TXC-VERDICT "))
+            .find_map(|line| line.strip_prefix("TX-VERDICT "))
             .unwrap_or_else(|| panic!("no verdict in {stdout:?}"))
             .to_owned();
         if line.starts_with("ok ") {

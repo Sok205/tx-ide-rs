@@ -31,7 +31,7 @@ pub const SESSION_DIRS: &str = ".superpowers/mockup";
 const DIR_OPTION: &str = "@tx-mockup-dir";
 const RETURN_OPTION: &str = "@tx-mockup-return";
 
-const USAGE: &str = "usage: txc mockup start --project DIR [--for S] | show [--for S] | wait [--for S] | stop [--for S]";
+const USAGE: &str = "usage: tx mockup start --project DIR [--for S] | show [--for S] | wait [--for S] | stop [--for S]";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MockupPlugin;
@@ -87,7 +87,7 @@ fn parse_args(argv: &[String]) -> Option<Args> {
 }
 
 /// `--for`, else the caller's own session: `$TX_SESSION_ID`, only when `$TMUX` names the
-/// core's own server (the rule `txc send` uses for its sender).
+/// core's own server (the rule `tx send` uses for its sender).
 fn resolve_agent(core: &TxCore, token: Option<&str>) -> Result<Option<AgentId>, CoreError> {
     match token {
         Some(token) => core.resolve(token).map(Some),
@@ -146,7 +146,7 @@ fn project_of(dir: &Path) -> Result<&Path, VerbError> {
     })
 }
 
-/// `<txc> <cli_arguments> _mockup-view <dir> <view>`, as argv.
+/// `<tx> <cli_arguments> _mockup-view <dir> <view>`, as argv.
 fn viewer_argv(core: &TxCore, dir: &Path, view: &str) -> Result<Vec<String>, VerbError> {
     let exe = std::env::current_exe()
         .map_err(|error| VerbError::Failed(format!("current exe: {error}")))?;
@@ -286,7 +286,7 @@ fn show(
     view: &str,
 ) -> Result<i32, VerbError> {
     let Some(dir) = session_dir(session) else {
-        let _ = writeln!(io.stderr, "txc mockup: run 'txc mockup start' first");
+        let _ = writeln!(io.stderr, "tx mockup: run 'tx mockup start' first");
         return Ok(1);
     };
     ensure_view(core, ui, view, &dir)?;
@@ -312,7 +312,7 @@ fn show(
 
 fn wait(io: &mut VerbIo<'_>, session: &Agent) -> Result<i32, VerbError> {
     let Some(dir) = session_dir(session) else {
-        let _ = writeln!(io.stderr, "txc mockup: run 'txc mockup start' first");
+        let _ = writeln!(io.stderr, "tx mockup: run 'tx mockup start' first");
         return Ok(1);
     };
     let millis = SystemTime::now()
@@ -325,7 +325,7 @@ fn wait(io: &mut VerbIo<'_>, session: &Agent) -> Result<i32, VerbError> {
     Ok(0)
 }
 
-/// `txc mockup start|show|wait|stop`.
+/// `tx mockup start|show|wait|stop`.
 pub struct MockupVerb;
 
 impl Verb for MockupVerb {
@@ -343,7 +343,7 @@ impl Verb for MockupVerb {
             return Ok(2);
         };
         let Some(id) = resolve_agent(core, args.agent.as_deref())? else {
-            let _ = writeln!(io.stderr, "txc mockup: no agent session (use --for)");
+            let _ = writeln!(io.stderr, "tx mockup: no agent session (use --for)");
             return Ok(2);
         };
         let session = core.get_agent(&id)?;
@@ -398,7 +398,7 @@ fn switch_back(ui: &Ui, view: &str) {
     }
 }
 
-/// `txc _mockup-view <session_dir> <view>`: the viewer process the view runs.
+/// `tx _mockup-view <session_dir> <view>`: the viewer process the view runs.
 pub struct ViewVerb;
 
 impl Verb for ViewVerb {
@@ -412,7 +412,7 @@ impl Verb for ViewVerb {
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let [dir, view] = argv else {
-            let _ = writeln!(io.stderr, "usage: txc {VIEW_VERB} <session_dir> <view>");
+            let _ = writeln!(io.stderr, "usage: tx {VIEW_VERB} <session_dir> <view>");
             return Ok(2);
         };
         let ui = Ui::from_core(core);

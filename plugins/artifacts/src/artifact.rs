@@ -35,7 +35,7 @@ const TOUCH_KEYS: [&str; 4] = ["session_id", "at", "rev", "changes"];
 
 /// What an artifact is, with the structured facts its kind needs. The plugin derives the open
 /// behaviour of a document and a diff from this in code; any other kind is opened by convention
-/// through the verb named after it (`txc <kind> open <id>`).
+/// through the verb named after it (`tx <kind> open <id>`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Kind {

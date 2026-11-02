@@ -1,7 +1,7 @@
-//! Removes the global agent hooks older txc versions installed (the chat plugin's chat-id
+//! Removes the global agent hooks older tx versions installed (the chat plugin's chat-id
 //! capture and the history plugin's transcript mirror), driven by the sidecar each install wrote next to the agent's hook
 //! file: it records exactly what was added and the backup taken before the first write, so only
-//! tx's own entries go. Run by `txc doctor --fix-hooks`.
+//! tx's own entries go. Run by `tx doctor --fix-hooks`.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -192,7 +192,7 @@ mod tests {
 
     fn home() -> tempfile::TempDir {
         tempfile::Builder::new()
-            .prefix("txc-home")
+            .prefix("tx-home")
             .tempdir_in("/tmp")
             .unwrap()
     }
@@ -245,8 +245,8 @@ mod tests {
         .unwrap();
     }
 
-    const CHAT_STOP: &str = "'/opt/txc' _capture stop || exit 1";
-    const INGEST: &str = "'/opt/txc' _ingest || exit 1";
+    const CHAT_STOP: &str = "'/opt/tx' _capture stop || exit 1";
+    const INGEST: &str = "'/opt/tx' _ingest || exit 1";
 
     #[test]
     fn restores_the_backup_byte_identical_and_keeps_it() {

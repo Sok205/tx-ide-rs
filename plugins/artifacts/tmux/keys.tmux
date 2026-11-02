@@ -6,7 +6,7 @@
 # the nested client, and the menu paints inside the pane. A pick re-hosts that pane on the
 # artifact's nvim view; in a view the key goes back to the controlling session. The prefix is
 # read at compose time (run-shell runs after the theme set it), as for the nav keys. Run by
-# `run-shell` from the server's tmux.conf, which `txc ui install` writes; @tx-data names the
+# `run-shell` from the server's tmux.conf, which `tx ui install` writes; @tx-data names the
 # directory holding bin/tmux-artifact-menu.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the quoting.

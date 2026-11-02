@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # keys: f
 # tx key plugin `chat`: prefix+f forks the tx session in the active pane (a popup asks for the
-# new name). Run by `run-shell` from the server's tmux.conf, which `txc ui install` writes;
+# new name). Run by `run-shell` from the server's tmux.conf, which `tx ui install` writes;
 # @tx-data names the directory holding bin/tmux-fork-tx-session.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the quoting.

@@ -45,7 +45,7 @@ pub struct LaunchRequest<'a> {
     /// Combined role text, the file holding it, and the granted skill dirs.
     pub profile: &'a Profile,
     /// The argv prefix every hook the adapter wires runs, with the CLI's event name appended:
-    /// `["/abs/txc", "chat", "hook"]`. Empty: wire no hooks.
+    /// `["/abs/tx", "chat", "hook"]`. Empty: wire no hooks.
     pub hook_command: &'a [String],
 }
 
@@ -107,7 +107,7 @@ impl Key {
 }
 
 /// The shell command a wired hook runs: every word of `hook_command` single-quoted, then
-/// `event`, then `|| exit 1`. Claude reads exit 2 as "block the agent", so a `txc` that fails
+/// `event`, then `|| exit 1`. Claude reads exit 2 as "block the agent", so a `tx` that fails
 /// to even start must never block a prompt or a stop.
 pub fn hook_shell_command(hook_command: &[String], event: &str) -> String {
     let words: Vec<String> = hook_command
@@ -352,7 +352,7 @@ pub trait LlmEngine: Send + Sync {
         None
     }
 
-    /// The engine data of a version-1 record, for `txc migrate`: `record` is the whole
+    /// The engine data of a version-1 record, for `tx migrate`: `record` is the whole
     /// version-1 JSON object (`id`, `cwd`, the retired chat plugin's `ext.chat`, …) and
     /// `launch` its agent launch (`engine`, `profile`, `model`, `effort`, `resume`: the record's
     /// own `launch`, or `ext.chat.launch` for a fork disguised as a process). Returns the
@@ -966,13 +966,13 @@ mod tests {
     #[test]
     fn hook_shell_command_quotes_every_word_and_never_exits_2() {
         let prefix = [
-            "/a b/it's/txc".to_owned(),
+            "/a b/it's/tx".to_owned(),
             "chat".to_owned(),
             "hook".to_owned(),
         ];
         assert_eq!(
             hook_shell_command(&prefix, "Stop"),
-            "'/a b/it'\\''s/txc' 'chat' 'hook' 'Stop' || exit 1"
+            "'/a b/it'\\''s/tx' 'chat' 'hook' 'Stop' || exit 1"
         );
     }
 

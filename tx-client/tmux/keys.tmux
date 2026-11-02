@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # keys: C-h C-j C-k C-l
 # tx key plugin `ide`: the IDE's root-table keys and global look. Run by `run-shell` from the
-# server's tmux.conf, which `txc ui install` writes (first, before the other plugins' fragments).
+# server's tmux.conf, which `tx ui install` writes (first, before the other plugins' fragments).
 #
 #   C-u / C-d       PageUp / PageDown in agent panes (Claude Code / Codex)
 #   C-h/j/k/l       seamless nav: nvim splits <-> panes <-> nested sessions (bin/tmux-nav)
@@ -18,7 +18,7 @@
 # last-write-wins.
 set -u
 
-# The data directory, handed over by the server's own options (written by `txc ui install`);
+# The data directory, handed over by the server's own options (written by `tx ui install`);
 # the helper scripts live in <data>/bin.
 DATA=$(tmux show-option -gv @tx-data 2>/dev/null)
 [ -n "$DATA" ] || exit 0

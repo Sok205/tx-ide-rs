@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # keys: t
-# tx key plugin `picker`: prefix+t opens the tx session picker in a popup. `txc pick` finds the
+# tx key plugin `picker`: prefix+t opens the tx session picker in a popup. `tx pick` finds the
 # pane to nest into by asking tmux directly (`display-message -p #{pane_id}`), so the bind plumbs
-# nothing through. Run by `run-shell` from the server's tmux.conf, which `txc ui install` writes.
+# nothing through. Run by `run-shell` from the server's tmux.conf, which `tx ui install` writes.
 # The picker's TAB roles panel runs in this popup's own terminal (fzf hands it over), since a
 # tmux popup cannot open inside another; its normal mode needs no tmux keys of its own.
 #
@@ -14,11 +14,11 @@
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.
 set -u
 
-TXC=$(tmux show-option -gv @tx-bin 2>/dev/null)
+TX_BIN=$(tmux show-option -gv @tx-bin 2>/dev/null)
 ARGUMENTS=$(tmux show-option -gv @tx-arguments 2>/dev/null)
 [ -n "$ARGUMENTS" ] || exit 0
-[ -n "$TXC" ] || exit 0
-TX="$TXC $ARGUMENTS"
+[ -n "$TX_BIN" ] || exit 0
+TX="$TX_BIN $ARGUMENTS"
 
 CONF=$(mktemp -t tx-picker-keys.XXXXXX)
 trap 'rm -f "$CONF"' EXIT

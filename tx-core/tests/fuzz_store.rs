@@ -614,7 +614,7 @@ proptest! {
 }
 
 /// A version-1 record where a version-2 one belongs is refused with the pointer to
-/// `txc migrate`, whatever else it says, and never skipped.
+/// `tx migrate`, whatever else it says, and never skipped.
 #[test]
 fn version_one_records_need_migration() {
     let (_dir, store) = store();

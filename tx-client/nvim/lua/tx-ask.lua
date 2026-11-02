@@ -8,20 +8,20 @@
 -- for. Sending is the ONLY thing that empties the queue, so a mistyped or
 -- abandoned prompt can never cost the operator questions they had banked.
 --
--- Delivery goes through `txc send <id> --via <label>`, which wraps the body in the
+-- Delivery goes through `tx send <id> --via <label>`, which wraps the body in the
 -- <from-user session="<label>"> operator envelope. The label is the tmux session
 -- hosting this nvim when it is a tx-client view (@tx-view), else the buffer's file
 -- name. The argv form of vim.system runs no shell, so a question containing quotes
 -- or $ reaches the target verbatim.
 --
--- Agent discovery is `txc ls --json`: the live agents, each {id, name, state,
+-- Agent discovery is `tx ls --json`: the live agents, each {id, name, state,
 -- working_directory, tags}.
 
--- the live agents, as txc lists them
+-- the live agents, as tx lists them
 local function live_agents()
-  local result = vim.system({ "txc", "ls", "--json" }, { text = true }):wait()
+  local result = vim.system({ "tx", "ls", "--json" }, { text = true }):wait()
   if result.code ~= 0 then
-    vim.notify("txc ls --json failed: " .. vim.trim(result.stderr or ""), vim.log.levels.ERROR)
+    vim.notify("tx ls --json failed: " .. vim.trim(result.stderr or ""), vim.log.levels.ERROR)
     return {}
   end
   return vim.json.decode(result.stdout)
@@ -84,14 +84,14 @@ local function via_label(file)
   return name ~= "" and name or "nvim"
 end
 
--- on_sent runs only when txc accepted the message, so a failed send leaves the
+-- on_sent runs only when tx accepted the message, so a failed send leaves the
 -- queue intact rather than swallowing questions the operator has to retype
 local function send(target, label, body, on_sent)
-  vim.system({ "txc", "send", "--via", label, target.id, "--", body }, { text = true }, function(result)
+  vim.system({ "tx", "send", "--via", label, target.id, "--", body }, { text = true }, function(result)
     vim.schedule(function()
       if result.code ~= 0 then
         local why = vim.trim(result.stderr or "")
-        vim.notify("txc send failed: " .. why, vim.log.levels.ERROR)
+        vim.notify("tx send failed: " .. why, vim.log.levels.ERROR)
         return
       end
       on_sent()

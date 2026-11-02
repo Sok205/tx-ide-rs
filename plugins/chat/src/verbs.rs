@@ -10,8 +10,8 @@ use tx_core::{Conversation, CoreError, TxCore, Verb, VerbError, VerbIo};
 
 use crate::hooks_cleanup::{RETIRED_SIDECARS, uninstall};
 
-const CHAT_USAGE: &str = "usage: txc chat ls <session>\n";
-const DOCTOR_USAGE: &str = "usage: txc doctor --fix-hooks\n";
+const CHAT_USAGE: &str = "usage: tx chat ls <session>\n";
+const DOCTOR_USAGE: &str = "usage: tx doctor --fix-hooks\n";
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![Arc::new(Chat), Arc::new(Doctor)]

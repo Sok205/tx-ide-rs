@@ -1,4 +1,4 @@
-//! Views through the binary: `txc ui view open|ls|close`, the guard on an agent's session,
+//! Views through the binary: `tx ui view open|ls|close`, the guard on an agent's session,
 //! orphans closed on listing, and prefix+X on a view.
 
 mod common;
@@ -64,7 +64,7 @@ fn view_open_ls_and_close() {
         ]),
         "sleep 600"
     );
-    // The view is not a core record: never in `txc ls`, listed by `ui view ls` with its parent's
+    // The view is not a core record: never in `tx ls`, listed by `ui view ls` with its parent's
     // name.
     assert!(!cli.ok(&["ls"]).contains("qa-shell"));
     let listed = cli.ok(&["ui", "view", "ls"]);
@@ -78,7 +78,7 @@ fn view_open_ls_and_close() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "txc ui view close: no session named 'qa-shell'\n"
+        "tx ui view close: no session named 'qa-shell'\n"
     );
     assert_ne!(state_of(&cli, "a"), "ended");
 }
@@ -123,7 +123,7 @@ fn view_open_rejects_a_taken_name_a_missing_kind_and_an_unknown_parent() {
         "{taken:?}"
     );
     let usage = cli.fails(&["ui", "view", "open", "t"], 2);
-    assert!(usage.contains("usage: txc ui view open"), "{usage}");
+    assert!(usage.contains("usage: tx ui view open"), "{usage}");
     cli.fails(&["ui", "view", "nope"], 2);
     let parent = cli.run(
         &["ui", "view", "open", "t", "--kind", "shell", "--parent", "ghost"],
@@ -134,7 +134,7 @@ fn view_open_rejects_a_taken_name_a_missing_kind_and_an_unknown_parent() {
     assert!(!has_session(&cli, "t"));
 }
 
-/// `txc ui view close` on an agent's tmux session is refused: the agent keeps running and only
+/// `tx ui view close` on an agent's tmux session is refused: the agent keeps running and only
 /// core may stop it.
 #[test]
 fn view_close_refuses_an_agent_session() {
@@ -190,7 +190,7 @@ fn view_ls_closes_the_views_of_a_stopped_agent() {
     assert!(has_session(&cli, "free"));
 }
 
-/// `txc kill <view>` keeps closing a view by name, and refuses anything core owns.
+/// `tx kill <view>` keeps closing a view by name, and refuses anything core owns.
 #[test]
 fn kill_closes_a_view_by_name() {
     require_tmux!();

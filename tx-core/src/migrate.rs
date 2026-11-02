@@ -1,4 +1,4 @@
-//! `txc migrate`, in two steps. First the one-time move of a version-1 home (`~/.tx-core`,
+//! `tx migrate`, in two steps. First the one-time move of a version-1 home (`~/.tx-core`,
 //! everything in one directory) into the five XDG directories ([`migrate_home`]); it refuses,
 //! before touching anything, while the old home's tmux server has sessions (their agents still
 //! carry the old paths), when the old home was already moved, and when any destination is
@@ -441,7 +441,7 @@ fn upgrade_one(core: &TxCore, path: &Path, record: &Map<String, Value>, id: &Age
     let Some(adapter) = core.engines().get(engine) else {
         return Outcome::Deferred(
             id.clone(),
-            format!("engine {engine} is disabled; enable it and run `txc migrate` again"),
+            format!("engine {engine} is disabled; enable it and run `tx migrate` again"),
         );
     };
     let Some(name) = text_of(record, "name") else {
@@ -879,7 +879,7 @@ mod tests {
             matches!(&error, CoreError::NeedsMigration { records: 1, .. }),
             "{error:?}"
         );
-        assert!(error.to_string().ends_with("run `txc migrate`"), "{error}");
+        assert!(error.to_string().ends_with("run `tx migrate`"), "{error}");
         let core = core_with_stub(root.path());
         let report = upgrade_records(&core).unwrap();
         assert_eq!(report.without_conversation.len(), 1);

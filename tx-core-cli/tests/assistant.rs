@@ -103,11 +103,11 @@ fn warm_takes_no_other_subcommand() {
     let cli = Cli::new();
     assert!(
         cli.fails(&["assistant"], 2)
-            .starts_with("usage: txc assistant warm")
+            .starts_with("usage: tx assistant warm")
     );
     assert!(
         cli.fails(&["assistant", "send"], 2)
-            .starts_with("usage: txc assistant warm")
+            .starts_with("usage: tx assistant warm")
     );
 }
 

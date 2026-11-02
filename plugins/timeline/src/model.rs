@@ -16,7 +16,7 @@
 //! `ext.edit.group`. Artifacts have no plugin yet, so milestones name the raw command.
 //!
 //! Times inside the payload are MINUTES from `epoch` (the local midnight `days` days back), as
-//! in the reference, so `txc _timeline-json` diffs against main's `tx _timeline-json`.
+//! in the reference, so `tx _timeline-json` diffs against main's `tx _timeline-json`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

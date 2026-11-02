@@ -96,7 +96,7 @@ fn new_agent_wants_a_pane_and_a_client() {
     let cli = Cli::new();
     assert!(
         cli.fails(&["_new-agent", "%0"], 2)
-            .starts_with("usage: txc _new-agent <pane> <client>")
+            .starts_with("usage: tx _new-agent <pane> <client>")
     );
 }
 
