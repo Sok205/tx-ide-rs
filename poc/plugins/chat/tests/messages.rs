@@ -77,6 +77,17 @@ fn classification_matches_python() {
             )),
         ),
         (
+            text("<from-user session=\"home\"><tx-command-prompt pane-id='%5'/> q?</from-user>"),
+            Some(expect(
+                "you",
+                "send-user-message",
+                "you",
+                "q?",
+                "u1",
+                "home",
+            )),
+        ),
+        (
             text("<tx-command-prompt focus=\"a/b\"/>\n  do it "),
             Some(expect("you", "prompt", "you", "do it", "u1", "")),
         ),

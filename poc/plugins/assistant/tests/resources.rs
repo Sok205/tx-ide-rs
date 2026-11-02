@@ -30,7 +30,7 @@ fn the_role_is_a_resource() {
     let fragment = String::from_utf8_lossy(keys[0].bytes);
     assert!(fragment.contains("# keys: /\n"), "declares prefix+/");
     assert!(fragment.contains("set-buffer -b tx-assistant-input \"%%\""));
-    assert!(fragment.contains("assistant ask --from-buffer"));
+    assert!(fragment.contains("assistant ask --from-buffer --pane '#{pane_id}'"));
 }
 
 #[test]
