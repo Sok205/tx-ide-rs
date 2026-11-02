@@ -9,7 +9,7 @@
 //! running diffview in its worktree, and any other kind through the verb named after it
 //! (`tx <kind> open <id>`). The touching session is `$TX_SESSION_ID`, else `user`.
 //!
-//! Settings (`plugins.yaml`): `editor` (default `nvim`), the program an artifact's view runs.
+//! Settings (`plugins.artifacts.settings` in `config.yaml`): `editor` (default `nvim`), the program an artifact's view runs.
 
 use std::path::PathBuf;
 use std::sync::Arc;

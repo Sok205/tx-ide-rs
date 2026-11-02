@@ -1,4 +1,4 @@
-//! plugins.yaml drives what tx links; plugin verbs dispatch after the built-ins.
+//! config.yaml's plugins section drives what tx links; plugin verbs dispatch after the built-ins.
 
 mod common;
 
@@ -25,7 +25,7 @@ impl Cli {
     }
     fn write_yaml(&self, text: &str) {
         std::fs::create_dir_all(self.state()).unwrap();
-        std::fs::write(self.state().join("plugins.yaml"), text).unwrap();
+        std::fs::write(self.state().join("config.yaml"), text).unwrap();
     }
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_tx"))
@@ -128,17 +128,17 @@ fn malformed_yaml_is_a_usage_error() {
     let cli = Cli::new();
     cli.write_yaml("plugins: [\n");
     let stderr = cli.fails(&["engines"], 2);
-    assert!(stderr.contains("plugins.yaml"), "{stderr}");
+    assert!(stderr.contains("config.yaml"), "{stderr}");
 }
 
 #[test]
-fn plugins_flag_overrides_the_default_file() {
+fn config_flag_overrides_the_default_file() {
     let cli = Cli::new();
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
     let other = cli.dir.path().join("other.yaml");
     std::fs::write(&other, "plugins:\n  engine-claude: { enabled: false }\n").unwrap();
     assert_eq!(
-        cli.ok(&["--plugins", other.to_str().unwrap(), "engines"]),
+        cli.ok(&["--config", other.to_str().unwrap(), "engines"]),
         "codex\n"
     );
 }

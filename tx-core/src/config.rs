@@ -24,7 +24,7 @@ pub const ARCHIVE_DIR: &str = "archive";
 /// The five directories tx keeps its files in, resolved by the front end (XDG, `TX_APPNAME`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Directories {
-    /// Written by the user: `plugins.yaml`, `roles/` and the skills under it.
+    /// Written by the user: `config.yaml`, `roles/` and the skills under it.
     pub config: PathBuf,
     /// Must survive: records, the log, plugin data, the files `ui install` generates.
     pub data: PathBuf,

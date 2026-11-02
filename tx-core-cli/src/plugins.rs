@@ -1,4 +1,4 @@
-//! The plugin switchboard: the compiled-in manifest and `plugins.yaml`.
+//! The plugin switchboard: the compiled-in manifest and the `plugins:` section of `config.yaml`.
 //!
 //! ```yaml
 //! plugins:
@@ -6,8 +6,8 @@
 //!   labels:
 //!     settings: { ... }
 //! ```
-//! A missing file enables everything; a malformed file or an unknown id is a usage error. A
-//! retired id is skipped, so a file written for an older tx keeps loading.
+//! No entry enables a plugin; an unknown id is a usage error. A retired id is skipped, so a file
+//! written for an older tx keeps loading.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -16,8 +16,6 @@ use serde::Deserialize;
 use tx_core::{Plugin, PluginConfig};
 
 use crate::args::UsageError;
-
-pub const FILE_NAME: &str = "plugins.yaml";
 
 /// Every plugin this binary links, in listing order.
 pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
@@ -40,7 +38,7 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_home_themes::HomeThemesPlugin),
 ];
 
-/// Ids of plugins this binary no longer links; `plugins.yaml` entries for them are ignored.
+/// Ids of plugins this binary no longer links; `config.yaml` entries for them are ignored.
 /// `hooks`: agent state moved into core and the engine adapters (`txi hook`).
 /// `history`: the transcript mirror; core archives conversations through the engines.
 /// `menu`: renamed `home`; an old `menu` entry no longer configures anything.
@@ -52,16 +50,10 @@ pub const RESERVED: &[&str] = &[
     "send", "where", "attach", "stop",
 ];
 
-#[derive(Deserialize, Default)]
+/// One `plugins.<id>` entry of `config.yaml`.
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct File {
-    #[serde(default)]
-    plugins: Option<BTreeMap<String, Entry>>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Entry {
+pub struct Entry {
     #[serde(default = "yes")]
     enabled: bool,
     #[serde(default)]
@@ -72,33 +64,26 @@ fn yes() -> bool {
     true
 }
 
-pub fn load(path: &Path, known: &[&str], reserved: &[&str]) -> Result<PluginConfig, UsageError> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(UsageError(format!("{}: {error}", path.display()))),
-    };
-    parse(&text, known, reserved)
-}
-
-/// `known` are the manifest's ids: any other key is refused, even an empty entry.
-pub fn parse(text: &str, known: &[&str], reserved: &[&str]) -> Result<PluginConfig, UsageError> {
-    let file: File = if text.trim().is_empty() {
-        File::default()
-    } else {
-        serde_norway::from_str(text).map_err(|error| UsageError(format!("{FILE_NAME}: {error}")))?
-    };
+/// `known` are the manifest's ids: any other key is refused, even an empty entry. `path` only
+/// names the file in errors.
+pub fn plugin_config(
+    entries: BTreeMap<String, Entry>,
+    known: &[&str],
+    reserved: &[&str],
+    path: &Path,
+) -> Result<PluginConfig, UsageError> {
     let mut cfg = PluginConfig {
         reserved: reserved.iter().map(|s| (*s).to_owned()).collect(),
         ..Default::default()
     };
-    for (id, entry) in file.plugins.unwrap_or_default() {
+    for (id, entry) in entries {
         if RETIRED.contains(&id.as_str()) {
             continue;
         }
         if !known.contains(&id.as_str()) {
             return Err(UsageError(format!(
-                "{FILE_NAME}: no plugin named {id:?} (known: {})",
+                "{}: no plugin named {id:?} (known: {})",
+                path.display(),
                 known.join(", ")
             )));
         }
@@ -116,7 +101,7 @@ pub fn manifest() -> Vec<Box<dyn Plugin>> {
     MANIFEST.iter().map(|make| make()).collect()
 }
 
-/// The manifest's ids, for validating `plugins.yaml`.
+/// The manifest's ids, for validating the `plugins:` section.
 pub fn known_ids() -> Vec<&'static str> {
     MANIFEST.iter().map(|make| make().id()).collect()
 }
@@ -127,7 +112,9 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     fn parse_text(text: &str) -> Result<PluginConfig, UsageError> {
-        parse(text, &["engine-codex", "labels"], &["ls"])
+        let path = Path::new("/c/config.yaml");
+        let config = crate::config::parse(text, path)?;
+        plugin_config(config.plugins, &["engine-codex", "labels"], &["ls"], path)
     }
 
     #[test]
@@ -185,7 +172,7 @@ mod tests {
     #[test]
     fn malformed_yaml_is_a_usage_error() {
         let error = parse_text("plugins: [1, 2\n").unwrap_err();
-        assert!(error.0.starts_with("plugins.yaml: "), "{error}");
+        assert!(error.0.starts_with("/c/config.yaml: "), "{error}");
     }
 
     #[test]

@@ -54,8 +54,10 @@ tx create <name> --tag <scope> --cwd <project-root> --parent "$(tx whoami)" \
   then the worker's role (`DEVELOPER` is the usual one; `ORCHESTRATOR` and `QA` also ship). Roles
   resolve from `$TX_DATA_DIR/roles` (the shipped ones) then `$TX_CONFIG_DIR/roles` (the
   operator's own).
-- `--engine` and `--prompt` are required. `--engine` is `claude` or `codex` (`tx engines` lists
-  them).
+- `--cwd` and `--prompt` are required. `--engine` is `claude` or `codex` (`tx engines` lists
+  them); left out, it is the operator's `agent.engine` in `config.yaml` (default `claude`). Keep
+  passing `--role` explicitly: without it the worker gets the operator's `agent.roles`, which
+  need not be the ones the task wants.
 - `--model` and `--effort` are placeholders, not recommendations. Omit either one and the engine
   picks it up from its own configuration (for claude, the `model` in `settings.json`) — which is
   what you want unless the operator named a tier. Pass them only when the operator asked for a
