@@ -1,0 +1,10 @@
+[book]
+title = "tx-ide: how it works"
+description = "A guide to tx-ide, a plain core for a swarm of interactive coding agents in tmux."
+language = "en"
+src = "src"
+
+[output.html]
+site-url = "/tx-ide-rs/guide/"
+default-theme = "light"
+preferred-dark-theme = "navy"

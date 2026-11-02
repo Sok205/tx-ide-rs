@@ -23,6 +23,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: 'latest'
       - name: Build the site
         run: python3 docs-site/build.py . _site "tx-core @ $(git rev-parse --short HEAD)"
       - uses: actions/upload-pages-artifact@v3

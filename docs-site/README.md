@@ -21,13 +21,33 @@ python3 docs-site/build.py . /tmp/tx-core-docs "tx-core @ $(git rev-parse --shor
 open /tmp/tx-core-docs/internal/tx_core/index.html
 ```
 
-This needs the stable Rust toolchain and Python 3, with no Python packages. The internal build uses the unstable `--document-hidden-items` through `RUSTC_BOOTSTRAP=1`. Cargo output goes to `target/structure/`.
+This needs the stable Rust toolchain, Python 3 (no packages) and `mdbook` on `PATH`
+(`cargo install mdbook --locked`; the build stops with that hint when it is missing). The internal build uses the unstable `--document-hidden-items` through `RUSTC_BOOTSTRAP=1`. Cargo output goes to `target/structure/`.
 
 The site directory gets:
 
 - `internal/` and `public/`: the two rustdoc trees, each with its `structure.html`.
-- `index.html`: forwards to the internal docs.
+- `guide/`: the guide (below).
+- `index.html`: a landing page linking the guide and both rustdoc trees, with the build label.
 - `.nojekyll`.
+
+## The guide
+
+`guide/` is an [mdBook](https://rust-lang.github.io/mdBook/): a human-written "how it works"
+for tx-ide. `guide/book.toml` configures it, `guide/src/SUMMARY.md` orders the pages, and each
+page is a Markdown file next to it in `guide/src/`. `build.py` runs
+`mdbook build docs-site/guide -d <site>/guide` after the rustdoc builds; the pages link the API
+docs as `../internal/tx_core/…`, so those links resolve on the built site only.
+
+To write with a live preview:
+
+```sh
+mdbook serve docs-site/guide --open
+mdbook test docs-site/guide    # checks the code blocks; none of them is compiled Rust
+```
+
+Label every fenced block (`sh`, `text`, `yaml`, or `rust,ignore`): `mdbook test` compiles an
+unlabelled block as Rust.
 
 ## Hosting
 
