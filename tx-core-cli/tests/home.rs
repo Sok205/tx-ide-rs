@@ -30,10 +30,6 @@ fn screen(cli: &Cli) -> String {
         .into_owned()
 }
 
-fn menu_shown(cli: &Cli) -> bool {
-    screen(cli).contains("New tx session")
-}
-
 fn clients(cli: &Cli) -> Vec<String> {
     let mut clients: Vec<String> = cli
         .tmux_out(&["list-clients", "-F", "#{client_session}"])
@@ -71,34 +67,22 @@ fn installed_server(cli: &Cli, yaml: &str) {
 const NO_ASSISTANT: &str = "plugins:\n  assistant: { enabled: false }\n";
 
 #[test]
-fn ui_install_binds_prefix_m_and_the_first_attach_hook() {
+fn ui_install_binds_prefix_m_only() {
     require_tmux!();
     let cli = Cli::new();
     installed_server(&cli, NO_ASSISTANT);
     let bound = cli.tmux_out(&["list-keys", "-T", "prefix", "m"]);
     assert!(bound.contains("run-shell -b"), "{bound}");
+    assert!(bound.contains("_home-open"), "{bound}");
     assert!(bound.contains("#{pane_id}"), "{bound}");
     assert!(bound.contains("#{client_name}"), "{bound}");
     let hook = cli.tmux_out(&["show-hooks", "-g", "client-attached"]);
-    assert!(hook.contains("_home-first"), "{hook}");
-    assert!(hook.contains("@tx-home-shown"), "{hook}");
+    assert!(!hook.contains("_home"), "{hook}");
     assert!(
         std::fs::read_to_string(cli.state().join("keys/.installed"))
             .unwrap()
             .lines()
-            .any(|line| line == "home\tkeys=m\tunset=\tunhook=client-attached[90]")
-    );
-    assert!(hook.starts_with("client-attached[90] "), "{hook}");
-    // Someone else's hook on another index survives the menu's unhook.
-    assert!(
-        cli.tmux(&[
-            "set-hook",
-            "-g",
-            "client-attached[0]",
-            "display-message mine"
-        ])
-        .status
-        .success()
+            .any(|line| line == "home\tkeys=m\tunset=\tunhook=")
     );
 
     cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
@@ -107,113 +91,23 @@ fn ui_install_binds_prefix_m_and_the_first_attach_hook() {
         !cli.tmux_out(&["list-keys", "-T", "prefix", "m"])
             .contains("_home-open")
     );
-    let hook = cli.tmux_out(&["show-hooks", "-g", "client-attached"]);
-    assert!(!hook.contains("_home-first"), "{hook}");
-    assert!(hook.contains("display-message mine"), "{hook}");
 }
 
-/// `ui install` turning the menu on in a live IDE: the operator's attach already happened, so
-/// it must not pop up on the next reattach.
+/// prefix+m from the home floor: the same screen in a popup, which `q` closes.
 #[test]
-#[ignore = "rewritten in Task 11"]
-fn enabling_the_menu_on_a_live_server_counts_the_attached_client_as_first() {
+fn prefix_m_opens_the_home_popup_and_q_closes_it() {
     require_tmux!();
     let cli = Cli::new();
     installed_server(&cli, NO_ASSISTANT);
-    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
-    cli.ok(&["ui", "install"]);
-    let sock = cli.sock().display().to_string();
-    cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =probe"));
-    assert!(
-        cli.wait_for(5, || clients(&cli) == ["probe"]),
-        "{:?}",
-        clients(&cli)
-    );
-    assert_eq!(cli.tmux_out(&["show-option", "-gqv", "@tx-home-shown"]), "");
-
-    cli.write_yaml(NO_ASSISTANT);
-    cli.ok(&["ui", "install"]);
-    assert!(
-        cli.wait_for(5, || cli.tmux_out(&[
-            "show-option",
-            "-gqv",
-            "@tx-home-shown"
-        ]) == "1"),
-        "the live client was not counted"
-    );
-    assert!(cli.tmux(&["detach-client", "-s", "probe"]).status.success());
-    assert!(
-        cli.wait_for(5, || clients(&cli).is_empty()),
-        "{:?}",
-        clients(&cli)
-    );
-    press(
-        &cli,
-        &[&format!("TMUX= tmux -S {sock} attach -t =probe"), "Enter"],
-    );
-    assert!(
-        cli.wait_for(5, || clients(&cli) == ["probe"]),
-        "{:?}",
-        clients(&cli)
-    );
-    assert!(
-        !cli.wait_for(2, || menu_shown(&cli)),
-        "the reattach showed the menu:\n{}",
-        screen(&cli)
-    );
-}
-
-#[test]
-#[ignore = "rewritten in Task 11"]
-fn prefix_m_opens_the_menu_without_disabled_plugins_items() {
-    require_tmux!();
-    let cli = Cli::new();
-    installed_server(
-        &cli,
-        "plugins:\n  assistant: { enabled: false }\n  timeline: { enabled: false }\n",
-    );
-    // Not this test's first attach.
-    assert!(
-        cli.tmux(&["set-option", "-g", "@tx-home-shown", "1"])
-            .status
-            .success()
-    );
-    let sock = cli.sock().display().to_string();
-    cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =probe"));
-    assert!(
-        cli.wait_for(5, || clients(&cli) == ["probe"]),
-        "{:?}",
-        clients(&cli)
-    );
-    assert!(!cli.wait_for(1, || menu_shown(&cli)), "{}", screen(&cli));
-
+    cli.create("a");
+    floor(&cli);
+    assert!(cli.wait_for(5, || home_shown(&cli)), "{}", screen(&cli));
+    let popup_shown = || screen(&cli).contains("q close");
     press(&cli, &["C-a", "m"]);
-    assert!(
-        cli.wait_for(10, || menu_shown(&cli)),
-        "prefix+m showed no menu:\n{}",
-        screen(&cli)
-    );
-    let shown = screen(&cli);
-    assert!(shown.contains("Attach to running"), "{shown}");
-    for hidden in ["Timeline", "Assistant", "Fork this session"] {
-        assert!(!shown.contains(hidden), "{hidden}:\n{shown}");
-    }
-    // A hidden item's key does nothing; the plugins list is read-only and Esc leaves it.
-    press(&cli, &["T"]);
-    press(&cli, &["p"]);
-    assert!(
-        cli.wait_for(5, || screen(&cli).contains("disabled")),
-        "{}",
-        screen(&cli)
-    );
-    press(&cli, &["Escape"]);
-    assert!(cli.wait_for(5, || menu_shown(&cli)), "{}", screen(&cli));
-    press(&cli, &["Escape"]);
-    assert!(
-        cli.wait_for(5, || !menu_shown(&cli)),
-        "Esc did not close it:\n{}",
-        screen(&cli)
-    );
+    assert!(cli.wait_for(5, popup_shown), "no popup:\n{}", screen(&cli));
+    press(&cli, &["q"]);
+    assert!(cli.wait_for(5, || !popup_shown()), "q did not close it:\n{}", screen(&cli));
+    assert!(home_shown(&cli), "{}", screen(&cli));
 }
 
 #[test]
@@ -223,7 +117,6 @@ fn home_outside_tx_ide_says_where_to_run_it() {
     assert!(stderr.contains("prefix+m"), "{stderr}");
     cli.fails(&["home", "x"], 2);
     cli.fails(&["_home-open", "%1"], 2);
-    cli.fails(&["_home-first"], 2);
     cli.fails(&["_home-tui", "%1", "c"], 2);
     cli.fails(&["_home-tui"], 2);
     cli.fails(&["_home-tui", "%1", "--choice"], 2);
@@ -352,14 +245,8 @@ fn client_on(cli: &Cli, session: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The outer terminal attached to `home`. The menu-era first-attach popup (gone in Task 11)
-/// is kept off: the server counts as shown.
+/// The outer terminal attached to `home`.
 fn attach_home(cli: &Cli) {
-    assert!(
-        cli.tmux(&["set-option", "-g", "@tx-home-shown", "1"])
-            .status
-            .success()
-    );
     let sock = cli.sock().display().to_string();
     cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =home"));
 }

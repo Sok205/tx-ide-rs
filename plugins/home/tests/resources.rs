@@ -27,8 +27,7 @@ fn the_key_fragment_declares_prefix_m_and_the_attach_hook() {
     assert!(text.starts_with("#!"), "{text}");
     assert!(text.lines().any(|line| line == "# keys: m"), "{text}");
     assert!(
-        text.lines()
-            .any(|line| line == "# unhook: client-attached[90]"),
+        !text.lines().any(|line| line.starts_with("# unhook:")),
         "{text}"
     );
     assert!(text.contains("bind m run-shell -b"), "{text}");
@@ -36,12 +35,7 @@ fn the_key_fragment_declares_prefix_m_and_the_attach_hook() {
         text.contains("_home-open '#{pane_id}' '#{client_name}'"),
         "{text}"
     );
-    assert!(text.contains("set-hook -g client-attached[90] {"), "{text}");
-    assert!(text.contains("#{@tx-home-shown}"), "{text}");
-    assert!(
-        text.contains("_home-first '#{pane_id}' '#{client_name}'"),
-        "{text}"
-    );
+    assert!(!text.contains("client-attached"), "{text}");
 }
 
 #[test]
@@ -50,7 +44,6 @@ fn the_verbs_are_registered() {
     for verb in [
         "home",
         "_home-open",
-        "_home-first",
         "_home-tui",
         "_home-install",
         "_home-perform",

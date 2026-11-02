@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
 # keys: m
-# unhook: client-attached[90]
-# tx key plugin `home`: prefix+m opens the tx-ide start menu in a popup on the firing client. The
-# first client to attach to a fresh server gets it once on its own: the client-attached hook runs
-# `_home-first` unless the server option @tx-home-shown is set, and `_home-first` sets it (a
-# client nested in one of the server's own panes never counts). The hook owns index 90 of
-# client-attached, so other hooks there stay. Sourced on a live server (`ui install` reloading)
-# with a non-nested client already attached, it marks the menu shown: that attach was the first.
-# Run by `run-shell` from the server's tmux.conf, which `tx ui install` writes.
+# tx key plugin `home`: prefix+m opens the tx-ide home (sessions, history, the assistant) in a
+# popup on the firing client. The home is also the floor of the `home` view's pane, where
+# `tx ui attach` lands; the popup is the same screen from anywhere else. Run by `run-shell` from
+# the server's tmux.conf, which `tx ui install` writes.
 #
-# Both run in the background (`run-shell -b`) and swallow their output, so a failing menu never
-# holds up the attach or drops the client into a run-shell view. The menu learns the firing pane
-# and client from `#{pane_id}` / `#{client_name}`, as the other key fragments pass them.
+# The bind runs in the background (`run-shell -b`) and swallows its output, so a failing home
+# never drops the client into a run-shell view. The home learns the firing pane and client from
+# `#{pane_id}` / `#{client_name}`, as the other key fragments pass them.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the quoting.
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.
@@ -28,19 +24,6 @@ trap 'rm -f "$CONF"' EXIT
 
 cat >>"$CONF" <<EOF2
 bind m run-shell -b "$TX _home-open '#{pane_id}' '#{client_name}' >/dev/null 2>&1 || true"
-set-hook -g client-attached[90] {
-  if -F '#{==:#{@tx-home-shown},}' {
-    run-shell -b "$TX _home-first '#{pane_id}' '#{client_name}' >/dev/null 2>&1 || true"
-  }
-}
 EOF2
 
 tmux source-file "$CONF"
-
-pane_ttys=" $(tmux list-panes -a -F '#{pane_tty}' 2>/dev/null | tr '\n' ' ') "
-for tty in $(tmux list-clients -F '#{client_tty}' 2>/dev/null); do
-  case "$pane_ttys" in
-    *" $tty "*) ;;
-    *) tmux set-option -g @tx-home-shown 1; break ;;
-  esac
-done

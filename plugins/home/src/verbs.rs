@@ -3,9 +3,8 @@
 //! exits; `_home-perform <pane>` (the `pane-died` hook) acts on that choice and gives the pane its
 //! next program: the nested attach of the chosen session, else the TUI again. `_home-open`
 //! (prefix+m) shows the TUI in a popup on the firing client and runs its choice once the popup
-//! has closed (tmux opens no second popup over a first); `_home-first` (the client-attached
-//! hook) opens it once per server. Every action is another plugin's `tx` verb or a tmux command
-//! (D3).
+//! has closed (tmux opens no second popup over a first). Every action is another plugin's `tx`
+//! verb or a tmux command (D3).
 
 use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
@@ -22,12 +21,9 @@ use crate::model::{Action, AssistantState, Context, Home};
 use crate::run::{self, Options};
 
 pub const OPEN_VERB: &str = "_home-open";
-pub const FIRST_VERB: &str = "_home-first";
 pub const TUI_VERB: &str = "_home-tui";
 pub const INSTALL_VERB: &str = "_home-install";
 pub const PERFORM_VERB: &str = "_home-perform";
-/// Server option: the start menu has been shown on this server.
-pub const SHOWN_OPTION: &str = "@tx-home-shown";
 const STATUS_MILLISECONDS: &str = "4000";
 const ASSISTANT_VERB: &str = "assistant";
 
@@ -35,7 +31,6 @@ pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![
         Arc::new(HomeVerb),
         Arc::new(Open),
-        Arc::new(First),
         Arc::new(Tui),
         Arc::new(Install),
         Arc::new(Perform),
@@ -56,7 +51,7 @@ fn plugin_directory(core: &TxCore) -> PathBuf {
     core.config().plugin_data_dir(crate::PLUGIN_ID)
 }
 
-/// `home`: open the start menu on the terminal this runs in.
+/// `home`: open the home in a popup on the terminal this runs in.
 struct HomeVerb;
 
 impl Verb for HomeVerb {
@@ -65,7 +60,7 @@ impl Verb for HomeVerb {
     }
 
     fn usage(&self) -> &'static str {
-        "home   the tx-ide start menu (prefix+m)"
+        "home   the tx-ide home: sessions, history, the assistant (prefix+m)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -86,7 +81,7 @@ impl Verb for HomeVerb {
             );
             return Ok(1);
         };
-        open(core, &ui, &pane, &client, false)
+        open(core, &ui, &pane, &client)
     }
 }
 
@@ -107,31 +102,7 @@ impl Verb for Open {
             return usage(io, "_home-open <pane> <client>");
         };
         let ui = Ui::from_core(core);
-        reported(&ui, client, open(core, &ui, pane, client, false))
-    }
-}
-
-/// `_home-first <pane> <client>`: the client-attached hook.
-struct First;
-
-impl Verb for First {
-    fn name(&self) -> &'static str {
-        FIRST_VERB
-    }
-
-    fn usage(&self) -> &'static str {
-        "_home-first <pane> <client>   the start menu, once per server (client-attached hook, internal)"
-    }
-
-    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let [pane, client] = argv else {
-            return usage(io, "_home-first <pane> <client>");
-        };
-        let ui = Ui::from_core(core);
-        if is_nested(&ui, client) || !claim_first(&ui) {
-            return Ok(0);
-        }
-        reported(&ui, client, open(core, &ui, pane, client, true))
+        reported(&ui, client, open(core, &ui, pane, client))
     }
 }
 
@@ -377,37 +348,6 @@ fn reported(ui: &Ui, client: &str, result: Result<i32, VerbError>) -> Result<i32
     result
 }
 
-/// Whether `client` should not count as a first attach: it is nested (its tty is one of this
-/// server's panes: the attach inside a view), or it is already gone.
-fn skips_first(clients: &str, pane_ttys: &str, client: &str) -> bool {
-    let Some(tty) = clients.lines().find_map(|line| {
-        line.split_once('\t')
-            .filter(|(name, _)| *name == client)
-            .map(|(_, tty)| tty)
-    }) else {
-        return true;
-    };
-    pane_ttys.lines().any(|pane_tty| pane_tty == tty)
-}
-
-fn is_nested(ui: &Ui, client: &str) -> bool {
-    let (_, clients) = ui.quiet(&["list-clients", "-F", "#{client_name}\t#{client_tty}"]);
-    let (_, ttys) = ui.quiet(&["list-panes", "-a", "-F", "#{pane_tty}"]);
-    skips_first(&clients, &ttys, client)
-}
-
-/// Test-and-set of [`SHOWN_OPTION`] in one tmux command, so two first clients cannot both win.
-fn claim_first(ui: &Ui) -> bool {
-    let (ok, out) = ui.quiet(&[
-        "if-shell",
-        "-F",
-        &format!("#{{{SHOWN_OPTION}}}"),
-        "display-message -p taken",
-        &format!("set-option -g {SHOWN_OPTION} 1 ; display-message -p mine"),
-    ]);
-    ok && out.trim() == "mine"
-}
-
 /// How to run this `tx` against this core.
 struct Txc {
     exe: PathBuf,
@@ -441,7 +381,7 @@ impl Txc {
     }
 }
 
-fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result<i32, VerbError> {
+fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str) -> Result<i32, VerbError> {
     let tx = Txc::current(core)?;
     let choice = tempfile::Builder::new()
         .prefix("tx-home-")
@@ -449,11 +389,7 @@ fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str, first: bool) -> Result
         .map_err(|e| failed(format!("choice file: {e}")))?
         .into_temp_path();
     let choice_path = choice.to_string_lossy();
-    let mut args = vec![TUI_VERB, pane, "--popup", "--choice", &choice_path];
-    if first {
-        args.push("--first");
-    }
-    let command = tx.shell(&args);
+    let command = tx.shell(&[TUI_VERB, pane, "--popup", "--choice", &choice_path]);
     // -EE: a home that fails keeps its popup open, showing why.
     ui.run(&[
         "display-popup",
@@ -781,16 +717,6 @@ mod tests {
                    tutor-rust is ready: tmux -S '/s/tmux.sock' attach -t =tutor-rust\n";
         assert_eq!(tutor_view(out), Some("tutor-rust"));
         assert_eq!(tutor_view("tutor-rust view created.\n"), None);
-    }
-
-    #[test]
-    fn a_gone_or_nested_client_is_no_first_attach() {
-        let clients = "/dev/ttys001\t/dev/ttys001\n/dev/ttys009\t/dev/ttys009\n";
-        let panes = "/dev/ttys009\n/dev/ttys010\n";
-        assert!(!skips_first(clients, panes, "/dev/ttys001"));
-        assert!(skips_first(clients, panes, "/dev/ttys009"), "nested");
-        assert!(skips_first(clients, panes, "/dev/ttys002"), "gone");
-        assert!(skips_first("", "", "/dev/ttys001"), "no server");
     }
 
     #[test]

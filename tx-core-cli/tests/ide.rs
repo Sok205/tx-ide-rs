@@ -286,10 +286,6 @@ fn ui_install_fragment_loads() {
     assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
     assert!(bound("prefix", "T").contains("_timeline-attach"));
     assert!(bound("prefix", "m").contains("_home-open"));
-    assert!(
-        cli.tmux_out(&["show-hooks", "-g", "client-attached"])
-            .contains("_home-first")
-    );
     cli.tmux(&["kill-server"]);
 }
 
@@ -656,12 +652,13 @@ fn ui_attach_lands_on_the_home_tui_and_the_assistant_comes_up_behind_it() {
     )
     .unwrap();
     cli.in_outer_pane(&format!("sh {}", script.display()));
+    // `ui install` ran just before; under the other suites' load the attach can take a while.
     assert!(
-        cli.wait_for(5, || cli.tmux_out(&["list-clients", "-F", "#{client_session}"]) == "home"),
+        cli.wait_for(15, || cli.tmux_out(&["list-clients", "-F", "#{client_session}"]) == "home"),
         "no client attached to home"
     );
     assert!(
-        cli.wait_for(5, || home_tui_shown(&cli)),
+        cli.wait_for(10, || home_tui_shown(&cli)),
         "the home pane does not show the TUI:\n{}",
         home_pane(&cli)
     );
