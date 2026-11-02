@@ -32,7 +32,8 @@ const ASSISTANT_VERB: &str = "assistant";
 
 /// `@tx-data` locates `bin/` and `keys/`; `@tx-arguments` is what every `txc` a key fragment
 /// runs carries (the core's `cli_arguments()`, words split by spaces: `install` refuses unsafe
-/// paths).
+/// paths). `detach-on-destroy on` detaches the nested clients of an ending agent, so their view
+/// panes fall back to a shell; views turn it off for themselves (`views::open`).
 fn conf_text(exe: &Path, data: &Path, arguments: &[String], others: &[&str]) -> String {
     let data = data.display();
     let arguments = arguments.join(" ");
@@ -40,7 +41,7 @@ fn conf_text(exe: &Path, data: &Path, arguments: &[String], others: &[&str]) -> 
         "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
-         set -g detach-on-destroy off\n\
+         set -g detach-on-destroy on\n\
          set -g @tx-bin \"{}\"\n\
          set -g @tx-data \"{data}\"\n\
          set -g @tx-arguments \"{arguments}\"\n\
@@ -489,7 +490,7 @@ mod tests {
             "# tx-core server config, written by `txc ui install`. Re-run to update.\n\
              set -s exit-empty on\n\
              set -g history-limit 50000\n\
-             set -g detach-on-destroy off\n\
+             set -g detach-on-destroy on\n\
              set -g @tx-bin \"/opt/txc\"\n\
              set -g @tx-data \"/s/data\"\n\
              set -g @tx-arguments \"--data-dir /s/data --run-dir /r\"\n\
