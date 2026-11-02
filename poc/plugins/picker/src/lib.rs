@@ -1,5 +1,5 @@
 //! tx-core plugin `picker`: the fzf session picker (prefix+t). It lists the running agents and
-//! the views, each view under the agent it belongs to. `_list` is its feed (fzf re-runs it to
+//! the views but the home base in one flat list, newest activity first. `_list` is its feed (fzf re-runs it to
 //! reload), `pick` is the interactive loop, and `_picker-popup` shows a pick in a popup (alt-p).
 //! Port of main's `tx attach` without `--host`/`--all`. Publishes `keys/picker.tmux`.
 
@@ -15,8 +15,8 @@ use tx_core::events::now;
 use tx_core::{Agent, ListFilter, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo};
 
 use tx_client::render::{
-    ACCENT_ANSI, BOLD, FG_ANSI, LOCATION_W, NESTED_MARK, PickerEntry, RESET, ROLE_W, Row,
-    WARN_ANSI, picker_namew, picker_rows,
+    ACCENT_ANSI, BOLD, FG_ANSI, LOCATION_W, PickerEntry, RESET, ROLE_W, Row, WARN_ANSI, listed,
+    picker_namew, picker_rows,
 };
 use tx_client::tmux::{DIM_FG_HEX, FG_HEX, Ui, shell_quote};
 use tx_client::views::{self, View};
@@ -170,7 +170,7 @@ pub fn fzf_args(
 }
 
 /// What the picker lists: reconciled with tmux and with the views whose agent is gone closed,
-/// the running agents and every view.
+/// the running agents and every view but the home base.
 struct Listing {
     agents: Vec<Agent>,
     views: Vec<View>,
@@ -194,18 +194,13 @@ impl Listing {
             .iter()
             .map(PickerEntry::Agent)
             .chain(self.views.iter().map(PickerEntry::View))
+            .filter(|entry| listed(*entry))
     }
 
-    /// The widest NAME cell: a view with a parent may be shown under it, behind the mark.
+    /// The widest NAME cell.
     fn longest_name(&self) -> i64 {
-        let mark = NESTED_MARK.chars().count();
         self.entries()
-            .map(|entry| match entry {
-                PickerEntry::View(view) if view.parent_id.is_some() => {
-                    view.name.chars().count() + mark
-                }
-                _ => entry.name().chars().count(),
-            } as i64)
+            .map(|entry| entry.name().chars().count() as i64)
             .max()
             .unwrap_or(0)
     }
@@ -573,7 +568,7 @@ mod tests {
 
     use super::*;
 
-    const HEADER: &str = "NAME           LOCATION                  STARTED IDLE   ROLE     TAGS";
+    const HEADER: &str = "NAME           LOCATION                  STARTED IDLE   ROLE  TAGS";
 
     const ALL: Binds = Binds {
         edit_tag: true,
@@ -707,7 +702,7 @@ mod tests {
 
     #[test]
     fn alt_p_output_is_split_from_the_selection() {
-        let row = "sh\t\tL\t$4\t  └ sh\n";
+        let row = "sh\t\tL\t$4\tsh\n";
         assert_eq!(split_popup(&format!("popup\n{row}")), (true, row));
         assert_eq!(split_popup(row), (false, row));
         assert_eq!(split_popup("popup\n"), (true, ""));
