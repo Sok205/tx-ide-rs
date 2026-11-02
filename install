@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# poc/install — make the poc the daily driver. Idempotent, safe to re-run; --dry-run prints every
+# install — make txc the daily driver. Idempotent, safe to re-run; --dry-run prints every
 # file change and changes nothing.
 #
-#   1. cargo install --path poc/tx-core-cli        txc and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin)
+#   1. cargo install --path tx-core-cli            txc and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin)
 #   2. txc ui install                               the IDE's tmux config from the plugins' resources
-#   2b. ~/.config/nvim and ~/.tmux.conf             links to poc/config/{nvim,tmux.conf}; a real
+#   2b. ~/.config/nvim and ~/.tmux.conf             links to config/{nvim,tmux.conf}; a real
 #                                                  directory or file there is moved to <path>.bak.<stamp>
 #   3. the switch (once; a second run finds nothing to do):
 #      - the old install's `tx` (~/.local/bin/tx) becomes `tx-old`, and ~/.tx-ide/tmux.conf sets
@@ -24,14 +24,14 @@
 # Not touched: ~/.tx-ide's data (sessions, history, artifacts), the repository's agents/, the hook
 # shims under ~/.tx-ide/hooks, the global tmux session-closed hook of the old server, the other
 # ~/.local/bin links of the old install (tx-assistant, tmux-pane-session-name,
-# tmux-system-resources: nothing in the poc wants those names).
+# tmux-system-resources: nothing in txc wants those names).
 set -u -o pipefail
 
-POC="$(cd "$(dirname "$0")" && pwd -P)"
+REPO="$(cd "$(dirname "$0")" && pwd -P)"
 HOME_DIR="${HOME%/}"
 # txc's data dir (the five-directory rule of `txc help`): agent worktrees live under its worktrees/.
 TX_DATA="${TX_DATA_DIR:-${XDG_DATA_HOME:-$HOME_DIR/.local/share}/${TX_APPNAME:-tx-ide}}"
-# Physical, like $POC, so a symlinked /tmp or home compares equal.
+# Physical, like $REPO, so a symlinked /tmp or home compares equal.
 TX_DATA="$(cd "$TX_DATA" 2>/dev/null && pwd -P || printf '%s' "$TX_DATA")"
 LOCAL_BIN="$HOME_DIR/.local/bin"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}"
@@ -71,9 +71,9 @@ real_path() {
 }
 
 cat <<EOF
-${B}=== tx-ide poc install ===${X}$( ((DRY_RUN)) && printf '  %s(dry run: nothing is changed)%s' "$Y" "$X")
+${B}=== tx-ide install ===${X}$( ((DRY_RUN)) && printf '  %s(dry run: nothing is changed)%s' "$Y" "$X")
 
-poc:        $POC
+repo:       $REPO
 binaries:   $CARGO_BIN/{txc,txi}
 old home:   $TX_IDE_DIR
 hook files: $CLAUDE_DIR/settings.json, $CODEX_DIR/hooks.json
@@ -100,11 +100,11 @@ for tool in claude nvim fzf; do
 done
 
 # === 1: txc and txi ===
-header "txc and txi (cargo install --path $POC/tx-core-cli)"
+header "txc and txi (cargo install --path $REPO/tx-core-cli)"
 if ((DRY_RUN)); then
-  would "$CARGO_BIN/txc, $CARGO_BIN/txi" "run: cargo install --path $POC/tx-core-cli --force"
+  would "$CARGO_BIN/txc, $CARGO_BIN/txi" "run: cargo install --path $REPO/tx-core-cli --force"
 else
-  if cargo install --path "$POC/tx-core-cli" --force 2>&1 | sed 's/^/    /'; then
+  if cargo install --path "$REPO/tx-core-cli" --force 2>&1 | sed 's/^/    /'; then
     ok "$CARGO_BIN/txc, $CARGO_BIN/txi" "installed"
   else
     fail "cargo install" "failed"
@@ -128,15 +128,15 @@ else
 fi
 
 # === 2b: the operator's nvim and tmux config ===
-# poc/config/ holds the editor and default-server tmux config; the links make them live. A link
+# config/ holds the editor and default-server tmux config; the links make them live. A link
 # already pointing there is left alone; a link elsewhere is replaced; a real directory or file is
 # moved aside first.
-header "Link ~/.config/nvim and ~/.tmux.conf to $POC/config"
+header "Link ~/.config/nvim and ~/.tmux.conf to $REPO/config"
 # An agent's worktree is deleted when the agent is archived, and a link into it would go with it:
 # the links must point at the main checkout.
-case "$POC/" in
+case "$REPO/" in
 "$TX_DATA/worktrees/"*)
-  fail "$POC" "is an agent worktree under $TX_DATA/worktrees — run poc/install from the main checkout"
+  fail "$REPO" "is an agent worktree under $TX_DATA/worktrees — run install from the main checkout"
   exit 1
   ;;
 esac
@@ -172,8 +172,8 @@ link_config() {
     fi
   fi
 }
-link_config "$POC/config/nvim" "$HOME_DIR/.config/nvim"
-link_config "$POC/config/tmux.conf" "$HOME_DIR/.tmux.conf"
+link_config "$REPO/config/nvim" "$HOME_DIR/.config/nvim"
+link_config "$REPO/config/tmux.conf" "$HOME_DIR/.tmux.conf"
 
 # === 3a: the old install becomes tx-old ===
 header "Rename the old install to tx-old"
@@ -316,7 +316,7 @@ ${B}The old install, as tx-old:${X}
   - the settings keys the old install set (disableWorkflows, skillOverrides, …) were left alone.
 
 ${B}Your own config:${X}
-  - ~/.config/nvim and ~/.tmux.conf link to $POC/config; edit them there, they are versioned.
+  - ~/.config/nvim and ~/.tmux.conf link to $REPO/config; edit them there, they are versioned.
   - restart your default tmux server once (tmux kill-server on the default socket) so it stops
     sourcing the old fragment; the IDE's server is unaffected.
   - terminal profile: unchanged. The IDE's M-1..9 / Cmd-Opt-digit keys come from the keymap

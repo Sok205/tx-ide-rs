@@ -1,4 +1,4 @@
-//! `poc/install --dry-run` against a throwaway `$HOME`: the hook step acts on what matches, not
+//! `install --dry-run` against a throwaway `$HOME`: the hook step acts on what matches, not
 //! on formatting. A compact (minified) settings file with no old entries is reported as not
 //! written; one with old entries lists each entry it would remove and keeps the foreign ones.
 //! Dry runs execute nothing (no cargo, no tmux server), so this needs only `jq` on `PATH`.
@@ -147,7 +147,7 @@ fn refuses_to_run_from_an_agent_worktree() {
     let home = home();
     // A copy of the script inside what the data dir calls an agent worktree.
     let data = home.path().join(".local/share/tx-ide");
-    let worktree = data.join("worktrees/repo-0123abcd/repo--agent/poc");
+    let worktree = data.join("worktrees/repo-0123abcd/repo--agent");
     std::fs::create_dir_all(&worktree).unwrap();
     std::fs::copy(script(), worktree.join("install")).unwrap();
     let output = std::process::Command::new("bash")
@@ -164,6 +164,6 @@ fn refuses_to_run_from_an_agent_worktree() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     let text = String::from_utf8_lossy(&output.stdout);
-    assert!(text.contains("run poc/install from the main checkout"), "{text}");
+    assert!(text.contains("run install from the main checkout"), "{text}");
     assert!(!text.contains("Rename the old install"), "stops before the switch: {text}");
 }
