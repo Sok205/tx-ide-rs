@@ -25,8 +25,10 @@ fn event_loop(
 ) -> io::Result<Option<Action>> {
     let started = Instant::now();
     let tick = Duration::from_millis(1000 / FPS);
+    let mut frame = 0_usize;
     loop {
-        terminal.draw(|f| ui::draw(home, f.area(), f.buffer_mut()))?;
+        terminal.draw(|f| ui::draw(home, frame, f.area(), f.buffer_mut()))?;
+        frame = frame.wrapping_add(1);
         if !event::poll(tick)? {
             continue;
         }
