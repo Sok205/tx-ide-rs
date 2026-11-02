@@ -195,16 +195,21 @@ impl Verb for Tui {
     }
 }
 
-/// `tx assistant warm`, detached and forgotten, when the assistant plugin is on and no
-/// assistant runs: none at all, or a stopped one (a new server after a reboot), which `warm`
-/// respawns in place. Whether it was started.
-fn warm_when_down(core: &TxCore, io: &mut VerbIo<'_>) -> Result<bool, VerbError> {
-    if core.verb(ASSISTANT_VERB).is_none()
-        || !matches!(
+/// Whether the assistant plugin is on and no assistant runs: none at all, a stopped one (a new
+/// server after a reboot), which `warm` respawns in place, or a failed warm (its cause may be
+/// fixed by now).
+fn assistant_down(core: &TxCore) -> bool {
+    core.verb(ASSISTANT_VERB).is_some()
+        && matches!(
             data::assistant_state(core),
-            AssistantState::Absent | AssistantState::Stopped { .. }
+            AssistantState::Absent | AssistantState::Stopped { .. } | AssistantState::Failed(_)
         )
-    {
+}
+
+/// `tx assistant warm`, detached and forgotten, when the [`assistant_down`]. Whether it was
+/// started.
+fn warm_when_down(core: &TxCore, io: &mut VerbIo<'_>) -> Result<bool, VerbError> {
+    if !assistant_down(core) {
         return Ok(false);
     }
     let tx = Txc::current(core)?;
@@ -280,7 +285,14 @@ impl Verb for Install {
         let installed = Txc::current(core).and_then(|tx| {
             let pane = floor::install(&ui, session, &floor::hook_command(&tx.shell(&[])))
                 .map_err(failed)?;
-            if !floor::takes_floor(pane.dead, &pane.command) {
+            // A TUI an earlier attach left comes back as a first open while the assistant is
+            // down, so every attach starts it again.
+            let earlier_tui = tx
+                .exe
+                .file_name()
+                .is_some_and(|name| name == pane.command.as_str())
+                && assistant_down(core);
+            if !floor::takes_floor(pane.dead, &pane.command) && !earlier_tui {
                 return Ok(());
             }
             // A fresh TUI: a choice or a last session left by a pane of an earlier server with
@@ -703,6 +715,12 @@ impl Performer<'_> {
                     },
                     &tx.shell(&["_timeline-attach"]),
                 );
+            }
+            Action::Warm => {
+                if let Err(error) = output(tx.command(&[ASSISTANT_VERB, "warm"])) {
+                    self.status(&format!("assistant: {error}"));
+                }
+                self.back(None);
             }
             Action::Tutor => {
                 self.back(None);

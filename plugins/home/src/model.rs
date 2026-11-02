@@ -146,6 +146,8 @@ pub enum Action {
     Artifacts(String),
     Timeline,
     Tutor,
+    /// Start the assistant again after a failed warm.
+    Warm,
 }
 
 impl Action {
@@ -160,6 +162,7 @@ impl Action {
             Action::Artifacts(id) => format!("artifacts {id}"),
             Action::Timeline => "timeline".into(),
             Action::Tutor => "tutor".into(),
+            Action::Warm => "warm".into(),
         }
     }
 
@@ -170,6 +173,7 @@ impl Action {
         Some(match (verb, argument.is_empty()) {
             ("timeline", true) => Action::Timeline,
             ("tutor", true) => Action::Tutor,
+            ("warm", true) => Action::Warm,
             ("attach", false) => Action::Attach(argument),
             ("resume", false) => Action::Resume(argument),
             ("new", false) => Action::New(PathBuf::from(argument)),
@@ -503,9 +507,16 @@ impl Home {
         }
     }
 
-    /// `r`: an ended agent, or the assistant when it is stopped.
+    /// `r`: an ended agent, the assistant when it is stopped, or a warm again when the last one
+    /// failed (on the assistant's row, or when no agent is listed to select).
     fn resume(&self) -> Outcome {
-        let Some(agent) = self.cursor_agent() else {
+        let agent = self.cursor_agent();
+        if matches!(self.context.assistant, AssistantState::Failed(_))
+            && agent.is_none_or(|agent| agent.is_assistant)
+        {
+            return Outcome::Run(Action::Warm);
+        }
+        let Some(agent) = agent else {
             return Outcome::Stay;
         };
         if is_ended(agent) {
@@ -1326,6 +1337,41 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn r_warms_a_failed_assistant_from_its_row_or_an_empty_list() {
+        let failed = AssistantState::Failed("no roles".into());
+        let mut on_its_row = Home::new(Context {
+            assistant: failed.clone(),
+            ..first_run_context()
+        });
+        assert_eq!(selected(&on_its_row).unwrap(), "agent tx-assistant");
+        assert_eq!(
+            on_its_row.key(KeyCode::Char('r')),
+            Outcome::Run(Action::Warm)
+        );
+        let mut no_record = Home::new(Context {
+            assistant: failed.clone(),
+            projects: Vec::new(),
+            agents: Vec::new(),
+            ..first_run_context()
+        });
+        assert_eq!(no_record.cursor(), None);
+        assert_eq!(
+            no_record.key(KeyCode::Char('r')),
+            Outcome::Run(Action::Warm)
+        );
+        let mut elsewhere = Home::new(Context {
+            assistant: failed,
+            ..context()
+        });
+        elsewhere.select_session("fixer");
+        assert_eq!(
+            elsewhere.key(KeyCode::Char('r')),
+            Outcome::Stay,
+            "a running agent"
+        );
+    }
+
+    #[test]
     fn plugins_and_keys_are_read_only_lists() {
         let mut home = Home::new(context());
         home.key(KeyCode::Char('p'));
@@ -1401,6 +1447,7 @@ pub(crate) mod tests {
             Action::Artifacts("0f3a".into()),
             Action::Timeline,
             Action::Tutor,
+            Action::Warm,
         ] {
             assert_eq!(Action::decode(&action.encode()), Some(action.clone()));
         }
@@ -1415,6 +1462,7 @@ pub(crate) mod tests {
             "attach",
             "stop  ",
             "timeline now",
+            "warm now",
             "plugins",
             "keys",
             "bogus",

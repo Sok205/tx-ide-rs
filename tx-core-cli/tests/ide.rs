@@ -708,6 +708,34 @@ fn ui_attach_without_the_roles_installed_shows_the_failed_assistant() {
         cli.run(&["show", "tx-assistant"], &[], "").status.code(),
         Some(1)
     );
+    // `r` warms again: the roles are still missing, so it fails again and the home comes back.
+    let pid = || cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_pid}"]);
+    let failed_pid = pid();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(
+        cli.tmux(&["send-keys", "-t", "=home:", "r"])
+            .status
+            .success()
+    );
+    assert!(
+        cli.wait_for(20, || pid() != failed_pid
+            && home_pane(&cli).contains("assistant ✗ failed")),
+        "r did not warm again:\n{}",
+        home_pane(&cli)
+    );
+    // With the roles installed, the next attach's install warms again and the failure clears.
+    cli.ok(&["ui", "install"]);
+    cli.ok(&["_home-install", "home"]);
+    assert!(
+        cli.wait_for(30, || {
+            let screen = home_pane(&cli);
+            !screen.contains("failed")
+                && (screen.contains("assistant ◐ starting") || screen.contains("assistant ● ready"))
+        }),
+        "the header never left failed:\n{}",
+        home_pane(&cli)
+    );
+    assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]).lines().count(), 1);
 }
 
 #[test]
