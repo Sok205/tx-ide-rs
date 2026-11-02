@@ -1870,6 +1870,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "tempfile",
+ "tx-chat",
  "tx-client",
  "tx-core",
 ]

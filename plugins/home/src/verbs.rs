@@ -12,6 +12,7 @@ use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
 use crate::data;
 use crate::model::{Action, Home};
+use crate::project::ProjectCache;
 use crate::run;
 
 pub const OPEN_VERB: &str = "_home-open";
@@ -138,7 +139,9 @@ impl Verb for Tui {
             _ => return usage(io, "_home-tui <pane> <client> <file> [--first]"),
         };
         // Until Task 9 makes it the floor, the TUI only ever runs in the prefix+m popup.
-        let mut home = Home::new_popup(data::context(core)?);
+        let ui = Ui::from_core(core);
+        let mut cache = ProjectCache::new();
+        let mut home = Home::new_popup(data::context(core, &ui, &mut cache, None)?);
         if let Some(action) = run::run(&mut home, first).map_err(failed)? {
             std::fs::write(file, action.encode()).map_err(|e| failed(format!("{file}: {e}")))?;
         }

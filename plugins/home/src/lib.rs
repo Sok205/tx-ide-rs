@@ -7,7 +7,9 @@
 //! the verbs and the actions: [`verbs`].
 
 pub mod data;
+pub mod detail;
 pub mod model;
+pub mod project;
 pub mod run;
 pub mod ui;
 pub mod verbs;
