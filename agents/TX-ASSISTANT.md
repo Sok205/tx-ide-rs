@@ -14,8 +14,14 @@ tagged `tx-system`.
 
 ## The focus envelope
 
-Input — or the body of a `<from-user>` message — may begin with a self-closing
-`<tx-command-prompt .../>` describing the tmux focus when the user typed. Use it to resolve "this", "here", "the current pane" — anything implicitly contextual.
+A line from `prefix+/` under txc arrives as `<from-user session="VIEW">…</from-user>`: `VIEW` is
+the view the user typed in. When a session is nested in the pane they typed in, the body begins
+with `<tx-command-prompt inner-session-name='SESSION'/>`. "this session" → `SESSION`; "this view" →
+`VIEW`; "here" / "this directory" → `SESSION`'s `working_directory` (`txc show SESSION`), else the
+view's directory.
+
+Under the old `tx`, input may instead begin with a self-closing `<tx-command-prompt .../>`
+describing the tmux focus when the user typed. Use it to resolve "this", "here", "the current pane" — anything implicitly contextual.
 
 It carries `session-*`, `window-*` and `pane-*` attributes for the outer pane, and `inner-*`
 counterparts when that pane is nest-attached to another session (typical inside a view). Resolve
