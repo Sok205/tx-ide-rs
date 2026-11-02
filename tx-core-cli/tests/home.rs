@@ -522,6 +522,53 @@ fn the_first_open_warms_the_assistant_once_and_the_header_follows() {
     assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]).lines().count(), 1);
 }
 
+/// `/`, a line and Enter nest into the assistant at once; the line follows in the background
+/// (the fake claude stays `starting`, which `assistant ask` would wait out for 20 s).
+#[test]
+fn ask_nests_into_the_assistant_at_once() {
+    require_tmux!();
+    let cli = Cli::new();
+    installed_server(&cli, "");
+    let path = cli.fake_claude_path();
+    assert!(
+        cli.tmux(&["set-environment", "-g", "PATH", &path])
+            .status
+            .success()
+    );
+    hand_made_home(&cli, "sh");
+    cli.ok(&["_home-install", "home"]);
+    attach_home(&cli);
+    assert!(
+        cli.wait_for(30, || screen(&cli)
+            .contains("assistant ◐ starting · claude")),
+        "{}",
+        screen(&cli)
+    );
+    // Past the first open's grace period, where `/` is ignored.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    press(&cli, &["-l", "/"]);
+    assert!(
+        cli.wait_for(5, || screen(&cli).contains("ask ›")),
+        "{}",
+        screen(&cli)
+    );
+    press(&cli, &["-l", "why is the build red"]);
+    press(&cli, &["Enter"]);
+    assert!(
+        cli.wait_for(3, || clients(&cli) == ["home", "tx-assistant"]
+            && home_command(&cli) == "tmux"),
+        "{:?} {}\n{}",
+        clients(&cli),
+        home_command(&cli),
+        screen(&cli)
+    );
+    assert!(
+        cli.ok(&["ls"]).contains("tx-assistant"),
+        "{}",
+        cli.ok(&["ls"])
+    );
+}
+
 #[test]
 fn x_then_y_stops_the_selected_agent() {
     require_tmux!();

@@ -634,18 +634,25 @@ impl Performer<'_> {
                     self.back(self.name_of(id).as_deref());
                 }
             },
-            Action::Ask(text) => {
-                // `assistant ask` prints nothing; `warm` names the session to show.
-                let asked = output(tx.command(&[ASSISTANT_VERB, "ask", text]))
-                    .and_then(|_| output(tx.command(&[ASSISTANT_VERB, "warm"])));
-                match asked {
-                    Ok(name) => self.show(name.trim()),
-                    Err(error) => {
-                        self.status(&format!("assistant: {error}"));
-                        self.back(None);
+            Action::Ask(text) => match output(tx.command(&[ASSISTANT_VERB, "warm"])) {
+                // `warm` names the session, at once when it runs. The line follows in the
+                // background: `ask` waits for a starting assistant, whose engine queues what is
+                // typed meanwhile.
+                Ok(name) => {
+                    self.show(name.trim());
+                    let mut ask = tx.command(&[ASSISTANT_VERB, "ask", text]);
+                    ask.stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .process_group(0);
+                    if let Err(error) = ask.spawn() {
+                        self.status(&format!("assistant ask: {error}"));
                     }
                 }
-            }
+                Err(error) => {
+                    self.status(&format!("assistant: {error}"));
+                    self.back(None);
+                }
+            },
             Action::New(directory) => {
                 self.back(None);
                 let Some(client) = self.client() else {
