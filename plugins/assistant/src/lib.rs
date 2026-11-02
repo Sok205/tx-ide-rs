@@ -11,6 +11,9 @@
 //! keeps its worktree and its name: `warm` finds the running assistant by its role, else
 //! respawns the newest ended one in place, else creates it. Concurrent warms take turns on a lock
 //! file, so they never make two.
+//!
+//! Settings (`plugins.assistant.settings` in `config.yaml`): `model` (default `opus`) and
+//! `effort` (default `medium`), used when a new assistant is created.
 
 mod focus;
 
@@ -20,6 +23,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use tx_client::tmux::Ui;
 use tx_core::{
     Agent, AgentId, CoreError, CreateOptions, EngineKind, LaunchOptions, ListFilter,
@@ -35,8 +39,8 @@ pub const ROLE: &str = "TX-ASSISTANT";
 pub const COMMON_ROLE: &str = "COMMON";
 pub const TAG: &str = "tx-system";
 pub const ENGINE: EngineKind = EngineKind::Claude;
-pub const MODEL: &str = "opus";
-pub const EFFORT: &str = "medium";
+pub const DEFAULT_MODEL: &str = "opus";
+pub const DEFAULT_EFFORT: &str = "medium";
 /// The first turn, typed by core at launch: an agent needs an initial prompt.
 pub const GREETING: &str = "You are starting up. Reply with the single word READY.";
 /// Under the plugin's data directory: the assistant's own repository, the checkout its
@@ -57,6 +61,36 @@ pub const VIA: &str = "prefix+/";
 pub const START_TIMEOUT: Duration = Duration::from_secs(20);
 const START_POLL: Duration = Duration::from_millis(250);
 
+/// `plugins.assistant.settings`: the model and effort the assistant is launched with.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Settings {
+    pub model: String,
+    pub effort: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            model: DEFAULT_MODEL.to_owned(),
+            effort: DEFAULT_EFFORT.to_owned(),
+        }
+    }
+}
+
+impl Settings {
+    /// No settings (`null`) are the defaults; an unknown key or a wrong type is refused.
+    pub fn from_value(value: &serde_json::Value) -> Result<Self, PluginError> {
+        if value.is_null() {
+            return Ok(Self::default());
+        }
+        serde_json::from_value(value.clone()).map_err(|error| PluginError::Register {
+            plugin: PLUGIN_ID.to_owned(),
+            reason: format!("settings: {error}"),
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AssistantPlugin;
 
@@ -66,7 +100,8 @@ impl Plugin for AssistantPlugin {
     }
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
-        r.verb(Arc::new(Assistant));
+        let settings = Settings::from_value(r.settings())?;
+        r.verb(Arc::new(Assistant { settings }));
         r.resource("keys/assistant.tmux", include_bytes!("../tmux/keys.tmux"))
     }
 }
@@ -136,11 +171,11 @@ fn io_error(path: &Path, source: std::io::Error) -> CoreError {
 /// The assistant session: COMMON + TX-ASSISTANT on claude, greeted with `GREETING`, tagged
 /// `tx-system`, in a worktree of its own repository (so the engine's skill links land there, not
 /// in `$HOME`).
-pub fn create_options(core: &TxCore) -> Result<CreateOptions, CoreError> {
+pub fn create_options(core: &TxCore, settings: &Settings) -> Result<CreateOptions, CoreError> {
     let launch = LaunchOptions::agent(ENGINE)
         .profile([COMMON_ROLE, ROLE])
-        .option("model", MODEL)
-        .option("effort", EFFORT)
+        .option("model", settings.model.as_str())
+        .option("effort", settings.effort.as_str())
         .initial_prompt(GREETING);
     Ok(CreateOptions::new(SESSION_NAME, ensure_home(core)?, launch).tags([TAG]))
 }
@@ -194,13 +229,13 @@ fn warm_lock(core: &TxCore) -> Result<File, CoreError> {
 /// The running assistant; else the newest ended one, respawned in place (same name, same
 /// worktree); else a new one. One warm at a time. The outcome is left in `FAILURE_FILE` for
 /// every caller: the reason on failure, no file after a success.
-pub fn warm(core: &TxCore) -> Result<AgentId, CoreError> {
-    let warmed = start(core);
+pub fn warm(core: &TxCore, settings: &Settings) -> Result<AgentId, CoreError> {
+    let warmed = start(core, settings);
     record_outcome(core, &warmed);
     warmed
 }
 
-fn start(core: &TxCore) -> Result<AgentId, CoreError> {
+fn start(core: &TxCore, settings: &Settings) -> Result<AgentId, CoreError> {
     let _lock = warm_lock(core)?;
     ensure_home(core)?;
     if let Some(id) = running(core)? {
@@ -208,7 +243,7 @@ fn start(core: &TxCore) -> Result<AgentId, CoreError> {
     }
     match latest_ended(core)? {
         Some(id) => Ok(core.respawn_agent(&id)?.id),
-        None => core.create_agent(create_options(core)?),
+        None => core.create_agent(create_options(core, settings)?),
     }
 }
 
@@ -216,13 +251,18 @@ fn start(core: &TxCore) -> Result<AgentId, CoreError> {
 /// in `pane`: via that pane's session, behind its focus envelope; else via `VIA`. A new
 /// assistant is given `START_TIMEOUT` to report a state past `starting`; the line goes out either
 /// way, since the engine queues input typed while it works.
-pub fn ask(core: &TxCore, text: &str, pane: Option<&str>) -> Result<AgentId, CoreError> {
+pub fn ask(
+    core: &TxCore,
+    settings: &Settings,
+    text: &str,
+    pane: Option<&str>,
+) -> Result<AgentId, CoreError> {
     let ui = Ui::from_core(core);
     let (via, text) = match pane.and_then(|pane| focus::focus(&ui, pane)) {
         Some(focus) => (focus.session_name, format!("{} {text}", focus.envelope)),
         None => (VIA.to_owned(), text.to_owned()),
     };
-    let id = warm(core)?;
+    let id = warm(core, settings)?;
     let deadline = Instant::now() + START_TIMEOUT;
     while core.get_agent(&id)?.state == LlmEngineState::Starting && Instant::now() < deadline {
         std::thread::sleep(START_POLL);
@@ -244,12 +284,16 @@ fn take_input_buffer(core: &TxCore) -> String {
 }
 
 /// `ask` with the line prefix+/ parked; nothing when the line is blank.
-fn ask_from_buffer(core: &TxCore, pane: Option<&str>) -> Result<(), CoreError> {
+fn ask_from_buffer(
+    core: &TxCore,
+    settings: &Settings,
+    pane: Option<&str>,
+) -> Result<(), CoreError> {
     let text = take_input_buffer(core);
     if text.trim().is_empty() {
         return Ok(());
     }
-    ask(core, text.trim_end_matches('\n'), pane)?;
+    ask(core, settings, text.trim_end_matches('\n'), pane)?;
     Ok(())
 }
 
@@ -269,7 +313,9 @@ fn record_outcome(core: &TxCore, warmed: &Result<AgentId, CoreError>) {
     }
 }
 
-pub struct Assistant;
+pub struct Assistant {
+    settings: Settings,
+}
 
 impl Verb for Assistant {
     fn name(&self) -> &'static str {
@@ -286,24 +332,24 @@ impl Verb for Assistant {
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         match argv {
             [sub] if sub == "warm" => {
-                let id = warm(core)?;
+                let id = warm(core, &self.settings)?;
                 let name = core.get_agent(&id)?.name;
                 writeln!(io.stdout, "{name}")
                     .map_err(|error| VerbError::Failed(format!("write: {error}")))?;
                 Ok(0)
             }
             [sub, flag] if sub == "ask" && flag == "--from-buffer" => {
-                ask_from_buffer(core, None)?;
+                ask_from_buffer(core, &self.settings, None)?;
                 Ok(0)
             }
             [sub, flag, pane_flag, pane]
                 if sub == "ask" && flag == "--from-buffer" && pane_flag == "--pane" =>
             {
-                ask_from_buffer(core, Some(pane))?;
+                ask_from_buffer(core, &self.settings, Some(pane))?;
                 Ok(0)
             }
             [sub, words @ ..] if sub == "ask" && !words.is_empty() => {
-                ask(core, &words.join(" "), None)?;
+                ask(core, &self.settings, &words.join(" "), None)?;
                 Ok(0)
             }
             _ => {
@@ -313,6 +359,41 @@ impl Verb for Assistant {
                 );
                 Ok(2)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn no_settings_are_the_defaults() {
+        assert_eq!(
+            Settings::from_value(&serde_json::Value::Null).unwrap(),
+            Settings {
+                model: "opus".to_owned(),
+                effort: "medium".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_key_left_out_keeps_its_default() {
+        let settings = Settings::from_value(&json!({"model": "sonnet"})).unwrap();
+        assert_eq!(settings.model, "sonnet");
+        assert_eq!(settings.effort, DEFAULT_EFFORT);
+    }
+
+    #[test]
+    fn an_unknown_key_or_a_wrong_type_is_refused() {
+        for value in [json!({"modle": "x"}), json!({"effort": 3})] {
+            let error = Settings::from_value(&value).unwrap_err();
+            assert!(
+                matches!(&error, PluginError::Register { plugin, .. } if plugin == "assistant"),
+                "{error:?}"
+            );
         }
     }
 }
