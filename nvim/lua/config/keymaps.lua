@@ -154,9 +154,17 @@ require("config.diffview-return").setup()
 -- Keymap usage telemetry (see lua/config/keylog.lua)
 require("config.keylog").setup()
 
--- <leader>aq / <leader>aQ — ask a live tx llm session about the code
--- under the cursor, one question or a queued batch (see lua/config/tx-ask.lua)
-require("config.tx-ask")
+-- <leader>aq / <leader>aQ — ask a live tx agent about the code under the cursor, one
+-- question or a queued batch. The module ships with tx-client: `txc ui install` puts it under
+-- <data>/nvim, which a tx view prepends to the runtimepath and loads before this file runs;
+-- the flag keeps a second load from registering the keymaps twice.
+if not vim.g.tx_ask_loaded then
+  vim.g.tx_ask_loaded = true
+  local data_directory = vim.env.TX_DATA_DIR
+    or (vim.env.XDG_DATA_HOME or vim.env.HOME .. "/.local/share") .. "/tx-ide"
+  vim.opt.runtimepath:prepend(data_directory .. "/nvim")
+  require("tx-ask")
+end
 
 -- Agent code tours: registers :TourApply / :TourClear and the autocmd that keeps
 -- annotations on screen as buffers come and go (see lua/agent-tour.lua). Nothing
