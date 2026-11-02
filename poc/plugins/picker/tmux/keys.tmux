@@ -3,6 +3,8 @@
 # tx key plugin `picker`: prefix+t opens the tx session picker in a popup. `txc pick` finds the
 # pane to nest into by asking tmux directly (`display-message -p #{pane_id}`), so the bind plumbs
 # nothing through. Run by `run-shell` from the server's tmux.conf, which `txc ui install` writes.
+# The picker's TAB roles panel runs in this popup's own terminal (fzf hands it over), since a
+# tmux popup cannot open inside another; its normal mode needs no tmux keys of its own.
 #
 # The popup is `-w 118`: wide enough for NAME + the 25-col LOCATION + STARTED/IDLE/ROLE + tag
 # chips without wrapping, with ~5 cols of extra NAME headroom. Keep it in lockstep with
