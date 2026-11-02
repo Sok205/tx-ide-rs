@@ -32,8 +32,9 @@ const ASSISTANT_VERB: &str = "assistant";
 
 /// `@tx-data` locates `bin/` and `keys/`; `@tx-arguments` is what every `txc` a key fragment
 /// runs carries (the core's `cli_arguments()`, words split by spaces: `install` refuses unsafe
-/// paths). `detach-on-destroy on` detaches the nested clients of an ending agent, so their view
-/// panes fall back to a shell; views turn it off for themselves (`views::open`).
+/// paths). `detach-on-destroy on` detaches the clients of an ending session: a client nested in a
+/// view's pane goes, and the pane falls back to a shell. The terminal is kept in tmux by its own
+/// `no-detach-on-destroy` flag, which `ui attach` sets.
 fn conf_text(exe: &Path, data: &Path, arguments: &[String], others: &[&str]) -> String {
     let data = data.display();
     let arguments = arguments.join(" ");
@@ -445,6 +446,10 @@ fn ensure_home(ui: &Ui, assistant: Option<&str>) -> Result<(), VerbError> {
     Ok(())
 }
 
+/// The terminal's client flag: when its session ends it moves to another session instead of
+/// leaving tmux (`detach-on-destroy on` detaches every other client).
+const TERMINAL_FLAG: &str = "no-detach-on-destroy";
+
 fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let ui = Ui::from_core(core);
     // Always: the assistant is part of the IDE being up, whether or not `home` is new.
@@ -453,7 +458,11 @@ fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     let env = std::env::var("TMUX").ok();
     match tmux_env_socket(env.as_deref()) {
         Some(socket) if Path::new(socket) == core.socket_path() => {
-            ui.switch_client(HOME_SESSION)
+            let terminal = ui
+                .terminal_client()
+                .map_err(|e| VerbError::Failed(e.to_string()))?;
+            ui.run(&["refresh-client", "-t", &terminal, "-f", TERMINAL_FLAG])
+                .and_then(|_| ui.switch_client(HOME_SESSION))
                 .map_err(|e| VerbError::Failed(e.to_string()))?;
             return Ok(0);
         }
@@ -467,7 +476,13 @@ fn attach(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     }
     let _ = io.stdout.flush();
     let error = ui
-        .command(&["attach-session", "-t", &format!("={HOME_SESSION}")])
+        .command(&[
+            "attach-session",
+            "-f",
+            TERMINAL_FLAG,
+            "-t",
+            &format!("={HOME_SESSION}"),
+        ])
         .stdin(Stdio::inherit())
         .env_remove("TMUX")
         .exec();

@@ -280,12 +280,17 @@ impl Ui {
     /// switched to its own host it nests the view in itself, and the window collapses to 1x1. So
     /// the caller's client is walked up to its outer (terminal) client and named with `-c`.
     pub fn switch_client(&self, name: &str) -> Result<(), UiError> {
-        let (client, _) = self
-            .display_message("#{client_name}", None)
-            .and_then(|client| self.outer_client(&client))
-            .ok_or(UiError::NoClient)?;
+        let client = self.terminal_client()?;
         self.run(&["switch-client", "-c", &client, "-t", &format!("={name}")])
             .map(drop)
+    }
+
+    /// The outer (terminal) client this process is shown on, walked up from the caller's client.
+    pub fn terminal_client(&self) -> Result<String, UiError> {
+        self.display_message("#{client_name}", None)
+            .and_then(|client| self.outer_client(&client))
+            .map(|(client, _)| client)
+            .ok_or(UiError::NoClient)
     }
 
     /// The real-terminal client that ultimately shows `client`, with its session.

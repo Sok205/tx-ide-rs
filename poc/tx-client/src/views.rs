@@ -208,11 +208,7 @@ pub fn open(ui: &Ui, request: &ViewRequest<'_>) -> Result<View, ViewError> {
     ui.run(&create)?;
     let created_at = tx_core::events::now();
     let tags = request.tags.join(",");
-    // The server detaches the clients of an ending session (`detach-on-destroy on`): an agent's
-    // are nested in view panes, which fall back to a shell. A view's client is the terminal, so a
-    // closing view moves it to another session instead of out of tmux.
     let mut options = vec![
-        ("detach-on-destroy", "off".to_owned()),
         (VIEW_OPTION, "1".to_owned()),
         (KIND_OPTION, request.kind.as_str().to_owned()),
         (CREATED_OPTION, created_at.to_string()),
