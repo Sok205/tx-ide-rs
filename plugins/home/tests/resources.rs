@@ -47,7 +47,14 @@ fn the_key_fragment_declares_prefix_m_and_the_attach_hook() {
 #[test]
 fn the_verbs_are_registered() {
     let (_dir, core) = core(&PluginConfig::default());
-    for verb in ["home", "_home-open", "_home-first", "_home-tui"] {
+    for verb in [
+        "home",
+        "_home-open",
+        "_home-first",
+        "_home-tui",
+        "_home-install",
+        "_home-perform",
+    ] {
         assert!(core.verb(verb).is_some(), "{verb}");
     }
 }
