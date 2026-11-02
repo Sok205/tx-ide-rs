@@ -6,11 +6,18 @@ crate can see, with relations through public fields and public signatures only."
 import re
 
 # Module layout of the map, top to bottom; also the order modules are parsed and listed in.
-LAYOUT_ROWS = [["plugin"], ["core"], ["config", "profile", "engine", "events"], ["messaging", "tmux", "store", "locks"], ["session", "error"]]
+LAYOUT_ROWS = [
+    ["plugin", "migrate"],
+    ["core"],
+    ["config", "profile", "roles", "engine", "events"],
+    ["messaging", "tmux", "store", "locks", "worktree", "mirror"],
+    ["agent", "state", "error"],
+]
 MODULE_COLORS = {
-    "core": "#8b7cf6", "config": "#5fa8e8", "session": "#3fc1b0", "store": "#63c174", "locks": "#e5a54b",
+    "core": "#8b7cf6", "config": "#5fa8e8", "agent": "#3fc1b0", "store": "#63c174", "locks": "#e5a54b",
     "tmux": "#ef6f6c", "events": "#e879b9", "messaging": "#f0c75e", "profile": "#9fb0c8",
-    "engine": "#4fd1e8", "plugin": "#c29ffa", "error": "#d98b62",
+    "engine": "#4fd1e8", "plugin": "#c29ffa", "error": "#d98b62", "migrate": "#b59f7a",
+    "roles": "#7fb7a4", "worktree": "#a3c45a", "mirror": "#d7a1e0", "state": "#6fa0c0",
 }
 MODULE_NAMES = [module for row in LAYOUT_ROWS for module in row]
 

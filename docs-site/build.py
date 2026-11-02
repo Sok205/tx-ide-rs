@@ -1,13 +1,14 @@
 """Build tx-core's docs site: rustdoc twice (public, and internal with private and #[doc(hidden)]
 items), each page extended with the Structure drawer, plus the graph page each drawer loads.
 
-Usage: python3 scripts/structure/build.py <workspace> <site dir> <label>
+Usage: python3 docs-site/build.py <workspace> <site dir> <label>
 Writes <site>/public, <site>/internal, <site>/index.html and <site>/.nojekyll (GitHub Pages)."""
 
 import hashlib
 import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -86,6 +87,11 @@ def main():
     workspace, site, label = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), sys.argv[3]
     site.mkdir(parents=True, exist_ok=True)
     source_dir = workspace / "tx-core" / "src"
+    crate_modules = set(re.findall(r"^pub mod (\w+);", (source_dir / "lib.rs").read_text(), re.MULTILINE))
+    if crate_modules != set(graph.MODULE_NAMES):
+        sys.exit(f"graph.LAYOUT_ROWS is out of date with tx-core/src/lib.rs: "
+                 f"missing {sorted(crate_modules - set(graph.MODULE_NAMES))}, "
+                 f"stale {sorted(set(graph.MODULE_NAMES) - crate_modules)}")
     nodes, calls, imports = extract.build(source_dir, graph.MODULE_NAMES)
     crate = graph.crate_root((source_dir / "lib.rs").read_text())
     doc_roots = {view: build_docs(workspace, site, view) for view in ("internal", "public")}

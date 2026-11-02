@@ -31,7 +31,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p tx-core-cli -- help                        # the txc binary
 ```
 
-The rustdoc structure graph: `scripts/structure/`. The previous implementation (the `tx` binary
+The tx-core API docs with a structure graph, built by `docs-site/`, are hosted at
+<https://sok205.github.io/tx-ide-rs/>. The previous implementation (the `tx` binary
 under `crates/`, its bash helpers and installer) was removed after the switch to `txc`; it is
 reachable at the tag `old-tx-final`.
 
