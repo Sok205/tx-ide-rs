@@ -7,7 +7,7 @@ use std::process::{Command, ExitCode};
 
 use tx_client::tmux::Ui;
 use tx_core::{
-    AgentId, CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, RefreshResult,
+    AgentId, CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter,
     SendOptions, Sender, TxCore,
 };
 use tx_core_cli::args::{self, Invocation, Verb};
@@ -131,6 +131,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             options,
             prompt,
         } => {
+            // Records whose session vanished without a hook (a crash, a `kill -9`, a reboot)
+            // read `ended` before they are listed.
+            core.refresh_all()?;
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
                 None => None,
@@ -177,6 +180,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             ended,
             json,
         } => {
+            // Records whose session vanished without a hook (a crash, a `kill -9`, a reboot)
+            // read `ended` before they are listed.
+            core.refresh_all()?;
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
                 None => None,
@@ -223,7 +229,10 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
         }
         Verb::Show { target } => {
-            let session = core.get_agent(&core.resolve(&target)?)?;
+            let session = core
+                .refresh_agent(&core.resolve(&target)?)?
+                .agent()
+                .clone();
             let text = session.to_json().map_err(|error| {
                 CoreError::Store(tx_core::StoreError::Encode {
                     id: session.id.clone(),
@@ -244,25 +253,6 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             let options = SendOptions::from(sender_from_env(&core, via)?);
             let receipt = core.send_message(&core.resolve(&target)?, &text, options)?;
             writeln!(out, "{}\t{}", receipt.recipient, receipt.pane).ok();
-        }
-        Verb::Refresh { target } => {
-            let changed = match target {
-                Some(target) => match core.refresh_agent(&core.resolve(&target)?)? {
-                    RefreshResult::Exited(session) => vec![session],
-                    _ => vec![],
-                },
-                None => core.refresh_all()?,
-            };
-            for session in changed {
-                writeln!(
-                    out,
-                    "{}\t{}\t{}",
-                    session.id,
-                    session.name,
-                    session.state.as_str()
-                )
-                .ok();
-            }
         }
         Verb::Where { target } => {
             let location = core.get_execution_location(&core.resolve(&target)?)?;

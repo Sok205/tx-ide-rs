@@ -46,6 +46,12 @@ fn usage_errors_exit_2_without_touching_state() {
         "{stderr}"
     );
     assert!(cli.fails(&["bogus"], 2).contains("bogus"));
+    for retired in ["archive", "migrate", "refresh"] {
+        assert!(
+            cli.fails(&[retired], 2)
+                .contains(&format!("unknown verb {retired:?}"))
+        );
+    }
     assert!(!cli.state().exists());
     assert!(cli.ok(&["help"]).starts_with("usage: tx"));
 }
@@ -261,8 +267,6 @@ fn agent_session_round_trip() {
         "<from-user>hello there;</from-user>\n<from-user>--flag</from-user>\n<from-agent session=\"ag-2\">from me</from-agent>\n<from-user>not me</from-user>\n<from-user session=\"plan.md\">from a buffer</from-user>\n<from-user session=\"notes\">from notes</from-user>\n<from-user session=\"notes\">unknown id</from-user>\n"
     );
 
-    assert_eq!(cli.ok(&["refresh"]), "");
-    assert_eq!(cli.ok(&["refresh", "ag-2"]), "");
     assert_eq!(cli.ok(&["stop", "ag-2"]).trim(), format!("{id}\tended"));
     assert!(cli.fails(&["where", "ag-2"], 1).contains("not running"));
     assert!(!cli.tmux(&["has-session", "-t", "=ag-2"]).status.success());
@@ -425,12 +429,21 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
     );
 }
 
+/// A session that vanished without a hook reads `ended` in `ls` and `show`: both refresh first.
 #[test]
-fn refresh_reports_vanished_sessions() {
+fn ls_and_show_see_vanished_sessions_as_ended() {
     require_tmux!();
     let cli = Cli::new();
-    let id = cli.create("v");
-    assert!(cli.tmux(&["kill-session", "-t", "=v"]).status.success());
-    assert_eq!(cli.ok(&["refresh"]).trim(), format!("{id}\tv\tended"));
-    assert_eq!(cli.ok(&["refresh"]), "");
+    let shown = cli.create("shown");
+    let listed = cli.create("listed");
+    assert!(cli.tmux(&["kill-session", "-t", "=shown"]).status.success());
+    let record: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "shown"])).unwrap();
+    assert_eq!(record["id"], shown.as_str());
+    assert_eq!(record["state"], "ended");
+    assert!(cli.tmux(&["kill-session", "-t", "=listed"]).status.success());
+    assert_eq!(cli.ok(&["ls"]), "");
+    assert!(
+        cli.ok(&["ls", "--ended"])
+            .contains(&format!("{listed}\tlisted\tended\t"))
+    );
 }

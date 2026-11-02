@@ -34,7 +34,6 @@ verbs:
   send [--via NAME] TARGET [--] TEXT...                             type a message into the session; as the
                                                                     agent this runs in, else as you from the
                                                                     view this runs in, else as you from NAME
-  refresh [TARGET]                                                  mark vanished sessions exited
   where TARGET                                                      socket, session target, pane target
   attach TARGET                                                     attach the terminal to the session
   stop TARGET                                                       exit the agent (its engine's own way, else kill);
@@ -127,9 +126,6 @@ pub enum Verb {
         text: String,
         /// Where the operator typed, when the CLI cannot tell (an nvim buffer).
         via: Option<String>,
-    },
-    Refresh {
-        target: Option<String>,
     },
     Where {
         target: String,
@@ -351,9 +347,6 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 via,
             }
         }
-        Some("refresh") => Verb::Refresh {
-            target: cursor.next().map(str::to_owned),
-        },
         Some("where") => Verb::Where {
             target: target(&mut cursor, "where")?,
         },
@@ -799,16 +792,6 @@ mod tests {
             ];
             assert!(parse(&args).unwrap_err().0.contains("--via"), "{bad:?}");
         }
-        assert_eq!(
-            parse_str("refresh").unwrap().verb,
-            Verb::Refresh { target: None }
-        );
-        assert_eq!(
-            parse_str("refresh x").unwrap().verb,
-            Verb::Refresh {
-                target: Some("x".into())
-            }
-        );
         assert_eq!(
             parse_str("where x").unwrap().verb,
             Verb::Where { target: "x".into() }

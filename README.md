@@ -177,7 +177,8 @@ then `CreateOptions::env`, then the engine plan's env.
   operation writes nothing. Reads (`list_agents`, `get_agent`, `resolve`) never touch tmux.
 - `refresh_agent` / `refresh_all` turn a `Running` record without a live `@tx-id` into
   `Exited`. Records are scanned before tmux is listed, so a session created in between is never
-  misjudged.
+  misjudged. There is no CLI verb for it: `tx ls` runs `refresh_all` and `tx show` runs
+  `refresh_agent` on its target before reading.
 - `send_message` wraps the text in `<from-user>…</from-user>` or
   `<from-agent session="name">…</from-agent>`, types it verbatim into the pane (`send-keys -l`,
   trailing `;` escaped), waits 300 ms, sends `Enter`. The whole delivery holds `<id>.lock`, so

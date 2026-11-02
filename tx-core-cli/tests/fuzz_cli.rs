@@ -229,7 +229,6 @@ fn token_pool() -> Vec<String> {
         "rename",
         "tag",
         "send",
-        "refresh",
         "where",
         "attach",
         "stop",
@@ -373,7 +372,7 @@ fn usage_level_inputs_are_table_driven() {
         (vec!["send", "--"], "send needs the message text"),
         (vec!["ls", "--lifecycle", "running"], "--lifecycle"),
         (vec!["ls", "--tag"], "--tag needs a value"),
-        (vec!["refresh", "a", "b"], "unexpected argument \"b\""),
+        (vec!["show", "a", "b"], "unexpected argument \"b\""),
         (
             vec![
                 "create", "n", "--cwd", "/", "--engine", "claude", "--effort", "",
@@ -761,7 +760,7 @@ fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
     cli.ok(&["stop", "a"]);
     let err = cli.fails(&["attach", "a"], 1);
     assert_eq!(err, format!("tx: session {id} is not running\n"));
-    // A session whose tmux side vanished is reported as not running after refresh.
+    // A session whose tmux side vanished is reported as not running.
     cli.ok(&[
         "create",
         "b",
