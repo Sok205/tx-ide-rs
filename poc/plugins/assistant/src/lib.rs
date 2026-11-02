@@ -3,13 +3,15 @@
 //! the assistant. `assistant ask` delivers one line to it as the operator: prefix+/ (the
 //! `keys/assistant.tmux` fragment) parks the typed line in a paste buffer and runs
 //! `assistant ask --from-buffer --pane <firing pane>`; the line goes out as typed in that pane's
-//! view, naming the session nested in the pane. Ships the TX-ASSISTANT role as an `agents/`
+//! session, behind the focus envelope (`focus`). Ships the TX-ASSISTANT role as an `agents/`
 //! resource.
 //!
 //! Every agent runs in a worktree of a git checkout, so the assistant has a small repository of
 //! its own under the plugin's data directory (`home/`), made on first use. A stopped assistant
 //! keeps its worktree, so the next one is `tx-assistant-2`: the running assistant is found by
 //! its role, and `warm` prints the name it really has.
+
+mod focus;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -155,14 +157,16 @@ pub fn warm(core: &TxCore) -> Result<AgentId, CoreError> {
     }
 }
 
-/// Delivers `text` to the running assistant (started when there is none) as the operator, typed
-/// in `pane` (`typed_in`), else via `VIA`. A new assistant is given `START_TIMEOUT` to report a
-/// state past `starting`; the line goes out either way, since the engine queues input typed while
-/// it works.
+/// Delivers `text` to the running assistant (started when there is none) as the operator. Typed
+/// in `pane`: via that pane's session, behind its focus envelope; else via `VIA`. A new
+/// assistant is given `START_TIMEOUT` to report a state past `starting`; the line goes out either
+/// way, since the engine queues input typed while it works.
 pub fn ask(core: &TxCore, text: &str, pane: Option<&str>) -> Result<AgentId, CoreError> {
-    let (via, text) = pane
-        .and_then(|pane| typed_in(core, pane, text))
-        .unwrap_or_else(|| (VIA.to_owned(), text.to_owned()));
+    let ui = Ui::from_core(core);
+    let (via, text) = match pane.and_then(|pane| focus::focus(&ui, pane)) {
+        Some(focus) => (focus.session_name, format!("{} {text}", focus.envelope)),
+        None => (VIA.to_owned(), text.to_owned()),
+    };
     let id = warm(core)?;
     let deadline = Instant::now() + START_TIMEOUT;
     while core.get_agent(&id)?.state == LlmEngineState::Starting && Instant::now() < deadline {
@@ -171,19 +175,6 @@ pub fn ask(core: &TxCore, text: &str, pane: Option<&str>) -> Result<AgentId, Cor
     let options = SendOptions::from(Sender::User { via: Some(via) });
     core.send_message(&id, &text, options)?;
     Ok(id)
-}
-
-/// `(via, text)` for a line typed in `pane`: the pane's view, and the session nested in that pane,
-/// when there is one, as `<tx-command-prompt inner-session-name='…'/>` in front of the line.
-/// `None` when the pane is gone.
-fn typed_in(core: &TxCore, pane: &str, text: &str) -> Option<(String, String)> {
-    let ui = Ui::from_core(core);
-    let view = ui.display_message("#{session_name}", Some(pane))?;
-    let text = match ui.inner_for_pane(pane) {
-        Some(inner) => format!("<tx-command-prompt inner-session-name='{inner}'/> {text}"),
-        None => text.to_owned(),
-    };
-    Some((view, text))
 }
 
 /// The line prefix+/ parked in `INPUT_BUFFER` on the core's server, deleted once read; empty when
@@ -218,7 +209,7 @@ impl Verb for Assistant {
         "assistant warm | ask --from-buffer [--pane PANE] | ask TEXT…   start the tx-assistant \
          session unless it is running and print its name (tx-assistant, or tx-assistant-2 … after \
          a stop); deliver a line to it as the operator (from the tx-assistant-input paste buffer, \
-         or the words given): typed in PANE's view, naming the session nested in it, else via prefix+/"
+         or the words given): typed in PANE's session behind its focus envelope, else via prefix+/"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
