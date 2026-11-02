@@ -575,10 +575,8 @@ impl Form {
                 value.remove(position - 1);
                 self.positions[active] -= 1;
             }
-            Key::Delete => {
-                if position < value.len() {
-                    value.remove(position);
-                }
+            Key::Delete if position < value.len() => {
+                value.remove(position);
             }
             Key::Char('\x15') => {
                 value.drain(..position);
