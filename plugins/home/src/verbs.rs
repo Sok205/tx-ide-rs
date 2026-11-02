@@ -17,7 +17,7 @@ use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
 use crate::data;
 use crate::floor;
-use crate::model::{Action, AssistantState, Context, Home};
+use crate::model::{Action, AssistantState, Home};
 use crate::run::{self, Options};
 
 pub const OPEN_VERB: &str = "_home-open";
@@ -164,11 +164,7 @@ impl Verb for Tui {
             .clone()
             .unwrap_or_else(|| floor::choice_path(&plugin_directory(core), &arguments.pane));
         let warming = arguments.first && !arguments.popup && warm_when_down(core, io)?;
-        let mut home = if arguments.popup {
-            Home::new_popup(Context::default())
-        } else {
-            Home::new(Context::default())
-        };
+        let mut home = Home::loading(arguments.popup);
         let options = Options {
             first: arguments.first,
             popup: arguments.popup,

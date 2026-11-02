@@ -187,6 +187,7 @@ fn row_lines(row: &Row<'_>, context: &Context, frame: usize) -> Vec<Line<'static
             dim(),
         )],
         Row::FirstRun => first_run_lines(),
+        Row::Loading => vec![Line::styled("  loading…", dim())],
     }
 }
 
@@ -582,6 +583,15 @@ mod tests {
         let line = &text(&render(&home))[0];
         assert_eq!(line.chars().count(), usize::from(W), "{line}");
         assert!(line.ends_with('…'), "{line}");
+    }
+
+    #[test]
+    fn before_its_first_context_the_list_is_one_dim_loading_line() {
+        let buf = render(&Home::loading(false));
+        let lines = text(&buf);
+        assert_eq!(lines[1], "  loading…");
+        assert!(lines[2..usize::from(H) - 1].iter().all(String::is_empty));
+        assert_eq!(buf[(2, 1)].fg, dim().fg.unwrap());
     }
 
     #[test]

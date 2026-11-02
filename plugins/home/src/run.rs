@@ -1,9 +1,10 @@
 //! The terminal loop: feed key presses to the [`Home`], keep its data fresh, return what it
 //! chose. Data comes from a worker thread (git lookups and tmux calls never hold up a key or a
-//! frame): the loop asks it for a fresh [`Context`] every [`REFRESH`] and for a
-//! [`Detail`](crate::model::Detail) as soon as an unfolded row lacks one; each reply replaces
-//! the home's context. The first paint waits
-//! at most [`FIRST_DATA`] for the first context, so the list is drawn rather than an empty home.
+//! frame): the loop asks it for a fresh [`Context`] every [`REFRESH`], for a
+//! [`Detail`](crate::model::Detail) as soon as an unfolded row lacks one, and for the git
+//! lookups a context left provisional (a worktree's project and branch) right after that context
+//! arrived; each reply replaces the home's context. A context never waits for git, so the first
+//! paint waits at most [`FIRST_DATA`] for it; until it arrives the list says it is loading.
 //! Frames are drawn after a key, a resize or a reply, and every tick while a spinner shows.
 //! Raw mode and the alternate screen are restored on every exit path. Keys pass [`accept`]
 //! first: no chords, and a home opened by an attach starts with a [`GRACE`] period.
@@ -42,9 +43,17 @@ enum Request {
     Context,
     /// The detail of the agent with this id.
     Detail(String),
+    /// The git lookups the last context left due, then the context again.
+    Projects,
 }
 
-type Reply = Result<Context, String>;
+/// A context, and whether git lookups are due for it (see [`ProjectCache::is_due`]).
+struct Gathered {
+    context: Context,
+    lookups_due: bool,
+}
+
+type Reply = Result<Gathered, String>;
 
 pub fn run(core: &TxCore, home: &mut Home, options: &Options) -> io::Result<Option<Action>> {
     std::thread::scope(|scope| {
@@ -59,21 +68,19 @@ pub fn run(core: &TxCore, home: &mut Home, options: &Options) -> io::Result<Opti
     })
 }
 
-/// Answers every request with the whole context, the details it gathered so far included. A
-/// context that cannot be read is the last reply.
+/// Answers every request with the whole context, the details it gathered so far included, and
+/// whether git lookups are due. A context that cannot be read is the last reply.
 fn worker(core: &TxCore, requests: &Receiver<Request>, replies: &Sender<Reply>) {
     let ui = Ui::from_core(core);
     let mut cache = ProjectCache::new();
     let mut context = Context::default();
     for request in requests {
-        match request {
-            Request::Context => match data::context(core, &ui, &mut cache, Some(&context)) {
-                Ok(fresh) => context = fresh,
-                Err(error) => {
-                    let _ = replies.send(Err(error.to_string()));
-                    return;
-                }
-            },
+        let regather = match request {
+            Request::Context => true,
+            Request::Projects => {
+                cache.look_up_due();
+                true
+            }
             Request::Detail(id) => {
                 // An agent whose record went away gets no detail; the next context drops its row.
                 if let Ok(agent) = core
@@ -82,9 +89,23 @@ fn worker(core: &TxCore, requests: &Receiver<Request>, replies: &Sender<Reply>) 
                 {
                     context.details.insert(id, detail(core, &mut cache, &agent));
                 }
+                false
+            }
+        };
+        if regather {
+            match data::context(core, &ui, &mut cache, Some(&context)) {
+                Ok(fresh) => context = fresh,
+                Err(error) => {
+                    let _ = replies.send(Err(error.to_string()));
+                    return;
+                }
             }
         }
-        if replies.send(Ok(context.clone())).is_err() {
+        let gathered = Gathered {
+            context: context.clone(),
+            lookups_due: cache.is_due(),
+        };
+        if replies.send(Ok(gathered)).is_err() {
             return;
         }
     }
@@ -112,9 +133,16 @@ impl Data<'_> {
     }
 
     /// Replaces the home's context; the first one selects the row the pane returned from.
+    /// Asks for the lookups a context left due, unless another reply is still to come.
     fn apply(&mut self, home: &mut Home, reply: Reply) -> io::Result<()> {
         self.outstanding -= 1;
-        let mut context = reply.map_err(io::Error::other)?;
+        let Gathered {
+            mut context,
+            lookups_due,
+        } = reply.map_err(io::Error::other)?;
+        if lookups_due && self.outstanding == 0 {
+            self.ask(Request::Projects)?;
+        }
         if self.warming
             && matches!(
                 context.assistant,
@@ -290,10 +318,13 @@ mod tests {
         std::thread::scope(|scope| {
             scope.spawn(move || worker(core, &worker_requests, &worker_replies));
             requests.send(Request::Context).unwrap();
-            let context = replies.recv().unwrap().unwrap();
-            assert!(context.agents.is_empty());
+            let gathered = replies.recv().unwrap().unwrap();
+            assert!(gathered.context.agents.is_empty());
+            assert!(!gathered.lookups_due);
             requests.send(Request::Detail("nosuch".into())).unwrap();
-            assert!(replies.recv().unwrap().unwrap().details.is_empty());
+            assert!(replies.recv().unwrap().unwrap().context.details.is_empty());
+            requests.send(Request::Projects).unwrap();
+            assert!(!replies.recv().unwrap().unwrap().lookups_due);
             drop(requests);
         });
     }

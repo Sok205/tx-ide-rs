@@ -102,8 +102,13 @@ pub enum Row<'a> {
     Agent(&'a AgentRow),
     Detail(&'a AgentRow, Option<&'a Detail>),
     Views(Vec<&'a ViewRow>),
-    EndedFold { project: usize, hidden: usize },
+    EndedFold {
+        project: usize,
+        hidden: usize,
+    },
     FirstRun,
+    /// The only row until the first context arrived.
+    Loading,
 }
 
 impl Row<'_> {
@@ -226,6 +231,8 @@ const SYSTEM_TAG: &str = "tx-system";
 
 pub struct Home {
     pub context: Context,
+    /// A context arrived: until then the list says it is loading, and is no first run.
+    loaded: bool,
     /// Index into [`Home::rows`].
     cursor: usize,
     /// Agent ids whose detail row shows.
@@ -247,6 +254,7 @@ impl Home {
     pub fn new(context: Context) -> Self {
         let mut home = Home {
             context,
+            loaded: true,
             cursor: 0,
             unfolded: BTreeSet::new(),
             ended_shown: false,
@@ -271,11 +279,23 @@ impl Home {
         }
     }
 
+    /// The floor (or the popup) before its first context.
+    pub fn loading(popup: bool) -> Self {
+        Home {
+            loaded: false,
+            popup,
+            ..Home::new(Context::default())
+        }
+    }
+
     pub fn view(&self) -> View {
         self.view
     }
 
     pub fn rows(&self) -> Vec<Row<'_>> {
+        if !self.loaded {
+            return vec![Row::Loading];
+        }
         let mut rows = Vec::new();
         for project in self.project_order() {
             let mut agents: Vec<&AgentRow> = self
@@ -356,7 +376,9 @@ impl Home {
     }
 
     pub fn is_first_run(&self) -> bool {
-        self.context.agents.iter().all(|agent| agent.is_assistant) && self.context.views.is_empty()
+        self.loaded
+            && self.context.agents.iter().all(|agent| agent.is_assistant)
+            && self.context.views.is_empty()
     }
 
     pub fn footer(&self) -> String {
@@ -401,7 +423,10 @@ impl Home {
 
     /// New data from the poll; the cursor stays on its session, else the nearest row.
     pub fn replace_context(&mut self, context: Context) {
-        self.reshape(|home| home.context = context);
+        self.reshape(|home| {
+            home.context = context;
+            home.loaded = true;
+        });
     }
 
     pub fn key(&mut self, code: KeyCode) -> Outcome {
@@ -848,6 +873,7 @@ pub(crate) mod tests {
             }
             Row::EndedFold { hidden, .. } => format!("{hidden} more ended"),
             Row::FirstRun => "first run".into(),
+            Row::Loading => "loading".into(),
         }
     }
 
@@ -1215,6 +1241,25 @@ pub(crate) mod tests {
             ..first_run_context()
         };
         assert!(!Home::new(only_a_view).is_first_run());
+    }
+
+    #[test]
+    fn rows_say_loading_until_the_first_context() {
+        let mut home = Home::loading(false);
+        assert_eq!(labels(&home), ["loading"]);
+        assert!(!home.is_first_run());
+        assert_eq!(home.cursor(), None);
+        assert_eq!(home.footer(), MAIN_FOOTER);
+        assert_eq!(home.key(KeyCode::Enter), Outcome::Stay);
+        home.replace_context(context());
+        assert!(labels(&home).contains(&"agent startup-ux".to_owned()));
+        assert!(selected(&home).is_some());
+        home.replace_context(first_run_context());
+        assert!(home.is_first_run());
+        assert_eq!(
+            Home::loading(true).footer(),
+            format!("{MAIN_FOOTER} · q close")
+        );
     }
 
     #[test]

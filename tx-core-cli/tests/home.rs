@@ -689,23 +689,39 @@ fn the_tui_paints_within_100ms() {
             .success()
     );
     assert!(cli.wait_for(5, || !home_shown(&cli)), "{}", screen(&cli));
+    // A slow git: the first paint must not wait for the agent's project and branch. `env`
+    // sets it past whatever the pane's shell startup files do to PATH.
+    let slow_git = cli.shim_path(&[(
+        "git",
+        &format!(
+            "sleep 0.3; PATH='{}' exec git \"$@\"",
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    )]);
     let tui = format!(
-        "{} {} _home-tui '{pane}'",
+        "env PATH='{slow_git}' {} {} _home-tui '{pane}'",
         env!("CARGO_BIN_EXE_tx"),
         cli.arguments()
     );
+    // The first paint shows the agent's row; the first-run screen never shows while it exists.
+    let painted_with_agent = || {
+        let shown = screen(&cli);
+        assert!(!shown.contains("No agents yet"), "{shown}");
+        home_shown(&cli) && shown.lines().any(|line| line.contains(" a "))
+    };
     let started = std::time::Instant::now();
     assert!(
         cli.tmux(&["respawn-pane", "-k", "-t", &pane, &tui])
             .status
             .success()
     );
-    while !home_shown(&cli) {
+    while !painted_with_agent() {
         assert!(
             started.elapsed() < std::time::Duration::from_secs(5),
             "{}",
             screen(&cli)
         );
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let painted = started.elapsed();
     eprintln!("first paint: {} ms", painted.as_millis());
@@ -713,4 +729,8 @@ fn the_tui_paints_within_100ms() {
         painted < std::time::Duration::from_millis(500),
         "{painted:?}"
     );
+    while started.elapsed() < std::time::Duration::from_secs(1) {
+        assert!(painted_with_agent(), "{}", screen(&cli));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }

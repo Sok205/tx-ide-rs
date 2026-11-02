@@ -64,8 +64,9 @@ const ASSISTANT_PLUGIN: &str = "assistant";
 const ASSISTANT_FAILURE_FILE: &str = "warm.failed";
 
 /// The home's whole context. Cheap by design: no transcript, artifact or detail is read here
-/// (details are asked for through `Home::needs_detail`, `previous.details` carries over); the
-/// only slow step is the first git lookup per worktree, which the TUI makes on a worker thread.
+/// (details are asked for through `Home::needs_detail`, `previous.details` carries over), and
+/// no git runs: projects and branches are what `cache` knows, a worktree it does not know yet
+/// sits under its parent directory until `ProjectCache::look_up_due` asked git.
 pub fn context(
     core: &TxCore,
     ui: &Ui,
