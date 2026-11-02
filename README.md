@@ -34,8 +34,7 @@ cargo run -p tx-core-cli -- help                        # the tx binary
 The tx-core API docs with a structure graph, built by `docs-site/`, are hosted at
 <https://sok205.github.io/tx-ide-rs/>. The previous implementation (an
 earlier `tx` binary under `crates/`, its bash helpers and installer) was removed after the switch
-to this one; it is reachable at the tag `old-tx-final`. This `tx` was called `txc` until the old
-one was gone; `install` leaves a `txc -> tx` link so anything still calling the old name works.
+to this one; it is reachable at the tag `old-tx-final`.
 
 ## Crates
 
@@ -404,7 +403,7 @@ tx ui attach     # attaches this terminal to the core server's `home` session
 change it would make and changes nothing. It is idempotent: a second run finds nothing to do.
 
 ```
-./install             # cargo install --path tx-core-cli (tx, txi, a txc link); tx ui install; the config links; the switch
+./install             # cargo install --path tx-core-cli (tx, txi); tx ui install; the config links; the switch
 ./install --dry-run
 ```
 

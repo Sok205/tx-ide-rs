@@ -2,8 +2,7 @@
 # install — make tx the daily driver. Idempotent, safe to re-run; --dry-run prints every
 # file change and changes nothing.
 #
-#   1. cargo install --path tx-core-cli            tx and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin),
-#                                                  plus a txc -> tx link there for what still calls txc
+#   1. cargo install --path tx-core-cli            tx and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin)
 #   2. tx ui install                               the IDE's tmux config from the plugins' resources
 #   2b. ~/.config/nvim and ~/.tmux.conf             links to config/{nvim,tmux.conf}; a real
 #                                                  directory or file there is moved to <path>.bak.<stamp>
@@ -117,16 +116,6 @@ else
     fail "cargo install" "failed"
     exit 1
   fi
-fi
-# The binary was called txc before; running agents, their roles and an IDE server installed
-# before the rename still call it by that name.
-if [[ -L "$CARGO_BIN/txc" && "$(readlink "$CARGO_BIN/txc")" == tx ]]; then
-  ok "$CARGO_BIN/txc" "links to tx"
-elif ((DRY_RUN)); then
-  would "$CARGO_BIN/txc" "link to tx (the binary's old name)"
-else
-  ln -sfn tx "$CARGO_BIN/txc"
-  ok "$CARGO_BIN/txc" "links to tx (the binary's old name)"
 fi
 case ":${PATH:-}:" in
 *":$CARGO_BIN:"*) ok "$CARGO_BIN" "on PATH" ;;
@@ -343,7 +332,7 @@ ${B}Your own config:${X}
     the old setup/iterm.sh installed; nothing to redo.
 
 ${B}Undo:${X}
-  ${D}cargo uninstall tx-core-cli; rm $CARGO_BIN/txc; mv $LOCAL_BIN/tx-old $LOCAL_BIN/tx${X};
+  ${D}cargo uninstall tx-core-cli; mv $LOCAL_BIN/tx-old $LOCAL_BIN/tx${X};
   remove the @tx-ide-bin line from $OLD_TMUX_CONF;
   restore $CLAUDE_DIR/settings.json and $CODEX_DIR/hooks.json from their .bak.<stamp> copies.
 EOF
