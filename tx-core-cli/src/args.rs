@@ -22,21 +22,18 @@ verbs:
                                                                     changes are not carried over); SOURCE's engine, roles and
                                                                     engine options unless an option says otherwise; name NAME,
                                                                     else SOURCE-fork; tags default to SOURCE's; prints its id
-  ls [--parent ID] [--tag T] [--running|--ended] [--archived] [--json]
-                                                                    id, name, state, working directory per line;
-                                                                    --running / --ended: only agents whose state
-                                                                    is not / is ended;
-                                                                    --archived: the archived sessions instead;
+  ls [--parent ID] [--tag T] [--running|--ended] [--json]
+                                                                    id, name, state, working directory per line
+                                                                    of the running agents (the default, --running),
+                                                                    or of the ended ones (--ended);
                                                                     --json: one array of {id, name, state,
-                                                                    working_directory, tags}, running only
-                                                                    unless --ended says otherwise
+                                                                    working_directory, tags}
   show TARGET                                                       the record as JSON
   rename TARGET NAME
   tag TARGET [TAG]...                                               replace the tag list
   send [--via NAME] TARGET [--] TEXT...                             type a message into the session; as the
                                                                     agent this runs in, else as you from the
                                                                     view this runs in, else as you from NAME
-  refresh [TARGET]                                                  mark vanished sessions exited
   where TARGET                                                      socket, session target, pane target
   attach TARGET                                                     attach the terminal to the session
   stop TARGET                                                       exit the agent (its engine's own way, else kill);
@@ -44,14 +41,8 @@ verbs:
   interrupt TARGET                                                  abort the agent's running turn
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
-  archive TARGET                                                    stop it if running, then hide it from ls; nothing
-                                                                    is deleted, and respawn brings it back
   engines                                                           the engines whose plugin is enabled (claude, codex)
   plugins                                                           id and active|disabled per plugin
-  migrate [--from DIR]                                              move a version-1 home (default
-                                                                    $TX_CORE_HOME, else ~/.tx-core) into
-                                                                    the directories below, once, and
-                                                                    upgrade its version-1 records
 
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
@@ -115,9 +106,8 @@ pub enum Verb {
     Ls {
         parent: Option<String>,
         tag: Option<String>,
-        /// `Some(false)`: `--running`; `Some(true)`: `--ended`.
-        ended: Option<bool>,
-        archived: bool,
+        /// `--ended`: the ended agents instead of the running ones.
+        ended: bool,
         json: bool,
     },
     Show {
@@ -137,9 +127,6 @@ pub enum Verb {
         /// Where the operator typed, when the CLI cannot tell (an nvim buffer).
         via: Option<String>,
     },
-    Refresh {
-        target: Option<String>,
-    },
     Where {
         target: String,
     },
@@ -155,14 +142,8 @@ pub enum Verb {
     Respawn {
         target: String,
     },
-    Archive {
-        target: String,
-    },
     Engines,
     Plugins,
-    Migrate {
-        from: Option<PathBuf>,
-    },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
     Plugin {
         name: String,
@@ -323,16 +304,6 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("help" | "--help" | "-h") => Verb::Help,
         Some("engines") => Verb::Engines,
         Some("plugins") => Verb::Plugins,
-        Some("migrate") => {
-            let from = match cursor.peek() {
-                Some("--from") => {
-                    cursor.next();
-                    Some(cursor.value("--from")?.into())
-                }
-                _ => None,
-            };
-            Verb::Migrate { from }
-        }
         Some("create") => parse_create(&mut cursor)?,
         Some("fork") => parse_fork(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
@@ -376,9 +347,6 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 via,
             }
         }
-        Some("refresh") => Verb::Refresh {
-            target: cursor.next().map(str::to_owned),
-        },
         Some("where") => Verb::Where {
             target: target(&mut cursor, "where")?,
         },
@@ -393,9 +361,6 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         },
         Some("respawn") => Verb::Respawn {
             target: target(&mut cursor, "respawn")?,
-        },
-        Some("archive") => Verb::Archive {
-            target: target(&mut cursor, "archive")?,
         },
         Some(other) => Verb::Plugin {
             name: other.to_owned(),
@@ -494,29 +459,22 @@ fn parse_fork(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
 fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut parent = None;
     let mut tag = None;
-    let mut ended = None;
-    let mut archived = false;
+    let mut ended = false;
     let mut json = false;
     while let Some(flag) = cursor.next() {
         match flag {
             "--parent" => parent = Some(cursor.value(flag)?.to_owned()),
             "--tag" => tag = Some(cursor.value(flag)?.to_owned()),
-            "--running" => ended = Some(false),
-            "--ended" => ended = Some(true),
-            "--archived" => archived = true,
+            "--running" => ended = false,
+            "--ended" => ended = true,
             "--json" => json = true,
             other => return Err(usage(format!("ls: unexpected argument {other:?}"))),
         }
-    }
-    // The JSON listing is for pickers of live agents (nvim's tx-ask).
-    if json && ended.is_none() {
-        ended = Some(false);
     }
     Ok(Verb::Ls {
         parent,
         tag,
         ended,
-        archived,
         json,
     })
 }
@@ -551,18 +509,6 @@ mod tests {
             }
         );
         assert_eq!(parse_str("plugins").unwrap().verb, Verb::Plugins);
-        assert_eq!(
-            parse_str("migrate").unwrap().verb,
-            Verb::Migrate { from: None }
-        );
-        assert_eq!(
-            parse_str("migrate --from /old").unwrap().verb,
-            Verb::Migrate {
-                from: Some("/old".into())
-            }
-        );
-        assert!(parse_str("migrate --from").is_err());
-        assert!(parse_str("migrate /old").is_err());
     }
 
     #[test]
@@ -744,31 +690,27 @@ mod tests {
             Verb::Ls {
                 parent: Some("p".into()),
                 tag: Some("t".into()),
-                ended: Some(true),
-                archived: false,
+                ended: true,
                 json: false
             }
         );
         assert!(matches!(
             parse_str("ls --running").unwrap().verb,
             Verb::Ls {
-                ended: Some(false),
+                ended: false,
                 json: false,
                 ..
             }
         ));
         assert!(matches!(
             parse_str("ls").unwrap().verb,
-            Verb::Ls { ended: None, .. }
+            Verb::Ls { ended: false, .. }
         ));
-        assert!(matches!(
-            parse_str("ls --archived").unwrap().verb,
-            Verb::Ls { archived: true, .. }
-        ));
+        assert!(parse_str("ls --archived").is_err());
         assert!(matches!(
             parse_str("ls --json").unwrap().verb,
             Verb::Ls {
-                ended: Some(false),
+                ended: false,
                 json: true,
                 ..
             }
@@ -776,7 +718,7 @@ mod tests {
         assert!(matches!(
             parse_str("ls --json --ended").unwrap().verb,
             Verb::Ls {
-                ended: Some(true),
+                ended: true,
                 json: true,
                 ..
             }
@@ -851,16 +793,6 @@ mod tests {
             assert!(parse(&args).unwrap_err().0.contains("--via"), "{bad:?}");
         }
         assert_eq!(
-            parse_str("refresh").unwrap().verb,
-            Verb::Refresh { target: None }
-        );
-        assert_eq!(
-            parse_str("refresh x").unwrap().verb,
-            Verb::Refresh {
-                target: Some("x".into())
-            }
-        );
-        assert_eq!(
             parse_str("where x").unwrap().verb,
             Verb::Where { target: "x".into() }
         );
@@ -879,10 +811,6 @@ mod tests {
         assert_eq!(
             parse_str("respawn x").unwrap().verb,
             Verb::Respawn { target: "x".into() }
-        );
-        assert_eq!(
-            parse_str("archive x").unwrap().verb,
-            Verb::Archive { target: "x".into() }
         );
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
         assert_eq!(parse_str("help").unwrap().verb, Verb::Help);

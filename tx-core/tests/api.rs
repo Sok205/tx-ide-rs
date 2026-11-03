@@ -81,7 +81,6 @@ fn record(cwd: &Path) -> Agent {
         created_at: 0.0,
         last_modified_at: 0.0,
         last_activity_at: None,
-        archived_at: None,
         tags: Vec::new(),
         parent_id: None,
         ext: Default::default(),
@@ -181,5 +180,5 @@ fn config_filter_and_send_builders() {
 #[test]
 fn event_types_are_a_slice() {
     let all: &[EventType] = EventType::ALL;
-    assert_eq!(all.len(), 12);
+    assert_eq!(all.len(), 11);
 }

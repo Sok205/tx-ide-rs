@@ -12,8 +12,7 @@ use crate::engine::EngineKind;
 use crate::error::CoreError;
 use crate::state::LlmEngineState;
 
-/// The record schema this build reads and writes. Version 1 (one `sessions/<id>.json` per
-/// record, with `lifecycle` and `launch`) is upgraded by `tx migrate`, never read in place.
+/// The record schema this build reads and writes; any other version is unreadable.
 pub const RECORD_VERSION: u64 = 2;
 /// Agent names are tmux session names and file-name fragments; keep them short.
 pub const MAX_NAME_BYTES: usize = 128;
@@ -103,15 +102,11 @@ pub struct Agent {
     /// When the record was last written; core stamps it on every save.
     pub last_modified_at: f64,
     /// When the agent last did something: today, when its `state` last moved. Core stamps it in
-    /// the save that moves the state. Metadata edits (a rename, tags, `ext`, archiving) are not
+    /// the save that moves the state. Metadata edits (a rename, tags, `ext`) are not
     /// activity and leave it alone; they move `last_modified_at` only. `None` until the first
     /// state move.
     #[serde(default)]
     pub last_activity_at: Option<f64>,
-    /// When the agent was archived: hidden from listings and its name freed, with nothing
-    /// deleted. `None` for an unarchived record; a respawn clears it.
-    #[serde(default)]
-    pub archived_at: Option<f64>,
     pub tags: Vec<String>,
     /// Ancestry only; core never schedules or stops children.
     #[serde(default)]
@@ -131,10 +126,6 @@ pub enum RecordError {
     Json(#[from] serde_json::Error),
     #[error("record version {0} is not supported (this build reads version {RECORD_VERSION})")]
     UnsupportedVersion(u64),
-    /// An older record this build knows how to upgrade, but only through `tx migrate`: the
-    /// mapping needs the engine plugins and moves files.
-    #[error("record version {0}: run `tx migrate`")]
-    NeedsMigration(u64),
     #[error("record version {0} is not an unsigned integer")]
     InvalidVersion(String),
     #[error("record has no version field")]
@@ -168,9 +159,6 @@ impl Agent {
         if self.last_activity_at.is_some_and(|at| !at.is_finite()) {
             return Err(RecordError::NonFiniteTime("last_activity_at"));
         }
-        if self.archived_at.is_some_and(|at| !at.is_finite()) {
-            return Err(RecordError::NonFiniteTime("archived_at"));
-        }
         let record = RecordOut {
             version: RECORD_VERSION,
             session: self,
@@ -180,8 +168,7 @@ impl Agent {
         Ok(text)
     }
 
-    /// Version 2 only. A version-1 record is `NeedsMigration`; any other version is
-    /// `UnsupportedVersion`. Keys this build does not know land in `other`.
+    /// Version 2 only; any other version is `UnsupportedVersion`. Keys this build does not know land in `other`.
     pub fn from_json(text: &str) -> Result<Self, RecordError> {
         let mut value: Map<String, Value> = serde_json::from_str(text)?;
         match value.remove("version") {
@@ -189,7 +176,6 @@ impl Agent {
             Some(Value::Number(version)) if version.as_u64() == Some(RECORD_VERSION) => {}
             Some(Value::Number(version)) => {
                 return Err(match version.as_u64() {
-                    Some(1) => RecordError::NeedsMigration(1),
                     Some(other) => RecordError::UnsupportedVersion(other),
                     None => RecordError::InvalidVersion(version.to_string()),
                 });
@@ -245,7 +231,6 @@ mod tests {
             created_at: 1727000000.5,
             last_modified_at: 1727000000.5,
             last_activity_at: None,
-            archived_at: None,
             tags: vec!["a".into(), "b".into()],
             parent_id: Some(sid("p")),
             ext: BTreeMap::new(),
@@ -265,7 +250,6 @@ mod tests {
             created_at: 1.0,
             last_modified_at: 2.0,
             last_activity_at: None,
-            archived_at: Some(3.0),
             tags: vec![],
             parent_id: None,
             ext: BTreeMap::new(),
@@ -297,7 +281,6 @@ mod tests {
         assert_eq!(value["roles"], serde_json::json!(["COMMON", "dev"]));
         assert_eq!(value["state"], "working");
         assert_eq!(value["parent_id"], "p");
-        assert_eq!(value["archived_at"], Value::Null);
         for gone in ["lifecycle", "launch", "ended_at", "cwd", "parent", "ext"] {
             assert!(value.get(gone).is_none(), "{gone}: {text}");
         }
@@ -320,7 +303,6 @@ mod tests {
                 "created_at",
                 "last_modified_at",
                 "last_activity_at",
-                "archived_at",
                 "tags",
                 "parent_id",
             ]
@@ -328,7 +310,6 @@ mod tests {
         let value: Value = serde_json::from_str(&ended().to_json().unwrap()).unwrap();
         assert_eq!(value["engine"], "codex");
         assert_eq!(value["state"], "ended");
-        assert_eq!(value["archived_at"], 3.0);
         assert_eq!(value["parent_id"], Value::Null);
     }
 
@@ -344,13 +325,12 @@ mod tests {
 
     #[test]
     fn optional_fields_may_be_null_or_absent() {
-        let text = r#"{"version":2,"id":"i","name":"n","engine":"claude","working_directory":"/","roles":[],"state":"idle","created_at":1.0,"last_modified_at":1.0,"archived_at":null,"tags":[],"parent_id":null}"#;
+        let text = r#"{"version":2,"id":"i","name":"n","engine":"claude","working_directory":"/","roles":[],"state":"idle","created_at":1.0,"last_modified_at":1.0,"last_activity_at":null,"tags":[],"parent_id":null}"#;
         let session = Agent::from_json(text).unwrap();
         assert_eq!(session.parent_id, None);
-        assert_eq!(session.archived_at, None);
         assert!(session.ext.is_empty() && session.other.is_empty());
         let text = text
-            .replace(r#","archived_at":null"#, "")
+            .replace(r#","last_activity_at":null"#, "")
             .replace(r#","parent_id":null"#, "");
         assert_eq!(Agent::from_json(&text).unwrap(), session);
     }
@@ -379,28 +359,34 @@ mod tests {
         );
     }
 
-    /// Acceptance 1: a version-1 record is refused by name, with the pointer to `tx migrate`,
-    /// before any of its fields is looked at (a process record, an unknown engine included).
+    /// A version-1 record is refused as an unsupported version before any of its fields is
+    /// looked at (a process record, an unknown engine included).
     #[test]
-    fn version_one_needs_migration() {
+    fn version_one_is_unsupported() {
         let error = Agent::from_json(VERSION_ONE).unwrap_err();
-        assert!(matches!(error, RecordError::NeedsMigration(1)), "{error:?}");
-        assert_eq!(error.to_string(), "record version 1: run `tx migrate`");
+        assert!(
+            matches!(error, RecordError::UnsupportedVersion(1)),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "record version 1 is not supported (this build reads version 2)"
+        );
         let process = VERSION_ONE.replace(
             r#"{"kind":"agent","engine":"claude","profile":[]}"#,
             r#"{"kind":"process","program":"sh","args":[]}"#,
         );
         assert!(matches!(
             Agent::from_json(&process),
-            Err(RecordError::NeedsMigration(1))
+            Err(RecordError::UnsupportedVersion(1))
         ));
         assert!(matches!(
             Agent::from_json(&VERSION_ONE.replace("\"claude\"", "\"kodex\"")),
-            Err(RecordError::NeedsMigration(1))
+            Err(RecordError::UnsupportedVersion(1))
         ));
         assert!(matches!(
             Agent::from_json(r#"{"version":1}"#),
-            Err(RecordError::NeedsMigration(1))
+            Err(RecordError::UnsupportedVersion(1))
         ));
     }
 
@@ -481,16 +467,10 @@ mod tests {
                 session.to_json(),
                 Err(RecordError::NonFiniteTime("last_modified_at"))
             ));
-            let mut session = ended();
-            session.archived_at = Some(bad);
-            assert!(matches!(
-                session.to_json(),
-                Err(RecordError::NonFiniteTime("archived_at"))
-            ));
         }
         let mut session = ended();
         session.created_at = -0.0;
-        session.archived_at = Some(f64::MIN_POSITIVE / 2.0);
+        session.last_activity_at = Some(f64::MIN_POSITIVE / 2.0);
         assert_eq!(
             Agent::from_json(&session.to_json().unwrap()).unwrap(),
             session

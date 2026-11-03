@@ -162,7 +162,7 @@ fn separate_locks_values_serialize_session_lock() {
     hammer(
         16,
         200,
-        move |_| Locks::new(&dir).session(&sid("x")).unwrap(),
+        move |_| Locks::new(&dir).agent(&sid("x")).unwrap(),
         "separate Locks per acquisition",
     );
 }
@@ -187,7 +187,7 @@ fn per_thread_locks_values_serialize_session_lock() {
     hammer(
         16,
         200,
-        move |t| per_thread[t].session(&sid("x")).unwrap(),
+        move |t| per_thread[t].agent(&sid("x")).unwrap(),
         "one Locks per thread",
     );
 }
@@ -406,7 +406,7 @@ fn ids_differing_only_by_case_observed_to_share_a_lock_on_macos() {
     let (tx, rx) = mpsc::channel();
     let other = locks.clone();
     thread::spawn(move || {
-        let _upper = other.session(&sid("ABC")).unwrap();
+        let _upper = other.agent(&sid("ABC")).unwrap();
         tx.send(()).unwrap();
     });
     assert!(
@@ -429,7 +429,7 @@ fn waiter_proceeds_promptly_after_drop() {
     let (tx, rx) = mpsc::channel();
     let other = locks.clone();
     let waiter = thread::spawn(move || {
-        let _guard = other.session(&sid("x")).unwrap();
+        let _guard = other.agent(&sid("x")).unwrap();
         tx.send(Instant::now()).unwrap();
     });
     thread::sleep(Duration::from_millis(100));

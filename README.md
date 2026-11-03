@@ -85,40 +85,6 @@ A plugin that re-invokes `tx` (key bindings, popups, detached children) passes
 `CoreConfig::cli_arguments()`, the five flags plus `--socket` when it is overridden; the tmux key
 fragments read the same words from the server option `@tx-arguments`.
 
-`--state-dir` used to name the one directory everything lived in (`~/.tx-core`, or
-`$TX_CORE_HOME`). It now names only the state directory, and `tx` refuses it, pointing at
-`tx migrate`, when it is the only directory flag and names a directory with `sessions/` in it.
-
-`tx migrate [--from DIR]` moves such a version-1 home (default `$TX_CORE_HOME`, else
-`~/.tx-core`) once: `agents/` to `<data>/roles/`, `user-agents/` to `<config>/roles/`,
-`plugins.yaml` to config, `sessions/`, `log.jsonl`, `plugins/`, `bin/`, `keys/`, `conf/` and
-`tmux.conf` to data, `profiles/` to state; `locks/` and the socket stay. It refuses while the old
-server has sessions (stop them first), when the old home has a `MOVED-TO` (a second run), and
-when a destination already holds something, so two homes are never merged. It renames within a
-filesystem and copies then deletes across filesystems, writes `<data>/MIGRATED-FROM` and
-`<old>/MOVED-TO`, keeps the old directory, and finishes with `ui install`, since the moved
-`tmux.conf` names the old paths.
-
-The same `tx migrate` then upgrades every version-1 record left in `<data>/sessions/<id>.json`
-(moved from the old home, or written by a build before record version 2) to
-`<data>/agents/<id>/agent.json`. Until that runs, every other `tx` verb refuses with
-`N version-1 record(s) in <data>/sessions: run \`tx migrate\``: the mapping needs the engine
-plugins and moves files, so nothing upgrades in memory. Per record: `cwd` → `working_directory`,
-`parent` → `parent_id`, `launch.profile` → `roles`, `launch.engine` → `engine`;
-`lifecycle: exited|stopped` → `state: ended`, a running record keeps its `state` (`starting`
-when it had none); `last_modified_at` absent → the file's mtime; `ended_at` and `ext.hooks` are
-dropped, every other `ext` key kept; the engine builds its `ext.<engine>` from `launch.model` /
-`launch.effort` and the retired chat plugin's `ext.chat` (`LlmEngine::upgrade_version_one`),
-under whatever a later build already recorded there. A process record carrying `ext.chat.launch`
-(a fork from before core fork) becomes that agent; any other process record (nvim views,
-shells), an engine this build does not know, unreadable JSON or a file not named after its
-record's id goes to `<data>/legacy/` and is reported, never aborting the run. The original of
-every upgraded record is kept as `<data>/migration-backup/<id>.v1.json`; the version-1 file is
-deleted only once the new one is written; a record already at version 2 is skipped; a record
-whose engine plugin is disabled is left for a later run (`deferred`). The report lists
-`migrated`, `migrated-no-conversation`, `legacy`, `skipped` and `deferred` lines, or
-`nothing to do`.
-
 ## Architecture
 
 ```
@@ -148,14 +114,15 @@ whose engine plugin is disabled is left for a later run (`deferred`). The report
 
 | home | what |
 |---|---|
-| disk (`agents/<id>/agent.json`, record version 2) | the record: id, name, engine (`claude` \| `codex`), working_directory, roles, state, timestamps (`last_modified_at` is stamped on every write, `last_activity_at` on every state move; `archived_at` when hidden), tags, parent_id, `ext`; keys this build does not know are kept and written back. The snapshot every read returns. |
+| disk (`agents/<id>/agent.json`, record version 2) | the record: id, name, engine (`claude` \| `codex`), working_directory, roles, state, timestamps (`last_modified_at` is stamped on every write, `last_activity_at` on every state move), tags, parent_id, `ext`; keys this build does not know are kept and written back. The snapshot every read returns. |
 | tmux | the link only: session option `@tx-id` = record id |
 | looked up on demand | `#{session_id}` (`$N`) and `#{pane_id}` (`%N`) found by `@tx-id`, so a rename in tmux cannot break them |
 
 There is no lifecycle field: an agent is running while `state` is not `ended`, and `ended` is
 final until a respawn; the event log says whether it exited (vanished) or was stopped
 (`stop_agent`). `ListFilter::running()` / `ended()` and `tx ls --running` / `--ended` pick a
-side.
+side; `tx ls` alone lists the running agents. Only a running record holds its name: an ended
+agent's name is free again.
 
 ### Agent state: the engine adapter decides, core applies
 
@@ -210,7 +177,8 @@ then `CreateOptions::env`, then the engine plan's env.
   operation writes nothing. Reads (`list_agents`, `get_agent`, `resolve`) never touch tmux.
 - `refresh_agent` / `refresh_all` turn a `Running` record without a live `@tx-id` into
   `Exited`. Records are scanned before tmux is listed, so a session created in between is never
-  misjudged.
+  misjudged. There is no CLI verb for it: `tx ls` runs `refresh_all` and `tx show` runs
+  `refresh_agent` on its target before reading.
 - `send_message` wraps the text in `<from-user>…</from-user>` or
   `<from-agent session="name">…</from-agent>`, types it verbatim into the pane (`send-keys -l`,
   trailing `;` escaped), waits 300 ms, sends `Enter`. The whole delivery holds `<id>.lock`, so
@@ -292,7 +260,7 @@ crate depending only on `tx-core`; the CLI registers the bundled ones in `main`.
 ### Reading the operation log from outside
 
 `log.jsonl` is `{"ts","actor","type","msg"}` per line; types are `created`, `renamed`, `tagged`,
-`message-sent`, `state-changed`, `exited`, `stopped`, `archived`. It is a notification trail, not the record:
+`message-sent`, `state-changed`, `exited`, `stopped`. It is a notification trail, not the record:
 on an event, re-read the session with `get_agent`. Lines are never torn, so `tail -f` works.
 
 ### From inside an agent
@@ -465,7 +433,7 @@ tx ui attach     # then prefix+t
 `tx ui view open … -- PROGRAM` is the way to start a shell or any other non-LLM program on the
 core's server; `tx create` starts agents only (`--engine` and `--prompt` are required). A
 record with `"kind": "process"` left on disk by an older build is skipped by every read and
-named on stderr when `tx` opens the core, until Storage PR 14's migration moves it.
+named on stderr when `tx` opens the core.
 
 **Views.** Every non-LLM tmux session on the core's server is a tx-client *view*: the `home`
 base, the `tutor-<lang>`, `mockup-<agent>` and `tx-timeline` viewers, an artifact's nvim

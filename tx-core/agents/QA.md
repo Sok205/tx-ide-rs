@@ -45,7 +45,7 @@ You report evidence.
 - **Agents under test:** Claude `--model sonnet` and Codex `--model gpt-6.1-sol`, set explicitly.
   Short prompts.
 - **Prove behaviour, not command success:** for example, tell an agent a secret word, then fork,
-  respawn or migrate it and ask for the word back. Watch `state` move
+  or respawn it and ask for the word back. Watch `state` move
   `starting → working → idle` while it really works.
 - Run the repository checks too: `cargo test --workspace` and
   `cargo clippy --workspace --all-targets -- -D warnings` against the branch.
@@ -59,6 +59,6 @@ Write a tx artifact titled "QA report: PR <n>" with:
 - anything surprising, even if it passed.
 
 Send the orchestrator the artifact id and the verdict in one line, with `tx send <orchestrator>
--- <line>`. Clean up: archive any agents you created in the sandbox (`tx archive <agent>` with
+-- <line>`. Clean up: stop any agents you created in the sandbox (`tx stop <agent>` with
 the sandbox's environment) and kill any tmux server you started yourself. Leave the
 `/tmp/tx-qa-<pr>/` evidence in place.

@@ -366,7 +366,7 @@ fn session_checks_pass_against_a_spawned_worker() {
     );
     assert!(out.contains("Lesson 6/13"), "{out}");
 
-    // Lesson 13: the worker must be gone and archived.
+    // Lesson 13: the worker must be stopped.
     tutor.ok(&["tutor", "goto", "13"], "");
     let (code, out, _) = tutor.code(&["tutor", "check"], "");
     assert_eq!(code, Some(1), "{out}");

@@ -45,7 +45,7 @@ fn kind(error: &CoreError) -> &'static str {
     }
 }
 
-fn kind() -> impl Strategy<Value = EngineKind> {
+fn engine_kind() -> impl Strategy<Value = EngineKind> {
     prop::sample::select(EngineKind::ALL.to_vec())
 }
 
@@ -121,7 +121,6 @@ fn session_with(parent: Option<AgentId>, tags: Vec<String>, state: LlmEngineStat
         created_at: 1.0,
         last_modified_at: 1.0,
         last_activity_at: None,
-        archived_at: None,
         tags,
         parent_id: parent,
         ext: std::collections::BTreeMap::new(),
@@ -209,7 +208,7 @@ proptest! {
         p1 in session_id(), p2 in session_id(),
         tags1 in texts(), tags2 in texts(),
         env in pairs(),
-        engine in kind(),
+        engine in engine_kind(),
     ) {
         let launch = LaunchOptions::agent(engine);
         let mut expected = CreateOptions::new(&name, &cwd, launch.clone());
@@ -241,7 +240,7 @@ proptest! {
     /// key, order is irrelevant.
     #[test]
     fn launch_options_agent_builder_sets_named_field_only(
-        engine in kind(),
+        engine in engine_kind(),
         roles1 in texts(), roles2 in texts(),
         m1 in text(), m2 in text(), e in text(), p in text(),
     ) {
@@ -394,7 +393,7 @@ fn engine_adapter_object_is_usable_from_another_thread() {
         }
     }
     let adapter: Box<dyn LlmEngine> = Box::new(Stub);
-    let id = std::thread::spawn(move || adapter.id().to_owned())
+    let id = std::thread::spawn(move || adapter.ext_key().to_owned())
         .join()
         .unwrap();
     assert_eq!(id, "stub");
@@ -405,16 +404,16 @@ fn engine_adapter_object_is_usable_from_another_thread() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn event_type_all_is_twelve_unique_lowercase_kebab_names() {
+fn event_type_all_is_eleven_unique_lowercase_kebab_names() {
     let all: &[EventType] = EventType::ALL;
-    assert_eq!(all.len(), 12);
+    assert_eq!(all.len(), 11);
     let variants: BTreeSet<&str> = all
         .iter()
         .map(|t| format!("{t:?}").leak() as &str)
         .collect();
-    assert_eq!(variants.len(), 12, "duplicate variant in ALL");
+    assert_eq!(variants.len(), 11, "duplicate variant in ALL");
     let names: BTreeSet<&'static str> = all.iter().map(|t| t.as_str()).collect();
-    assert_eq!(names.len(), 12, "duplicate as_str in ALL");
+    assert_eq!(names.len(), 11, "duplicate as_str in ALL");
     for name in names {
         assert!(!name.is_empty());
         assert!(

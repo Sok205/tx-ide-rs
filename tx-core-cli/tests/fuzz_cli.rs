@@ -229,11 +229,9 @@ fn token_pool() -> Vec<String> {
         "rename",
         "tag",
         "send",
-        "refresh",
         "where",
         "attach",
         "stop",
-        "archive",
         "engines",
         "help",
         "--help",
@@ -374,7 +372,7 @@ fn usage_level_inputs_are_table_driven() {
         (vec!["send", "--"], "send needs the message text"),
         (vec!["ls", "--lifecycle", "running"], "--lifecycle"),
         (vec!["ls", "--tag"], "--tag needs a value"),
-        (vec!["refresh", "a", "b"], "unexpected argument \"b\""),
+        (vec!["show", "a", "b"], "unexpected argument \"b\""),
         (
             vec![
                 "create", "n", "--cwd", "/", "--engine", "claude", "--effort", "",
@@ -533,7 +531,8 @@ fn create_boundary_names_and_relative_cwd() {
         cli.ok(&["stop", "--cwd"]).trim().split('\t').nth(1),
         Some("ended")
     );
-    assert_eq!(cli.ok(&["ls"]).lines().count(), 3);
+    assert_eq!(cli.ok(&["ls"]).lines().count(), 2);
+    assert_eq!(cli.ok(&["ls", "--ended"]).lines().count(), 1);
 }
 
 #[test]
@@ -761,7 +760,7 @@ fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
     cli.ok(&["stop", "a"]);
     let err = cli.fails(&["attach", "a"], 1);
     assert_eq!(err, format!("tx: session {id} is not running\n"));
-    // A session whose tmux side vanished is reported as not running after refresh.
+    // A session whose tmux side vanished is reported as not running.
     cli.ok(&[
         "create",
         "b",
@@ -812,6 +811,8 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
     }
     cli.ok(&["stop", "9"]);
     let ls = cli.ok(&["ls"]);
+    assert_eq!(ls.lines().count(), names.len() - 1, "the running ones");
+    let ls = ls + &cli.ok(&["ls", "--ended"]);
     assert_eq!(ls.lines().count(), names.len());
     for line in ls.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
@@ -839,7 +840,10 @@ fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
         cli.ok(&["ls", "--running"]).lines().count(),
         names.len() - 1
     );
-    assert_eq!(cli.ok(&["ls", "--tag", "k"]).lines().count(), names.len());
+    assert_eq!(
+        cli.ok(&["ls", "--tag", "k"]).lines().count(),
+        names.len() - 1
+    );
     assert_eq!(cli.ok(&["ls", "--parent", "a"]), "");
     assert!(
         cli.fails(&["ls", "--parent", "nope"], 1)
@@ -870,7 +874,6 @@ fn sandboxed(root: &Path) -> Command {
         .env_remove("TX_SESSION_ID")
         .env_remove("TX_TMUX_SOCKET")
         .env_remove("TX_APPNAME")
-        .env_remove("TX_CORE_HOME")
         .env_remove("XDG_RUNTIME_DIR");
     for (key, xdg) in [
         ("TX_CONFIG_DIR", "XDG_CONFIG_HOME"),
@@ -906,19 +909,19 @@ fn data_dir_flag_beats_exported_beats_xdg_beats_home() {
     let all = [("TX_DATA_DIR", exported.as_path()), ("XDG_DATA_HOME", &xdg)];
     let output = run(&["--data-dir", flag.to_str().unwrap(), "engines"], &all);
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(flag.join("sessions").is_dir());
+    assert!(flag.join("agents").is_dir());
     assert!(!exported.exists() && !xdg.exists());
 
     assert!(run(&["engines"], &all).status.success());
-    assert!(exported.join("sessions").is_dir());
+    assert!(exported.join("agents").is_dir());
     assert!(!xdg.exists());
 
     assert!(run(&["engines"], &all[1..]).status.success());
-    assert!(xdg.join("tx-ide/sessions").is_dir());
+    assert!(xdg.join("tx-ide/agents").is_dir());
     assert!(!home.join(".local/share").exists());
 
     assert!(run(&["engines"], &[]).status.success());
-    assert!(home.join(".local/share/tx-ide/sessions").is_dir());
+    assert!(home.join(".local/share/tx-ide/agents").is_dir());
 
     // An empty exported value means unset, not "the current directory".
     let scratch = root.path().join("scratch");
@@ -984,7 +987,7 @@ fn long_socket_path_fails_before_touching_state_and_socket_overrides_it() {
     let args = with(&just_fits, &["engines"]);
     let output = run(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(just_fits.is_dir() && data.join("sessions").is_dir());
+    assert!(just_fits.is_dir() && data.join("agents").is_dir());
 
     let short = root.path().join("s.sock");
     let args = with(&too_long, &["--socket", short.to_str().unwrap(), "engines"]);
@@ -1122,8 +1125,8 @@ fn six_concurrent_creates_with_the_same_name_get_distinct_suffixed_names() {
         .collect();
     sessions.sort_unstable();
     assert_eq!(sessions, expected);
-    // Once archived, the bare name is free again.
-    cli.ok(&["archive", "same"]);
+    // Once stopped, the bare name is free again.
+    cli.ok(&["stop", "same"]);
     let id = cli.ok(&[
         "create",
         "same",
@@ -1138,11 +1141,11 @@ fn six_concurrent_creates_with_the_same_name_get_distinct_suffixed_names() {
     assert_eq!(shown["name"], "same");
     assert_eq!(cli.ok(&["ls", "--running"]).lines().count(), 6);
     assert_eq!(cli.ok(&["ls"]).lines().count(), 6);
-    assert_eq!(cli.ok(&["ls", "--archived"]).lines().count(), 1);
+    assert_eq!(cli.ok(&["ls", "--ended"]).lines().count(), 1);
 }
 
 /// Every directory flag naming `dir`: the suites keep the five directories in one place, so
-/// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
+/// their paths stay `<dir>/agents`, `<dir>/tmux.sock`, … (the XDG suite separates them).
 pub fn directory_flags(dir: &std::path::Path) -> Vec<std::ffi::OsString> {
     [
         "--config-dir",

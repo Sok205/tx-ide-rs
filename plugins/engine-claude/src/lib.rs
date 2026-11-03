@@ -38,7 +38,6 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tx_core::migrate::version_one_conversation;
 use tx_core::{
     Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
     LlmEngineChange, LlmEngineHook, LlmEngineState, WorkspaceAction, engine_data,
@@ -348,43 +347,6 @@ impl LlmEngine for ClaudeAdapter {
         Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
-    /// `model` and `effort` from the version-1 launch (an effort Claude does not know is
-    /// dropped), and the conversation the record names, its transcript where the chat plugin
-    /// recorded it, else where Claude writes conversation `id` of a process started in the
-    /// record's `cwd`.
-    fn upgrade_version_one(
-        &self,
-        record: &serde_json::Map<String, Value>,
-        launch: &serde_json::Map<String, Value>,
-    ) -> Value {
-        let mut data = serde_json::Map::new();
-        if let Some(model) = launch.get(MODEL_KEY).and_then(Value::as_str) {
-            data.insert(MODEL_KEY.into(), model.into());
-        }
-        if let Some(effort) = launch
-            .get(EFFORT_KEY)
-            .and_then(Value::as_str)
-            .and_then(|effort| effort.parse::<Effort>().ok())
-        {
-            data.insert(EFFORT_KEY.into(), effort.as_str().into());
-        }
-        if let Some((conversation, transcript)) = version_one_conversation(record, launch) {
-            data.insert(CONVERSATION_ID_KEY.into(), conversation.into());
-            let transcript = transcript.map(str::to_owned).or_else(|| {
-                let cwd = record.get("cwd")?.as_str()?;
-                Some(
-                    self.transcript_path(Path::new(cwd), conversation)
-                        .to_string_lossy()
-                        .into_owned(),
-                )
-            });
-            if let Some(transcript) = transcript {
-                data.insert(TRANSCRIPT_PATH_KEY.into(), transcript.into());
-            }
-        }
-        Value::Object(data)
-    }
-
     fn on_hook(&self, session: &Agent, hook: &LlmEngineHook) -> LlmEngineChange {
         let field = |key: &str| hook.payload.get(key).and_then(Value::as_str);
         let state = match hook.name.as_str() {
@@ -620,7 +582,6 @@ mod tests {
             created_at: 1.0,
             last_modified_at: 1.0,
             last_activity_at: None,
-            archived_at: None,
             tags: Vec::new(),
             parent_id: None,
             ext,
@@ -1449,60 +1410,4 @@ mod tests {
         }
     }
 
-    /// `tx migrate`: the version-1 launch's options (an effort Claude does not know dropped),
-    /// and the conversation: the chat plugin's active capture with its transcript, else the
-    /// launch's `resume` with the transcript where Claude writes it for the record's `cwd`.
-    #[test]
-    fn upgrade_version_one_builds_the_engine_data() {
-        let engine = adapter();
-        let object = |value: serde_json::Value| value.as_object().unwrap().clone();
-        let record = object(serde_json::json!({
-            "id": "a", "cwd": "/w",
-            "ext": {"chat": {"chats": [
-                {"id": "old", "ended_at": 1.0, "transcript": "/t/old.jsonl"},
-                {"id": "c1", "transcript": "/t/c1.jsonl"},
-            ]}},
-        }));
-        let launch = object(serde_json::json!({
-            "kind": "agent", "engine": "claude", "model": "sonnet", "effort": "max", "resume": "r1",
-        }));
-        assert_eq!(
-            engine.upgrade_version_one(&record, &launch),
-            serde_json::json!({"model": "sonnet", "effort": "max", "conversation_id": "c1", "transcript_path": "/t/c1.jsonl"})
-        );
-        let launch = object(
-            serde_json::json!({"kind": "agent", "engine": "claude", "effort": "extreme", "resume": "r1"}),
-        );
-        let data = engine.upgrade_version_one(
-            &object(serde_json::json!({"id": "a", "cwd": "/w"})),
-            &launch,
-        );
-        assert_eq!(data["conversation_id"], "r1");
-        assert_eq!(
-            data.get("effort"),
-            None,
-            "an effort Claude does not know is dropped"
-        );
-        assert_eq!(data.get("model"), None);
-        let transcript = data["transcript_path"].as_str().unwrap();
-        assert!(
-            transcript.starts_with("/h/projects/") && transcript.ends_with("/r1.jsonl"),
-            "{transcript}"
-        );
-        assert_eq!(
-            engine.upgrade_version_one(
-                &object(serde_json::json!({"id": "a"})),
-                &object(serde_json::json!({"resume": "r1"}))
-            ),
-            serde_json::json!({"conversation_id": "r1"}),
-            "no cwd, no computed path"
-        );
-        assert_eq!(
-            engine.upgrade_version_one(
-                &object(serde_json::json!({"id": "a", "cwd": "/w"})),
-                &object(serde_json::json!({"kind": "agent"}))
-            ),
-            serde_json::json!({})
-        );
-    }
 }

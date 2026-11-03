@@ -17,7 +17,7 @@ pub enum CoreError {
     NotFound(String),
     #[error("another session is already named {0:?}")]
     NameTaken(String),
-    /// A respawn whose name an unarchived record took meanwhile; never renamed automatically.
+    /// A respawn whose name a running record took meanwhile; never renamed automatically.
     #[error(
         "cannot respawn: the name {name:?} is held by session {holder}; rename one of them first"
     )]
@@ -34,10 +34,6 @@ pub enum CoreError {
     StillRunning(AgentId),
     #[error("worktree {} is gone; a respawn never recreates one", .0.display())]
     WorktreeMissing(PathBuf),
-    /// `<data>/sessions/` still holds version-1 records; nothing opens until `tx migrate`
-    /// upgrades them.
-    #[error("{records} version-1 record(s) in {}: run `tx migrate`", directory.display())]
-    NeedsMigration { directory: PathBuf, records: usize },
     /// The record's or request's engine kind has no adapter registered: its plugin is disabled.
     #[error("engine {0} is disabled")]
     EngineDisabled(EngineKind),

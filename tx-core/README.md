@@ -29,9 +29,7 @@ reads the environment.
 <run>/tmux.sock             the private server (must stay ≤ 100 bytes; set CoreConfig::tmux_socket)
 ```
 
-`tx_core::migrate::migrate_home` moves a version-1 home (everything in one directory) into them,
-and `tx_core::migrate::upgrade_records` turns the version-1 records left in `<data>/sessions/`
-into version-2 ones; `TxCore::open` refuses while any are there.
+A record at any version other than 2 is unreadable.
 
 Disk is the record. tmux holds only the session option `@tx-id`; `$N` / `%N` targets are looked
 up by it on every call and never stored, so a rename behind core's back changes nothing.
@@ -92,12 +90,10 @@ to `cwd`, refusing anything that escapes it), then starts `program args…` with
 - Names: `[A-Za-z0-9_-]{1,128}`; ids: `[A-Za-z0-9_-]{1,64}` (uuid v4 in practice). Both are
   validated everywhere, including when read back from disk, so a record or lock file can never
   land outside its directory.
-- `NameTaken` counts every unarchived record, running or not: a stopped agent keeps its name
-  (a new create gets `<name>-2`), an archived one frees it. A tmux session that still holds the
-  name also yields `NameTaken`. A respawn whose name an unarchived record took meanwhile fails
-  with `NameHeld`; nothing is renamed automatically.
-- `archive_agent` stops a running session, then hides it from `list_agents` (unless the
-  filter asks for `archived()`); the record, worktree and profile stay, and a respawn clears it.
+- `NameTaken` counts the running records only: a running agent holds its name (a new create
+  gets `<name>-2`), an ended one frees it. A tmux session that still holds the name also yields
+  `NameTaken`. A respawn whose name a running record took meanwhile fails with `NameHeld`;
+  nothing is renamed automatically.
 - `Exited` and `Stopped` are terminal. Reads never touch tmux. `list-sessions` is the only
   liveness signal; any failure of it other than "no server" is `InspectionFailed`, and the
   operation writes nothing.
