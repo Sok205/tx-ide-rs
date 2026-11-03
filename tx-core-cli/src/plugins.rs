@@ -37,6 +37,7 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_tour::TourPlugin),
     || Box::new(tx_timeline::TimelinePlugin),
     || Box::new(tx_home::HomePlugin),
+    || Box::new(tx_home_themes::HomeThemesPlugin),
 ];
 
 /// Ids of plugins this binary no longer links; `plugins.yaml` entries for them are ignored.

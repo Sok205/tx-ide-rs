@@ -1820,6 +1820,7 @@ dependencies = [
  "tx-engine-claude",
  "tx-engine-codex",
  "tx-home",
+ "tx-home-themes",
  "tx-kill",
  "tx-labels",
  "tx-mockup",
@@ -1873,6 +1874,17 @@ dependencies = [
  "tx-chat",
  "tx-client",
  "tx-core",
+]
+
+[[package]]
+name = "tx-home-themes"
+version = "0.1.0"
+dependencies = [
+ "fastrand",
+ "ratatui",
+ "serde_json",
+ "tx-core",
+ "tx-home",
 ]
 
 [[package]]

@@ -64,13 +64,13 @@ fn installed_server(cli: &Cli, yaml: &str) {
     );
 }
 
-const NO_ASSISTANT: &str = "plugins:\n  assistant: { enabled: false }\n";
+const PLAIN_HOME: &str = "plugins:\n  assistant: { enabled: false }\n  home-themes: { enabled: false }\n";
 
 #[test]
 fn ui_install_binds_prefix_m_only() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     let bound = cli.tmux_out(&["list-keys", "-T", "prefix", "m"]);
     assert!(bound.contains("run-shell -b"), "{bound}");
     assert!(bound.contains("_home-open"), "{bound}");
@@ -98,7 +98,7 @@ fn ui_install_binds_prefix_m_only() {
 fn prefix_m_opens_the_home_popup_and_q_closes_it() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     cli.create("a");
     floor(&cli);
     assert!(cli.wait_for(5, || home_shown(&cli)), "{}", screen(&cli));
@@ -271,7 +271,7 @@ fn floor(cli: &Cli) {
 fn home_install_turns_a_shell_home_into_the_tui() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     hand_made_home(&cli, "sh");
     // A choice and a last session an earlier server's pane of the same id left behind.
     let directory = cli.state().join("plugins/home");
@@ -320,7 +320,7 @@ fn home_install_turns_a_shell_home_into_the_tui() {
 fn home_install_leaves_a_split_shell_alone() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     hand_made_home(&cli, "sh");
     cli.ok(&["_home-install", "home"]);
     assert!(
@@ -370,7 +370,7 @@ fn home_install_leaves_a_split_shell_alone() {
 fn an_editor_in_the_home_pane_is_left_alone() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     hand_made_home(&cli, "sleep 600");
     cli.ok(&["_home-install", "home"]);
     assert!(!cli.wait_for(1, || home_command(&cli) == "tx"));
@@ -384,7 +384,7 @@ fn an_editor_in_the_home_pane_is_left_alone() {
 fn enter_nests_into_the_picked_session_and_detach_returns_to_the_tui() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     cli.create("a");
     let odd = "v#1 it's";
     assert!(
@@ -440,7 +440,7 @@ fn enter_nests_into_the_picked_session_and_detach_returns_to_the_tui() {
 fn a_picker_enter_then_exit_returns_to_the_tui() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     cli.create("a");
     floor(&cli);
     let sock = cli.sock().display().to_string();
@@ -573,7 +573,7 @@ fn ask_nests_into_the_assistant_at_once() {
 fn x_then_y_stops_the_selected_agent() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     cli.create("b");
     floor(&cli);
     assert!(
@@ -609,7 +609,7 @@ fn x_then_y_stops_the_selected_agent() {
 fn the_popup_variant_closes_on_q_and_attach_switches_the_client() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     cli.create("a");
     floor(&cli);
     let client = client_on(&cli, "home");
@@ -679,7 +679,7 @@ fn the_popup_variant_closes_on_q_and_attach_switches_the_client() {
 fn the_tui_paints_within_100ms() {
     require_tmux!();
     let cli = Cli::new();
-    installed_server(&cli, NO_ASSISTANT);
+    installed_server(&cli, PLAIN_HOME);
     cli.create("a");
     floor(&cli);
     let pane = home_pane(&cli);
