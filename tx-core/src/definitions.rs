@@ -485,6 +485,206 @@ impl Definitions {
             format!("unknown {kind} {name:?} (searched {searched})"),
         )
     }
+
+    /// Validates the winning definitions: every agent, skill and `mcp.json` when `names` is
+    /// empty, else the agents, skills and servers of those names. Returns what was checked and
+    /// every problem found, not just the first.
+    pub fn check(&self, names: &[String]) -> Result<CheckReport, DefinitionError> {
+        let mut report = CheckReport::default();
+        let agent_files = self.agent_files()?;
+        let skill_directories = self.skill_directories()?;
+        let mut servers: BTreeMap<String, PathBuf> = BTreeMap::new();
+        let mut mcp_files = Vec::new();
+        for path in self.mcp_files() {
+            match read_mcp(&path) {
+                Ok(definitions) => {
+                    for name in definitions.servers.keys() {
+                        servers.insert(name.clone(), path.clone());
+                    }
+                    mcp_files.push(definitions);
+                }
+                Err(error) => report.problems.push(error),
+            }
+        }
+        let wanted = |name: &str| names.is_empty() || names.iter().any(|wanted| wanted == name);
+        for name in names {
+            if !agent_files.contains_key(name)
+                && !skill_directories.contains_key(name)
+                && !servers.contains_key(name)
+            {
+                report.problems.push(DefinitionError::new(
+                    self.roots
+                        .last()
+                        .map(PathBuf::as_path)
+                        .unwrap_or(Path::new("")),
+                    None,
+                    format!("no agent, skill or MCP server named {name:?}"),
+                ));
+            }
+        }
+        for (name, path) in agent_files.iter().filter(|(name, _)| wanted(name)) {
+            report.agents += 1;
+            if !is_bare_name(name) {
+                report.problems.push(DefinitionError::new(
+                    path,
+                    None,
+                    format!("agent name {name:?} must match [A-Za-z0-9_-]+"),
+                ));
+            }
+            match read_agent(path) {
+                Ok(agent) => {
+                    check_agent(&agent, &skill_directories, &servers, &mut report.problems)
+                }
+                Err(error) => report.problems.push(error),
+            }
+        }
+        for (name, directory) in skill_directories.iter().filter(|(name, _)| wanted(name)) {
+            report.skills += 1;
+            if !is_bare_name(name) {
+                report.problems.push(DefinitionError::new(
+                    directory,
+                    None,
+                    format!("skill name {name:?} must match [A-Za-z0-9_-]+"),
+                ));
+            }
+            if let Err(error) = read_skill(directory) {
+                report.problems.push(error);
+            }
+        }
+        for definitions in &mcp_files {
+            for (name, server) in definitions
+                .servers
+                .iter()
+                .filter(|(name, _)| wanted(name))
+                // A server a later file overrides is not checked.
+                .filter(|(name, _)| servers.get(*name) == Some(&definitions.path))
+            {
+                report.servers += 1;
+                check_server(definitions, name, server, &mut report.problems);
+            }
+        }
+        Ok(report)
+    }
+}
+
+/// What `Definitions::check` looked at, and what is wrong.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CheckReport {
+    pub agents: usize,
+    pub skills: usize,
+    pub servers: usize,
+    pub problems: Vec<DefinitionError>,
+}
+
+/// Agent, skill and server names become path fragments and tool-name parts.
+fn is_bare_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+const MCP_TOOL_PREFIX: &str = "mcp__";
+
+/// The references of one agent: its skills and servers exist, `tools` names no MCP tool (Claude
+/// ignores those there), and an `mcp__<server>` cut names one of its servers.
+fn check_agent(
+    agent: &AgentDefinition,
+    skill_directories: &BTreeMap<String, PathBuf>,
+    servers: &BTreeMap<String, PathBuf>,
+    problems: &mut Vec<DefinitionError>,
+) {
+    let problem =
+        |key: &str, message: String| DefinitionError::new(&agent.path, agent.line_of(key), message);
+    for skill in &agent.skills {
+        if !skill_directories.contains_key(skill) {
+            problems.push(problem("skills", format!("unknown skill {skill:?}")));
+        }
+    }
+    for server in &agent.mcp_servers {
+        if !servers.contains_key(server) {
+            problems.push(problem(
+                "mcpServers",
+                format!("unknown MCP server {server:?} (not in any {MCP_FILE})"),
+            ));
+        }
+    }
+    for tool in agent.tools.iter().flatten() {
+        if tool.starts_with(MCP_TOOL_PREFIX) {
+            problems.push(problem(
+                "tools",
+                format!(
+                    "{tool:?}: `tools` lists built-in tools only; list the server in \
+                     `mcpServers` and cut its tools with `disallowedTools`"
+                ),
+            ));
+        }
+    }
+    for tool in &agent.disallowed_tools {
+        let Some(rest) = tool.strip_prefix(MCP_TOOL_PREFIX) else {
+            continue;
+        };
+        let server = rest.split("__").next().unwrap_or_default();
+        if !agent.mcp_servers.iter().any(|listed| listed == server) {
+            problems.push(problem(
+                "disallowedTools",
+                format!("{tool:?} cuts from {server:?}, which is not in `mcpServers`"),
+            ));
+        }
+    }
+}
+
+/// `${VAR}` stands for a secret, and only as the whole value of an `env` or `headers` entry:
+/// that is the form every engine can pass through.
+fn check_server(
+    definitions: &McpDefinitions,
+    name: &str,
+    server: &McpServer,
+    problems: &mut Vec<DefinitionError>,
+) {
+    let problem = |message: String| {
+        DefinitionError::new(&definitions.path, definitions.line_of(name), message)
+    };
+    if !is_bare_name(name) {
+        problems.push(problem(format!(
+            "server name {name:?} must match [A-Za-z0-9_-]+"
+        )));
+    }
+    let (plain, (secrets_key, secrets)): (Vec<(&str, &String)>, _) = match server {
+        McpServer::Stdio { command, args, env } => (
+            std::iter::once(("command", command))
+                .chain(args.iter().map(|argument| ("args", argument)))
+                .collect(),
+            ("env", env),
+        ),
+        McpServer::Http { url, headers } => (vec![("url", url)], ("headers", headers)),
+    };
+    for (key, value) in plain {
+        if value.contains("${") {
+            problems.push(problem(format!(
+                "{name}.{key}: `${{VAR}}` is allowed only as a whole `env` or `headers` value"
+            )));
+        }
+    }
+    for (entry, value) in secrets {
+        if value.contains("${") && !is_whole_variable(value) {
+            problems.push(problem(format!(
+                "{name}.{secrets_key}.{entry}: a variable must be the whole value, `${{NAME}}`"
+            )));
+        }
+    }
+}
+
+fn is_whole_variable(value: &str) -> bool {
+    value
+        .strip_prefix("${")
+        .and_then(|rest| rest.strip_suffix('}'))
+        .is_some_and(|name| {
+            name.chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
 }
 
 #[cfg(test)]
@@ -593,5 +793,57 @@ mod tests {
         let servers = definitions.mcp_servers().unwrap();
         assert_eq!(servers["m"].1, user.join("mcp.json"));
         assert!(definitions.agent("missing").is_err());
+    }
+
+    #[test]
+    fn check_reports_every_problem_with_its_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        write(
+            &root.join("agents/pm.md"),
+            "---\nname: pm\ndescription: d\ntools: Bash, mcp__probe__get\nmcpServers: [probe, nope]\n\
+             disallowedTools: mcp__other__x\nskills: [missing]\n---\n",
+        );
+        write(&root.join("agents/bad.md"), "---\nname: bad\n---\n");
+        write(
+            &root.join("mcp.json"),
+            "{\"mcpServers\": {\n  \"probe\": {\"command\": \"${BIN}\", \"env\": {\"A\": \"x${B}\", \"C\": \"${C}\"}}\n}}",
+        );
+        let report = Definitions::new([root.clone()]).check(&[]).unwrap();
+        let lines: Vec<String> = report
+            .problems
+            .iter()
+            .map(|problem| {
+                let path = problem
+                    .path
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .display()
+                    .to_string();
+                format!("{path}:{}: {}", problem.line.unwrap_or(0), problem.message)
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "agents/bad.md:2: missing field `description`",
+                "agents/pm.md:7: unknown skill \"missing\"",
+                "agents/pm.md:5: unknown MCP server \"nope\" (not in any mcp.json)",
+                "agents/pm.md:4: \"mcp__probe__get\": `tools` lists built-in tools only; list the \
+                 server in `mcpServers` and cut its tools with `disallowedTools`",
+                "agents/pm.md:6: \"mcp__other__x\" cuts from \"other\", which is not in `mcpServers`",
+                "mcp.json:2: probe.command: `${VAR}` is allowed only as a whole `env` or `headers` value",
+                "mcp.json:2: probe.env.A: a variable must be the whole value, `${NAME}`",
+            ]
+        );
+        assert_eq!((report.agents, report.skills, report.servers), (2, 0, 1));
+        let named = Definitions::new([root])
+            .check(&["probe".to_owned(), "x".to_owned()])
+            .unwrap();
+        assert_eq!((named.agents, named.servers), (0, 1));
+        assert_eq!(
+            named.problems[0].message,
+            "no agent, skill or MCP server named \"x\""
+        );
     }
 }
