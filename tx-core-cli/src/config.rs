@@ -5,11 +5,11 @@
 //!   engine: claude
 //!   roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
 //!   model: claude-opus-5-5       # null: the engine's own default
-//!   effort: high                 # null: the engine's own default
+//!   effort: 3                    # 1-5 (or the engine's word); null: the engine's own default
 //! plugins:
 //!   engine-codex: { enabled: false }
 //!   assistant:
-//!     settings: { model: opus, effort: medium }
+//!     settings: { model: opus, effort: 2 }
 //! ```
 //! Every key is optional; a missing or empty file is every default. An unknown key, a bad value
 //! or malformed YAML is a usage error naming the file.
@@ -41,6 +41,8 @@ pub struct AgentDefaults {
     pub engine: EngineKind,
     pub roles: Vec<String>,
     pub model: Option<String>,
+    /// A number on the tx scale or an engine's word, as text; the engine checks it.
+    #[serde(deserialize_with = "tx_core::deserialize_optional_effort")]
     pub effort: Option<String>,
 }
 
@@ -50,7 +52,7 @@ impl Default for AgentDefaults {
             engine: EngineKind::Claude,
             roles: vec!["COMMON".to_owned(), "DEVELOPER".to_owned()],
             model: Some("claude-opus-5-5".to_owned()),
-            effort: Some("high".to_owned()),
+            effort: Some("3".to_owned()),
         }
     }
 }
@@ -164,6 +166,24 @@ mod tests {
                 model: Some("gpt-5".to_owned()),
                 effort: Some("low".to_owned()),
             }
+        );
+    }
+
+    #[test]
+    fn effort_is_a_number_or_a_word() {
+        for (text, effort) in [
+            ("agent:\n  effort: 3\n", "3"),
+            ("agent:\n  effort: \"3\"\n", "3"),
+            ("agent:\n  effort: high\n", "high"),
+            ("agent:\n  effort: \"high\"\n", "high"),
+        ] {
+            let config = parse_text(text).unwrap();
+            assert_eq!(config.agent.effort.as_deref(), Some(effort), "{text:?}");
+        }
+        let error = parse_text("agent:\n  effort: [3]\n").unwrap_err();
+        assert!(
+            error.0.contains("a number 1-5 or the engine's word"),
+            "{error}"
         );
     }
 

@@ -491,6 +491,15 @@ fn create_fills_unflagged_options_from_the_config_file() {
     assert_eq!(flagged["roles"], serde_json::json!(["DEVELOPER"]));
     assert_eq!(flagged["ext"]["claude"]["model"], "opus");
     assert_eq!(flagged["ext"]["claude"]["effort"], "low");
+
+    // A level on the 1-5 scale, from the file or a flag, is stored as the engine's word.
+    cli.write_yaml("agent:\n  effort: 4\n");
+    let leveled = create("leveled", &[]);
+    assert_eq!(leveled["ext"]["claude"]["effort"], "xhigh");
+    let level_flag = create("level-flag", &["--effort", "1"]);
+    assert_eq!(level_flag["ext"]["claude"]["effort"], "low");
+    let level_option = create("level-option", &["--option", "effort=5"]);
+    assert_eq!(level_option["ext"]["claude"]["effort"], "max");
 }
 
 /// `help` names the config file it would read; a typo in it stops every other verb.

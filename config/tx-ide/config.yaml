@@ -8,7 +8,7 @@ agent:
   engine: claude               # claude | codex
   roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
   model: claude-opus-5-5       # Opus 5.5; null: the engine's own default (for claude, settings.json)
-  effort: high                 # 3 of 5: low|medium|high|xhigh|max (codex also none|minimal); null: the engine's own
+  effort: 3                    # 1-5: low|medium|high|xhigh|max, or the engine's word (codex also none|minimal); null: the engine's own
 
 # Every plugin, on. `enabled: false` switches one off; `tx plugins` shows the result.
 plugins:
@@ -23,7 +23,7 @@ plugins:
   spawn: { enabled: true }
   assistant:
     enabled: true
-    settings: { model: opus, effort: medium }   # what the tx-assistant (prefix+/) runs on
+    settings: { model: opus, effort: 2 }        # what the tx-assistant (prefix+/) runs on
   mockup: { enabled: true }
   tutor: { enabled: true }
   artifacts:

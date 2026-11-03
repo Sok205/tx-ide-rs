@@ -13,7 +13,8 @@
 //! file, so they never make two.
 //!
 //! Settings (`plugins.assistant.settings` in `config.yaml`): `model` (default `opus`) and
-//! `effort` (default `medium`), used when a new assistant is created.
+//! `effort` (default `2`, medium; a number 1-5 or the engine's word), used when a new assistant
+//! is created.
 
 mod focus;
 
@@ -40,7 +41,7 @@ pub const COMMON_ROLE: &str = "COMMON";
 pub const TAG: &str = "tx-system";
 pub const ENGINE: EngineKind = EngineKind::Claude;
 pub const DEFAULT_MODEL: &str = "opus";
-pub const DEFAULT_EFFORT: &str = "medium";
+pub const DEFAULT_EFFORT: &str = "2";
 /// The first turn, typed by core at launch: an agent needs an initial prompt.
 pub const GREETING: &str = "You are starting up. Reply with the single word READY.";
 /// Under the plugin's data directory: the assistant's own repository, the checkout its
@@ -66,6 +67,8 @@ const START_POLL: Duration = Duration::from_millis(250);
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub model: String,
+    /// A number on the tx scale or an engine's word, as text; the engine checks it.
+    #[serde(deserialize_with = "tx_core::deserialize_effort")]
     pub effort: String,
 }
 
@@ -374,7 +377,7 @@ mod tests {
             Settings::from_value(&serde_json::Value::Null).unwrap(),
             Settings {
                 model: "opus".to_owned(),
-                effort: "medium".to_owned(),
+                effort: "2".to_owned(),
             }
         );
     }
@@ -387,8 +390,22 @@ mod tests {
     }
 
     #[test]
+    fn effort_is_a_number_or_a_word() {
+        assert_eq!(
+            Settings::from_value(&json!({"effort": 4})).unwrap().effort,
+            "4"
+        );
+        assert_eq!(
+            Settings::from_value(&json!({"effort": "max"}))
+                .unwrap()
+                .effort,
+            "max"
+        );
+    }
+
+    #[test]
     fn an_unknown_key_or_a_wrong_type_is_refused() {
-        for value in [json!({"modle": "x"}), json!({"effort": 3})] {
+        for value in [json!({"modle": "x"}), json!({"effort": true})] {
             let error = Settings::from_value(&value).unwrap_err();
             assert!(
                 matches!(&error, PluginError::Register { plugin, .. } if plugin == "assistant"),
