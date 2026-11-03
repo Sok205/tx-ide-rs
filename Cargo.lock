@@ -1883,6 +1883,7 @@ dependencies = [
  "fastrand",
  "ratatui",
  "serde_json",
+ "tempfile",
  "tx-core",
  "tx-home",
 ]
