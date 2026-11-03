@@ -93,16 +93,16 @@ struct Window {
 
 impl Window {
     /// Soft round lights on near-black; where they overlap the stronger one wins.
-    fn blur_lights(&mut self, width: u16, rows: u16) {
+    fn blur_lights(&mut self, width: u16, rows: u32) {
         let blobs: Vec<_> = (0..self.random.usize(BLOBS.0..=BLOBS.1))
             .map(|_| {
-                let radius = f32::from(rows)
+                let radius = rows as f32
                     * (BLOB_RADIUS.0 + (BLOB_RADIUS.1 - BLOB_RADIUS.0) * self.random.f32());
                 let light = if self.random.bool() { WARM } else { COOL };
                 (
                     (
                         self.random.f32() * f32::from(width),
-                        self.random.f32() * f32::from(rows),
+                        self.random.f32() * rows as f32,
                     ),
                     radius,
                     light,
@@ -110,7 +110,7 @@ impl Window {
             })
             .collect();
         self.lights = (0..rows)
-            .flat_map(|y| (0..width).map(move |x| (f32::from(x), f32::from(y))))
+            .flat_map(|y| (0..width).map(move |x| (f32::from(x), y as f32)))
             .map(|pixel| {
                 let (strength, light) = blobs
                     .iter()
@@ -129,8 +129,7 @@ impl Window {
 
     fn respawn(&mut self, area: Rect) {
         self.area = area;
-        let rows = area.height * 2;
-        self.blur_lights(area.width, rows);
+        self.blur_lights(area.width, u32::from(area.height) * 2);
         self.droplets.clear();
         self.trails.clear();
         self.wipes.clear();

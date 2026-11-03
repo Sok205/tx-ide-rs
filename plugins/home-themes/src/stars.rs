@@ -83,20 +83,15 @@ struct Sky {
 }
 
 /// Darker overhead, lighter at the horizon, with soft wavy edges between the bands.
-fn shade(x: u16, y: u16, rows: u16) -> Color {
-    let wobble = (value_noise(f32::from(x) * 0.04, f32::from(y) * 0.08, 1) - 0.5) * 0.2;
-    quantised(
-        NAVY,
-        INDIGO,
-        f32::from(y) / f32::from(rows) + wobble,
-        SKY_SHADES,
-    )
+fn shade(x: u16, y: u32, rows: u32) -> Color {
+    let wobble = (value_noise(f32::from(x) * 0.04, y as f32 * 0.08, 1) - 0.5) * 0.2;
+    quantised(NAVY, INDIGO, y as f32 / rows as f32 + wobble, SKY_SHADES)
 }
 
 impl Sky {
     fn respawn(&mut self, area: Rect) {
         self.area = area;
-        let (width, rows) = (area.width, area.height * 2);
+        let (width, rows) = (area.width, u32::from(area.height) * 2);
         self.gradient = (0..rows)
             .flat_map(|y| (0..width).map(move |x| shade(x, y, rows)))
             .collect();
@@ -105,7 +100,7 @@ impl Sky {
             .map(|_| Star {
                 position: (
                     self.random.i32(0..i32::from(width)),
-                    self.random.i32(0..i32::from(rows)),
+                    self.random.i32(0..rows as i32),
                 ),
                 tint: STAR_TINTS[self.random.usize(..STAR_TINTS.len())],
                 level: self.random.usize(..TWINKLE_LEVELS.len()),

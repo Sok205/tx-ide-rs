@@ -13,7 +13,7 @@ use ratatui::style::Color;
 use tx_home::backdrop::{Backdrop, Pixels};
 
 use crate::common::{
-    Pointer, STEP, Steps, draw_logo, fill, logo_size, pixel_of, quantised, value_noise,
+    Pointer, STEP, Steps, angle, draw_logo, fill, logo_size, pixel_of, quantised, value_noise,
 };
 
 const SKY_TOP: Color = Color::Rgb(9, 13, 24);
@@ -199,7 +199,8 @@ impl Pines {
 
     fn column(&self, flake: &Flake) -> usize {
         let swayed = flake.x
-            + flake.sway_amplitude * (self.clock as f32 * flake.sway_rate + flake.sway_phase).sin();
+            + flake.sway_amplitude
+                * (angle(self.clock, f64::from(flake.sway_rate)) + flake.sway_phase).sin();
         (swayed.round() as i32).rem_euclid(self.width() as i32) as usize
     }
 

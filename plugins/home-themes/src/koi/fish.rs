@@ -7,7 +7,7 @@ use fastrand::Rng;
 use ratatui::style::Color;
 use tx_home::backdrop::{Pixels, dim};
 
-use crate::common::distance;
+use crate::common::{angle, distance};
 
 pub const SEGMENTS: usize = 14;
 
@@ -333,9 +333,8 @@ impl Fish {
     }
 
     /// The spine with a sine wave travelling head to tail, larger towards the tail and in a burst.
-    fn waved(&self, phase: f32) -> [(f32, f32); SEGMENTS] {
+    fn waved(&self, beat: f32) -> [(f32, f32); SEGMENTS] {
         let amplitude = self.length * 0.05 * self.speed / self.cruise();
-        let beat = phase * TAIL_BEATS_PER_SECOND * TAU + self.beat;
         std::array::from_fn(|index| {
             let (x, y) = self.spine[index];
             let forward = if index == 0 {
@@ -350,9 +349,10 @@ impl Fish {
         })
     }
 
-    /// `phase`: seconds, driving the tail wave and the fin strokes.
-    pub fn draw(&self, phase: f32, pixels: &mut Pixels) {
-        let spine = self.waved(phase);
+    /// `seconds` drive the tail wave and the fin strokes.
+    pub fn draw(&self, seconds: f64, pixels: &mut Pixels) {
+        let beat = angle(seconds, f64::from(TAIL_BEATS_PER_SECOND * TAU)) + self.beat;
+        let spine = self.waved(beat);
         let widest = self.length * 0.15;
         let fin = dim(FIN, self.depth);
 
@@ -371,7 +371,7 @@ impl Fish {
         }
         let shoulder = spine[3];
         let forward = angle(shoulder, spine[2]);
-        let flap = 0.25 * (phase * TAIL_BEATS_PER_SECOND * TAU + self.beat).sin();
+        let flap = 0.25 * beat.sin();
         for side in [-1.0, 1.0] {
             let tip = at(shoulder, forward + side * (2.0 + flap), self.length * 0.15);
             stroke(pixels, shoulder, tip, 0.7, fin);

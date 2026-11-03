@@ -13,8 +13,8 @@ use ratatui::style::Color;
 use tx_home::backdrop::{Backdrop, Pixels};
 
 use crate::common::{
-    Pointer, STEP, Steps, distance, draw_logo, fill, glow, logo_size, pixel_of, quantised,
-    value_noise,
+    Pointer, STEP, Steps, angle, distance, draw_logo, fill, glow, logo_size, noise_time, pixel_of,
+    quantised, value_noise,
 };
 
 const WATER: Color = Color::Rgb(2, 6, 14);
@@ -97,7 +97,8 @@ struct Abyss {
 impl Jelly {
     /// 0 gliding, up to 1 at the hardest squeeze of the bell.
     fn contraction(&self, clock: f64) -> f32 {
-        let phase = (clock as f32 / self.pulse_seconds + self.pulse_offset).fract();
+        let phase =
+            ((clock / f64::from(self.pulse_seconds)).fract() as f32 + self.pulse_offset).fract();
         if phase < SQUEEZE {
             (phase / SQUEEZE * PI).sin()
         } else {
@@ -187,12 +188,12 @@ impl Abyss {
         }
     }
 
-    fn caustic(&mut self, width: u16, rows: u16) {
-        let drift = self.clock as f32 * 0.02;
+    fn caustic(&mut self, width: u16, rows: u32) {
+        let drift = noise_time(self.clock, 0.02);
         self.water.clear();
         self.water.extend((0..rows).flat_map(|y| {
             (0..width).map(move |x| {
-                let light = value_noise(f32::from(x) * 0.05 + drift, f32::from(y) * 0.1, 3);
+                let light = value_noise(f32::from(x) * 0.05 + drift, y as f32 * 0.1, 3);
                 quantised(WATER, CAUSTIC, light, CAUSTIC_SHADES)
             })
         }));
@@ -220,7 +221,7 @@ impl Abyss {
             let start = center_x - half_width * 0.7 + along * half_width * 1.4;
             for step in 1..=length {
                 let sway =
-                    (self.clock as f32 * 0.5 + index as f32 * 1.7 + step as f32 * 0.45).sin() * 1.5;
+                    (angle(self.clock, 0.5) + index as f32 * 1.7 + step as f32 * 0.45).sin() * 1.5;
                 let fade = 1.0 - step as f32 / length as f32;
                 let point = ((start + sway).round() as i32, center_y as i32 + step);
                 glow(
@@ -269,7 +270,7 @@ impl Backdrop for Abyss {
         buffer: &mut Buffer,
     ) {
         self.advance(elapsed, area);
-        self.caustic(area.width, area.height * 2);
+        self.caustic(area.width, u32::from(area.height) * 2);
         let mut pixels = Pixels::new(area.width, area.height);
         fill(&mut pixels, &self.water);
         for fleck in &self.snow {

@@ -87,31 +87,31 @@ fn between(random: &mut Rng, (low, high): (f32, f32)) -> f32 {
     low + (high - low) * random.f32()
 }
 
-fn paint_scene(width: u16, rows: u16) -> Vec<Color> {
+fn paint_scene(width: u16, rows: u32) -> Vec<Color> {
     let mut scene: Vec<Color> = (0..rows)
         .flat_map(|y| {
             (0..width).map(move |x| {
-                let wobble = (value_noise(f32::from(x) * 0.04, f32::from(y) * 0.08, 1) - 0.5) * 0.3;
+                let wobble = (value_noise(f32::from(x) * 0.04, y as f32 * 0.08, 1) - 0.5) * 0.3;
                 quantised(
                     SKY_TOP,
                     SKY_HORIZON,
-                    f32::from(y) / f32::from(rows) + wobble,
+                    y as f32 / rows as f32 + wobble,
                     SKY_SHADES,
                 )
             })
         })
         .collect();
     let mut fill = |x: i32, y: i32, color: Color| {
-        if (0..i32::from(width)).contains(&x) && (0..i32::from(rows)).contains(&y) {
+        if (0..i32::from(width)).contains(&x) && (0..rows as i32).contains(&y) {
             scene[y as usize * usize::from(width) + x as usize] = color;
         }
     };
-    let (width_pixels, rows_pixels) = (f32::from(width), f32::from(rows));
+    let (width_pixels, rows_pixels) = (f32::from(width), rows as f32);
     for (fraction, height) in [(0.14, 0.5), (0.8, 0.62)] {
         let trunk_x = (width_pixels * fraction) as i32;
         let canopy_radius = rows_pixels * height * 0.22;
         let canopy_y = rows_pixels * (1.0 - height * 0.6);
-        for y in (canopy_y as i32)..i32::from(rows) {
+        for y in (canopy_y as i32)..rows as i32 {
             fill(trunk_x - 1, y, TREE);
             fill(trunk_x, y, TREE);
             fill(trunk_x + 1, y, TREE);
@@ -128,7 +128,7 @@ fn paint_scene(width: u16, rows: u16) -> Vec<Color> {
     for x in 0..width {
         let grass = 0.15 + 0.1 * value_noise(f32::from(x) * 0.05, 0.0, 3);
         let top = (rows_pixels * (1.0 - grass)) as i32;
-        for y in top..i32::from(rows) {
+        for y in top..rows as i32 {
             fill(i32::from(x), y, GRASS);
         }
     }
@@ -138,8 +138,8 @@ fn paint_scene(width: u16, rows: u16) -> Vec<Color> {
 impl Meadow {
     fn respawn(&mut self, area: Rect) {
         self.area = area;
-        let (width, rows) = (f32::from(area.width), f32::from(area.height * 2));
-        self.scene = paint_scene(area.width, area.height * 2);
+        let (width, rows) = (f32::from(area.width), f32::from(area.height) * 2.0);
+        self.scene = paint_scene(area.width, u32::from(area.height) * 2);
         let cells = usize::from(area.width) * usize::from(area.height);
         let count = (cells / CELLS_PER_FIREFLY).clamp(FIREFLIES.0, FIREFLIES.1);
         self.fireflies = (0..count)
@@ -188,7 +188,7 @@ impl Meadow {
         if area != self.area {
             self.respawn(area);
         }
-        let bounds = (f32::from(area.width), f32::from(area.height * 2));
+        let bounds = (f32::from(area.width), f32::from(area.height) * 2.0);
         for _ in 0..self.steps.due(elapsed, STEP) {
             self.clock += f64::from(STEP);
             let pointer = self.pointer.noticed(self.clock);
@@ -200,7 +200,8 @@ impl Meadow {
 
     /// How lit a firefly is: off for part of every period, then swelling and fading.
     fn brightness(&self, firefly: &Firefly) -> f32 {
-        let phase = (self.clock as f32 / firefly.period + firefly.offset).fract();
+        let phase =
+            ((self.clock / f64::from(firefly.period)).fract() as f32 + firefly.offset).fract();
         ((0.5 - 0.5 * (phase * TAU).cos() - 0.3) / 0.7).max(0.0)
     }
 

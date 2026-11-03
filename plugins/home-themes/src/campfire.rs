@@ -10,7 +10,9 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::{STEP, Steps, draw_logo, logo_size, pixel_of, quantised, value_noise};
+use crate::common::{
+    STEP, Steps, draw_logo, logo_size, noise_time, pixel_of, quantised, value_noise,
+};
 
 const NIGHT: Color = Color::Rgb(14, 9, 10);
 const EMBER_GLOW: Color = Color::Rgb(214, 96, 22);
@@ -89,7 +91,7 @@ impl Campfire {
     fn centre(&self) -> (f32, f32) {
         (
             f32::from(self.area.width) / 2.0,
-            f32::from(self.area.height * 2) - 1.0 - FLAME_HEIGHT,
+            f32::from(self.area.height) * 2.0 - 1.0 - FLAME_HEIGHT,
         )
     }
 
@@ -129,7 +131,7 @@ impl Campfire {
         let (width, rows) = (f32::from(pixels.width()), f32::from(pixels.height()));
         let (centre_x, centre_y) = (width / 2.0, rows - 1.0);
         let (radius_x, radius_y) = ((width * 0.12).max(8.0), rows * 0.35);
-        let flicker = 0.8 + 0.2 * value_noise(self.clock as f32 * 0.8, 0.0, 5) + self.stoke();
+        let flicker = 0.8 + 0.2 * value_noise(noise_time(self.clock, 0.8), 0.0, 5) + self.stoke();
         let (left, right) = (
             (centre_x - radius_x).floor() as i32,
             (centre_x + radius_x).ceil() as i32,
@@ -155,7 +157,7 @@ impl Campfire {
         );
         for across in -FLAME_HALF_WIDTH..=FLAME_HALF_WIDTH {
             let taper = 1.0 - across.abs() as f32 / (FLAME_HALF_WIDTH + 1) as f32;
-            let wave = value_noise(across as f32 * 1.7, self.clock as f32 * 4.0, 9);
+            let wave = value_noise(across as f32 * 1.7, noise_time(self.clock, 4.0), 9);
             let height = (FLAME_HEIGHT * taper * (0.6 + 0.4 * wave)).round() as i32;
             for up in 0..height {
                 let color = quantised(FLAME_HOT, FLAME_COOL, up as f32 / height as f32, 3);

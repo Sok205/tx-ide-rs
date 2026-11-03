@@ -13,7 +13,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tx_home::backdrop::{Backdrop, Pixels, palette};
 
-use crate::common::{Pointer, STEP, Steps, distance, draw_logo, logo_size, pixel_of};
+use crate::common::{Pointer, STEP, Steps, angle, distance, draw_logo, logo_size, pixel_of};
 use fish::{Attractions, Fish};
 use water::{Pellet, Ripple, Wake};
 
@@ -59,10 +59,10 @@ struct Pond {
 }
 
 /// `wake`: the wake's energy here, lightening the water. The shimmer drifts over minutes.
-fn water(x: i32, y: i32, seconds: f32, wake: f32) -> Color {
+fn water(x: i32, y: i32, seconds: f64, wake: f32) -> Color {
     let (x, y) = (x as f32, y as f32);
-    let wave = (x * 0.21 + y * 0.13 + seconds * 0.02).sin()
-        + (x * 0.07 - y * 0.19 - seconds * 0.013).sin();
+    let wave = (x * 0.21 + y * 0.13 + angle(seconds, 0.02)).sin()
+        + (x * 0.07 - y * 0.19 - angle(seconds, 0.013)).sin();
     let mix = (wave + 2.0) / 4.0 + WAKE_LIGHT * wake.min(1.0);
     // Few shades and a slow drift: a cell changes only when its shade steps, which keeps the bytes
     // sent to tmux each frame to the fish and ripples.
@@ -169,7 +169,7 @@ impl Backdrop for Pond {
         buffer: &mut Buffer,
     ) {
         self.swim(elapsed, area);
-        let seconds = elapsed.as_secs_f32();
+        let seconds = elapsed.as_secs_f64();
         let mut pixels = Pixels::new(area.width, area.height);
         for y in 0..i32::from(pixels.height()) {
             for x in 0..i32::from(pixels.width()) {

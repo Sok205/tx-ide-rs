@@ -133,8 +133,12 @@ pub fn between(random: &mut Rng, (low, high): (f64, f64)) -> f64 {
     low + (high - low) * random.f64()
 }
 
+/// Noise repeats every this many units on each axis, so a time axis can wrap without a seam.
+const NOISE_PERIOD: i32 = 256;
+
 /// A pseudo-random value in 0..1 for each lattice point.
 fn lattice(x: i32, y: i32, seed: u32) -> f32 {
+    let (x, y) = (x.rem_euclid(NOISE_PERIOD), y.rem_euclid(NOISE_PERIOD));
     let mut hash = (x as u32).wrapping_mul(0x27d4_eb2d)
         ^ (y as u32).wrapping_mul(0x1656_67b1)
         ^ seed.wrapping_mul(0x9e37_79b9);
@@ -154,6 +158,18 @@ pub fn value_noise(x: f32, y: f32, seed: u32) -> f32 {
     let upper = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * across;
     let lower = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * across;
     upper + (lower - upper) * down
+}
+
+/// `seconds * rate` along a noise axis, wrapped to the noise period in f64 so it stays precise
+/// on a clock that has run for days.
+pub fn noise_time(seconds: f64, rate: f64) -> f32 {
+    (seconds * rate).rem_euclid(f64::from(NOISE_PERIOD)) as f32
+}
+
+/// `seconds * rate` radians, wrapped to one turn in f64 so a sine of it stays smooth on a clock
+/// that has run for days.
+pub fn angle(seconds: f64, rate: f64) -> f32 {
+    (seconds * rate).rem_euclid(std::f64::consts::TAU) as f32
 }
 
 /// `shades` evenly spaced steps from `dark` to `light`; `amount` 0..1 is rounded to a step.
@@ -395,6 +411,18 @@ pub mod tests {
                 "{lowest}..{highest} for seed {seed}"
             );
         }
+    }
+
+    #[test]
+    fn value_noise_wraps_without_a_seam() {
+        for step in 0..100 {
+            let (x, y) = (step as f32 * 0.37, step as f32 * 0.11);
+            let wrapped = value_noise(x + NOISE_PERIOD as f32, y, 4);
+            assert!((value_noise(x, y, 4) - wrapped).abs() < 1e-4, "at {x}");
+        }
+        let late = 86_400.0 * 30.0;
+        assert!((noise_time(late, 4.0) - noise_time(late + 1.0 / 60.0, 4.0)).abs() < 0.07);
+        assert!((angle(late, 0.5) - angle(late + 1.0 / 60.0, 0.5)).abs() < 0.01);
     }
 
     #[test]
