@@ -15,6 +15,7 @@ verbs:
                                                                     start an agent; prints its id. It runs in its own
                                                                     worktree of the checkout DIR (name NAME, else NAME-2 …).
                                                                     --model M and --effort E are --option model=M / effort=E;
+                                                                    effort is 1-5 (or the engine's own word);
                                                                     the engine validates every option. A flag not given
                                                                     comes from `agent:` in the config file
   fork SOURCE --prompt T [--name NAME] [--tag T]... [--option KEY=VALUE]... [--model M] [--effort E]
@@ -60,7 +61,7 @@ The config file is <config>/config.yaml (--config FILE overrides); every key is 
     engine: claude              claude | codex
     roles: [COMMON, DEVELOPER]  any --role replaces the whole list
     model: claude-opus-5-5      null: the engine's own default
-    effort: high                null: the engine's own default
+    effort: 3                   1-5 (or the engine's own word); null: the engine's own default
   plugins:                      one entry per plugin id (see `plugins`)
     <id>: { enabled: true, settings: {...} }
 ";

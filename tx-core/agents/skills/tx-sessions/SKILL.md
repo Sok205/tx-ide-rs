@@ -45,7 +45,7 @@ To delegate work — coding, scoping, planning, research — the standard recipe
 
 ```bash
 tx create <name> --tag <scope> --cwd <project-root> --parent "$(tx whoami)" \
-  --engine claude --model <model> --effort <low|medium|high|xhigh|max> \
+  --engine claude --model <model> --effort <1-5> \
   --role COMMON --role DEVELOPER --prompt "<task>"
 ```
 
@@ -60,11 +60,11 @@ tx create <name> --tag <scope> --cwd <project-root> --parent "$(tx whoami)" \
   need not be the ones the task wants.
 - `--model` and `--effort` are placeholders, not recommendations. Omit either one and it comes
   from the operator's `agent.model` / `agent.effort` in `config.yaml` (default Opus 5.5, effort
-  high; `null` there leaves it to the engine) — which is what you want unless the operator named a
+  3; `null` there leaves it to the engine) — which is what you want unless the operator named a
   tier. With `--engine codex`, pass both: the defaults name a Claude model. Pass them only when the operator asked for a
-  specific model or effort. Effort is the engine's word: claude takes
-  `low|medium|high|xhigh|max`, codex also `none|minimal`. A numeric effort `1`–`5` from a plan
-  means `low`, `medium`, `high`, `xhigh`, `max`.
+  specific model or effort. Effort is 1–5 (or the engine's own word): `1` low, `2` medium,
+  `3` high, `4` xhigh, `5` max for every engine, so a plan's effort passes straight through
+  (`--effort 3`); codex also takes the words `none|minimal`.
 - `--prompt` must be short and single-line — long or special-char-laden prompts crash tmux input.
   Point at an artifact for anything longer.
 - Read-only agents are not in the poc yet: tell an investigation in its prompt not to edit. To

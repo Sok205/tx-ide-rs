@@ -283,18 +283,20 @@ agent:                         # defaults for `tx create`; a flag given replaces
   engine: claude               # claude | codex
   roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
   model: claude-opus-5-5       # null: the engine's own default
-  effort: high                 # null: the engine's own default
+  effort: 3                    # 1-5 (or the engine's own word); null: the engine's own default
 
 plugins:                       # one entry per plugin id; see Plugins below
   engine-codex: { enabled: false }
   assistant:
-    settings: { model: opus, effort: medium }
+    settings: { model: opus, effort: 2 }
   artifacts:
     settings: { editor: nvim }
 ```
 
-So `tx create w --cwd . --prompt "…"` starts a Claude agent on Opus 5.5 at effort high, with the
-COMMON and DEVELOPER roles. With `--engine codex`, pass `--model` / `--effort` too (or set them to
+So `tx create w --cwd . --prompt "…"` starts a Claude agent on Opus 5.5 at effort 3 (high), with
+the COMMON and DEVELOPER roles. Effort is 1–5 (or the engine's own word): 1 = low, 2 = medium,
+3 = high, 4 = xhigh, 5 = max, the same for every engine, in this file, `--effort` and
+`--option effort=`; the record stores the word. Codex's `none` and `minimal` are words only. With `--engine codex`, pass `--model` / `--effort` too (or set them to
 `null`): the defaults name a Claude model.
 An unknown key, a bad value or malformed YAML stops `tx` with a usage error naming the file. The
 directories, the socket, the roles and skills directories and `--env` stay flags and environment
@@ -357,7 +359,7 @@ dirs but COMMON, which every agent gets; `none` first, DEVELOPER preselected). N
 The session is created in the popup; the outcome lands on the client's status line.
 
 `assistant warm` creates `tx-assistant` with the engine `claude`, roles COMMON + TX-ASSISTANT, under a lock (two warms never make two assistants); an ended assistant is respawned in place (same record and worktree) rather than replaced by `tx-assistant-2`; a failure is kept in `<data>/plugins/assistant/warm.failed` (removed by the next success) for the home's header; the assistant's home repository is seeded as trusted in Claude's config file when that file exists, so the first launch does not stop on the trust dialog. It uses
-model `opus`, effort `medium`, tag `tx-system`, in the data dir (so the engine's skill links
+model `opus`, effort `2` (medium), tag `tx-system`, in the data dir (so the engine's skill links
 land under `<data>/.claude/skills`). A `Running` record whose tmux session is gone is
 refreshed to `Exited` and the assistant started again.
 
