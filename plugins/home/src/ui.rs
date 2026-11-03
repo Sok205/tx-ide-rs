@@ -23,7 +23,7 @@ pub const DIM_FG: Color = Color::Rgb(169, 177, 214);
 pub const GREEN: Color = Color::Rgb(158, 206, 106);
 pub const RED: Color = Color::Rgb(247, 118, 142);
 
-/// The loop's redraw rate: the starting spinner is the only thing that moves.
+/// The loop's redraw rate without an animating backdrop, while a starting spinner shows.
 pub const FPS: u64 = 4;
 
 const NAME_W: usize = 24;
@@ -57,7 +57,7 @@ fn truncate(text: &str, width: usize) -> String {
     }
 }
 
-/// `frame` counts redraws; it only picks the spinner glyph of starting agents.
+/// `frame` is a 4 Hz clock; it only picks the spinner glyph of starting agents.
 /// `themed`: a backdrop shows behind, so the selected row is a solid accent bar.
 pub fn draw(home: &Home, frame: usize, area: Rect, buf: &mut Buffer, themed: bool) {
     match home.view() {

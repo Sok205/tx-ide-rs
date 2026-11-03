@@ -5,7 +5,9 @@
 //! lookups a context left provisional (a worktree's project and branch) right after that context
 //! arrived; each reply replaces the home's context. A context never waits for git, so the first
 //! paint waits at most [`FIRST_DATA`] for it; until it arrives the list says it is loading.
-//! Frames are drawn after a key, a resize or a reply, and every tick while a spinner shows.
+//! Every queued event is handled before a frame is drawn. A frame follows a key, a resize or a
+//! reply at once; while a spinner shows or a focused backdrop animates, frames also come at its
+//! rate, never more often however many events arrive.
 //! Raw mode and the alternate screen are restored on every exit path. Keys pass [`accept`]
 //! first: no chords, and a home opened by an attach starts with a [`GRACE`] period.
 
@@ -251,11 +253,20 @@ fn event_loop(
         }
     }
     let mut changed = true;
+    let mut last_frame = started;
     loop {
         changed |= data.receive(home)?;
         data.request(home)?;
         let animating = focused && backdrop.is_some();
-        if changed || animating || spinning(home) {
+        let interval = match &backdrop {
+            Some(backdrop) if animating => {
+                Duration::from_millis(1000 / backdrop.frames_per_second())
+            }
+            _ => Duration::from_millis(1000 / FPS),
+        };
+        let periodic = animating || spinning(home);
+        if changed || (periodic && last_frame.elapsed() >= interval) {
+            last_frame = Instant::now();
             // A coarse spinner clock, so it turns at 4 Hz whatever the frame rate.
             let spinner = (started.elapsed().as_millis() / 250) as usize;
             terminal.draw(|f| {
@@ -272,51 +283,53 @@ fn event_loop(
             })?;
             changed = false;
         }
-        let tick = match &backdrop {
-            Some(backdrop) if focused => Duration::from_millis(1000 / backdrop.frames_per_second()),
-            _ => Duration::from_millis(1000 / FPS),
+        let mut wait = if periodic {
+            (last_frame + interval).saturating_duration_since(Instant::now())
+        } else {
+            interval
         };
-        if !event::poll(tick)? {
-            continue;
-        }
-        let key = match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => key,
-            Event::Mouse(event) => {
-                if let Some(backdrop) = backdrop.as_deref_mut() {
-                    backdrop.mouse(event);
+        // Every queued event is handled before the next frame, so a backlog costs one frame.
+        while event::poll(wait)? {
+            wait = Duration::ZERO;
+            let key = match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => key,
+                Event::Mouse(event) => {
+                    if let Some(backdrop) = backdrop.as_deref_mut() {
+                        backdrop.mouse(event);
+                    }
+                    continue;
                 }
-                continue;
+                Event::FocusLost => {
+                    focused = false;
+                    continue;
+                }
+                Event::FocusGained => {
+                    focused = true;
+                    changed = true;
+                    continue;
+                }
+                Event::Resize(..) => {
+                    changed = true;
+                    continue;
+                }
+                _ => continue,
+            };
+            if options.popup
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.code == KeyCode::Char('c')
+            {
+                return Ok(None);
             }
-            Event::FocusLost => {
-                focused = false;
+            let in_grace = options.first && started.elapsed() < GRACE;
+            let Some(code) = accept(key.code, key.modifiers, in_grace) else {
                 continue;
+            };
+            changed = true;
+            match home.key(code) {
+                Outcome::Stay => {}
+                Outcome::Close => return Ok(None),
+                Outcome::Run(action) => return Ok(Some(action)),
             }
-            Event::FocusGained => {
-                focused = true;
-                changed = true;
-                continue;
-            }
-            Event::Resize(..) => {
-                changed = true;
-                continue;
-            }
-            _ => continue,
-        };
-        if options.popup
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-            && key.code == KeyCode::Char('c')
-        {
-            return Ok(None);
-        }
-        let in_grace = options.first && started.elapsed() < GRACE;
-        let Some(code) = accept(key.code, key.modifiers, in_grace) else {
-            continue;
-        };
-        changed = true;
-        match home.key(code) {
-            Outcome::Stay => {}
-            Outcome::Close => return Ok(None),
-            Outcome::Run(action) => return Ok(Some(action)),
         }
     }
 }
