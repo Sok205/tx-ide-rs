@@ -163,7 +163,7 @@ impl Backdrop for Pond {
         elapsed: Duration,
         area: Rect,
         logo: Option<Rect>,
-        text: Rect,
+        text: &Buffer,
         buffer: &mut Buffer,
     ) {
         self.swim(elapsed, area);
@@ -232,6 +232,7 @@ impl Backdrop for Pond {
 #[cfg(test)]
 mod tests {
     use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+    use ratatui::style::Style;
     use tx_home::backdrop::layout;
 
     use super::*;
@@ -252,21 +253,23 @@ mod tests {
             ..Pond::default()
         };
         let area = Rect::new(0, 0, 80, 24);
-        let (logo, text) = layout(area, pond.logo_size());
-        pond.paint(Duration::ZERO, area, logo, text, &mut Buffer::empty(area));
+        let (logo, _) = layout(area, pond.logo_size());
+        let blank = Buffer::empty(area);
+        pond.paint(Duration::ZERO, area, logo, &blank, &mut Buffer::empty(area));
         (pond, area)
     }
 
     /// Paints every 50 ms of `seconds`.
     fn run(pond: &mut Pond, area: Rect, seconds: u64) {
-        let (logo, text) = layout(area, pond.logo_size());
+        let (logo, _) = layout(area, pond.logo_size());
+        let blank = Buffer::empty(area);
         let mut buffer = Buffer::empty(area);
         for tick in 1..=seconds * 20 {
             pond.paint(
                 Duration::from_millis(tick * 50),
                 area,
                 logo,
-                text,
+                &blank,
                 &mut buffer,
             );
         }
@@ -311,7 +314,8 @@ mod tests {
         pond.fish.truncate(1);
         let head = pond.fish[0].head();
         let pointer = ((head.0 + 40.0) / 2.0, (head.1 + 24.0) / 2.0);
-        let (logo, text) = layout(area, pond.logo_size());
+        let (logo, _) = layout(area, pond.logo_size());
+        let blank = Buffer::empty(area);
         let mut farthest: f32 = 0.0;
         for tick in 1..=200 {
             pond.pointer = Some((pointer, pond.clock));
@@ -319,7 +323,7 @@ mod tests {
                 Duration::from_millis(tick * 50),
                 area,
                 logo,
-                text,
+                &blank,
                 &mut Buffer::empty(area),
             );
             if tick > 100 {
@@ -368,12 +372,22 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_drawn_as_glyphs_in_the_text_region() {
+    fn glyphs_skip_text_cells_and_show_between_them() {
         let (mut pond, area) = painted();
-        let (logo, text) = layout(area, pond.logo_size());
+        let (logo, content) = layout(area, pond.logo_size());
+        // Home's text: every other row of the content area is a full line.
+        let mut text = Buffer::empty(area);
+        for row in (content.top()..content.bottom()).step_by(2) {
+            text.set_string(
+                content.x,
+                row,
+                "x".repeat(usize::from(content.width)),
+                Style::new(),
+            );
+        }
         let centre = (
-            f32::from(text.x + text.width / 2),
-            2.0 * f32::from(text.y + text.height / 2),
+            f32::from(content.x + content.width / 2),
+            2.0 * f32::from(content.y + content.height / 2),
         );
         pond.ripples.push(Ripple {
             center: centre,
@@ -385,18 +399,29 @@ mod tests {
             born: 0.0,
         });
         let mut buffer = Buffer::empty(area);
-        pond.paint(Duration::ZERO, area, logo, text, &mut buffer);
-        for row in text.top()..text.bottom() {
-            for column in text.left()..text.right() {
-                assert_eq!(buffer[(column, row)].symbol(), " ", "({column}, {row})");
-            }
+        pond.paint(Duration::ZERO, area, logo, &text, &mut buffer);
+        let glyphs_on = |row: u16| {
+            (content.left()..content.right())
+                .filter(|&column| {
+                    ["-", "|", "/", "\\", "·"].contains(&buffer[(column, row)].symbol())
+                })
+                .count()
+        };
+        for row in (content.top()..content.bottom()).step_by(2) {
+            assert!(
+                (content.left()..content.right())
+                    .all(|column| buffer[(column, row)].symbol() == " "),
+                "row {row}"
+            );
         }
-        let ripple_glyphs = buffer
-            .content()
-            .iter()
-            .filter(|cell| ["-", "|", "/", "\\"].contains(&cell.symbol()))
-            .count();
-        assert!(ripple_glyphs > 0, "the ring reaches outside the text");
+        let between: usize = (content.top() + 1..content.bottom())
+            .step_by(2)
+            .map(glyphs_on)
+            .sum();
+        assert!(
+            between > 0,
+            "the ring shows on the blank rows below the logo"
+        );
     }
 
     #[test]
@@ -416,7 +441,7 @@ mod tests {
                     Duration::from_secs(3),
                     area,
                     logo,
-                    Rect::default(),
+                    &Buffer::empty(area),
                     &mut buffer,
                 );
             }
@@ -427,15 +452,10 @@ mod tests {
     fn a_long_gap_is_clamped() {
         let mut pond = Pond::default();
         let area = Rect::new(0, 0, 80, 24);
+        let blank = Buffer::empty(area);
         let mut buffer = Buffer::empty(area);
-        pond.paint(Duration::ZERO, area, None, Rect::default(), &mut buffer);
-        pond.paint(
-            Duration::from_secs(3600),
-            area,
-            None,
-            Rect::default(),
-            &mut buffer,
-        );
+        pond.paint(Duration::ZERO, area, None, &blank, &mut buffer);
+        pond.paint(Duration::from_secs(3600), area, None, &blank, &mut buffer);
         assert!(pond.steps <= (MAX_GAP / STEP).ceil() as usize);
     }
 
@@ -447,13 +467,15 @@ mod tests {
             .enumerate()
         {
             let area = Rect::new(0, 0, width, height);
-            let (logo, text) = layout(area, pond.logo_size());
+            let (logo, content) = layout(area, pond.logo_size());
+            let mut text = Buffer::empty(area);
+            text.set_style(content, Style::new().bg(Color::Red));
             let mut buffer = Buffer::empty(area);
             pond.paint(
                 Duration::from_secs(second as u64),
                 area,
                 logo,
-                text,
+                &text,
                 &mut buffer,
             );
         }

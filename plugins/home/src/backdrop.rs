@@ -4,7 +4,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::MouseEvent;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
@@ -14,13 +14,14 @@ pub trait Backdrop {
     /// (width, height) of this theme's logo in cells.
     fn logo_size(&self) -> (u16, u16);
     /// `elapsed`: time since the backdrop was built, less the time the pane spent unfocused.
-    /// `logo`: the box home reserved, if any. `text`: the region home will write text into.
+    /// `logo`: the box home reserved, if any. `text`: what home will draw over `area`; its
+    /// [`is_text`] cells take home's text on top.
     fn paint(
         &mut self,
         elapsed: Duration,
         area: Rect,
         logo: Option<Rect>,
-        text: Rect,
+        text: &Buffer,
         buffer: &mut Buffer,
     );
     fn mouse(&mut self, event: MouseEvent);
@@ -37,6 +38,11 @@ pub fn install(constructor: Constructor) {
 
 pub fn chosen() -> Option<Constructor> {
     CHOSEN.get().copied()
+}
+
+/// Whether home drew this cell: a glyph, or a background such as the cursor bar.
+pub fn is_text(cell: &Cell) -> bool {
+    cell.symbol() != " " || cell.bg != Color::Reset
 }
 
 pub const MINIMUM_LIST_ROWS: u16 = 10;
@@ -163,14 +169,15 @@ impl Pixels {
             .unwrap_or(background)
     }
 
-    pub fn render(&self, area: Rect, text: Rect, background: Color, buffer: &mut Buffer) {
+    /// Half-blocks, except dimmed background-only spaces under home's `text` cells.
+    pub fn render(&self, area: Rect, text: &Buffer, background: Color, buffer: &mut Buffer) {
         for row in 0..area.height {
             for column in 0..area.width {
                 let (x, y) = (area.x + column, area.y + row);
                 let top = self.get(i32::from(column), i32::from(row) * 2, background);
                 let bottom = self.get(i32::from(column), i32::from(row) * 2 + 1, background);
                 let cell = &mut buffer[(x, y)];
-                if text.contains((x, y).into()) {
+                if is_text(&text[(x, y)]) {
                     cell.set_char(' ')
                         .set_bg(palette(dim(mean(top, bottom), TEXT_DIM)));
                 } else {
@@ -243,7 +250,7 @@ mod tests {
     #[test]
     fn pixels_outside_text_are_half_blocks() {
         let (pixels, area, mut buffer) = two_pixels();
-        pixels.render(area, Rect::default(), BACKGROUND, &mut buffer);
+        pixels.render(area, &Buffer::empty(area), BACKGROUND, &mut buffer);
         let cell = &buffer[(0, 0)];
         assert_eq!((cell.symbol(), cell.fg, cell.bg), ("▀", RED, BLUE));
         let empty = &buffer[(1, 0)];
@@ -251,12 +258,23 @@ mod tests {
     }
 
     #[test]
-    fn pixels_inside_text_are_dimmed_spaces() {
+    fn pixels_under_text_cells_are_dimmed_spaces() {
         let (pixels, area, mut buffer) = two_pixels();
-        pixels.render(area, area, BACKGROUND, &mut buffer);
+        let mut text = Buffer::empty(area);
+        text[(0, 0)].set_char('a');
+        pixels.render(area, &text, BACKGROUND, &mut buffer);
         let cell = &buffer[(0, 0)];
         assert_eq!(cell.symbol(), " ");
         assert_eq!(cell.bg, dim(mean(RED, BLUE), TEXT_DIM));
+        assert_eq!(buffer[(1, 0)].symbol(), "▀");
+    }
+
+    #[test]
+    fn a_glyph_or_a_background_is_text() {
+        assert!(!is_text(&Cell::EMPTY));
+        assert!(is_text(Cell::EMPTY.clone().set_char('a')));
+        assert!(is_text(Cell::EMPTY.clone().set_bg(Color::Red)));
+        assert!(!is_text(Cell::EMPTY.clone().set_fg(Color::Red)));
     }
 
     #[test]
@@ -266,15 +284,16 @@ mod tests {
         pixels.set(99, 99, RED);
         let mut empty = Pixels::new(0, 0);
         empty.set(0, 0, RED);
+        let nothing = Buffer::empty(Rect::default());
         empty.render(
             Rect::default(),
-            Rect::default(),
+            &nothing,
             BACKGROUND,
             &mut Buffer::empty(Rect::default()),
         );
         let area = Rect::new(0, 0, 3, 2);
         let mut buffer = Buffer::empty(area);
-        pixels.render(area, Rect::default(), BACKGROUND, &mut buffer);
+        pixels.render(area, &Buffer::empty(area), BACKGROUND, &mut buffer);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::f32::consts::{FRAC_PI_8, PI, TAU};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{dim, palette};
+use tx_home::backdrop::{dim, is_text, palette};
 
 /// Pixels per second a ripple's ring grows.
 const RIPPLE_SPEED: f32 = 9.0;
@@ -27,14 +27,14 @@ pub struct Pellet {
     pub born: f32,
 }
 
-/// The cell over pixel `point`, unless it is outside `area` or under home's text.
-fn surface_cell(area: Rect, text: Rect, point: (f32, f32)) -> Option<(u16, u16)> {
+/// The cell over pixel `point`, unless it is outside `area` or one of home's text cells.
+fn surface_cell(area: Rect, text: &Buffer, point: (f32, f32)) -> Option<(u16, u16)> {
     let (x, y) = (point.0.floor(), (point.1 / 2.0).floor());
     if x < 0.0 || y < 0.0 || x >= f32::from(area.width) || y >= f32::from(area.height) {
         return None;
     }
     let cell = (area.x + x as u16, area.y + y as u16);
-    (!text.contains(cell.into())).then_some(cell)
+    (!is_text(&text[cell])).then_some(cell)
 }
 
 /// The glyph along a ring's tangent at `angle` around its centre (y grows downwards).
@@ -58,7 +58,7 @@ impl Ripple {
         now - self.born < self.lifetime()
     }
 
-    pub fn draw(&self, now: f32, area: Rect, text: Rect, buffer: &mut Buffer) {
+    pub fn draw(&self, now: f32, area: Rect, text: &Buffer, buffer: &mut Buffer) {
         let age = now - self.born;
         let radius = RIPPLE_SPEED * age;
         let brightness = (0.4 + 0.6 * self.strength) * (1.0 - age / self.lifetime());
@@ -84,7 +84,7 @@ impl Pellet {
     }
 
     /// Darkens as it sinks.
-    pub fn draw(&self, now: f32, area: Rect, text: Rect, buffer: &mut Buffer) {
+    pub fn draw(&self, now: f32, area: Rect, text: &Buffer, buffer: &mut Buffer) {
         if let Some(cell) = surface_cell(area, text, self.position) {
             let sunk = (now - self.born) / PELLET_LIFETIME;
             buffer[cell]

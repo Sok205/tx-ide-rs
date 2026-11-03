@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Widget};
 use tx_client::render::reltime;
 use tx_core::LlmEngineState;
 
-use crate::backdrop::{Backdrop, layout, palette};
+use crate::backdrop::{Backdrop, is_text, layout, palette};
 use crate::model::{AgentRow, AssistantState, Context, Detail, Home, Row, View};
 
 pub const ACCENT: Color = Color::Rgb(122, 162, 247);
@@ -67,7 +67,9 @@ pub fn draw(home: &Home, frame: usize, area: Rect, buf: &mut Buffer, themed: boo
     }
 }
 
-/// The backdrop, if any, then home's text over the part of the area below the logo.
+/// The backdrop, if any, then home's text over the part of the area below the logo. Home draws
+/// into a layer first, so the backdrop knows which cells hold text; those cells go on top,
+/// keeping the backdrop's background where home set none.
 pub fn draw_frame(
     home: &Home,
     frame: usize,
@@ -80,8 +82,20 @@ pub fn draw_frame(
         return draw(home, frame, area, buffer, false);
     };
     let (logo, content) = layout(area, backdrop.logo_size());
-    backdrop.paint(elapsed, area, logo, content, buffer);
-    draw(home, frame, content, buffer, true);
+    let mut text = Buffer::empty(area);
+    draw(home, frame, content, &mut text, true);
+    backdrop.paint(elapsed, area, logo, &text, buffer);
+    for position in area.positions() {
+        let drawn = &text[position];
+        if is_text(drawn) {
+            let cell = &mut buffer[position];
+            let background = cell.bg;
+            *cell = drawn.clone();
+            if drawn.bg == Color::Reset {
+                cell.bg = background;
+            }
+        }
+    }
 }
 
 fn selected(themed: bool) -> Style {
@@ -740,12 +754,12 @@ mod tests {
             _elapsed: Duration,
             area: Rect,
             logo: Option<Rect>,
-            _text: Rect,
+            _text: &Buffer,
             buffer: &mut Buffer,
         ) {
             for y in area.top()..area.bottom() {
                 for x in area.left()..area.right() {
-                    buffer[(x, y)].set_bg(Color::Rgb(1, 2, 3));
+                    buffer[(x, y)].set_char('w').set_bg(Color::Rgb(1, 2, 3));
                 }
             }
             if let Some(logo) = logo {
@@ -767,8 +781,12 @@ mod tests {
         let mut fill = Fill { logo: (10, 3) };
         draw_frame(&home, 0, Some(&mut fill), Duration::ZERO, area, &mut buf);
         assert!((35..45).all(|x| buf[(x, 0)].symbol() == "L"));
-        assert!(text(&buf)[4].contains("tx-ide"));
+        assert!(text(&buf)[4].starts_with("tx-ide"));
         assert_eq!(buf[(0, 4)].bg, Color::Rgb(1, 2, 3));
+        // The blank between two words is not text: the backdrop shows there.
+        assert_eq!(buf[(6, 4)].symbol(), "w");
+        let cursor = u16::try_from(row_of(&text(&buf), "fixer   ")).unwrap();
+        assert!((0..W).all(|x| buf[(x, cursor)].bg == palette(ACCENT)));
     }
 
     #[test]
