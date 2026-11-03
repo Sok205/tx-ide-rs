@@ -4,8 +4,11 @@
 //! frontmatter block whose `skills: [a, b]` line (at any indent, so `tx:` nesting works) grants
 //! skills; each resolves to `<skill_dir>/<name>/` from the last skill dir that has it.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use crate::definitions::McpServer;
 
 pub const ROLE_SUFFIX: &str = ".md";
 pub const LOCAL_SUFFIX: &str = ".local.md";
@@ -61,19 +64,39 @@ pub struct Profiles {
     skill_dirs: Vec<PathBuf>,
 }
 
-/// A resolved profile: the combined text and the granted skill directories.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Which built-in tools a launch offers, in Claude's names; each engine maps them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum BuiltInTools {
+    /// No agent definition: the engine's own minimal set.
+    #[default]
+    EngineBase,
+    /// An agent definition without `tools`: every built-in tool.
+    All,
+    /// An agent definition's `tools`, then the `--tool` extras.
+    Listed(Vec<String>),
+}
+
+/// A resolved profile: the combined text, the granted skill directories, and what an agent
+/// definition adds (roles alone leave those at their defaults).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedProfile {
     pub text: String,
     pub skill_dirs: Vec<PathBuf>,
+    pub tools: BuiltInTools,
+    pub disallowed_tools: Vec<String>,
+    /// The MCP servers the agent gets, by name; none means none at all.
+    pub mcp_servers: BTreeMap<String, McpServer>,
 }
 
-/// What an engine adapter receives: the text, a file holding it, and the skill dirs.
+/// What an engine adapter receives: the resolved profile, and a file holding its text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Profile {
     text: String,
     file: PathBuf,
     skill_dirs: Vec<PathBuf>,
+    tools: BuiltInTools,
+    disallowed_tools: Vec<String>,
+    mcp_servers: BTreeMap<String, McpServer>,
 }
 
 impl Profile {
@@ -87,6 +110,9 @@ impl Profile {
             text: resolved.text,
             file: path.to_owned(),
             skill_dirs: resolved.skill_dirs,
+            tools: resolved.tools,
+            disallowed_tools: resolved.disallowed_tools,
+            mcp_servers: resolved.mcp_servers,
         })
     }
 
@@ -100,6 +126,18 @@ impl Profile {
 
     pub fn skill_dirs(&self) -> &[PathBuf] {
         &self.skill_dirs
+    }
+
+    pub fn tools(&self) -> &BuiltInTools {
+        &self.tools
+    }
+
+    pub fn disallowed_tools(&self) -> &[String] {
+        &self.disallowed_tools
+    }
+
+    pub fn mcp_servers(&self) -> &BTreeMap<String, McpServer> {
+        &self.mcp_servers
     }
 }
 
@@ -147,6 +185,7 @@ impl Profiles {
         Ok(ResolvedProfile {
             text: bodies.join("\n\n"),
             skill_dirs,
+            ..ResolvedProfile::default()
         })
     }
 
@@ -485,6 +524,7 @@ mod tests {
         let resolved = ResolvedProfile {
             text: "hello".into(),
             skill_dirs: vec![tree.path("s/one")],
+            ..ResolvedProfile::default()
         };
         let path = tree.path("profiles/abc.md");
         let profile = Profile::write(resolved, &path).unwrap();

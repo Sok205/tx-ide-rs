@@ -625,6 +625,7 @@ mod tests {
             ResolvedProfile {
                 text: text.into(),
                 skill_dirs: skills.iter().map(PathBuf::from).collect(),
+                ..ResolvedProfile::default()
             },
             &dir.path().join("p.md"),
         )
@@ -657,6 +658,7 @@ mod tests {
             engine: adapter().kind(),
             working_directory: "/tmp".into(),
             roles: Vec::new(),
+            definition: None,
             state,
             created_at: 1.0,
             last_modified_at: 1.0,

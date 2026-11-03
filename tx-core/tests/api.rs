@@ -41,6 +41,7 @@ fn launch_request_builder() {
         ResolvedProfile {
             text: "t".into(),
             skill_dirs: vec![],
+            ..ResolvedProfile::default()
         },
         &dir.path().join("p.md"),
     )
@@ -77,6 +78,7 @@ fn record(cwd: &Path) -> Agent {
         engine: EngineKind::Claude,
         working_directory: cwd.to_owned(),
         roles: Vec::new(),
+        definition: None,
         state: LlmEngineState::Idle,
         created_at: 0.0,
         last_modified_at: 0.0,

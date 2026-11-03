@@ -268,6 +268,7 @@ mod tests {
             engine: EngineKind::Claude,
             working_directory: PathBuf::from("/"),
             roles: vec![],
+            definition: None,
             state: LlmEngineState::Idle,
             created_at,
             last_modified_at: created_at,

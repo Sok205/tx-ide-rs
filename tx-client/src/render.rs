@@ -263,6 +263,7 @@ mod tests {
             engine: tx_core::EngineKind::Claude,
             working_directory: PathBuf::from("/r"),
             roles: vec![],
+            definition: None,
             state: tx_core::LlmEngineState::Idle,
             created_at,
             last_modified_at: created_at,

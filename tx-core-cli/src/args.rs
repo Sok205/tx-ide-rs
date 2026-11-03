@@ -12,12 +12,18 @@ usage: tx [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR
 verbs:
   create NAME --cwd DIR --prompt T [--engine ENGINE] [--role R]... [--option KEY=VALUE]... [--model M]
                 [--effort E] [--parent ID] [--tag T]... [--env KEY=VALUE]...
+                [--agent A [--skill S]... [--mcp M]... [--tool T]...]
                                                                     start an agent; prints its id. It runs in its own
                                                                     worktree of the checkout DIR (name NAME, else NAME-2 …).
                                                                     --model M and --effort E are --option model=M / effort=E;
                                                                     effort is 1-5 (or the engine's own word);
                                                                     the engine validates every option. A flag not given
-                                                                    comes from `agent:` in the config file
+                                                                    comes from `agent:` in the config file.
+                                                                    --agent A runs the agent definition A (see
+                                                                    `definitions`): its prompt, tools, MCP servers and
+                                                                    skills, plus the --skill/--mcp/--tool extras, all kept
+                                                                    on the record and resolved again at every respawn;
+                                                                    with --agent, only --role adds roles
   fork SOURCE --prompt T [--name NAME] [--tag T]... [--option KEY=VALUE]... [--model M] [--effort E]
                                                                     a new agent continuing SOURCE's conversation in a branch,
                                                                     in its own worktree at SOURCE's committed HEAD (uncommitted
@@ -105,8 +111,10 @@ pub enum Verb {
         env: Vec<(String, String)>,
         /// `None`: the config file's `agent.engine`.
         engine: Option<EngineKind>,
-        /// Empty: the config file's `agent.roles`.
+        /// Empty: the config file's `agent.roles`, or none with `--agent`.
         roles: Vec<String>,
+        /// `--agent A` and its `--skill`/`--mcp`/`--tool` extras.
+        definition: Option<tx_core::DefinitionChoice>,
         /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
         /// a repeated key is settled by the engine's options object, last one wins.
         options: Vec<(String, String)>,
@@ -461,9 +469,15 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut roles = Vec::new();
     let mut options = Vec::new();
     let mut prompt = None;
+    let mut agent = None;
+    let mut extras = tx_core::DefinitionChoice::default();
     while let Some(flag) = cursor.next() {
         match flag {
             "--cwd" => cwd = Some(cursor.value(flag)?.into()),
+            "--agent" => agent = Some(cursor.value(flag)?.to_owned()),
+            "--skill" => extras.skills.push(cursor.value(flag)?.to_owned()),
+            "--mcp" => extras.mcp_servers.push(cursor.value(flag)?.to_owned()),
+            "--tool" => extras.tools.push(cursor.value(flag)?.to_owned()),
             "--parent" => parent = Some(cursor.value(flag)?.to_owned()),
             "--tag" => tags.push(cursor.value(flag)?.to_owned()),
             "--env" => env.push(env_pair(cursor.value(flag)?)?),
@@ -478,6 +492,11 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     }
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
     let prompt = prompt.ok_or_else(|| usage("create needs --prompt T"))?;
+    let definition = match agent {
+        Some(agent) => Some(tx_core::DefinitionChoice { agent, ..extras }),
+        None if extras == tx_core::DefinitionChoice::default() => None,
+        None => return Err(usage("--skill, --mcp and --tool extend an --agent")),
+    };
     Ok(Verb::Create {
         name,
         cwd,
@@ -486,6 +505,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         env,
         engine,
         roles,
+        definition,
         options,
         prompt,
     })
@@ -623,12 +643,14 @@ mod tests {
             env,
             engine,
             roles,
+            definition,
             options,
             prompt,
         } = inv.verb
         else {
             panic!()
         };
+        assert_eq!(definition, None);
         assert_eq!(name, "w1");
         assert_eq!(cwd, Path::new("/w"));
         assert_eq!(parent.as_deref(), Some("p-1"));
@@ -646,6 +668,31 @@ mod tests {
             ]
         );
         assert_eq!(prompt, "go");
+    }
+
+    #[test]
+    fn create_with_an_agent_definition_and_extras() {
+        let Verb::Create { definition, .. } = parse_str(
+            "create w --cwd /w --prompt go --agent pm --skill s1 --mcp probe --tool WebFetch --skill s2",
+        )
+        .unwrap()
+        .verb
+        else {
+            panic!()
+        };
+        assert_eq!(
+            definition,
+            Some(tx_core::DefinitionChoice {
+                agent: "pm".into(),
+                skills: vec!["s1".into(), "s2".into()],
+                mcp_servers: vec!["probe".into()],
+                tools: vec!["WebFetch".into()],
+            })
+        );
+        assert_eq!(
+            parse_str("create w --cwd /w --prompt go --skill s").unwrap_err().0,
+            "--skill, --mcp and --tool extend an --agent"
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::agent::AgentId;
+use crate::definitions::DefinitionError;
 use crate::engine::{EngineError, EngineKind};
 use crate::profile::RoleError;
 use crate::store::StoreError;
@@ -53,6 +54,8 @@ pub enum CoreError {
     SocketPathNotAbsolute(PathBuf),
     #[error(transparent)]
     Profile(#[from] RoleError),
+    #[error(transparent)]
+    Definition(#[from] DefinitionError),
     #[error(transparent)]
     Engine(#[from] EngineError),
     #[error(transparent)]

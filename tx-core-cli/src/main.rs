@@ -155,6 +155,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             env,
             engine,
             roles,
+            definition,
             options,
             prompt,
         } => {
@@ -163,7 +164,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             core.refresh_all()?;
             let defaults = load_config(&invocation.global, core.config())?.agent;
             let engine = engine.unwrap_or(defaults.engine);
-            let roles = if roles.is_empty() {
+            // An agent definition carries its own prompt: the default roles apply without one.
+            let roles = if roles.is_empty() && definition.is_none() {
                 defaults.roles
             } else {
                 roles
@@ -180,6 +182,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             let mut launch = LaunchOptions::agent(engine)
                 .profile(roles)
                 .initial_prompt(prompt);
+            if let Some(choice) = definition {
+                launch = launch.definition(choice);
+            }
             for (key, value) in options {
                 launch = launch.option(key, value);
             }

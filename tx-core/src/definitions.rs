@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
+use crate::agent::DefinitionChoice;
+use crate::profile::{BuiltInTools, ResolvedProfile};
+
 pub const AGENTS_DIR: &str = "agents";
 pub const AGENT_SUFFIX: &str = ".md";
 pub const SKILLS_DIR: &str = "skills";
@@ -486,6 +489,62 @@ impl Definitions {
         )
     }
 
+    /// `resolved` (the roles' profile) with the agent definition `choice` on top:
+    /// - the text is the roles' text, then the agent's prompt;
+    /// - the skills are the roles' grants, then the agent's and the `--skill` extras, each name
+    ///   once;
+    /// - the tools are every built-in when the agent has no `tools`, else its list with the
+    ///   `--tool` extras added;
+    /// - `disallowedTools` is the agent's;
+    /// - the MCP servers are the agent's and the `--mcp` extras, from the winning `mcp.json` keys.
+    pub fn apply(
+        &self,
+        mut resolved: ResolvedProfile,
+        choice: &DefinitionChoice,
+    ) -> Result<ResolvedProfile, DefinitionError> {
+        let agent = self.agent(&choice.agent)?;
+        if !agent.prompt.is_empty() {
+            resolved.text = [resolved.text.as_str(), agent.prompt.as_str()]
+                .into_iter()
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+        }
+        let skill_directories = self.skill_directories()?;
+        for name in agent.skills.iter().chain(&choice.skills) {
+            let directory = skill_directories
+                .get(name)
+                .ok_or_else(|| self.unknown("skill", name, SKILLS_DIR))?;
+            if !resolved
+                .skill_dirs
+                .iter()
+                .any(|granted| granted.file_name() == directory.file_name())
+            {
+                resolved.skill_dirs.push(directory.clone());
+            }
+        }
+        resolved.tools = match agent.tools {
+            None => BuiltInTools::All,
+            Some(mut tools) => {
+                for tool in &choice.tools {
+                    if !tools.contains(tool) {
+                        tools.push(tool.clone());
+                    }
+                }
+                BuiltInTools::Listed(tools)
+            }
+        };
+        resolved.disallowed_tools = agent.disallowed_tools;
+        let servers = self.mcp_servers()?;
+        for name in agent.mcp_servers.iter().chain(&choice.mcp_servers) {
+            let (server, _) = servers
+                .get(name)
+                .ok_or_else(|| self.unknown("MCP server", name, MCP_FILE))?;
+            resolved.mcp_servers.insert(name.clone(), server.clone());
+        }
+        Ok(resolved)
+    }
+
     /// Validates the winning definitions: every agent, skill and `mcp.json` when `names` is
     /// empty, else the agents, skills and servers of those names. Returns what was checked and
     /// every problem found, not just the first.
@@ -808,6 +867,72 @@ mod tests {
         let servers = definitions.mcp_servers().unwrap();
         assert_eq!(servers["m"].1, user.join("mcp.json"));
         assert!(definitions.agent("missing").is_err());
+    }
+
+    #[test]
+    fn apply_puts_the_definition_and_its_extras_on_the_roles() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        write(
+            &root.join("agents/pm.md"),
+            "---\nname: pm\ndescription: d\ntools: Bash\nmcpServers: [probe]\n\
+             disallowedTools: mcp__probe__x\nskills: [a]\n---\nTriage.\n",
+        );
+        write(
+            &root.join("agents/plain.md"),
+            "---\nname: plain\ndescription: d\n---\n",
+        );
+        for skill in ["a", "b"] {
+            write(
+                &root.join(format!("skills/{skill}/SKILL.md")),
+                &format!("---\nname: {skill}\ndescription: d\n---\n"),
+            );
+        }
+        write(
+            &root.join("mcp.json"),
+            r#"{"mcpServers": {"probe": {"command": "p"}, "web": {"type": "http", "url": "u"}}}"#,
+        );
+        let definitions = Definitions::new([root.clone()]);
+        let roles = ResolvedProfile {
+            text: "Roles.".into(),
+            skill_dirs: vec![root.join("skills/a")],
+            ..ResolvedProfile::default()
+        };
+        let choice = DefinitionChoice {
+            agent: "pm".into(),
+            skills: vec!["b".into()],
+            mcp_servers: vec!["web".into()],
+            tools: vec!["Read".into(), "Bash".into()],
+        };
+        let resolved = definitions.apply(roles, &choice).unwrap();
+        assert_eq!(resolved.text, "Roles.\n\nTriage.");
+        assert_eq!(
+            resolved.skill_dirs,
+            [root.join("skills/a"), root.join("skills/b")]
+        );
+        assert_eq!(
+            resolved.tools,
+            BuiltInTools::Listed(vec!["Bash".into(), "Read".into()])
+        );
+        assert_eq!(resolved.disallowed_tools, ["mcp__probe__x"]);
+        assert_eq!(
+            resolved.mcp_servers.keys().collect::<Vec<_>>(),
+            ["probe", "web"]
+        );
+        let plain = definitions
+            .apply(ResolvedProfile::default(), &DefinitionChoice::new("plain"))
+            .unwrap();
+        assert_eq!(plain.tools, BuiltInTools::All);
+        assert!(plain.mcp_servers.is_empty());
+        let unknown = DefinitionChoice {
+            mcp_servers: vec!["nope".into()],
+            ..DefinitionChoice::new("plain")
+        };
+        assert!(
+            definitions
+                .apply(ResolvedProfile::default(), &unknown)
+                .is_err()
+        );
     }
 
     #[test]

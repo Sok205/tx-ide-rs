@@ -642,6 +642,7 @@ fn resolved(text: &str) -> ResolvedProfile {
     ResolvedProfile {
         text: text.to_owned(),
         skill_dirs: vec![PathBuf::from("/skills/one")],
+        ..ResolvedProfile::default()
     }
 }
 

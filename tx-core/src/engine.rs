@@ -688,6 +688,7 @@ mod tests {
             engine: EngineKind::Claude,
             working_directory: cwd.to_owned(),
             roles: Vec::new(),
+            definition: None,
             state: LlmEngineState::Starting,
             created_at: 0.0,
             last_modified_at: 0.0,
@@ -733,6 +734,7 @@ mod tests {
             ResolvedProfile {
                 text: "t".into(),
                 skill_dirs: vec![],
+                ..ResolvedProfile::default()
             },
             &dir.path().join("p.md"),
         )
