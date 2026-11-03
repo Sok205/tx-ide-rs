@@ -249,7 +249,7 @@ pub struct Home {
     /// The trailing pseudo-project of the views under no project.
     loose_views: Project,
     /// A backdrop catalogue is installed: `b` cycles themes.
-    pub themed: bool,
+    themed: bool,
     notice: Option<(String, Instant)>,
 }
 
@@ -390,9 +390,14 @@ impl Home {
             && self.context.views.is_empty()
     }
 
-    /// Shown in place of the footer for [`NOTICE`].
-    pub fn notify(&mut self, text: String) {
-        self.notice = Some((text, Instant::now()));
+    /// A backdrop catalogue is installed: `b` cycles themes.
+    pub fn set_themed(&mut self, themed: bool) {
+        self.themed = themed;
+    }
+
+    /// Shown in place of the footer for [`NOTICE`] from `now`.
+    pub fn notify(&mut self, text: String, now: Instant) {
+        self.notice = Some((text, now));
     }
 
     /// Drops a notice that has run its time; whether one was dropped.
@@ -1378,11 +1383,11 @@ pub(crate) mod tests {
     #[test]
     fn b_asks_for_the_next_theme_in_normal_mode() {
         let mut home = Home::new(context());
-        home.themed = true;
+        home.set_themed(true);
         assert_eq!(home.key(KeyCode::Char('b')), Outcome::NextTheme);
         assert_eq!(home.key(KeyCode::Char('t')), Outcome::Run(Action::Timeline));
         assert_eq!(home.footer(), format!("{MAIN_FOOTER} · b theme"));
-        home.themed = false;
+        home.set_themed(false);
         assert_eq!(home.key(KeyCode::Char('b')), Outcome::Stay);
         assert_eq!(home.footer(), MAIN_FOOTER);
     }
@@ -1390,7 +1395,7 @@ pub(crate) mod tests {
     #[test]
     fn b_theme_comes_after_q_close() {
         let mut popup = Home::new_popup(context());
-        popup.themed = true;
+        popup.set_themed(true);
         assert_eq!(popup.footer(), format!("{MAIN_FOOTER} · q close · b theme"));
     }
 
@@ -1398,7 +1403,7 @@ pub(crate) mod tests {
     fn b_types_in_find_and_ask_modes() {
         for opener in ['f', '/'] {
             let mut home = Home::new(context());
-            home.themed = true;
+            home.set_themed(true);
             home.key(KeyCode::Char(opener));
             assert_eq!(home.key(KeyCode::Char('b')), Outcome::Stay);
             let prompt = if opener == 'f' {
@@ -1413,9 +1418,9 @@ pub(crate) mod tests {
     #[test]
     fn a_notice_replaces_the_footer_for_two_seconds() {
         let mut home = Home::new(context());
-        home.notify("theme: koi".into());
-        assert_eq!(home.footer(), "theme: koi");
         let now = Instant::now();
+        home.notify("theme: koi".into(), now);
+        assert_eq!(home.footer(), "theme: koi");
         assert!(!home.expire_notice(now + Duration::from_millis(1900)));
         assert_eq!(home.footer(), "theme: koi");
         assert!(home.expire_notice(now + Duration::from_secs(3)));

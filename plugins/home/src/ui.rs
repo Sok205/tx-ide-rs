@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn a_notice_is_drawn_in_the_footer_line() {
         let mut home = Home::new(context());
-        home.notify("theme: off".into());
+        home.notify("theme: off".into(), std::time::Instant::now());
         assert_eq!(text(&render(&home)).pop().unwrap(), "theme: off");
     }
 

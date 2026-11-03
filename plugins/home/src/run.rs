@@ -68,7 +68,7 @@ pub fn run(core: &TxCore, home: &mut Home, options: &Options) -> io::Result<Opti
         let (worker_replies, replies) = channel();
         scope.spawn(move || worker(core, &worker_requests, &worker_replies));
         let catalogue = backdrop::catalogue();
-        home.themed = catalogue.is_some();
+        home.set_themed(catalogue.is_some());
         let mut theme = catalogue.and_then(|catalogue| catalogue.start);
         let mut backdrop = catalogue
             .zip(theme)
@@ -354,7 +354,7 @@ fn event_loop(
                     }
                     let name = chosen.map(|(name, _)| *name);
                     (catalogue.remember)(name);
-                    home.notify(format!("theme: {}", name.unwrap_or("off")));
+                    home.notify(format!("theme: {}", name.unwrap_or("off")), Instant::now());
                     clock = Clock::new(Instant::now());
                 }
             }
