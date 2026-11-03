@@ -12,6 +12,7 @@ pub mod abyss;
 pub mod campfire;
 pub mod common;
 pub mod fireflies;
+pub mod garden;
 pub mod koi;
 pub mod life;
 pub mod rain;
@@ -26,6 +27,7 @@ pub const THEMES: &[(&str, Constructor)] = &[
     ("stars", stars::sky),
     ("fireflies", fireflies::meadow),
     ("rain", rain::window),
+    ("garden", garden::sand),
     ("abyss", abyss::deep),
     ("snow", snow::pines),
     ("campfire", campfire::embers),
