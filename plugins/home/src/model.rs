@@ -248,7 +248,7 @@ pub struct Home {
     popup: bool,
     /// The trailing pseudo-project of the views under no project.
     loose_views: Project,
-    /// A backdrop catalogue is installed: `t` cycles themes instead of opening the timeline.
+    /// A backdrop catalogue is installed: `b` cycles themes.
     pub themed: bool,
     notice: Option<(String, Instant)>,
 }
@@ -432,7 +432,7 @@ impl Home {
         } else {
             MAIN_FOOTER
         };
-        let theme = if self.themed { " · t theme" } else { "" };
+        let theme = if self.themed { " · b theme" } else { "" };
         let close = if self.popup { " · q close" } else { "" };
         format!("{hint}{theme}{close}")
     }
@@ -501,7 +501,7 @@ impl Home {
                     return Outcome::Run(Action::Artifacts(agent.id.clone()));
                 }
             }
-            KeyCode::Char('t') if self.themed => return Outcome::NextTheme,
+            KeyCode::Char('b') if self.themed => return Outcome::NextTheme,
             KeyCode::Char('t' | 'T') => return Outcome::Run(Action::Timeline),
             KeyCode::Char('L') => return Outcome::Run(Action::Tutor),
             KeyCode::Char('?' | 'K') => self.view = View::Keys(0),
@@ -1375,32 +1375,28 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn t_asks_for_the_next_theme_in_normal_mode() {
+    fn b_asks_for_the_next_theme_in_normal_mode() {
         let mut home = Home::new(context());
         home.themed = true;
-        assert_eq!(home.key(KeyCode::Char('t')), Outcome::NextTheme);
-        assert_eq!(
-            home.key(KeyCode::Char('T')),
-            Outcome::Run(Action::Timeline),
-            "T still opens the timeline"
-        );
-        assert_eq!(home.footer(), format!("{MAIN_FOOTER} · t theme"));
-        home.themed = false;
+        assert_eq!(home.key(KeyCode::Char('b')), Outcome::NextTheme);
         assert_eq!(home.key(KeyCode::Char('t')), Outcome::Run(Action::Timeline));
+        assert_eq!(home.footer(), format!("{MAIN_FOOTER} · b theme"));
+        home.themed = false;
+        assert_eq!(home.key(KeyCode::Char('b')), Outcome::Stay);
         assert_eq!(home.footer(), MAIN_FOOTER);
     }
 
     #[test]
-    fn t_types_in_find_and_ask_modes() {
+    fn b_types_in_find_and_ask_modes() {
         for opener in ['f', '/'] {
             let mut home = Home::new(context());
             home.themed = true;
             home.key(KeyCode::Char(opener));
-            assert_eq!(home.key(KeyCode::Char('t')), Outcome::Stay);
+            assert_eq!(home.key(KeyCode::Char('b')), Outcome::Stay);
             let prompt = if opener == 'f' {
-                "find › t"
+                "find › b"
             } else {
-                "ask › t"
+                "ask › b"
             };
             assert_eq!(home.footer(), prompt);
         }
