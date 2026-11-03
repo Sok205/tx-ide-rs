@@ -4,8 +4,8 @@
 //! agent:                         # defaults for `tx create`; flags override
 //!   engine: claude
 //!   roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
-//!   model: opus                  # unset: the engine's own default
-//!   effort: high                 # unset: the engine's own default
+//!   model: claude-opus-5-5       # null: the engine's own default
+//!   effort: high                 # null: the engine's own default
 //! plugins:
 //!   engine-codex: { enabled: false }
 //!   assistant:
@@ -49,8 +49,8 @@ impl Default for AgentDefaults {
         Self {
             engine: EngineKind::Claude,
             roles: vec!["COMMON".to_owned(), "DEVELOPER".to_owned()],
-            model: None,
-            effort: None,
+            model: Some("claude-opus-5-5".to_owned()),
+            effort: Some("high".to_owned()),
         }
     }
 }
@@ -142,6 +142,13 @@ mod tests {
                 ..AgentDefaults::default()
             }
         );
+    }
+
+    #[test]
+    fn null_model_and_effort_leave_them_to_the_engine() {
+        let config = parse_text("agent:\n  model: null\n  effort: null\n").unwrap();
+        assert_eq!(config.agent.model, None);
+        assert_eq!(config.agent.effort, None);
     }
 
     #[test]

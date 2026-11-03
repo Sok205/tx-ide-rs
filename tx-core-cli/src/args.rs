@@ -59,8 +59,8 @@ The config file is <config>/config.yaml (--config FILE overrides); every key is 
   agent:                        defaults for create; a flag given replaces its key
     engine: claude              claude | codex
     roles: [COMMON, DEVELOPER]  any --role replaces the whole list
-    model: null                 null: the engine's own default
-    effort: null                null: the engine's own default
+    model: claude-opus-5-5      null: the engine's own default
+    effort: high                null: the engine's own default
   plugins:                      one entry per plugin id (see `plugins`)
     <id>: { enabled: true, settings: {...} }
 ";

@@ -478,7 +478,8 @@ fn create_fills_unflagged_options_from_the_config_file() {
     let bare = create("bare", &[]);
     assert_eq!(bare["engine"], "claude");
     assert_eq!(bare["roles"], serde_json::json!(["COMMON", "DEVELOPER"]));
-    assert!(bare["ext"]["claude"].get("model").is_none(), "{bare}");
+    assert_eq!(bare["ext"]["claude"]["model"], "claude-opus-5-5");
+    assert_eq!(bare["ext"]["claude"]["effort"], "high");
 
     cli.write_yaml("agent:\n  roles: [COMMON]\n  model: sonnet\n  effort: low\n");
     let filed = create("filed", &[]);

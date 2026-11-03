@@ -282,8 +282,8 @@ back to the same default. In short:
 agent:                         # defaults for `tx create`; a flag given replaces its key
   engine: claude               # claude | codex
   roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
-  model: null                  # null: the engine's own default
-  effort: null                 # null: the engine's own default
+  model: claude-opus-5-5       # null: the engine's own default
+  effort: high                 # null: the engine's own default
 
 plugins:                       # one entry per plugin id; see Plugins below
   engine-codex: { enabled: false }
@@ -293,7 +293,9 @@ plugins:                       # one entry per plugin id; see Plugins below
     settings: { editor: nvim }
 ```
 
-So `tx create w --cwd . --prompt "…"` starts a Claude agent with the COMMON and DEVELOPER roles.
+So `tx create w --cwd . --prompt "…"` starts a Claude agent on Opus 5.5 at effort high, with the
+COMMON and DEVELOPER roles. With `--engine codex`, pass `--model` / `--effort` too (or set them to
+`null`): the defaults name a Claude model.
 An unknown key, a bad value or malformed YAML stops `tx` with a usage error naming the file. The
 directories, the socket, the roles and skills directories and `--env` stay flags and environment
 variables (see "Where files live" above); they are not in this file.

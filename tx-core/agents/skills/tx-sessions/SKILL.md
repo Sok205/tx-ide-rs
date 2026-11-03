@@ -58,9 +58,10 @@ tx create <name> --tag <scope> --cwd <project-root> --parent "$(tx whoami)" \
   them); left out, it is the operator's `agent.engine` in `config.yaml` (default `claude`). Keep
   passing `--role` explicitly: without it the worker gets the operator's `agent.roles`, which
   need not be the ones the task wants.
-- `--model` and `--effort` are placeholders, not recommendations. Omit either one and the engine
-  picks it up from its own configuration (for claude, the `model` in `settings.json`) — which is
-  what you want unless the operator named a tier. Pass them only when the operator asked for a
+- `--model` and `--effort` are placeholders, not recommendations. Omit either one and it comes
+  from the operator's `agent.model` / `agent.effort` in `config.yaml` (default Opus 5.5, effort
+  high; `null` there leaves it to the engine) — which is what you want unless the operator named a
+  tier. With `--engine codex`, pass both: the defaults name a Claude model. Pass them only when the operator asked for a
   specific model or effort. Effort is the engine's word: claude takes
   `low|medium|high|xhigh|max`, codex also `none|minimal`. A numeric effort `1`–`5` from a plan
   means `low`, `medium`, `high`, `xhigh`, `max`.
