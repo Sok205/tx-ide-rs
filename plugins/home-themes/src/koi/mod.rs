@@ -18,6 +18,8 @@ use water::{Pellet, Ripple, Wake};
 
 const WATER_DEEP: (f32, f32, f32) = (14.0, 16.0, 38.0);
 const WATER_LIGHT: (f32, f32, f32) = (30.0, 40.0, 82.0);
+/// Shades per step from `WATER_DEEP` to `WATER_LIGHT`.
+const WATER_SHADES: f32 = 3.0;
 const LOGO_WHITE: Color = Color::Rgb(255, 244, 226);
 const STEP: f32 = 1.0 / 60.0;
 /// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
@@ -58,12 +60,15 @@ struct Pond {
     steps: usize,
 }
 
-/// `wake`: the wake's energy here, lightening the water.
+/// `wake`: the wake's energy here, lightening the water. The shimmer drifts over minutes.
 fn water(x: i32, y: i32, seconds: f32, wake: f32) -> Color {
     let (x, y) = (x as f32, y as f32);
-    let wave =
-        (x * 0.21 + y * 0.13 + seconds * 0.6).sin() + (x * 0.07 - y * 0.19 - seconds * 0.4).sin();
+    let wave = (x * 0.21 + y * 0.13 + seconds * 0.02).sin()
+        + (x * 0.07 - y * 0.19 - seconds * 0.013).sin();
     let mix = (wave + 2.0) / 4.0 + WAKE_LIGHT * wake.min(1.0);
+    // Few shades and a slow drift: a cell changes only when its shade steps, which keeps the bytes
+    // sent to tmux each frame to the fish and ripples.
+    let mix = (mix * WATER_SHADES).round() / WATER_SHADES;
     let channel = |deep: f32, light: f32| (deep + (light - deep) * mix).round() as u8;
     Color::Rgb(
         channel(WATER_DEEP.0, WATER_LIGHT.0),
@@ -151,7 +156,7 @@ impl Pond {
 
 impl Backdrop for Pond {
     fn frames_per_second(&self) -> u64 {
-        20
+        15
     }
 
     fn logo_size(&self) -> (u16, u16) {
@@ -446,6 +451,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Every changed cell is bytes into tmux, which all panes share: a gliding pond repaints its
+    /// fish, not its water.
+    #[test]
+    fn a_frame_repaints_few_cells() {
+        let mut pond = Pond {
+            random: Rng::with_seed(7),
+            ..Pond::default()
+        };
+        let area = Rect::new(0, 0, 250, 70);
+        let blank = Buffer::empty(area);
+        let mut previous = Buffer::empty(area);
+        pond.paint(Duration::ZERO, area, None, &blank, &mut previous);
+        let frames = 30;
+        let mut changed = 0;
+        for frame in 1..=frames {
+            let mut buffer = Buffer::empty(area);
+            let elapsed = Duration::from_millis(frame * 1000 / pond.frames_per_second());
+            pond.paint(elapsed, area, None, &blank, &mut buffer);
+            changed += previous.diff(&buffer).len();
+            previous = buffer;
+        }
+        let per_frame = changed / frames as usize;
+        assert!(per_frame < 500, "{per_frame} of {} cells", area.area());
     }
 
     #[test]

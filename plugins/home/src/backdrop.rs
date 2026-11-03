@@ -169,7 +169,8 @@ impl Pixels {
             .unwrap_or(background)
     }
 
-    /// Half-blocks, except dimmed background-only spaces under home's `text` cells.
+    /// Half-blocks (a space where both halves match), except dimmed background-only spaces under
+    /// home's `text` cells.
     pub fn render(&self, area: Rect, text: &Buffer, background: Color, buffer: &mut Buffer) {
         for row in 0..area.height {
             for column in 0..area.width {
@@ -180,6 +181,9 @@ impl Pixels {
                 if is_text(&text[(x, y)]) {
                     cell.set_char(' ')
                         .set_bg(palette(dim(mean(top, bottom), TEXT_DIM)));
+                } else if top == bottom {
+                    // Looks the same as a half-block, and spares the terminal a colour.
+                    cell.set_char(' ').set_bg(palette(bottom));
                 } else {
                     cell.set_char('▀')
                         .set_fg(palette(top))
@@ -253,8 +257,8 @@ mod tests {
         pixels.render(area, &Buffer::empty(area), BACKGROUND, &mut buffer);
         let cell = &buffer[(0, 0)];
         assert_eq!((cell.symbol(), cell.fg, cell.bg), ("▀", RED, BLUE));
-        let empty = &buffer[(1, 0)];
-        assert_eq!((empty.fg, empty.bg), (BACKGROUND, BACKGROUND));
+        let even = &buffer[(1, 0)];
+        assert_eq!((even.symbol(), even.bg), (" ", BACKGROUND));
     }
 
     #[test]
@@ -266,7 +270,7 @@ mod tests {
         let cell = &buffer[(0, 0)];
         assert_eq!(cell.symbol(), " ");
         assert_eq!(cell.bg, dim(mean(RED, BLUE), TEXT_DIM));
-        assert_eq!(buffer[(1, 0)].symbol(), "▀");
+        assert_eq!(buffer[(1, 0)].bg, BACKGROUND);
     }
 
     #[test]

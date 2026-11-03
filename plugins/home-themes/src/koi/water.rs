@@ -50,8 +50,9 @@ fn tangent(angle: f32) -> char {
 }
 
 impl Ripple {
+    /// A weak ring dies small: a ring repaints its whole circumference every frame.
     fn lifetime(&self) -> f32 {
-        1.8 + 1.4 * self.strength
+        0.6 + 2.6 * self.strength
     }
 
     pub fn alive(&self, now: f64) -> bool {

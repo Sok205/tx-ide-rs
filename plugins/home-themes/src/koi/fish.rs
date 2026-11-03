@@ -414,7 +414,8 @@ impl Fish {
                         along_distance.hypot(across_distance) <= marking.radius
                     })
                     .map_or(WHITE, |marking| marking.color);
-                let rounding = 1.0 - 0.3 * across * across;
+                // Two flat shades, not a gradient, so a gliding body repaints only its edges.
+                let rounding = if across.abs() < 0.58 { 1.0 } else { 0.8 };
                 pixels.set(x, y, dim(color, self.depth * rounding));
             }
         }
