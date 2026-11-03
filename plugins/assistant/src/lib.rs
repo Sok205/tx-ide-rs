@@ -201,7 +201,7 @@ pub fn running(core: &TxCore) -> Result<Option<AgentId>, CoreError> {
     Ok(None)
 }
 
-/// The newest ended, unarchived assistant, by tag and role; `None` when there is none.
+/// The newest ended assistant, by tag and role; `None` when there is none.
 pub fn latest_ended(core: &TxCore) -> Result<Option<AgentId>, CoreError> {
     let filter = ListFilter::new().tag(TAG).ended();
     let mut newest: Option<Agent> = None;
