@@ -338,7 +338,7 @@ fn event_loop(
                 Outcome::Close => return Ok(None),
                 Outcome::Run(action) => return Ok(Some(action)),
                 Outcome::NextTheme => {
-                    let catalogue = backdrop::catalogue().expect("`t` needs a catalogue");
+                    let catalogue = backdrop::catalogue().expect("`b` needs a catalogue");
                     let was_on = backdrop.is_some();
                     *theme = backdrop::next(*theme, catalogue.themes.len());
                     let chosen = theme.map(|index| &catalogue.themes[index]);
