@@ -1,8 +1,10 @@
-"""Build tx-core's docs site: rustdoc twice (public, and internal with private and #[doc(hidden)]
-items), each page extended with the Structure drawer, plus the graph page each drawer loads.
+"""Build tx-ide's docs site: rustdoc twice (public, and internal with private and #[doc(hidden)]
+items), each page extended with the Structure drawer, plus the graph page each drawer loads; and
+the mdBook guide (docs-site/guide), which needs `mdbook` on PATH.
 
 Usage: python3 docs-site/build.py <workspace> <site dir> <label>
-Writes <site>/public, <site>/internal, <site>/index.html and <site>/.nojekyll (GitHub Pages)."""
+Writes <site>/public, <site>/internal, <site>/guide, <site>/index.html and <site>/.nojekyll
+(GitHub Pages)."""
 
 import hashlib
 import html
@@ -24,6 +26,33 @@ VIEW_FLAGS = {
     "internal": "-Z unstable-options --document-private-items --document-hidden-items",
 }
 PAGE_PREFIX = {"struct": "struct", "enum": "enum", "trait": "trait", "fn": "fn", "const": "constant", "type": "type"}
+GUIDE = HERE / "guide"
+LANDING = """<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tx-ide docs</title>
+<style>
+  body {{ font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem; color: #222; }}
+  h1 {{ font-size: 1.6rem; margin-bottom: 0.5rem; }}
+  ul {{ padding-left: 1.2rem; }}
+  li {{ margin: 0.4rem 0; }}
+  .label {{ color: #777; font-size: 0.85rem; margin-top: 2.5rem; }}
+  @media (prefers-color-scheme: dark) {{ body {{ background: #1b1b1b; color: #ddd; }} a {{ color: #8ab4f8; }} }}
+</style>
+<h1>tx-ide docs</h1>
+<p>tx-ide is a plain core for a swarm of interactive coding agents in tmux: each agent is an
+engine process (Claude Code, Codex) in its own git worktree, with a durable record, on tx's own
+tmux server. The guide explains how the pieces fit; the API reference documents the
+<code>tx-core</code> library, with a structure graph on every page.</p>
+<ul>
+  <li><a href="guide/index.html">The guide</a>: what tx-ide is and how it works.</li>
+  <li><a href="internal/tx_core/index.html">tx-core API, internal</a>: every item, private and hidden ones included.</li>
+  <li><a href="public/tx_core/index.html">tx-core API, public</a>: what a crate user sees.</li>
+</ul>
+<p class="label">{label}</p>
+</html>
+"""
 FONTS = [("Fira Sans", 400, "FiraSans-Regular"), ("Fira Sans", 500, "FiraSans-Medium"),
          ("Source Code Pro", 400, "SourceCodePro-Regular"), ("Source Serif 4", 400, "SourceSerif4-Regular")]
 
@@ -83,8 +112,17 @@ def font_faces(doc_root):
     return "\n".join(faces)
 
 
+def build_guide(site):
+    """The mdBook guide into <site>/guide."""
+    destination = site / "guide"
+    subprocess.run(["mdbook", "build", str(GUIDE), "-d", str(destination)], check=True)
+    return destination
+
+
 def main():
     workspace, site, label = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), sys.argv[3]
+    if shutil.which("mdbook") is None:
+        sys.exit("mdbook is not on PATH; the guide needs it: cargo install mdbook --locked")
     site.mkdir(parents=True, exist_ok=True)
     source_dir = workspace / "tx-core" / "src"
     crate_modules = set(re.findall(r"^pub mod (\w+);", (source_dir / "lib.rs").read_text(), re.MULTILINE))
@@ -107,11 +145,9 @@ def main():
         items = sum(card["kind"] != "method" for card in view["cards"])
         print(f"{view_name}: {items} items, {len(view['cards']) - items} methods, {len(view['edges'])} edges, "
               f"{len(view['urls'])} linked to rustdoc pages")
-    (site / "index.html").write_text(
-        '<!doctype html>\n<meta charset="utf-8">\n<title>tx-core docs</title>\n'
-        '<meta http-equiv="refresh" content="0; url=internal/tx_core/index.html">\n'
-        f'<p>tx-core docs ({html.escape(label)}): <a href="internal/tx_core/index.html">internal</a> · '
-        '<a href="public/tx_core/index.html">public</a></p>\n')
+    guide = build_guide(site)
+    print(f"guide: {guide}")
+    (site / "index.html").write_text(LANDING.format(label=html.escape(label)))
     (site / ".nojekyll").touch()
     print(f"open {site / 'internal' / 'tx_core' / 'index.html'}")
 

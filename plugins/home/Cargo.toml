@@ -1,14 +1,15 @@
 [package]
-name = "tx-menu"
+name = "tx-home"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "tx-core plugin: the tx-ide start menu (ratatui), prefix+m and the first attach."
+description = "tx-core plugin: the tx-ide home (ratatui): projects, agents, views and history; the floor of the home pane and prefix+m."
 
 [dependencies]
 tx-core.workspace = true
 tx-client.workspace = true
+tx-chat = { path = "../chat" }
 serde_json.workspace = true
 tempfile.workspace = true
 ratatui = "0.30"

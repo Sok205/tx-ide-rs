@@ -1,7 +1,7 @@
 //! The menu plugin's resources and verbs, listed through the core.
 
 use tx_core::{CoreConfig, PluginConfig, TxCore};
-use tx_menu::MenuPlugin;
+use tx_home::HomePlugin;
 
 fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
     let dir = tempfile::Builder::new()
@@ -12,7 +12,7 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
         dir.path().join("state"),
     )))
     .unwrap();
-    core.plug(vec![Box::new(MenuPlugin)], config).unwrap();
+    core.plug(vec![Box::new(HomePlugin)], config).unwrap();
     (dir, core)
 }
 
@@ -21,33 +21,33 @@ fn the_key_fragment_declares_prefix_m_and_the_attach_hook() {
     let (_dir, core) = core(&PluginConfig::default());
     let keys = core.resources("keys/");
     assert_eq!(keys.len(), 1);
-    assert_eq!(keys[0].plugin, "menu");
-    assert_eq!(keys[0].name, "keys/menu.tmux");
+    assert_eq!(keys[0].plugin, "home");
+    assert_eq!(keys[0].name, "keys/home.tmux");
     let text = std::str::from_utf8(keys[0].bytes).unwrap();
     assert!(text.starts_with("#!"), "{text}");
     assert!(text.lines().any(|line| line == "# keys: m"), "{text}");
     assert!(
-        text.lines()
-            .any(|line| line == "# unhook: client-attached[90]"),
+        !text.lines().any(|line| line.starts_with("# unhook:")),
         "{text}"
     );
     assert!(text.contains("bind m run-shell -b"), "{text}");
     assert!(
-        text.contains("_menu-open '#{pane_id}' '#{client_name}'"),
+        text.contains("_home-open '#{pane_id}' '#{client_name}'"),
         "{text}"
     );
-    assert!(text.contains("set-hook -g client-attached[90] {"), "{text}");
-    assert!(text.contains("#{@tx-menu-shown}"), "{text}");
-    assert!(
-        text.contains("_menu-first '#{pane_id}' '#{client_name}'"),
-        "{text}"
-    );
+    assert!(!text.contains("client-attached"), "{text}");
 }
 
 #[test]
 fn the_verbs_are_registered() {
     let (_dir, core) = core(&PluginConfig::default());
-    for verb in ["menu", "_menu-open", "_menu-first", "_menu-tui"] {
+    for verb in [
+        "home",
+        "_home-open",
+        "_home-tui",
+        "_home-install",
+        "_home-perform",
+    ] {
         assert!(core.verb(verb).is_some(), "{verb}");
     }
 }
@@ -55,8 +55,8 @@ fn the_verbs_are_registered() {
 #[test]
 fn a_disabled_plugin_publishes_nothing() {
     let mut config = PluginConfig::default();
-    config.disabled.insert("menu".to_owned());
+    config.disabled.insert("home".to_owned());
     let (_dir, core) = core(&config);
     assert!(core.plugin_resources("").is_empty());
-    assert!(core.verb("menu").is_none());
+    assert!(core.verb("home").is_none());
 }

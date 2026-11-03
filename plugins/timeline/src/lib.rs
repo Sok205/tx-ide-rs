@@ -9,10 +9,8 @@
 
 pub mod app;
 pub mod cache;
-pub mod clock;
-pub mod metadata;
 pub mod model;
-pub mod rows;
+pub use tx_chat::transcript::{clock, metadata, rows};
 pub mod run;
 pub mod turns;
 pub mod ui;

@@ -171,7 +171,7 @@ fn prefix_shift_t_opens_the_resident_popup_and_q_detaches() {
     require_tmux!();
     let cli = Cli::new();
     // The menu would pop up on this first attach and take the keys.
-    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  menu: { enabled: false }\n");
+    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
     cli.ok(&["ui", "install"]);
     let conf = cli.state().join("tmux.conf");
     let started = Command::new("tmux")

@@ -51,7 +51,7 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/assistant.tmux\"\n\
          run-shell \"{state}/keys/artifacts.tmux\"\n\
          run-shell \"{state}/keys/timeline.tmux\"\n\
-         run-shell \"{state}/keys/menu.tmux\"\n",
+         run-shell \"{state}/keys/home.tmux\"\n",
         exe().display(),
         arguments = cli.arguments(),
     )
@@ -96,7 +96,7 @@ fn start_server(cli: &Cli) {
                     .contains("_timeline-attach")
                 && cli
                     .tmux_out(&["list-keys", "-T", "prefix", "m"])
-                    .contains("_menu-open")
+                    .contains("_home-open")
                 && cli
                     .tmux_out(&["show-option", "-gv", "pane-border-format"])
                     .contains("_pane-label")
@@ -136,7 +136,7 @@ fn ui_install_materialises_resources() {
         "spawn",
         "artifacts",
         "timeline",
-        "menu",
+        "home",
     ] {
         let path = state.join(format!("keys/{id}.tmux"));
         assert!(path.is_file(), "{path:?}");
@@ -166,7 +166,7 @@ fn ui_install_materialises_resources() {
         ("spawn", "keys=n"),
         ("artifacts", "keys=a"),
         ("timeline", "keys=T"),
-        ("menu", "keys=m"),
+        ("home", "keys=m"),
     ] {
         assert!(
             installed
@@ -285,11 +285,7 @@ fn ui_install_fragment_loads() {
     assert!(bound("prefix", "n").contains("tmux-new-agent"));
     assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
     assert!(bound("prefix", "T").contains("_timeline-attach"));
-    assert!(bound("prefix", "m").contains("_menu-open"));
-    assert!(
-        cli.tmux_out(&["show-hooks", "-g", "client-attached"])
-            .contains("_menu-first")
-    );
+    assert!(bound("prefix", "m").contains("_home-open"));
     cli.tmux(&["kill-server"]);
 }
 
@@ -323,7 +319,7 @@ fn fragments_do_nothing_outside_an_installed_server() {
         "spawn",
         "artifacts",
         "timeline",
-        "menu",
+        "home",
     ] {
         let output = Command::new(cli.state().join(format!("keys/{id}.tmux")))
             .env("TMUX", format!("{},1,0", other.display()))
@@ -564,6 +560,20 @@ fn ui_attach_lands_in_a_view_home() {
         cli.tmux_out(&["show-window-options", "-vt", "=home:", "pane-border-status"]),
         "top"
     );
+    assert_eq!(
+        cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{window_name}"]),
+        "home"
+    );
+}
+
+/// The home pane's screen: the floor's TUI, or whatever runs there.
+fn home_pane(cli: &Cli) -> String {
+    cli.tmux_out(&["capture-pane", "-p", "-t", "=home:"])
+}
+
+fn home_tui_shown(cli: &Cli) -> bool {
+    let screen = home_pane(cli);
+    screen.contains("tx-ide") && screen.contains("enter attach")
 }
 
 #[test]
@@ -624,7 +634,7 @@ fn ui_attach_inside_the_core_switches_the_client() {
 }
 
 #[test]
-fn ui_attach_starts_the_assistant_and_nests_home_into_it() {
+fn ui_attach_lands_on_the_home_tui_and_the_assistant_comes_up_behind_it() {
     require_tmux!();
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
@@ -634,28 +644,36 @@ fn ui_attach_starts_the_assistant_and_nests_home_into_it() {
     std::fs::write(
         &script,
         format!(
-            "export PATH='{}'\nexec {}\n",
+            "export PATH='{}' CLAUDE_CONFIG_DIR='{}'\nexec {}\n",
             cli.fake_claude_path(),
+            cli.claude_config_dir().display(),
             attach_command(&cli)
         ),
     )
     .unwrap();
     cli.in_outer_pane(&format!("sh {}", script.display()));
-    let clients = || {
-        let mut clients: Vec<String> = cli
-            .tmux_out(&["list-clients", "-F", "#{client_session}"])
-            .lines()
-            .map(str::to_owned)
-            .collect();
-        clients.sort();
-        clients
-    };
-    // Starting the assistant (a repository, its worktree, the agent) can take over ten seconds
-    // while the other suites load the machine.
+    // `ui install` ran just before; under the other suites' load the attach can take a while.
     assert!(
-        cli.wait_for(30, || clients() == ["home", "tx-assistant"]),
-        "clients: {:?}",
-        clients()
+        cli.wait_for(15, || cli.tmux_out(&["list-clients", "-F", "#{client_session}"]) == "home"),
+        "no client attached to home"
+    );
+    assert!(
+        cli.wait_for(10, || home_tui_shown(&cli)),
+        "the home pane does not show the TUI:\n{}",
+        home_pane(&cli)
+    );
+    // Starting the assistant (a repository, its worktree, the agent) can take over ten seconds
+    // while the other suites load the machine; the TUI starts it and the header follows. The
+    // fake claude never reports a turn, so the record stays `starting`.
+    let assistant_row = || {
+        let screen = home_pane(&cli);
+        screen.contains("tx-assistant")
+            && (screen.contains("assistant ◐ starting") || screen.contains("assistant ● ready"))
+    };
+    assert!(
+        cli.wait_for(30, assistant_row),
+        "the header never showed the assistant coming up:\n{}",
+        home_pane(&cli)
     );
     let json: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "tx-assistant"])).unwrap();
     assert_ne!(json["state"], "ended");
@@ -664,14 +682,11 @@ fn ui_attach_starts_the_assistant_and_nests_home_into_it() {
     assert!(cwd.starts_with(cli.worktrees_dir()), "{cwd:?}");
     assert!(cwd.ends_with("home--tx-assistant"), "{cwd:?}");
     assert_eq!(json["roles"], serde_json::json!(["COMMON", "TX-ASSISTANT"]));
-    assert_eq!(
-        cli.tmux_out(&["show-options", "-vt", "=home:", "@tx-view"]),
-        "1"
-    );
+    assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]).lines().count(), 1);
 }
 
 #[test]
-fn ui_attach_without_the_roles_installed_opens_a_plain_home() {
+fn ui_attach_without_the_roles_installed_shows_the_failed_assistant() {
     require_tmux!();
     let cli = Cli::new();
     let path = cli.fake_claude_path();
@@ -681,21 +696,56 @@ fn ui_attach_without_the_roles_installed_opens_a_plain_home() {
         "",
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("COMMON"), "{stderr:?}");
+    assert!(stderr.contains("nesting inside another tmux"), "{stderr:?}");
     assert!(cli.tmux(&["has-session", "-t", "=home"]).status.success());
+    assert!(
+        cli.wait_for(20, || home_pane(&cli).contains("assistant ✗ failed")),
+        "the header never reported the failed warm:\n{}",
+        home_pane(&cli)
+    );
+    assert!(home_pane(&cli).contains("COMMON"), "{}", home_pane(&cli));
     assert_eq!(
         cli.run(&["show", "tx-assistant"], &[], "").status.code(),
         Some(1)
     );
+    // `r` warms again: the roles are still missing, so it fails again and the home comes back.
+    let pid = || cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_pid}"]);
+    let failed_pid = pid();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(
+        cli.tmux(&["send-keys", "-t", "=home:", "r"])
+            .status
+            .success()
+    );
+    assert!(
+        cli.wait_for(20, || pid() != failed_pid
+            && home_pane(&cli).contains("assistant ✗ failed")),
+        "r did not warm again:\n{}",
+        home_pane(&cli)
+    );
+    // With the roles installed, the next attach's install warms again and the failure clears.
+    cli.ok(&["ui", "install"]);
+    cli.ok(&["_home-install", "home"]);
+    assert!(
+        cli.wait_for(30, || {
+            let screen = home_pane(&cli);
+            !screen.contains("failed")
+                && (screen.contains("assistant ◐ starting") || screen.contains("assistant ● ready"))
+        }),
+        "the header never left failed:\n{}",
+        home_pane(&cli)
+    );
+    assert_eq!(cli.ok(&["ls", "--tag", "tx-system"]).lines().count(), 1);
 }
 
 #[test]
-fn ui_attach_warms_the_assistant_when_home_already_exists() {
+fn ui_attach_installs_the_floor_on_an_existing_shell_home() {
     require_tmux!();
     let cli = Cli::new();
+    cli.write_yaml(&plugins_yaml_disabling("assistant"));
     cli.ok(&["ui", "install"]);
     assert!(
-        cli.tmux(&["new-session", "-d", "-s", "home", "sleep", "60"])
+        cli.tmux(&["new-session", "-d", "-s", "home", "sh"])
             .status
             .success()
     );
@@ -710,24 +760,116 @@ fn ui_attach_warms_the_assistant_when_home_already_exists() {
         "#{client_session}"
     ]) == "other"));
     let inside = format!("{},1,0", cli.sock().display());
-    let path = cli.fake_claude_path();
-    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside), ("PATH", &path)], "");
+    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside)], "");
     assert_eq!(
         output.status.code(),
         Some(0),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_ne!(common::state_of(&cli, "tx-assistant"), "ended");
-    // The existing home is kept as it is: its pane still runs what it ran.
-    assert_eq!(
-        cli.tmux_out(&[
+    assert!(
+        cli.wait_for(5, || home_tui_shown(&cli)),
+        "the shell home did not get the floor:\n{}",
+        home_pane(&cli)
+    );
+    let pane = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_id}"]);
+    assert!(
+        cli.tmux_out(&["show-hooks", "-p", "-t", &pane])
+            .contains("_home-perform")
+    );
+}
+
+#[test]
+fn ui_attach_with_home_disabled_opens_a_shell() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.write_yaml(
+        "plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n",
+    );
+    cli.create("a");
+    cli.in_outer_pane(&attach_command(&cli));
+    assert!(
+        cli.wait_for(5, || cli.tmux_out(&["list-clients", "-F", "#{client_session}"]) == "home"),
+        "no client attached to home"
+    );
+    let shell = std::path::Path::new(&std::env::var("SHELL").unwrap_or_else(|_| "sh".into()))
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        cli.wait_for(5, || cli.tmux_out(&[
             "display-message",
             "-p",
             "-t",
             "=home:",
             "#{pane_current_command}"
-        ]),
-        "sleep"
+        ]) == shell),
+        "{}",
+        cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_current_command}"])
     );
+    let pane = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_id}"]);
+    assert!(
+        !cli.tmux_out(&["show-hooks", "-p", "-t", &pane])
+            .contains("_home-perform")
+    );
+}
+
+/// A home whose plugin was disabled after it held the floor: its pane keeps the hook of a verb
+/// that is gone and dies with the TUI; the next attach takes the floor apart and gives the pane
+/// its shell back.
+#[test]
+fn ui_attach_with_home_disabled_after_it_was_enabled_repairs_the_pane() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.write_yaml(&plugins_yaml_disabling("assistant"));
+    cli.in_outer_pane(&attach_command(&cli));
+    assert!(
+        cli.wait_for(10, || home_tui_shown(&cli)),
+        "no home TUI:\n{}",
+        home_pane(&cli)
+    );
+    let pane = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_id}"]);
+    let pane_format = |format: &str| cli.tmux_out(&["display-message", "-p", "-t", &pane, format]);
+    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
+    cli.ok(&["ui", "install"]);
+    assert!(
+        Command::new("kill")
+            .arg(pane_format("#{pane_pid}"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        cli.wait_for(5, || pane_format("#{pane_dead}") == "1"),
+        "the TUI did not die"
+    );
+    let inside = format!("{},1,0", cli.sock().display());
+    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside)], "");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let shell = Path::new(&std::env::var("SHELL").unwrap_or_else(|_| "sh".into()))
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        cli.wait_for(5, || pane_format("#{pane_dead}") == "0"
+            && pane_format("#{pane_current_command}") == shell),
+        "{} {}",
+        pane_format("#{pane_dead}"),
+        pane_format("#{pane_current_command}")
+    );
+    assert!(
+        !cli.tmux_out(&["show-hooks", "-p", "-t", &pane])
+            .contains("pane-died")
+    );
+    let option = |name: &str| cli.tmux_out(&["show-options", "-pv", "-t", &pane, name]);
+    assert_eq!(option("remain-on-exit"), "off");
+    assert_eq!(option("@tx-home-floor"), "");
+    assert_eq!(option("remain-on-exit-format"), "");
 }

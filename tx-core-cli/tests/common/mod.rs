@@ -82,7 +82,8 @@ impl Cli {
             .args(directory_flags(&self.state()))
             .args(args)
             .env_remove("TMUX")
-            .env_remove("TX_SESSION_ID");
+            .env_remove("TX_SESSION_ID")
+            .env("CLAUDE_CONFIG_DIR", self.claude_config_dir());
         for (key, value) in env {
             command.env(key, value);
         }
@@ -220,6 +221,13 @@ impl Cli {
     /// A `claude` that just stays alive, so agent sessions can be created without the engine.
     pub fn fake_claude_path(&self) -> String {
         self.shim_path(&[("claude", "exec sleep 60")])
+    }
+    /// `<dir>/claude-config`, made: `command` sets it as `CLAUDE_CONFIG_DIR` unless a test
+    /// overrides it, so trust seeding never reaches the operator's own `~/.claude.json`.
+    pub fn claude_config_dir(&self) -> PathBuf {
+        let dir = self.dir.path().join("claude-config");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
     /// A git repository with one commit under `<dir>/<name>`: an agent's starting checkout.
     pub fn repository(&self, name: &str) -> PathBuf {

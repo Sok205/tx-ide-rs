@@ -1760,6 +1760,7 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-engine-claude",
 ]
 
 [[package]]
@@ -1767,6 +1768,7 @@ name = "tx-chat"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "regex",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
@@ -1817,9 +1819,9 @@ dependencies = [
  "tx-edit",
  "tx-engine-claude",
  "tx-engine-codex",
+ "tx-home",
  "tx-kill",
  "tx-labels",
- "tx-menu",
  "tx-mockup",
  "tx-picker",
  "tx-spawn",
@@ -1862,6 +1864,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-home"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "tx-chat",
+ "tx-client",
+ "tx-core",
+]
+
+[[package]]
 name = "tx-kill"
 version = "0.1.0"
 dependencies = [
@@ -1874,17 +1888,6 @@ dependencies = [
 name = "tx-labels"
 version = "0.1.0"
 dependencies = [
- "tempfile",
- "tx-client",
- "tx-core",
-]
-
-[[package]]
-name = "tx-menu"
-version = "0.1.0"
-dependencies = [
- "ratatui",
- "serde_json",
  "tempfile",
  "tx-client",
  "tx-core",

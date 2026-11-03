@@ -13,6 +13,8 @@ use crate::tmux::{Ui, UiError};
 /// `1` on every view; `tmux.conf` and the key plugins test for it.
 pub const VIEW_OPTION: &str = "@tx-view";
 pub const KIND_OPTION: &str = "@tx-view-kind";
+/// `1` on the home view's floor pane: the pane the home plugin keeps its TUI in.
+pub const HOME_FLOOR_OPTION: &str = "@tx-home-floor";
 const PARENT_OPTION: &str = "@tx-view-parent";
 const BOUND_OPTION: &str = "@tx-view-bound";
 const TAGS_OPTION: &str = "@tx-view-tags";
@@ -288,6 +290,47 @@ pub fn close_orphans(ui: &Ui, core: &TxCore) -> Result<Vec<String>, ViewError> {
     Ok(closed)
 }
 
+/// A pane of the home view, as [`home_panes`] lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HomePane {
+    pub id: String,
+    /// It carries [`HOME_FLOOR_OPTION`].
+    pub floor: bool,
+    pub dead: bool,
+    pub command: String,
+}
+
+/// Every pane of `session`, its first window's first pane first.
+pub fn home_panes(ui: &Ui, session: &str) -> Result<Vec<HomePane>, UiError> {
+    let format = format!(
+        "#{{pane_id}}\t#{{{HOME_FLOOR_OPTION}}}\t#{{pane_dead}}\t#{{pane_current_command}}"
+    );
+    let listing = ui.run(&[
+        "list-panes",
+        "-s",
+        "-t",
+        &exact_session(session),
+        "-F",
+        &format,
+    ])?;
+    Ok(parse_home_panes(&listing))
+}
+
+fn parse_home_panes(listing: &str) -> Vec<HomePane> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(4, '\t');
+            Some(HomePane {
+                id: fields.next()?.to_owned(),
+                floor: fields.next()? == "1",
+                dead: fields.next()? == "1",
+                command: fields.next()?.to_owned(),
+            })
+        })
+        .collect()
+}
+
 /// One `LIST_FORMAT` line per session; a session without `@tx-view 1` or without a known kind
 /// is not a view and is skipped.
 pub fn parse_views(listing: &str) -> Vec<View> {
@@ -321,6 +364,27 @@ pub fn parse_views(listing: &str) -> Vec<View> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_panes_are_parsed_in_order_with_their_mark() {
+        assert_eq!(
+            parse_home_panes("%0\t\t0\tzsh\n%4\t1\t1\ttx\nbogus\n"),
+            [
+                HomePane {
+                    id: "%0".into(),
+                    floor: false,
+                    dead: false,
+                    command: "zsh".into(),
+                },
+                HomePane {
+                    id: "%4".into(),
+                    floor: true,
+                    dead: true,
+                    command: "tx".into(),
+                },
+            ]
+        );
+    }
 
     #[test]
     fn kinds_round_trip_through_their_names() {
