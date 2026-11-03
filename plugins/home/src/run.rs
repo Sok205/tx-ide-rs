@@ -5,7 +5,9 @@
 //! lookups a context left provisional (a worktree's project and branch) right after that context
 //! arrived; each reply replaces the home's context. A context never waits for git, so the first
 //! paint waits at most [`FIRST_DATA`] for it; until it arrives the list says it is loading.
-//! Frames are drawn after a key, a resize or a reply, and every tick while a spinner shows.
+//! Every queued event is handled before a frame is drawn. A frame follows a key, a resize or a
+//! reply at once; while a spinner shows or a focused backdrop animates, frames also come at its
+//! rate, never more often however many events arrive. Unfocused, the backdrop's clock stops.
 //! Raw mode and the alternate screen are restored on every exit path. Keys pass [`accept`]
 //! first: no chords, and a home opened by an attach starts with a [`GRACE`] period.
 
@@ -13,10 +15,15 @@ use std::io;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, Event,
+    KeyCode, KeyEventKind, KeyModifiers,
+};
+use ratatui::crossterm::execute;
 use tx_client::tmux::Ui;
 use tx_core::{LlmEngineState, TxCore};
 
+use crate::backdrop::{self, Backdrop};
 use crate::data;
 use crate::detail::detail;
 use crate::model::{Action, AssistantState, Context, GRACE, Home, Outcome, accept};
@@ -60,8 +67,28 @@ pub fn run(core: &TxCore, home: &mut Home, options: &Options) -> io::Result<Opti
         let (requests, worker_requests) = channel();
         let (worker_replies, replies) = channel();
         scope.spawn(move || worker(core, &worker_requests, &worker_replies));
+        let catalogue = backdrop::catalogue();
+        home.set_themed(catalogue.is_some());
+        let mut theme = catalogue.and_then(|catalogue| catalogue.start);
+        let mut backdrop = catalogue
+            .zip(theme)
+            .map(|(catalogue, index)| (catalogue.themes[index].1)());
         let mut terminal = ratatui::try_init()?;
-        let result = event_loop(home, options, &mut terminal, &requests, &replies);
+        if backdrop.is_some() {
+            execute!(io::stdout(), EnableMouseCapture, EnableFocusChange)?;
+        }
+        let result = event_loop(
+            home,
+            options,
+            &mut terminal,
+            &requests,
+            &replies,
+            &mut theme,
+            &mut backdrop,
+        );
+        if backdrop.is_some() {
+            let _ = execute!(io::stdout(), DisableMouseCapture, DisableFocusChange);
+        }
         ratatui::restore();
         // Dropping `requests` ends the worker once its current request is done.
         result
@@ -210,9 +237,11 @@ fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     requests: &Sender<Request>,
     replies: &Receiver<Reply>,
+    theme: &mut Option<usize>,
+    backdrop: &mut Option<Box<dyn Backdrop>>,
 ) -> io::Result<Option<Action>> {
     let started = Instant::now();
-    let tick = Duration::from_millis(1000 / FPS);
+    let mut clock = Clock::new(started);
     let mut data = Data {
         requests,
         replies,
@@ -230,43 +259,148 @@ fn event_loop(
             return Err(io::Error::other("the data worker stopped"));
         }
     }
-    let mut frame = 0_usize;
     let mut changed = true;
+    let mut last_frame = started;
     loop {
         changed |= data.receive(home)?;
+        changed |= home.expire_notice(Instant::now());
         data.request(home)?;
-        if changed || spinning(home) {
-            terminal.draw(|f| ui::draw(home, frame, f.area(), f.buffer_mut()))?;
-            frame = frame.wrapping_add(1);
+        let animating = clock.running() && backdrop.is_some();
+        let interval = match &backdrop {
+            Some(backdrop) if animating => {
+                Duration::from_millis(1000 / backdrop.frames_per_second())
+            }
+            _ => Duration::from_millis(1000 / FPS),
+        };
+        let periodic = animating || spinning(home);
+        if changed || (periodic && last_frame.elapsed() >= interval) {
+            last_frame = Instant::now();
+            // A coarse spinner clock, so it turns at 4 Hz whatever the frame rate.
+            let spinner = (started.elapsed().as_millis() / 250) as usize;
+            terminal.draw(|f| {
+                ui::draw_frame(
+                    home,
+                    spinner,
+                    backdrop
+                        .as_deref_mut()
+                        .map(|backdrop| backdrop as &mut dyn Backdrop),
+                    clock.elapsed(last_frame),
+                    f.area(),
+                    f.buffer_mut(),
+                );
+            })?;
             changed = false;
         }
-        if !event::poll(tick)? {
-            continue;
-        }
-        let key = match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => key,
-            Event::Resize(..) => {
-                changed = true;
-                continue;
+        let mut wait = if periodic {
+            (last_frame + interval).saturating_duration_since(Instant::now())
+        } else {
+            interval
+        };
+        // Every queued event is handled before the next frame, so a backlog costs one frame.
+        while event::poll(wait)? {
+            wait = Duration::ZERO;
+            let key = match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => key,
+                Event::Mouse(event) => {
+                    if let Some(backdrop) = backdrop.as_deref_mut() {
+                        backdrop.mouse(event);
+                    }
+                    continue;
+                }
+                Event::FocusLost => {
+                    clock.pause(Instant::now());
+                    continue;
+                }
+                Event::FocusGained => {
+                    clock.resume(Instant::now());
+                    changed = true;
+                    continue;
+                }
+                Event::Resize(..) => {
+                    changed = true;
+                    continue;
+                }
+                _ => continue,
+            };
+            if options.popup
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.code == KeyCode::Char('c')
+            {
+                return Ok(None);
             }
-            _ => continue,
-        };
-        if options.popup
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-            && key.code == KeyCode::Char('c')
-        {
-            return Ok(None);
+            let in_grace = options.first && started.elapsed() < GRACE;
+            let Some(code) = accept(key.code, key.modifiers, in_grace) else {
+                continue;
+            };
+            changed = true;
+            match home.key(code) {
+                Outcome::Stay => {}
+                Outcome::Close => return Ok(None),
+                Outcome::Run(action) => return Ok(Some(action)),
+                Outcome::NextTheme => {
+                    let catalogue = backdrop::catalogue().expect("`b` needs a catalogue");
+                    let was_on = backdrop.is_some();
+                    *theme = backdrop::next(*theme, catalogue.themes.len());
+                    let chosen = theme.map(|index| &catalogue.themes[index]);
+                    *backdrop = chosen.map(|(_, constructor)| constructor());
+                    match modes_change(was_on, backdrop.is_some()) {
+                        Some(true) => {
+                            execute!(io::stdout(), EnableMouseCapture, EnableFocusChange)?;
+                        }
+                        Some(false) => {
+                            execute!(io::stdout(), DisableMouseCapture, DisableFocusChange)?;
+                        }
+                        None => {}
+                    }
+                    let name = chosen.map(|(name, _)| *name);
+                    (catalogue.remember)(name);
+                    home.notify(format!("theme: {}", name.unwrap_or("off")), Instant::now());
+                    clock = Clock::new(Instant::now());
+                }
+            }
         }
-        let in_grace = options.first && started.elapsed() < GRACE;
-        let Some(code) = accept(key.code, key.modifiers, in_grace) else {
-            continue;
-        };
-        changed = true;
-        match home.key(code) {
-            Outcome::Stay => {}
-            Outcome::Close => return Ok(None),
-            Outcome::Run(action) => return Ok(Some(action)),
+    }
+}
+
+/// What to do with mouse capture and focus reporting when the backdrop goes from `before` to
+/// `after`: `Some(true)` turns them on, `Some(false)` off, `None` leaves them.
+fn modes_change(before: bool, after: bool) -> Option<bool> {
+    (before != after).then_some(after)
+}
+
+/// The backdrop's time: it stands still while the pane is unfocused.
+struct Clock {
+    started: Instant,
+    /// Time spent unfocused before the current focus.
+    paused: Duration,
+    lost: Option<Instant>,
+}
+
+impl Clock {
+    fn new(started: Instant) -> Self {
+        Self {
+            started,
+            paused: Duration::ZERO,
+            lost: None,
         }
+    }
+
+    fn running(&self) -> bool {
+        self.lost.is_none()
+    }
+
+    fn pause(&mut self, now: Instant) {
+        self.lost.get_or_insert(now);
+    }
+
+    fn resume(&mut self, now: Instant) {
+        if let Some(lost) = self.lost.take() {
+            self.paused += now - lost;
+        }
+    }
+
+    fn elapsed(&self, now: Instant) -> Duration {
+        self.lost.unwrap_or(now) - self.started - self.paused
     }
 }
 
@@ -300,6 +434,30 @@ mod tests {
         home.context.agents.clear();
         home.context.assistant = AssistantState::Creating;
         assert!(spinning(&home));
+    }
+
+    #[test]
+    fn cycling_to_off_and_back_toggles_the_terminal_modes() {
+        assert_eq!(modes_change(true, true), None);
+        assert_eq!(modes_change(true, false), Some(false));
+        assert_eq!(modes_change(false, false), None);
+        assert_eq!(modes_change(false, true), Some(true));
+    }
+
+    #[test]
+    fn the_backdrop_clock_stands_still_while_unfocused() {
+        let started = Instant::now();
+        let at = |seconds| started + Duration::from_secs(seconds);
+        let mut clock = Clock::new(started);
+        assert_eq!(clock.elapsed(at(2)), Duration::from_secs(2));
+        clock.pause(at(2));
+        clock.pause(at(3));
+        assert!(!clock.running());
+        assert_eq!(clock.elapsed(at(10)), Duration::from_secs(2));
+        clock.resume(at(10));
+        clock.resume(at(11));
+        assert!(clock.running());
+        assert_eq!(clock.elapsed(at(12)), Duration::from_secs(4));
     }
 
     #[test]

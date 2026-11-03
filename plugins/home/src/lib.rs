@@ -7,6 +7,7 @@
 //! State and keys: [`model`]; what it shows: [`data`], [`detail`], [`project`]; drawing: [`ui`];
 //! the terminal: [`run`]; the verbs and the actions: [`verbs`].
 
+pub mod backdrop;
 pub mod data;
 pub mod detail;
 pub mod floor;

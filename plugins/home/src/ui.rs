@@ -1,8 +1,7 @@
 //! Drawing: the session list with its header and footer, and the plugins / keys sub-lists,
 //! rendered into a [`Buffer`]. Colours go through [`palette`], so `TX_HOME_COLORS=256` swaps
 //! the true-colour constants for the nearest entries of the 256-colour palette.
-
-use std::sync::OnceLock;
+use std::time::Duration;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -12,9 +11,11 @@ use ratatui::widgets::{Block, Widget};
 use tx_client::render::reltime;
 use tx_core::LlmEngineState;
 
+use crate::backdrop::{Backdrop, is_text, layout, palette};
 use crate::model::{AgentRow, AssistantState, Context, Detail, Home, Row, View};
 
 pub const ACCENT: Color = Color::Rgb(122, 162, 247);
+pub const ON_ACCENT: Color = Color::Rgb(26, 27, 38);
 pub const INFO: Color = Color::Rgb(125, 207, 255);
 pub const WARN: Color = Color::Rgb(224, 175, 104);
 pub const FG: Color = Color::Rgb(192, 202, 245);
@@ -22,35 +23,13 @@ pub const DIM_FG: Color = Color::Rgb(169, 177, 214);
 pub const GREEN: Color = Color::Rgb(158, 206, 106);
 pub const RED: Color = Color::Rgb(247, 118, 142);
 
-/// The loop's redraw rate: the starting spinner is the only thing that moves.
+/// The loop's redraw rate without an animating backdrop, while a starting spinner shows.
 pub const FPS: u64 = 4;
 
 const NAME_W: usize = 24;
 const SPINNER: [char; 4] = ['◐', '◓', '◑', '◒'];
 const DAY: f64 = 86_400.0;
 const DETAIL_INDENT: &str = "      ";
-
-/// `color`, or its 256-colour palette entry when `TX_HOME_COLORS=256`.
-fn palette(color: Color) -> Color {
-    static INDEXED: OnceLock<bool> = OnceLock::new();
-    let indexed_palette =
-        INDEXED.get_or_init(|| std::env::var("TX_HOME_COLORS").is_ok_and(|value| value == "256"));
-    if *indexed_palette {
-        indexed(color)
-    } else {
-        color
-    }
-}
-
-/// The nearest entry of the 6x6x6 colour cube.
-fn indexed(color: Color) -> Color {
-    let Color::Rgb(red, green, blue) = color else {
-        return color;
-    };
-    let level = |channel: u8| (u16::from(channel) * 5 + 127) / 255;
-    let index = 16 + 36 * level(red) + 6 * level(green) + level(blue);
-    Color::Indexed(u8::try_from(index).expect("cube indices are at most 231"))
-}
 
 fn fg(color: Color) -> Style {
     Style::new().fg(palette(color))
@@ -78,16 +57,56 @@ fn truncate(text: &str, width: usize) -> String {
     }
 }
 
-/// `frame` counts redraws; it only picks the spinner glyph of starting agents.
-pub fn draw(home: &Home, frame: usize, area: Rect, buf: &mut Buffer) {
+/// `frame` is a 4 Hz clock; it only picks the spinner glyph of starting agents.
+/// `themed`: a backdrop shows behind, so the selected row is a solid accent bar.
+pub fn draw(home: &Home, frame: usize, area: Rect, buf: &mut Buffer, themed: bool) {
     match home.view() {
-        View::Main => draw_main(home, frame, area, buf),
-        View::Plugins(row) => draw_plugins(home, row, area, buf),
-        View::Keys(row) => draw_keys(home, row, area, buf),
+        View::Main => draw_main(home, frame, area, buf, themed),
+        View::Plugins(row) => draw_plugins(home, row, area, buf, themed),
+        View::Keys(row) => draw_keys(home, row, area, buf, themed),
     }
 }
 
-fn draw_main(home: &Home, frame: usize, area: Rect, buf: &mut Buffer) {
+/// The backdrop, if any, then home's text over the part of the area below the logo. Home draws
+/// into a layer first, so the backdrop knows which cells hold text; those cells go on top,
+/// keeping the backdrop's background where home set none.
+pub fn draw_frame(
+    home: &Home,
+    frame: usize,
+    backdrop: Option<&mut dyn Backdrop>,
+    elapsed: Duration,
+    area: Rect,
+    buffer: &mut Buffer,
+) {
+    let Some(backdrop) = backdrop else {
+        return draw(home, frame, area, buffer, false);
+    };
+    let (logo, content) = layout(area, backdrop.logo_size());
+    let mut text = Buffer::empty(area);
+    draw(home, frame, content, &mut text, true);
+    backdrop.paint(elapsed, area, logo, &text, buffer);
+    for position in area.positions() {
+        let drawn = &text[position];
+        if is_text(drawn) {
+            let cell = &mut buffer[position];
+            let background = cell.bg;
+            *cell = drawn.clone();
+            if drawn.bg == Color::Reset {
+                cell.bg = background;
+            }
+        }
+    }
+}
+
+fn selected(themed: bool) -> Style {
+    if themed {
+        Style::new().bg(palette(ACCENT)).fg(palette(ON_ACCENT))
+    } else {
+        Style::new().add_modifier(Modifier::REVERSED)
+    }
+}
+
+fn draw_main(home: &Home, frame: usize, area: Rect, buf: &mut Buffer, themed: bool) {
     let header = header_line(home, usize::from(area.width));
     put(buf, area, area.x, area.y, &header, area.width);
     if area.height < 2 {
@@ -127,7 +146,7 @@ fn draw_main(home: &Home, frame: usize, area: Rect, buf: &mut Buffer) {
         if Some(index) == cursor_line {
             buf.set_style(
                 Rect::new(area.x, y, area.width, 1).intersection(area),
-                Style::new().add_modifier(Modifier::REVERSED),
+                selected(themed),
             );
         }
     }
@@ -350,7 +369,7 @@ struct List<'a> {
     hint: &'a str,
 }
 
-fn draw_list(list: &List<'_>, area: Rect, buf: &mut Buffer) {
+fn draw_list(list: &List<'_>, area: Rect, buf: &mut Buffer, themed: bool) {
     let List {
         title,
         header,
@@ -392,10 +411,7 @@ fn draw_list(list: &List<'_>, area: Rect, buf: &mut Buffer) {
     for (index, line) in rows.iter().enumerate().skip(first).take(body) {
         put(buf, inner, inner.x, y, line, inner.width);
         if highlight && index == row {
-            buf.set_style(
-                Rect::new(inner.x, y, inner.width, 1),
-                Style::new().add_modifier(Modifier::REVERSED),
-            );
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), selected(themed));
         }
         y += 1;
     }
@@ -409,7 +425,7 @@ fn draw_list(list: &List<'_>, area: Rect, buf: &mut Buffer) {
     );
 }
 
-fn draw_plugins(home: &Home, row: usize, area: Rect, buf: &mut Buffer) {
+fn draw_plugins(home: &Home, row: usize, area: Rect, buf: &mut Buffer, themed: bool) {
     let idw = home
         .context
         .plugins
@@ -441,10 +457,10 @@ fn draw_plugins(home: &Home, row: usize, area: Rect, buf: &mut Buffer) {
         highlight: false,
         hint: "read-only · plugins.yaml switches them · esc back",
     };
-    draw_list(&list, area, buf);
+    draw_list(&list, area, buf, themed);
 }
 
-fn draw_keys(home: &Home, row: usize, area: Rect, buf: &mut Buffer) {
+fn draw_keys(home: &Home, row: usize, area: Rect, buf: &mut Buffer, themed: bool) {
     let keys: Vec<String> = home
         .context
         .keys
@@ -480,14 +496,13 @@ fn draw_keys(home: &Home, row: usize, area: Rect, buf: &mut Buffer) {
         highlight: false,
         hint: "j/k scroll · esc back",
     };
-    draw_list(&list, area, buf);
+    draw_list(&list, area, buf, themed);
 }
 
 #[cfg(test)]
 mod tests {
+    use ratatui::crossterm::event::{KeyCode, MouseEvent};
     use std::collections::BTreeMap;
-
-    use ratatui::crossterm::event::KeyCode;
 
     use super::*;
     use crate::model::tests::{agent, context};
@@ -499,7 +514,7 @@ mod tests {
     fn render_sized(home: &Home, frame: usize, width: u16, height: u16) -> Buffer {
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
-        draw(home, frame, area, &mut buf);
+        draw(home, frame, area, &mut buf, false);
         buf
     }
 
@@ -709,6 +724,88 @@ mod tests {
     }
 
     #[test]
+    fn a_themed_cursor_row_is_solid_not_reversed() {
+        let home = Home::new(context());
+        let area = Rect::new(0, 0, W, H);
+        let mut buf = Buffer::empty(area);
+        draw(&home, 0, area, &mut buf, true);
+        let cursor = u16::try_from(row_of(&text(&buf), "fixer   ")).unwrap();
+        assert!((0..W).all(|x| buf[(x, cursor)].bg == palette(ACCENT)));
+        assert!(
+            buf.content
+                .iter()
+                .all(|cell| !cell.modifier.contains(Modifier::REVERSED))
+        );
+    }
+
+    struct Fill {
+        logo: (u16, u16),
+    }
+
+    impl Backdrop for Fill {
+        fn frames_per_second(&self) -> u64 {
+            10
+        }
+        fn logo_size(&self) -> (u16, u16) {
+            self.logo
+        }
+        fn paint(
+            &mut self,
+            _elapsed: Duration,
+            area: Rect,
+            logo: Option<Rect>,
+            _text: &Buffer,
+            buffer: &mut Buffer,
+        ) {
+            for y in area.top()..area.bottom() {
+                for x in area.left()..area.right() {
+                    buffer[(x, y)].set_char('w').set_bg(Color::Rgb(1, 2, 3));
+                }
+            }
+            if let Some(logo) = logo {
+                for y in logo.top()..logo.bottom() {
+                    for x in logo.left()..logo.right() {
+                        buffer[(x, y)].set_char('L');
+                    }
+                }
+            }
+        }
+        fn mouse(&mut self, _event: MouseEvent) {}
+    }
+
+    #[test]
+    fn a_backdrop_paints_under_the_text_and_the_logo_sits_above() {
+        let home = Home::new(context());
+        let area = Rect::new(0, 0, W, H);
+        let mut buf = Buffer::empty(area);
+        let mut fill = Fill { logo: (10, 3) };
+        draw_frame(&home, 0, Some(&mut fill), Duration::ZERO, area, &mut buf);
+        assert!((35..45).all(|x| buf[(x, 0)].symbol() == "L"));
+        assert!(text(&buf)[4].starts_with("tx-ide"));
+        assert_eq!(buf[(0, 4)].bg, Color::Rgb(1, 2, 3));
+        // The blank between two words is not text: the backdrop shows there.
+        assert_eq!(buf[(6, 4)].symbol(), "w");
+        let cursor = u16::try_from(row_of(&text(&buf), "fixer   ")).unwrap();
+        assert!((0..W).all(|x| buf[(x, cursor)].bg == palette(ACCENT)));
+    }
+
+    #[test]
+    fn no_backdrop_draws_as_before() {
+        let home = Home::new(context());
+        let area = Rect::new(0, 0, W, H);
+        let mut buf = Buffer::empty(area);
+        draw_frame(&home, 0, None, Duration::ZERO, area, &mut buf);
+        assert_eq!(buf, render(&home));
+    }
+
+    #[test]
+    fn a_notice_is_drawn_in_the_footer_line() {
+        let mut home = Home::new(context());
+        home.notify("theme: off".into(), std::time::Instant::now());
+        assert_eq!(text(&render(&home)).pop().unwrap(), "theme: off");
+    }
+
+    #[test]
     fn the_footer_changes_when_finding_asking_and_confirming() {
         let last = |home: &Home| text(&render(home)).pop().unwrap();
         let mut home = Home::new(context());
@@ -866,7 +963,7 @@ mod tests {
         }
         let area = Rect::new(7, 5, 5, 3);
         let mut buf = Buffer::empty(Rect::new(0, 0, 20, 20));
-        draw(&homes[0], 0, area, &mut buf);
+        draw(&homes[0], 0, area, &mut buf, false);
     }
 
     #[test]
@@ -899,13 +996,5 @@ mod tests {
             "{}",
             status("kill")
         );
-    }
-
-    #[test]
-    fn the_256_colour_palette_maps_rgb_into_the_cube_and_leaves_others() {
-        assert_eq!(indexed(Color::Rgb(0, 0, 0)), Color::Indexed(16));
-        assert_eq!(indexed(Color::Rgb(255, 255, 255)), Color::Indexed(231));
-        assert_eq!(indexed(Color::Rgb(255, 0, 0)), Color::Indexed(196));
-        assert_eq!(indexed(Color::Red), Color::Red);
     }
 }

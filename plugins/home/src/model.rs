@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use tx_core::LlmEngineState;
@@ -204,6 +204,7 @@ pub enum Outcome {
     Stay,
     Close,
     Run(Action),
+    NextTheme,
 }
 
 /// A question on the footer line, answered by the next key.
@@ -247,7 +248,13 @@ pub struct Home {
     popup: bool,
     /// The trailing pseudo-project of the views under no project.
     loose_views: Project,
+    /// A backdrop catalogue is installed: `b` cycles themes.
+    themed: bool,
+    notice: Option<(String, Instant)>,
 }
+
+/// How long a notice replaces the footer.
+const NOTICE: Duration = Duration::from_secs(2);
 
 impl Home {
     /// The floor: the home pane's own TUI, which never closes on `q`.
@@ -267,6 +274,8 @@ impl Home {
                 name: "views".into(),
                 path: PathBuf::new(),
             },
+            themed: false,
+            notice: None,
         };
         home.cursor = home.anchor(None);
         home
@@ -381,6 +390,28 @@ impl Home {
             && self.context.views.is_empty()
     }
 
+    /// A backdrop catalogue is installed: `b` cycles themes.
+    pub fn set_themed(&mut self, themed: bool) {
+        self.themed = themed;
+    }
+
+    /// Shown in place of the footer for [`NOTICE`] from `now`.
+    pub fn notify(&mut self, text: String, now: Instant) {
+        self.notice = Some((text, now));
+    }
+
+    /// Drops a notice that has run its time; whether one was dropped.
+    pub fn expire_notice(&mut self, now: Instant) -> bool {
+        let expired = self
+            .notice
+            .as_ref()
+            .is_some_and(|(_, shown)| now.duration_since(*shown) >= NOTICE);
+        if expired {
+            self.notice = None;
+        }
+        expired
+    }
+
     pub fn footer(&self) -> String {
         if let Some(Confirm::Stop(id)) = &self.confirm {
             let name = self
@@ -396,6 +427,9 @@ impl Home {
             Some(Input::Ask(text)) => return format!("ask › {text}"),
             None => {}
         }
+        if let Some((text, _)) = &self.notice {
+            return text.clone();
+        }
         let hint = if self.is_first_run() {
             FIRST_RUN_FOOTER
         } else if self.cursor_agent().is_some_and(is_ended) {
@@ -403,11 +437,10 @@ impl Home {
         } else {
             MAIN_FOOTER
         };
-        if self.popup {
-            format!("{hint} · q close")
-        } else {
-            hint.to_owned()
-        }
+        let close = if self.popup { " · q close" } else { "" };
+        // Last, so a narrow popup cuts it rather than `q close`.
+        let theme = if self.themed { " · b theme" } else { "" };
+        format!("{hint}{close}{theme}")
     }
 
     /// The first unfolded agent whose [`Detail`] the context lacks.
@@ -474,6 +507,7 @@ impl Home {
                     return Outcome::Run(Action::Artifacts(agent.id.clone()));
                 }
             }
+            KeyCode::Char('b') if self.themed => return Outcome::NextTheme,
             KeyCode::Char('t' | 'T') => return Outcome::Run(Action::Timeline),
             KeyCode::Char('L') => return Outcome::Run(Action::Tutor),
             KeyCode::Char('?' | 'K') => self.view = View::Keys(0),
@@ -1344,6 +1378,54 @@ pub(crate) mod tests {
             "q leaves a sub-view first"
         );
         assert_eq!(popup.view(), View::Main);
+    }
+
+    #[test]
+    fn b_asks_for_the_next_theme_in_normal_mode() {
+        let mut home = Home::new(context());
+        home.set_themed(true);
+        assert_eq!(home.key(KeyCode::Char('b')), Outcome::NextTheme);
+        assert_eq!(home.key(KeyCode::Char('t')), Outcome::Run(Action::Timeline));
+        assert_eq!(home.footer(), format!("{MAIN_FOOTER} · b theme"));
+        home.set_themed(false);
+        assert_eq!(home.key(KeyCode::Char('b')), Outcome::Stay);
+        assert_eq!(home.footer(), MAIN_FOOTER);
+    }
+
+    #[test]
+    fn b_theme_comes_after_q_close() {
+        let mut popup = Home::new_popup(context());
+        popup.set_themed(true);
+        assert_eq!(popup.footer(), format!("{MAIN_FOOTER} · q close · b theme"));
+    }
+
+    #[test]
+    fn b_types_in_find_and_ask_modes() {
+        for opener in ['f', '/'] {
+            let mut home = Home::new(context());
+            home.set_themed(true);
+            home.key(KeyCode::Char(opener));
+            assert_eq!(home.key(KeyCode::Char('b')), Outcome::Stay);
+            let prompt = if opener == 'f' {
+                "find › b"
+            } else {
+                "ask › b"
+            };
+            assert_eq!(home.footer(), prompt);
+        }
+    }
+
+    #[test]
+    fn a_notice_replaces_the_footer_for_two_seconds() {
+        let mut home = Home::new(context());
+        let now = Instant::now();
+        home.notify("theme: koi".into(), now);
+        assert_eq!(home.footer(), "theme: koi");
+        assert!(!home.expire_notice(now + Duration::from_millis(1900)));
+        assert_eq!(home.footer(), "theme: koi");
+        assert!(home.expire_notice(now + Duration::from_secs(3)));
+        assert_eq!(home.footer(), MAIN_FOOTER);
+        assert!(!home.expire_notice(now + Duration::from_secs(4)));
     }
 
     #[test]

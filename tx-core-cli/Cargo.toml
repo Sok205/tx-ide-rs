@@ -34,6 +34,7 @@ tx-artifacts = { path = "../plugins/artifacts" }
 tx-tour = { path = "../plugins/tour" }
 tx-timeline = { path = "../plugins/timeline" }
 tx-home = { path = "../plugins/home" }
+tx-home-themes = { path = "../plugins/home-themes" }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway = "0.9"
