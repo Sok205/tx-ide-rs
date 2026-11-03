@@ -47,8 +47,6 @@ pub fn is_text(cell: &Cell) -> bool {
 
 pub const MINIMUM_LIST_ROWS: u16 = 10;
 
-const TEXT_DIM: f32 = 0.35;
-
 /// Plain "tx-ide" block letters.
 pub const LOGO: &[&str] = &[
     "███ █ █     ███   █ ███",
@@ -111,6 +109,24 @@ pub fn dim(color: Color, factor: f32) -> Color {
     Color::Rgb(scale(red), scale(green), scale(blue))
 }
 
+/// `color` scaled down, if needed, to be no brighter than `ceiling`; non-`Rgb` colours pass
+/// through.
+pub fn no_brighter_than(color: Color, ceiling: Color) -> Color {
+    let (lightness, limit) = (luminance(color), luminance(ceiling));
+    if lightness > limit {
+        dim(color, limit / lightness)
+    } else {
+        color
+    }
+}
+
+fn luminance(color: Color) -> f32 {
+    let Color::Rgb(red, green, blue) = color else {
+        return 0.0;
+    };
+    0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue)
+}
+
 /// The mean of two `Rgb` colours; for anything else, the first.
 fn mean(first: Color, second: Color) -> Color {
     match (first, second) {
@@ -169,9 +185,16 @@ impl Pixels {
             .unwrap_or(background)
     }
 
-    /// Half-blocks (a space where both halves match), except dimmed background-only spaces under
-    /// home's `text` cells.
-    pub fn render(&self, area: Rect, text: &Buffer, background: Color, buffer: &mut Buffer) {
+    /// Half-blocks (a space where both halves match), except background-only spaces under home's
+    /// `text` cells, no brighter than `text_ceiling` so the text stays readable over bright pixels.
+    pub fn render(
+        &self,
+        area: Rect,
+        text: &Buffer,
+        background: Color,
+        text_ceiling: Color,
+        buffer: &mut Buffer,
+    ) {
         for row in 0..area.height {
             for column in 0..area.width {
                 let (x, y) = (area.x + column, area.y + row);
@@ -180,7 +203,7 @@ impl Pixels {
                 let cell = &mut buffer[(x, y)];
                 if is_text(&text[(x, y)]) {
                     cell.set_char(' ')
-                        .set_bg(palette(dim(mean(top, bottom), TEXT_DIM)));
+                        .set_bg(palette(no_brighter_than(mean(top, bottom), text_ceiling)));
                 } else if top == bottom {
                     // Looks the same as a half-block, and spares the terminal a colour.
                     cell.set_char(' ').set_bg(palette(bottom));
@@ -201,6 +224,7 @@ mod tests {
     const RED: Color = Color::Rgb(255, 0, 0);
     const BLUE: Color = Color::Rgb(0, 0, 255);
     const BACKGROUND: Color = Color::Rgb(10, 20, 30);
+    const CEILING: Color = Color::Rgb(40, 40, 40);
 
     fn two_pixels() -> (Pixels, Rect, Buffer) {
         let mut pixels = Pixels::new(2, 1);
@@ -254,7 +278,7 @@ mod tests {
     #[test]
     fn pixels_outside_text_are_half_blocks() {
         let (pixels, area, mut buffer) = two_pixels();
-        pixels.render(area, &Buffer::empty(area), BACKGROUND, &mut buffer);
+        pixels.render(area, &Buffer::empty(area), BACKGROUND, CEILING, &mut buffer);
         let cell = &buffer[(0, 0)];
         assert_eq!((cell.symbol(), cell.fg, cell.bg), ("▀", RED, BLUE));
         let even = &buffer[(1, 0)];
@@ -262,15 +286,21 @@ mod tests {
     }
 
     #[test]
-    fn pixels_under_text_cells_are_dimmed_spaces() {
+    fn pixels_under_text_cells_are_spaces_capped_at_the_ceiling() {
         let (pixels, area, mut buffer) = two_pixels();
         let mut text = Buffer::empty(area);
         text[(0, 0)].set_char('a');
-        pixels.render(area, &text, BACKGROUND, &mut buffer);
-        let cell = &buffer[(0, 0)];
-        assert_eq!(cell.symbol(), " ");
-        assert_eq!(cell.bg, dim(mean(RED, BLUE), TEXT_DIM));
-        assert_eq!(buffer[(1, 0)].bg, BACKGROUND);
+        text[(1, 0)].set_char('b');
+        pixels.render(area, &text, BACKGROUND, CEILING, &mut buffer);
+        let bright = &buffer[(0, 0)];
+        assert_eq!(bright.symbol(), " ");
+        assert_eq!(
+            bright.bg,
+            no_brighter_than(mean(RED, BLUE), CEILING),
+            "brighter than the ceiling: scaled down"
+        );
+        assert!(luminance(bright.bg) <= luminance(CEILING) + 1.0);
+        assert_eq!(buffer[(1, 0)].bg, BACKGROUND, "darker water stays as it is");
     }
 
     #[test]
@@ -293,11 +323,12 @@ mod tests {
             Rect::default(),
             &nothing,
             BACKGROUND,
+            CEILING,
             &mut Buffer::empty(Rect::default()),
         );
         let area = Rect::new(0, 0, 3, 2);
         let mut buffer = Buffer::empty(area);
-        pixels.render(area, &Buffer::empty(area), BACKGROUND, &mut buffer);
+        pixels.render(area, &Buffer::empty(area), BACKGROUND, CEILING, &mut buffer);
     }
 
     #[test]

@@ -21,6 +21,8 @@ const WATER_LIGHT: (f32, f32, f32) = (30.0, 40.0, 82.0);
 /// Shades per step from `WATER_DEEP` to `WATER_LIGHT`.
 const WATER_SHADES: f32 = 3.0;
 const LOGO_WHITE: Color = Color::Rgb(255, 244, 226);
+/// The brightest water: text cells show the water as it is, and fish under them no brighter.
+const TEXT_CEILING: Color = Color::Rgb(30, 40, 82);
 const STEP: f32 = 1.0 / 60.0;
 /// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
 const MAX_GAP: f32 = 0.25;
@@ -183,7 +185,13 @@ impl Backdrop for Pond {
         for fish in &self.fish {
             fish.draw(seconds, &mut pixels);
         }
-        pixels.render(area, text, palette(Color::Rgb(0, 0, 0)), buffer);
+        pixels.render(
+            area,
+            text,
+            palette(Color::Rgb(0, 0, 0)),
+            TEXT_CEILING,
+            buffer,
+        );
         for ripple in &self.ripples {
             ripple.draw(self.clock, area, text, buffer);
         }
