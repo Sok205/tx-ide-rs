@@ -9,6 +9,7 @@ use tx_core::{Plugin, PluginError, Registry};
 use tx_home::backdrop::{Catalogue, Constructor, install};
 
 pub mod common;
+pub mod abyss;
 pub mod fireflies;
 pub mod koi;
 pub mod rain;
@@ -22,6 +23,7 @@ pub const THEMES: &[(&str, Constructor)] = &[
     ("stars", stars::sky),
     ("fireflies", fireflies::meadow),
     ("rain", rain::window),
+    ("abyss", abyss::deep),
 ];
 
 const OFF: &str = "off";
