@@ -1,0 +1,37 @@
+# tx configuration: ~/.config/tx-ide/config.yaml (`tx help` prints the path in use).
+# Written by `install` with every default spelled out; edit any value. `install` never overwrites
+# this file, so a newer default reaches you only if you copy it from config/tx-ide/config.yaml in
+# the repository. A key you delete falls back to the same default.
+
+# Defaults for `tx create`; a flag given on the command line replaces its key.
+agent:
+  engine: claude               # claude | codex
+  roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
+  model: null                  # null: the engine's own default (for claude, settings.json)
+  effort: null                 # claude: low|medium|high|xhigh|max; codex also none|minimal
+
+# Every plugin, on. `enabled: false` switches one off; `tx plugins` shows the result.
+plugins:
+  engine-claude: { enabled: true }
+  engine-codex: { enabled: true }
+  chat: { enabled: true }
+  ide: { enabled: true }
+  labels: { enabled: true }
+  kill: { enabled: true }
+  picker: { enabled: true }
+  edit: { enabled: true }
+  spawn: { enabled: true }
+  assistant:
+    enabled: true
+    settings: { model: opus, effort: medium }   # what the tx-assistant (prefix+/) runs on
+  mockup: { enabled: true }
+  tutor: { enabled: true }
+  artifacts:
+    enabled: true
+    settings: { editor: nvim }                   # the program an artifact's view runs
+  tour: { enabled: true }
+  timeline: { enabled: true }
+  home: { enabled: true }
+  home-themes:
+    enabled: true
+    settings: { theme: koi }                     # the home's animation; `t` in the home picks another

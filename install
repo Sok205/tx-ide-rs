@@ -6,6 +6,9 @@
 #   2. tx ui install                               the IDE's tmux config from the plugins' resources
 #   2b. ~/.config/nvim and ~/.tmux.conf             links to config/{nvim,tmux.conf}; a real
 #                                                  directory or file there is moved to <path>.bak.<stamp>
+#   2c. ~/.config/tx-ide/config.yaml               tx's config with every default spelled out, copied
+#                                                  from config/tx-ide/config.yaml; an existing file
+#                                                  is yours and is never touched
 #   3. the switch (once; a second run finds nothing to do):
 #      - the old install's `tx` (~/.local/bin/tx) becomes `tx-old`, and ~/.tx-ide/tmux.conf sets
 #        @tx-ide-bin tx-old so the old fragment's prefix+t / prefix+T popups keep working;
@@ -16,7 +19,7 @@
 #      - tx doctor --fix-hooks removes what older tx versions wired.
 #   4. what is left for you to do, printed at the end.
 #
-# Honoured: $HOME, $CARGO_INSTALL_ROOT, $TX_APPNAME (tx's directories), $TX_IDE_HOME (the old
+# Honoured: $HOME, $CARGO_INSTALL_ROOT, $TX_APPNAME, $TX_CONFIG_DIR, $XDG_CONFIG_HOME (tx's directories), $TX_IDE_HOME (the old
 # home, default ~/.tx-ide), $CLAUDE_CONFIG_DIR, $CODEX_HOME. Nothing here talks to a tmux server;
 # reload your old server yourself (the last section says how). Needs cargo, tmux and jq. A run
 # with a sandboxed $HOME (QA) also needs $RUSTUP_HOME and $CARGO_HOME, or rustup finds no toolchain.
@@ -33,6 +36,8 @@ HOME_DIR="${HOME%/}"
 TX_DATA="${TX_DATA_DIR:-${XDG_DATA_HOME:-$HOME_DIR/.local/share}/${TX_APPNAME:-tx-ide}}"
 # Physical, like $REPO, so a symlinked /tmp or home compares equal.
 TX_DATA="$(cd "$TX_DATA" 2>/dev/null && pwd -P || printf '%s' "$TX_DATA")"
+# tx's config dir, by the same rule.
+TX_CONFIG="${TX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME_DIR/.config}/${TX_APPNAME:-tx-ide}}"
 LOCAL_BIN="$HOME_DIR/.local/bin"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}"
 CODEX_DIR="${CODEX_HOME:-$HOME_DIR/.codex}"
@@ -181,6 +186,21 @@ link_config() {
 link_config "$REPO/config/nvim" "$HOME_DIR/.config/nvim"
 link_config "$REPO/config/tmux.conf" "$HOME_DIR/.tmux.conf"
 
+# === 2c: tx's config file ===
+# A copy, not a link: the values are the operator's to change, and a later install must never
+# undo them. A missing key falls back to the same default, so an older copy keeps working.
+header "Write tx's config file"
+TX_CONFIG_FILE="$TX_CONFIG/config.yaml"
+if [[ -e "$TX_CONFIG_FILE" || -L "$TX_CONFIG_FILE" ]]; then
+  ok "$TX_CONFIG_FILE" "exists — left as it is"
+elif ((DRY_RUN)); then
+  would "$TX_CONFIG_FILE" "write the defaults from $REPO/config/tx-ide/config.yaml"
+else
+  mkdir -p "$TX_CONFIG"
+  cp "$REPO/config/tx-ide/config.yaml" "$TX_CONFIG_FILE"
+  ok "$TX_CONFIG_FILE" "written with the defaults"
+fi
+
 # === 3a: the old install becomes tx-old ===
 header "Rename the old install to tx-old"
 # The old installer links ~/.local/bin/tx to <repo>/bin/tx; only that entry is renamed (a
@@ -326,6 +346,7 @@ ${B}The old install, as tx-old:${X}
 
 ${B}Your own config:${X}
   - ~/.config/nvim and ~/.tmux.conf link to $REPO/config; edit them there, they are versioned.
+  - tx's settings are in $TX_CONFIG_FILE (agent defaults for tx create, plugins); a copy, edit it in place.
   - restart your default tmux server once (tmux kill-server on the default socket) so it stops
     sourcing the old fragment; the IDE's server is unaffected.
   - terminal profile: unchanged. The IDE's M-1..9 / Cmd-Opt-digit keys come from the keymap

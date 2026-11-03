@@ -15,7 +15,8 @@ nvim and tmux config (`config/`).
 
 ```bash
 git clone <this-repo> ~/tx-ide-rs
-~/tx-ide-rs/install            # cargo install tx and txi; tx ui install; link ~/.config/nvim and ~/.tmux.conf
+~/tx-ide-rs/install            # cargo install tx and txi; tx ui install; link ~/.config/nvim and ~/.tmux.conf;
+                               # write ~/.config/tx-ide/config.yaml with the defaults (once)
 ~/tx-ide-rs/install --dry-run  # print every change first
 tx ui attach                  # the IDE
 ```
@@ -272,8 +273,10 @@ caller as an agent only when `$TMUX` names tx's own socket; anywhere else the se
 ## Configuration
 
 One file, `<config>/config.yaml` (by default `~/.config/tx-ide/config.yaml`; `--config FILE`
-overrides). `tx help` prints the path. Open it in any editor; nothing writes it for you. Every key is
-optional, and a missing or empty file means every default:
+overrides). `tx help` prints the path. `install` writes it once, with every default spelled out
+(a copy of `config/tx-ide/config.yaml`); after that it is yours, and `install` never touches it
+again. Open it in any editor. Every key is optional: a key you delete, or a missing file, falls
+back to the same default. In short:
 
 ```yaml
 agent:                         # defaults for `tx create`; a flag given replaces its key
