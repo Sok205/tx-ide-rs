@@ -1,14 +1,15 @@
 //! The Claude Code engine for tx-core: `claude <conversation> [--model M] --effort E --no-chrome
-//! --strict-mcp-config --setting-sources project,local --tools Bash,Read,Edit,Write[,Skill]
-//! [--system-prompt <profile text>] --settings <launch settings> --dangerously-skip-permissions
-//! [prompt]`, with every granted skill linked under `.claude/skills/<name>` in the working
-//! directory.
+//! --strict-mcp-config --setting-sources "" --tools Bash,Read,Edit,Write[,Skill] [--plugin-dir
+//! <cwd>/.claude/tx-plugin] [--system-prompt <profile text>] --settings <launch settings>
+//! --dangerously-skip-permissions [prompt]`.
 //!
-//! The launch is minimal: the profile text replaces Claude Code's own system prompt, only the
-//! [`BASE_TOOLS`] are offered (plus `Skill` when the profile grants a skill), and nothing of the
-//! operator's user level reaches the session — no MCP servers or claude.ai connectors, no
-//! claude.ai-synced or bundled skills, no user settings. What the session still needs from user
-//! settings is restated in [`launch_settings`]. The conversation flags depend on the launch mode:
+//! The launch is a clean slate: the profile text replaces Claude Code's own system prompt, only
+//! the [`BASE_TOOLS`] are offered (plus `Skill` when the profile grants a skill), and no setting
+//! source is read — no user, project or local settings, hooks, CLAUDE.md, auto-memory, skills or
+//! commands, and with `--strict-mcp-config` no MCP servers or claude.ai connectors. What the
+//! session still needs is restated in [`launch_settings`]. Granted skills reach it as the skills
+//! of a plugin named [`PLUGIN_NAME`] (so `tx:<skill>`): a manifest and one link per skill under
+//! [`PLUGIN_DIR`] in the working directory. The conversation flags depend on the launch mode:
 //!
 //! | mode   | flags                                                                   |
 //! |--------|-------------------------------------------------------------------------|
@@ -52,7 +53,12 @@ use tx_core::{
 };
 
 pub const CLAUDE_BIN: &str = "claude";
-pub const SKILLS_DIR: &str = ".claude/skills";
+/// The per-agent plugin carrying the granted skills, relative to the working directory.
+pub const PLUGIN_DIR: &str = ".claude/tx-plugin";
+pub const PLUGIN_MANIFEST: &str = ".claude/tx-plugin/.claude-plugin/plugin.json";
+pub const PLUGIN_SKILLS_DIR: &str = ".claude/tx-plugin/skills";
+pub const PLUGIN_NAME: &str = "tx";
+pub const PLUGIN_DIR_FLAG: &str = "--plugin-dir";
 pub const MODEL_FLAG: &str = "--model";
 pub const RESUME_FLAG: &str = "--resume";
 pub const SESSION_ID_FLAG: &str = "--session-id";
@@ -64,8 +70,9 @@ pub const TOOLS_FLAG: &str = "--tools";
 /// Drops every MCP server not passed with `--mcp-config`, the claude.ai connectors included.
 pub const STRICT_MCP_CONFIG_FLAG: &str = "--strict-mcp-config";
 pub const SETTING_SOURCES_FLAG: &str = "--setting-sources";
-/// Leaves out the user source: the operator's `~/.claude/settings.json` and claude.ai skill sync.
-pub const SETTING_SOURCES: &str = "project,local";
+/// No setting source at all: neither the operator's `~/.claude` (settings, CLAUDE.md, skills,
+/// claude.ai skill sync) nor the project's `.claude` and CLAUDE.md.
+pub const SETTING_SOURCES: &str = "";
 /// The built-in tools every launch offers.
 pub const BASE_TOOLS: [&str; 4] = ["Bash", "Read", "Edit", "Write"];
 /// Offered on top of [`BASE_TOOLS`] when the profile grants a skill.
@@ -210,6 +217,17 @@ impl ClaudeAdapter {
             TOOLS_FLAG.to_owned(),
             tools(!request.profile.skill_dirs().is_empty()),
         ]);
+        if !request.profile.skill_dirs().is_empty() {
+            args.extend([
+                PLUGIN_DIR_FLAG.to_owned(),
+                request
+                    .session
+                    .working_directory
+                    .join(PLUGIN_DIR)
+                    .to_string_lossy()
+                    .into_owned(),
+            ]);
+        }
         if !request.profile.text().is_empty() {
             args.extend([
                 SYSTEM_PROMPT_FLAG.to_owned(),
@@ -226,7 +244,13 @@ impl ClaudeAdapter {
         }
         let mut plan = LaunchPlan::new(CLAUDE_BIN).args(args);
         plan.engine_data = stored_data;
-        for link in skill_links(SKILLS_DIR, request.profile.skill_dirs()) {
+        if !request.profile.skill_dirs().is_empty() {
+            plan = plan.workspace(WorkspaceAction::Write {
+                path: PLUGIN_MANIFEST.into(),
+                content: serde_json::json!({ "name": PLUGIN_NAME }).to_string(),
+            });
+        }
+        for link in skill_links(PLUGIN_SKILLS_DIR, request.profile.skill_dirs()) {
             plan = plan.workspace(link);
         }
         plan
@@ -477,13 +501,14 @@ pub fn tools(skills_granted: bool) -> String {
     tools.join(",")
 }
 
-/// `--settings` JSON for every launch. `disableBundledSkills` drops Claude's bundled skills, which
-/// the operator's own `skillOverrides` would otherwise hide; `skipDangerousModePermissionPrompt`
-/// keeps `--dangerously-skip-permissions` from asking for confirmation (default answer: exit),
-/// since the operator's own setting is in the user source this launch leaves out. Every
+/// `--settings` JSON for every launch, restating what the left-out user settings would carry:
+/// `disableBundledSkills` drops Claude's bundled skills, `autoMemoryEnabled: false` keeps
+/// auto-memory off, and `skipDangerousModePermissionPrompt` keeps
+/// `--dangerously-skip-permissions` from asking for confirmation (default answer: exit). Every
 /// [`HOOK_EVENTS`] entry is wired to `hook_command` (no hooks when it is empty).
 pub fn launch_settings(hook_command: &[String]) -> String {
     let mut settings = serde_json::json!({
+        "autoMemoryEnabled": false,
         "disableBundledSkills": true,
         "skipDangerousModePermissionPrompt": true,
     });
@@ -906,15 +931,14 @@ mod tests {
     }
 
     /// The settings of a launch without hooks.
-    const SETTINGS: &str =
-        r#"{"disableBundledSkills":true,"skipDangerousModePermissionPrompt":true}"#;
+    const SETTINGS: &str = r#"{"autoMemoryEnabled":false,"disableBundledSkills":true,"skipDangerousModePermissionPrompt":true}"#;
 
     /// The minimal-launch flags after the effort, for a profile without skills.
     const MINIMAL: [&str; 6] = [
         "--no-chrome",
         "--strict-mcp-config",
         "--setting-sources",
-        "project,local",
+        "",
         "--tools",
         "Bash,Read,Edit,Write",
     ];
@@ -1055,6 +1079,7 @@ mod tests {
         let plan = adapter()
             .start(&LaunchRequest::new(&session, &profile), "go")
             .unwrap();
+        let plugin_dir = dir.path().join(".claude/tx-plugin");
         assert_eq!(
             plan.args,
             argv(&[
@@ -1067,9 +1092,11 @@ mod tests {
                 "--no-chrome",
                 "--strict-mcp-config",
                 "--setting-sources",
-                "project,local",
+                "",
                 "--tools",
                 "Bash,Read,Edit,Write,Skill",
+                "--plugin-dir",
+                &plugin_dir.to_string_lossy(),
                 "--system-prompt",
                 "# Role\nbe good",
                 "--settings",
@@ -1092,13 +1119,17 @@ mod tests {
         assert_eq!(
             plan.workspace,
             vec![
+                WorkspaceAction::Write {
+                    path: ".claude/tx-plugin/.claude-plugin/plugin.json".into(),
+                    content: r#"{"name":"tx"}"#.into(),
+                },
                 WorkspaceAction::Symlink {
                     src: "/skills/one".into(),
-                    dst: ".claude/skills/one".into()
+                    dst: ".claude/tx-plugin/skills/one".into()
                 },
                 WorkspaceAction::Symlink {
                     src: "/other/two".into(),
-                    dst: ".claude/skills/two".into()
+                    dst: ".claude/tx-plugin/skills/two".into()
                 },
             ]
         );
