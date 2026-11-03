@@ -1,5 +1,5 @@
-//! A koi: a spine that trails its head, steered by a wander, its neighbours and the pond's edges,
-//! and drawn as a tapered body with fins and markings.
+//! A koi: a spine that trails its head, steered by a wander, its neighbours, the pond's edges,
+//! food and the pointer, and drawn as a tapered body with fins and markings.
 
 use std::f32::consts::{PI, TAU};
 
@@ -20,6 +20,14 @@ const SEPARATION_WEIGHT: f32 = 1.0;
 const ALIGNMENT_WEIGHT: f32 = 0.2;
 const EDGE_WEIGHT: f32 = 20.0;
 const EDGE_MARGIN: f32 = 4.0;
+const FOOD_RANGE: f32 = 25.0;
+const FOOD_WEIGHT: f32 = 3.0;
+/// How much faster and tighter a fish turns while it goes for food or circles the pointer.
+const FOCUSED_AGILITY: f32 = 3.0;
+const CURIOSITY_RANGE: f32 = 20.0;
+/// How far from the pointer a curious fish circles it.
+const CURIOSITY_RADIUS: f32 = 6.0;
+const CURIOSITY_WEIGHT: f32 = 1.5;
 const BURST_FACTOR: f32 = 2.0;
 const TAIL_BEATS_PER_SECOND: f32 = 0.8;
 
@@ -45,12 +53,20 @@ struct Marking {
     color: Color,
 }
 
+/// What draws a fish's attention, wherever it is: it only reacts within its own ranges.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Attractions {
+    /// The nearest pellet.
+    pub food: Option<(f32, f32)>,
+    pub pointer: Option<(f32, f32)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Fish {
     spine: [(f32, f32); SEGMENTS],
     heading: f32,
     speed: f32,
-    bursting: bool,
+    pub(super) bursting: bool,
     /// Seconds left in the current burst or glide.
     timer: f32,
     wander: f32,
@@ -59,6 +75,30 @@ pub struct Fish {
     pub(super) depth: f32,
     /// Offsets the tail wave so the fish don't beat in step.
     beat: f32,
+}
+
+pub fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
+    (to.0 - from.0).hypot(to.1 - from.1)
+}
+
+/// Straight at the food.
+fn hunger(head: (f32, f32), food: (f32, f32)) -> (f32, f32) {
+    let reach = FOOD_WEIGHT / distance(head, food).max(0.1);
+    ((food.0 - head.0) * reach, (food.1 - head.1) * reach)
+}
+
+/// In towards the pointer, or out from it, to circle it at `CURIOSITY_RADIUS` on whichever side
+/// it already is.
+fn curiosity(head: (f32, f32), heading: f32, pointer: (f32, f32)) -> (f32, f32) {
+    let (offset_x, offset_y) = (pointer.0 - head.0, pointer.1 - head.1);
+    let distance = offset_x.hypot(offset_y).max(0.1);
+    let (radial_x, radial_y) = (offset_x / distance, offset_y / distance);
+    let side = (heading.cos() * offset_y - heading.sin() * offset_x).signum();
+    let inward = ((distance - CURIOSITY_RADIUS) / CURIOSITY_RADIUS).clamp(-1.0, 1.0);
+    (
+        CURIOSITY_WEIGHT * (radial_x * inward + side * radial_y),
+        CURIOSITY_WEIGHT * (radial_y * inward - side * radial_x),
+    )
 }
 
 fn wrap(angle: f32) -> f32 {
@@ -172,6 +212,10 @@ impl Fish {
         fish
     }
 
+    pub fn head(&self) -> (f32, f32) {
+        self.spine[0]
+    }
+
     fn cruise(&self) -> f32 {
         2.0 + self.length * 0.1
     }
@@ -182,12 +226,27 @@ impl Fish {
         seconds: f32,
         neighbours: &[Fish],
         bounds: (f32, f32),
+        attractions: Attractions,
         random: &mut Rng,
     ) {
-        self.pace(seconds, random);
+        let head = self.spine[0];
+        let noticed = Attractions {
+            food: attractions
+                .food
+                .filter(|&food| distance(head, food) <= FOOD_RANGE),
+            pointer: attractions
+                .pointer
+                .filter(|&pointer| distance(head, pointer) <= CURIOSITY_RANGE),
+        };
+        self.pace(seconds, noticed.food.is_some(), random);
         self.wander = (self.wander + (random.f32() * 2.0 - 1.0) * WANDER_DRIFT * seconds.sqrt())
             .clamp(-WANDER_LIMIT, WANDER_LIMIT);
-        self.turn_towards(self.steering(neighbours, bounds), seconds);
+        let agility = if noticed.food.is_some() || noticed.pointer.is_some() {
+            FOCUSED_AGILITY
+        } else {
+            1.0
+        };
+        self.turn_towards(self.steering(neighbours, bounds, noticed), agility, seconds);
         let (x, y) = self.spine[0];
         let travel = self.speed * seconds;
         self.spine[0] = (
@@ -198,9 +257,10 @@ impl Fish {
     }
 
     /// Alternates bursts at `BURST_FACTOR` × cruise with glides that slowly ease back to cruise.
-    fn pace(&mut self, seconds: f32, random: &mut Rng) {
+    /// A `hungry` fish bursts.
+    fn pace(&mut self, seconds: f32, hungry: bool, random: &mut Rng) {
         self.timer -= seconds;
-        if self.timer <= 0.0 {
+        if self.timer <= 0.0 || (hungry && !self.bursting) {
             self.bursting = !self.bursting;
             self.timer = if self.bursting {
                 0.7 + random.f32() * 0.8
@@ -217,7 +277,7 @@ impl Fish {
     }
 
     /// The heading to steer towards.
-    fn steering(&self, neighbours: &[Fish], bounds: (f32, f32)) -> f32 {
+    fn steering(&self, neighbours: &[Fish], bounds: (f32, f32), noticed: Attractions) -> f32 {
         let head = self.spine[0];
         let wander = self.heading + self.wander;
         let (mut x, mut y) = (wander.cos(), wander.sin());
@@ -248,14 +308,17 @@ impl Fish {
         // corner knows which way to turn.
         let (centre_x, centre_y) = (bounds.0 / 2.0 - head.0, bounds.1 / 2.0 - head.1);
         let pull = EDGE_WEIGHT * near / centre_x.hypot(centre_y).max(1.0);
-        x += centre_x * pull;
-        y += centre_y * pull;
-        y.atan2(x)
+        let (food_x, food_y) = noticed.food.map_or((0.0, 0.0), |food| hunger(head, food));
+        let (curious_x, curious_y) = noticed
+            .pointer
+            .map_or((0.0, 0.0), |pointer| curiosity(head, self.heading, pointer));
+        (y + centre_y * pull + food_y + curious_y).atan2(x + centre_x * pull + food_x + curious_x)
     }
 
-    fn turn_towards(&mut self, target: f32, seconds: f32) {
-        let limit = TURNING * self.speed / self.length;
-        let rate = (wrap(target - self.heading) * STEERING_GAIN).clamp(-limit, limit);
+    /// `agility` scales both the turn rate and its cap.
+    fn turn_towards(&mut self, target: f32, agility: f32, seconds: f32) {
+        let limit = agility * TURNING * self.speed / self.length;
+        let rate = (agility * wrap(target - self.heading) * STEERING_GAIN).clamp(-limit, limit);
         self.heading = (self.heading + rate * seconds).rem_euclid(TAU);
     }
 
@@ -374,7 +437,7 @@ mod tests {
     fn step(school: &mut [Fish], random: &mut Rng) {
         let neighbours = school.to_vec();
         for fish in school.iter_mut() {
-            fish.swim(STEP, &neighbours, BOUNDS, random);
+            fish.swim(STEP, &neighbours, BOUNDS, Attractions::default(), random);
         }
     }
 
@@ -413,7 +476,7 @@ mod tests {
             fish.length = length;
             fish.heading = 0.0;
             fish.speed = 6.0;
-            fish.turn_towards(std::f32::consts::FRAC_PI_2, STEP);
+            fish.turn_towards(std::f32::consts::FRAC_PI_2, 1.0, STEP);
             fish.heading
         };
         assert!(turn(40.0, &mut random) < turn(20.0, &mut random));
