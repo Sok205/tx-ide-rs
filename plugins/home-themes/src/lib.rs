@@ -11,6 +11,7 @@ use tx_home::backdrop::{Catalogue, Constructor, install};
 pub mod common;
 pub mod fireflies;
 pub mod koi;
+pub mod rain;
 pub mod stars;
 
 pub const PLUGIN_ID: &str = "home-themes";
@@ -20,6 +21,7 @@ pub const THEMES: &[(&str, Constructor)] = &[
     ("koi", koi::pond),
     ("stars", stars::sky),
     ("fireflies", fireflies::meadow),
+    ("rain", rain::window),
 ];
 
 const OFF: &str = "off";
