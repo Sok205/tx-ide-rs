@@ -30,6 +30,8 @@ const CLICK_SCATTER: f32 = 3.0;
 const WAKE_DEPOSIT: f32 = 0.5;
 /// How far a full wake moves the water towards (and past) `WATER_LIGHT`.
 const WAKE_LIGHT: f32 = 0.6;
+/// Seconds a still pointer keeps the fish curious: a terminal never says the mouse has left.
+const POINTER_MEMORY: f32 = 3.0;
 
 pub fn pond() -> Box<dyn Backdrop> {
     Box::<Pond>::default()
@@ -49,8 +51,8 @@ struct Pond {
     clock: f32,
     ripples: Vec<Ripple>,
     pellets: Vec<Pellet>,
-    /// In pixels.
-    pointer: Option<(f32, f32)>,
+    /// In pixels, and the `clock` it last moved at.
+    pointer: Option<((f32, f32), f32)>,
     wake: Wake,
     #[cfg(test)]
     steps: usize,
@@ -71,6 +73,12 @@ fn water(x: i32, y: i32, seconds: f32, wake: f32) -> Color {
 }
 
 impl Pond {
+    fn noticed_pointer(&self) -> Option<(f32, f32)> {
+        self.pointer
+            .filter(|(_, moved)| self.clock - moved <= POINTER_MEMORY)
+            .map(|(point, _)| point)
+    }
+
     fn swim(&mut self, elapsed: Duration, area: Rect) {
         let cells = usize::from(area.width) * usize::from(area.height);
         let bounds = (f32::from(area.width), f32::from(area.height) * 2.0);
@@ -97,13 +105,14 @@ impl Pond {
             let now = self.clock;
             // All fish steer off the same moment.
             let neighbours = self.fish.clone();
+            let pointer = self.noticed_pointer();
             for fish in &mut self.fish {
                 let head = fish.head();
                 let attractions = Attractions {
                     food: self.pellets.iter().map(|pellet| pellet.position).min_by(
                         |first, second| distance(head, *first).total_cmp(&distance(head, *second)),
                     ),
-                    pointer: self.pointer,
+                    pointer,
                 };
                 let was_bursting = fish.bursting;
                 fish.swim(STEP, &neighbours, bounds, attractions, &mut self.random);
@@ -212,7 +221,9 @@ impl Backdrop for Pond {
                     strength: 1.0,
                 });
             }
-            MouseEventKind::Moved | MouseEventKind::Drag(_) => self.pointer = Some(point),
+            MouseEventKind::Moved | MouseEventKind::Drag(_) => {
+                self.pointer = Some((point, self.clock));
+            }
             _ => {}
         }
     }
@@ -300,21 +311,37 @@ mod tests {
         pond.fish.truncate(1);
         let head = pond.fish[0].head();
         let pointer = ((head.0 + 40.0) / 2.0, (head.1 + 24.0) / 2.0);
-        pond.pointer = Some(pointer);
-        run(&mut pond, area, 5);
         let (logo, text) = layout(area, pond.logo_size());
         let mut farthest: f32 = 0.0;
-        for tick in 1..=100 {
+        for tick in 1..=200 {
+            pond.pointer = Some((pointer, pond.clock));
             pond.paint(
-                Duration::from_millis(5000 + tick * 50),
+                Duration::from_millis(tick * 50),
                 area,
                 logo,
                 text,
                 &mut Buffer::empty(area),
             );
-            farthest = farthest.max(distance(pond.fish[0].head(), pointer));
+            if tick > 100 {
+                farthest = farthest.max(distance(pond.fish[0].head(), pointer));
+            }
         }
         assert!(farthest < 14.0, "{farthest}");
+    }
+
+    #[test]
+    fn curiosity_fades_after_the_pointer_goes_quiet() {
+        let (mut pond, area) = painted();
+        let moved = MouseEvent {
+            kind: MouseEventKind::Moved,
+            ..click(10, 5)
+        };
+        pond.mouse(moved);
+        assert_eq!(pond.noticed_pointer(), Some((10.0, 11.0)));
+        run(&mut pond, area, 4);
+        assert_eq!(pond.noticed_pointer(), None);
+        pond.mouse(moved);
+        assert_eq!(pond.noticed_pointer(), Some((10.0, 11.0)));
     }
 
     #[test]
