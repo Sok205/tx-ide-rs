@@ -10,6 +10,7 @@ use tx_home::backdrop::{Catalogue, Constructor, install};
 
 pub mod common;
 pub mod abyss;
+pub mod campfire;
 pub mod fireflies;
 pub mod koi;
 pub mod rain;
@@ -26,6 +27,7 @@ pub const THEMES: &[(&str, Constructor)] = &[
     ("rain", rain::window),
     ("abyss", abyss::deep),
     ("snow", snow::pines),
+    ("campfire", campfire::embers),
 ];
 
 const OFF: &str = "off";
