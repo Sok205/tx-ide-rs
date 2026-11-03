@@ -13,7 +13,7 @@ pub trait Backdrop {
     fn frames_per_second(&self) -> u64;
     /// (width, height) of this theme's logo in cells.
     fn logo_size(&self) -> (u16, u16);
-    /// `elapsed`: time since the backdrop was built, with paused time not subtracted.
+    /// `elapsed`: time since the backdrop was built, less the time the pane spent unfocused.
     /// `logo`: the box home reserved, if any. `text`: the region home will write text into.
     fn paint(
         &mut self,

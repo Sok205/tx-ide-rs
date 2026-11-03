@@ -7,7 +7,7 @@
 //! paint waits at most [`FIRST_DATA`] for it; until it arrives the list says it is loading.
 //! Every queued event is handled before a frame is drawn. A frame follows a key, a resize or a
 //! reply at once; while a spinner shows or a focused backdrop animates, frames also come at its
-//! rate, never more often however many events arrive.
+//! rate, never more often however many events arrive. Unfocused, the backdrop's clock stops.
 //! Raw mode and the alternate screen are restored on every exit path. Keys pass [`accept`]
 //! first: no chords, and a home opened by an attach starts with a [`GRACE`] period.
 
@@ -234,7 +234,7 @@ fn event_loop(
     backdrop: &mut Option<Box<dyn Backdrop>>,
 ) -> io::Result<Option<Action>> {
     let started = Instant::now();
-    let mut focused = true;
+    let mut clock = Clock::new(started);
     let mut data = Data {
         requests,
         replies,
@@ -257,7 +257,7 @@ fn event_loop(
     loop {
         changed |= data.receive(home)?;
         data.request(home)?;
-        let animating = focused && backdrop.is_some();
+        let animating = clock.running() && backdrop.is_some();
         let interval = match &backdrop {
             Some(backdrop) if animating => {
                 Duration::from_millis(1000 / backdrop.frames_per_second())
@@ -276,7 +276,7 @@ fn event_loop(
                     backdrop
                         .as_deref_mut()
                         .map(|backdrop| backdrop as &mut dyn Backdrop),
-                    started.elapsed(),
+                    clock.elapsed(last_frame),
                     f.area(),
                     f.buffer_mut(),
                 );
@@ -300,11 +300,11 @@ fn event_loop(
                     continue;
                 }
                 Event::FocusLost => {
-                    focused = false;
+                    clock.pause(Instant::now());
                     continue;
                 }
                 Event::FocusGained => {
-                    focused = true;
+                    clock.resume(Instant::now());
                     changed = true;
                     continue;
                 }
@@ -331,6 +331,42 @@ fn event_loop(
                 Outcome::Run(action) => return Ok(Some(action)),
             }
         }
+    }
+}
+
+/// The backdrop's time: it stands still while the pane is unfocused.
+struct Clock {
+    started: Instant,
+    /// Time spent unfocused before the current focus.
+    paused: Duration,
+    lost: Option<Instant>,
+}
+
+impl Clock {
+    fn new(started: Instant) -> Self {
+        Self {
+            started,
+            paused: Duration::ZERO,
+            lost: None,
+        }
+    }
+
+    fn running(&self) -> bool {
+        self.lost.is_none()
+    }
+
+    fn pause(&mut self, now: Instant) {
+        self.lost.get_or_insert(now);
+    }
+
+    fn resume(&mut self, now: Instant) {
+        if let Some(lost) = self.lost.take() {
+            self.paused += now - lost;
+        }
+    }
+
+    fn elapsed(&self, now: Instant) -> Duration {
+        self.lost.unwrap_or(now) - self.started - self.paused
     }
 }
 
@@ -364,6 +400,22 @@ mod tests {
         home.context.agents.clear();
         home.context.assistant = AssistantState::Creating;
         assert!(spinning(&home));
+    }
+
+    #[test]
+    fn the_backdrop_clock_stands_still_while_unfocused() {
+        let started = Instant::now();
+        let at = |seconds| started + Duration::from_secs(seconds);
+        let mut clock = Clock::new(started);
+        assert_eq!(clock.elapsed(at(2)), Duration::from_secs(2));
+        clock.pause(at(2));
+        clock.pause(at(3));
+        assert!(!clock.running());
+        assert_eq!(clock.elapsed(at(10)), Duration::from_secs(2));
+        clock.resume(at(10));
+        clock.resume(at(11));
+        assert!(clock.running());
+        assert_eq!(clock.elapsed(at(12)), Duration::from_secs(4));
     }
 
     #[test]
