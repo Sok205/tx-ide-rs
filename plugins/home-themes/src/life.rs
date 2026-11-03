@@ -31,6 +31,7 @@ const PATCH_DENSITY: f32 = 0.4;
 const MIN_POPULATION: f32 = 0.02;
 /// Flips per step at or under which the board counts as having stopped changing.
 const STILL_FLIPS: usize = 6;
+/// A board that flips `STILL_FLIPS` cells or fewer per step for 3 s (12 steps) has settled.
 const STALL_STEPS: u32 = 12;
 /// A glider heading down and to the right, as (column, row) offsets.
 const GLIDER: [(i32, i32); 5] = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
@@ -143,9 +144,11 @@ impl Life {
     }
 
     fn advance(&mut self, elapsed: Duration, area: Rect) {
-        if area != self.area {
+        // A move alone keeps the board; only a new size needs a new one.
+        if area.as_size() != self.area.as_size() {
             self.respawn(area);
         }
+        self.area = area;
         for _ in 0..self.steps.due(elapsed, STEP) {
             self.step();
         }
@@ -410,6 +413,16 @@ mod tests {
         let mut life = empty_board();
         life.step();
         assert!(life.population() > 0);
+    }
+
+    #[test]
+    fn a_moved_board_keeps_its_cells() {
+        let mut life = empty_board();
+        life.mouse(click(3, 1));
+        life.advance(Duration::ZERO, Rect::new(5, 2, 40, 10));
+        assert_eq!(life.population(), 5);
+        life.advance(Duration::ZERO, Rect::new(5, 2, 41, 10));
+        assert_ne!(life.cells.len(), 40 * 20, "a new size reseeds");
     }
 
     #[test]

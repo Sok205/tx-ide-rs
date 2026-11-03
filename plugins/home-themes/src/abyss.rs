@@ -125,6 +125,7 @@ impl Abyss {
 
     fn respawn(&mut self, area: Rect) {
         self.area = area;
+        self.pointer = Pointer::default();
         let rows = f32::from(area.height) * 2.0;
         let cells = usize::from(area.width) * usize::from(area.height);
         let count = (cells / CELLS_PER_JELLY).clamp(JELLIES.0, JELLIES.1);
@@ -254,6 +255,7 @@ impl Abyss {
 
 impl Backdrop for Abyss {
     fn frames_per_second(&self) -> u64 {
+        // A slow scene: 12 FPS looks the same as 15 and sends less to tmux.
         12
     }
 
@@ -470,6 +472,21 @@ mod tests {
             ..click(80, 0)
         });
         assert!(abyss.rings.is_empty());
+        assert_eq!(abyss.pointer.noticed(abyss.clock), None);
+    }
+
+    #[test]
+    fn a_new_area_forgets_the_pointer() {
+        let mut abyss = painted();
+        abyss.mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            ..click(10, 5)
+        });
+        paint(
+            &mut abyss,
+            Duration::from_millis(50),
+            Rect::new(0, 0, 60, 20),
+        );
         assert_eq!(abyss.pointer.noticed(abyss.clock), None);
     }
 

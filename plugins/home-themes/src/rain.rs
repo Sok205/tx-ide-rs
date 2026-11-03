@@ -312,13 +312,16 @@ impl Backdrop for Window {
             return;
         };
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) if self.wipes.len() < MAX_WIPES => {
+            MouseEventKind::Down(MouseButton::Left) => {
                 let wipe = Wipe {
-                    start: point,
+                    start: (point.0, point.1 - WIPE_LENGTH / 2.0),
                     born: self.clock,
                 };
                 self.droplets
                     .retain(|droplet| !wipe.covers(droplet.position));
+                if self.wipes.len() == MAX_WIPES {
+                    self.wipes.remove(0);
+                }
                 self.wipes.push(wipe);
             }
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
@@ -461,13 +464,18 @@ mod tests {
     fn a_wipe_clears_droplets() {
         let mut window = bare();
         window.droplets = vec![
-            droplet((10.0, 20.0), false),
             droplet((10.0, 5.0), false),
+            droplet((10.0, 30.0), false),
+            droplet((10.0, 50.0), false),
             droplet((60.0, 20.0), false),
         ];
-        window.mouse(click(10, 5));
+        window.mouse(click(10, 10));
         let remaining: Vec<_> = window.droplets.iter().map(|d| d.position).collect();
-        assert_eq!(remaining, [(10.0, 5.0), (60.0, 20.0)]);
+        assert_eq!(
+            remaining,
+            [(10.0, 50.0), (60.0, 20.0)],
+            "centred on the click"
+        );
         for _ in 0..50 {
             window.spawn();
         }
@@ -492,10 +500,12 @@ mod tests {
     #[test]
     fn clicks_are_capped() {
         let mut window = bare();
-        for _ in 0..200 {
-            window.mouse(click(10, 5));
+        for column in 0..40 {
+            window.mouse(click(column, 5));
         }
-        assert!(window.wipes.len() <= MAX_WIPES, "{}", window.wipes.len());
+        assert_eq!(window.wipes.len(), MAX_WIPES);
+        assert_eq!(window.wipes[0].start.0, f32::from(40 - MAX_WIPES as u16));
+        assert_eq!(window.wipes[MAX_WIPES - 1].start.0, 39.0, "the newest wins");
     }
 
     #[test]

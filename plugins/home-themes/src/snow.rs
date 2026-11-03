@@ -80,9 +80,9 @@ struct Pines {
     steps: Steps,
     /// The last painted area, which mouse events are relative to and the scene was built for.
     area: Rect,
-    /// Sky, ground and pines: one colour per pixel, row by row.
+    /// Sky, ground and trees: one colour per pixel, row by row.
     scene: Vec<Color>,
-    pines: Vec<Pine>,
+    trees: Vec<Pine>,
     /// The y of the highest solid pixel in each column.
     surface: Vec<i32>,
     /// Pixels of snow lying on `surface`, per column.
@@ -157,7 +157,7 @@ impl Pines {
             })
             .collect();
         let count = self.random.usize(MIN_PINES..=MAX_PINES);
-        self.pines = (0..count)
+        self.trees = (0..count)
             .map(|index| {
                 let height = ((rows as f32 * (0.28 + 0.27 * self.random.f32())) as i32).max(6);
                 let slot = width as f32 / count as f32;
@@ -171,7 +171,7 @@ impl Pines {
             })
             .collect();
         self.surface = vec![ground_top; width];
-        for pine in &self.pines {
+        for pine in &self.trees {
             for row in 0..pine.height {
                 let y = ground_top - pine.height + row;
                 let half = pine.half_width(row);
@@ -222,9 +222,13 @@ impl Pines {
     }
 
     fn shake(&mut self, point: (f32, f32)) {
-        let reach = |pine: &&Pine| (pine.x - point.0 as i32).abs() <= pine.widest + NEAR_PINE;
+        let ground_top = self.ground_top();
+        let reach = |pine: &&Pine| {
+            (pine.x - point.0 as i32).abs() <= pine.widest + NEAR_PINE
+                && point.1 as i32 >= ground_top - pine.height - NEAR_PINE
+        };
         let Some(pine) = self
-            .pines
+            .trees
             .iter()
             .filter(reach)
             .min_by_key(|pine| (pine.x - point.0 as i32).abs())
@@ -232,10 +236,11 @@ impl Pines {
             return;
         };
         let (left, right) = (pine.x - pine.widest, pine.x + pine.widest);
-        let ground_top = self.ground_top();
         let columns: Vec<usize> = (0..self.width())
             .filter(|&column| {
-                (left..=right).contains(&(column as i32)) && self.surface[column] < ground_top
+                (left..=right).contains(&(column as i32))
+                    && self.surface[column] < ground_top
+                    && self.depth[column] > 0
             })
             .collect();
         if columns.is_empty() {
@@ -485,7 +490,7 @@ mod tests {
     fn a_click_shakes_a_pine() {
         let mut pines = painted();
         pines.flakes.clear();
-        let pine = &pines.pines[0];
+        let pine = &pines.trees[0];
         let column = pine.x as usize;
         pines.depth[column] = 2;
         pines.settled.push_back(column);
@@ -497,9 +502,26 @@ mod tests {
     }
 
     #[test]
+    fn a_click_high_above_a_pine_or_on_a_bare_one_shakes_nothing() {
+        let mut pines = painted();
+        pines.flakes.clear();
+        let column = pines.trees[0].x as usize;
+        pines.depth[column] = 2;
+        pines.mouse(click(column as u16, 0));
+        assert_eq!(
+            pines.depth[column], 2,
+            "the sky above the pine is not the pine"
+        );
+        pines.depth[column] = 0;
+        let row = (pines.surface[column] / 2) as u16;
+        pines.mouse(click(column as u16, row));
+        assert!(pines.flakes.is_empty(), "no snow, no burst");
+    }
+
+    #[test]
     fn clicks_are_capped() {
         let mut pines = painted();
-        let column = pines.pines[0].x as u16;
+        let column = pines.trees[0].x as u16;
         for _ in 0..200 {
             pines.mouse(click(column, 12));
         }
