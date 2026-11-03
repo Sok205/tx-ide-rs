@@ -35,6 +35,7 @@ const WAKE_LIGHT: f32 = 0.6;
 /// Live ripples at most: each repaints its whole ring every frame, so rapid clicks would flood
 /// tmux.
 const MAX_RIPPLES: usize = 12;
+const MAX_PELLETS: usize = 64;
 
 pub fn pond() -> Box<dyn Backdrop> {
     Box::<Pond>::default()
@@ -130,7 +131,8 @@ impl Pond {
                     .iter()
                     .position(|pellet| distance(head, pellet.position) <= EAT_RANGE)
                 {
-                    self.pellets.swap_remove(eaten);
+                    // `remove`, not `swap_remove`: the oldest stay first, for the cap to drop.
+                    self.pellets.remove(eaten);
                     add_ripple(
                         &mut self.ripples,
                         Ripple {
@@ -209,6 +211,8 @@ impl Backdrop for Pond {
                         born: self.clock,
                     });
                 }
+                let excess = self.pellets.len().saturating_sub(MAX_PELLETS);
+                self.pellets.drain(..excess);
                 add_ripple(
                     &mut self.ripples,
                     Ripple {
@@ -300,6 +304,18 @@ mod tests {
             pond.ripples[0].center,
             (f32::from(50 - MAX_RIPPLES as u16), 11.0)
         );
+    }
+
+    #[test]
+    fn clicks_are_capped() {
+        let (mut pond, _) = painted();
+        for _ in 0..30 {
+            pond.mouse(click(10, 5));
+        }
+        pond.mouse(click(60, 5));
+        assert_eq!(pond.pellets.len(), MAX_PELLETS);
+        assert!(distance(pond.pellets[MAX_PELLETS - 1].position, (60.0, 11.0)) <= 3.0);
+        assert!(distance(pond.pellets[0].position, (10.0, 11.0)) <= 3.0);
     }
 
     #[test]
