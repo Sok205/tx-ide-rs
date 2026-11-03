@@ -34,7 +34,7 @@ const WAKE_DEPOSIT: f32 = 0.5;
 const WAKE_LIGHT: f32 = 0.6;
 /// Live ripples at most: each repaints its whole ring every frame, so rapid clicks would flood
 /// tmux.
-const MAX_RIPPLES: usize = 12;
+const MAX_RIPPLES: usize = 6;
 const MAX_PELLETS: usize = 64;
 
 pub fn pond() -> Box<dyn Backdrop> {

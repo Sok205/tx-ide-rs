@@ -277,9 +277,11 @@ pub mod tests {
 
     /// Paints `backdrop` frame by frame at its fps on 250x70 (logo box from `layout`, text layer =
     /// a home-like layer: 8 rows of text) and diffs each shown frame with the one before. After a
-    /// 10 s warm-up, so periodic events are due: the mean over 2 s is ≤ 400 changed cells; after a
-    /// left click + a hover, every frame of the next 1 s is ≤ 1200 and their mean ≤ 400; through
-    /// 10 rapid clicks at different points and the 1 s after, every frame is ≤ 1200.
+    /// 10 s warm-up, through 20 s idle, so periodic events show: every frame is ≤ 1200 changed
+    /// cells and every 2 s mean ≤ 400. After a left click + a hover, every frame of the next 1 s
+    /// is ≤ 1200 and their mean ≤ 400. Through 2 s of a hover sweeping the pane, a click every
+    /// fourth frame: every frame ≤ 1200, mean ≤ 400. Through 10 rapid clicks at different points
+    /// and the 1 s after, every frame is ≤ 1200.
     pub fn assert_within_budget(backdrop: &mut dyn Backdrop) {
         let area = Rect::new(0, 0, 250, 70);
         let (logo, content) = layout(area, backdrop.logo_size());
@@ -306,11 +308,15 @@ pub mod tests {
         for _ in 0..=10 * fps {
             changed(backdrop);
         }
-        let calm: Vec<usize> = (0..2 * fps).map(|_| changed(backdrop)).collect();
+        let calm: Vec<usize> = (0..20 * fps).map(|_| changed(backdrop)).collect();
         assert!(
-            mean(&calm) <= MEAN_BUDGET,
-            "{} changed cells per frame",
-            mean(&calm)
+            calm.iter().all(|&count| count <= BURST_BUDGET),
+            "{calm:?} changed cells while idle"
+        );
+        let busiest = calm.windows(2 * fps as usize).map(mean).max();
+        assert!(
+            busiest <= Some(MEAN_BUDGET),
+            "{busiest:?} changed cells per frame over 2 s idle"
         );
         backdrop.mouse(mouse(MouseEventKind::Down(MouseButton::Left), 60, 30));
         backdrop.mouse(mouse(MouseEventKind::Moved, 64, 33));
@@ -323,6 +329,27 @@ pub mod tests {
             mean(&busy) <= MEAN_BUDGET,
             "{} changed cells per frame in the second after a click and a hover",
             mean(&busy)
+        );
+        let sweep = 2 * fps;
+        let sustained: Vec<usize> = (0..sweep)
+            .map(|index| {
+                let column = (index * u64::from(area.width - 1) / (sweep - 1)) as u16;
+                let row = (index * u64::from(area.height - 1) / (sweep - 1)) as u16;
+                backdrop.mouse(mouse(MouseEventKind::Moved, column, row));
+                if index % 4 == 0 {
+                    backdrop.mouse(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+                }
+                changed(backdrop)
+            })
+            .collect();
+        assert!(
+            sustained.iter().all(|&count| count <= BURST_BUDGET),
+            "{sustained:?} changed cells through a hover sweep and clicks"
+        );
+        assert!(
+            mean(&sustained) <= MEAN_BUDGET,
+            "{} changed cells per frame through a hover sweep and clicks",
+            mean(&sustained)
         );
         let mut clicks = Vec::new();
         for index in 0..10 {
