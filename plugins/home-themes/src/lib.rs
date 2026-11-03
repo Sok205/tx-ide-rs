@@ -9,13 +9,18 @@ use tx_core::{Plugin, PluginError, Registry};
 use tx_home::backdrop::{Catalogue, Constructor, install};
 
 pub mod common;
+pub mod fireflies;
 pub mod koi;
 pub mod stars;
 
 pub const PLUGIN_ID: &str = "home-themes";
 
 /// The only place theme names appear; the first is the default.
-pub const THEMES: &[(&str, Constructor)] = &[("koi", koi::pond), ("stars", stars::sky)];
+pub const THEMES: &[(&str, Constructor)] = &[
+    ("koi", koi::pond),
+    ("stars", stars::sky),
+    ("fireflies", fireflies::meadow),
+];
 
 const OFF: &str = "off";
 
@@ -104,10 +109,16 @@ mod tests {
 
     #[test]
     fn an_unknown_name_lists_the_known_ones() {
+        let known = THEMES.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", ");
         assert_eq!(
             theme(&json!({"theme": "nope"})).unwrap_err(),
-            r#"settings.theme must be one of: koi, stars, got "nope""#
+            format!(r#"settings.theme must be one of: {known}, got "nope""#)
         );
+    }
+
+    #[test]
+    fn koi_stays_the_default() {
+        assert_eq!(THEMES[0].0, "koi");
     }
 
     #[test]
