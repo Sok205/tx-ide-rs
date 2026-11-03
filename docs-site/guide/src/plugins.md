@@ -6,9 +6,12 @@ verbs and key. Verbs starting with `_` are internal: key bindings, hooks and pop
 
 ## Engines
 
-**`engine-claude`** registers the Claude Code adapter. It launches
-`claude --session-id <tx id> --append-system-prompt <profile> --dangerously-skip-permissions …`
-(or `--resume`, or `--resume … --fork-session` for a fork), links granted skills under
+**`engine-claude`** registers the Claude Code adapter. It launches a minimal session,
+`claude --session-id <tx id> --strict-mcp-config --setting-sources project,local --tools
+Bash,Read,Edit,Write[,Skill] --system-prompt <profile> --dangerously-skip-permissions …`
+(or `--resume`, or `--resume … --fork-session` for a fork): the profile replaces Claude Code's
+own system prompt, and no MCP servers, claude.ai connectors, synced or bundled skills, or user
+settings reach the session. It links granted skills under
 `.claude/skills/`, and wires Claude's hooks to `txi hook <Event>`. It keeps
 `conversation_id`, `transcript_path`, `model` and `effort` under `ext.claude`, archives each
 transcript with its sidecar directory, and restores it for a resume when Claude has cleaned it up.

@@ -1,7 +1,14 @@
 //! The Claude Code engine for tx-core: `claude <conversation> [--model M] --effort E --no-chrome
-//! --append-system-prompt <profile text> --dangerously-skip-permissions [prompt]`, with every
-//! granted skill linked under `.claude/skills/<name>` in the working directory. The conversation
-//! flags depend on the launch mode:
+//! --strict-mcp-config --setting-sources project,local --tools Bash,Read,Edit,Write[,Skill]
+//! [--system-prompt <profile text>] --settings <launch settings> --dangerously-skip-permissions
+//! [prompt]`, with every granted skill linked under `.claude/skills/<name>` in the working
+//! directory.
+//!
+//! The launch is minimal: the profile text replaces Claude Code's own system prompt, only the
+//! [`BASE_TOOLS`] are offered (plus `Skill` when the profile grants a skill), and nothing of the
+//! operator's user level reaches the session — no MCP servers or claude.ai connectors, no
+//! claude.ai-synced or bundled skills, no user settings. What the session still needs from user
+//! settings is restated in [`launch_settings`]. The conversation flags depend on the launch mode:
 //!
 //! | mode   | flags                                                                   |
 //! |--------|-------------------------------------------------------------------------|
@@ -52,7 +59,17 @@ pub const SESSION_ID_FLAG: &str = "--session-id";
 pub const FORK_SESSION_FLAG: &str = "--fork-session";
 pub const EFFORT_FLAG: &str = "--effort";
 pub const NO_CHROME_FLAG: &str = "--no-chrome";
-pub const APPEND_SYSTEM_PROMPT_FLAG: &str = "--append-system-prompt";
+pub const SYSTEM_PROMPT_FLAG: &str = "--system-prompt";
+pub const TOOLS_FLAG: &str = "--tools";
+/// Drops every MCP server not passed with `--mcp-config`, the claude.ai connectors included.
+pub const STRICT_MCP_CONFIG_FLAG: &str = "--strict-mcp-config";
+pub const SETTING_SOURCES_FLAG: &str = "--setting-sources";
+/// Leaves out the user source: the operator's `~/.claude/settings.json` and claude.ai skill sync.
+pub const SETTING_SOURCES: &str = "project,local";
+/// The built-in tools every launch offers.
+pub const BASE_TOOLS: [&str; 4] = ["Bash", "Read", "Edit", "Write"];
+/// Offered on top of [`BASE_TOOLS`] when the profile grants a skill.
+pub const SKILL_TOOL: &str = "Skill";
 pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
 pub const SETTINGS_FLAG: &str = "--settings";
 /// The slash command that exits the CLI cleanly: its `SessionEnd` hook fires and the
@@ -187,20 +204,23 @@ impl ClaudeAdapter {
                 .unwrap_or(DEFAULT_EFFORT.as_str())
                 .to_owned(),
             NO_CHROME_FLAG.to_owned(),
+            STRICT_MCP_CONFIG_FLAG.to_owned(),
+            SETTING_SOURCES_FLAG.to_owned(),
+            SETTING_SOURCES.to_owned(),
+            TOOLS_FLAG.to_owned(),
+            tools(!request.profile.skill_dirs().is_empty()),
         ]);
         if !request.profile.text().is_empty() {
             args.extend([
-                APPEND_SYSTEM_PROMPT_FLAG.to_owned(),
+                SYSTEM_PROMPT_FLAG.to_owned(),
                 request.profile.text().to_owned(),
             ]);
         }
-        if !request.hook_command.is_empty() {
-            args.extend([
-                SETTINGS_FLAG.to_owned(),
-                hook_settings(request.hook_command),
-            ]);
-        }
-        args.push(SKIP_PERMISSIONS_FLAG.to_owned());
+        args.extend([
+            SETTINGS_FLAG.to_owned(),
+            launch_settings(request.hook_command),
+            SKIP_PERMISSIONS_FLAG.to_owned(),
+        ]);
         if !prompt.is_empty() {
             args.push(prompt.to_owned());
         }
@@ -448,9 +468,33 @@ pub fn conversation_started(current: &Value, payload: &Value) -> Option<Value> {
     Some(Value::Object(data))
 }
 
-/// `--settings` JSON wiring every [`HOOK_EVENTS`] entry to `hook_command`. Inline settings
-/// add to the user's own hooks rather than replacing them.
-pub fn hook_settings(hook_command: &[String]) -> String {
+/// The `--tools` list: [`BASE_TOOLS`], plus [`SKILL_TOOL`] when a skill is granted.
+pub fn tools(skills_granted: bool) -> String {
+    let mut tools = BASE_TOOLS.to_vec();
+    if skills_granted {
+        tools.push(SKILL_TOOL);
+    }
+    tools.join(",")
+}
+
+/// `--settings` JSON for every launch. `disableBundledSkills` drops Claude's bundled skills, which
+/// the operator's own `skillOverrides` would otherwise hide; `skipDangerousModePermissionPrompt`
+/// keeps `--dangerously-skip-permissions` from asking for confirmation (default answer: exit),
+/// since the operator's own setting is in the user source this launch leaves out. Every
+/// [`HOOK_EVENTS`] entry is wired to `hook_command` (no hooks when it is empty).
+pub fn launch_settings(hook_command: &[String]) -> String {
+    let mut settings = serde_json::json!({
+        "disableBundledSkills": true,
+        "skipDangerousModePermissionPrompt": true,
+    });
+    if !hook_command.is_empty() {
+        settings["hooks"] = hook_settings(hook_command);
+    }
+    settings.to_string()
+}
+
+/// The `hooks` settings object wiring every [`HOOK_EVENTS`] entry to `hook_command`.
+fn hook_settings(hook_command: &[String]) -> Value {
     let hooks: serde_json::Map<String, Value> = HOOK_EVENTS
         .iter()
         .map(|event| {
@@ -465,7 +509,7 @@ pub fn hook_settings(hook_command: &[String]) -> String {
             ((*event).to_owned(), entry)
         })
         .collect();
-    serde_json::json!({ "hooks": hooks }).to_string()
+    Value::Object(hooks)
 }
 
 /// Claude's project-dir name for an absolute path: every `/` and `.` becomes `-`.
@@ -861,16 +905,32 @@ mod tests {
         }
     }
 
-    /// What every launch ends with when no option is set.
-    const TAIL: [&str; 4] = [
-        "--effort",
-        "high",
+    /// The settings of a launch without hooks.
+    const SETTINGS: &str =
+        r#"{"disableBundledSkills":true,"skipDangerousModePermissionPrompt":true}"#;
+
+    /// The minimal-launch flags after the effort, for a profile without skills.
+    const MINIMAL: [&str; 6] = [
         "--no-chrome",
-        "--dangerously-skip-permissions",
+        "--strict-mcp-config",
+        "--setting-sources",
+        "project,local",
+        "--tools",
+        "Bash,Read,Edit,Write",
     ];
 
+    /// What every launch ends with when no option is set and the profile is empty.
+    fn tail() -> Vec<&'static str> {
+        [
+            &["--effort", "high"][..],
+            &MINIMAL[..],
+            &["--settings", SETTINGS, "--dangerously-skip-permissions"][..],
+        ]
+        .concat()
+    }
+
     fn with_tail(head: &[&str]) -> Vec<String> {
-        argv(&[head, &TAIL[..]].concat())
+        argv(&[head, &tail()[..]].concat())
     }
 
     #[test]
@@ -924,16 +984,20 @@ mod tests {
             .unwrap();
         assert_eq!(
             plan.args,
-            argv(&[
-                "--resume",
-                "chat-42",
-                "--effort",
-                "high",
-                "--no-chrome",
-                "--append-system-prompt",
-                "role",
-                "--dangerously-skip-permissions",
-            ])
+            argv(
+                &[
+                    &["--resume", "chat-42", "--effort", "high"][..],
+                    &MINIMAL[..],
+                    &[
+                        "--system-prompt",
+                        "role",
+                        "--settings",
+                        SETTINGS,
+                        "--dangerously-skip-permissions",
+                    ][..],
+                ]
+                .concat()
+            )
         );
         assert_eq!(plan.engine_data, None, "a resume keeps the data as it is");
         // No data yet (or hand-edited junk): the conversation is the one named after the session.
@@ -1001,8 +1065,15 @@ mod tests {
                 "--effort",
                 "medium",
                 "--no-chrome",
-                "--append-system-prompt",
+                "--strict-mcp-config",
+                "--setting-sources",
+                "project,local",
+                "--tools",
+                "Bash,Read,Edit,Write,Skill",
+                "--system-prompt",
                 "# Role\nbe good",
+                "--settings",
+                SETTINGS,
                 "--dangerously-skip-permissions",
                 "go",
             ])
@@ -1042,14 +1113,14 @@ mod tests {
             .unwrap();
         assert_eq!(
             plan.args,
-            argv(&[
-                "--session-id",
-                session.id.as_str(),
-                "--effort",
-                "max",
-                "--no-chrome",
-                "--dangerously-skip-permissions"
-            ])
+            argv(
+                &[
+                    &["--session-id", session.id.as_str(), "--effort", "max"][..],
+                    &MINIMAL[..],
+                    &["--settings", SETTINGS, "--dangerously-skip-permissions"][..],
+                ]
+                .concat()
+            )
         );
     }
 
@@ -1184,6 +1255,8 @@ mod tests {
             .unwrap();
         assert_eq!(plan.args[at + 2], "--dangerously-skip-permissions");
         let settings: Value = serde_json::from_str(&plan.args[at + 1]).unwrap();
+        assert_eq!(settings["disableBundledSkills"], true);
+        assert_eq!(settings["skipDangerousModePermissionPrompt"], true);
         let hooks = settings["hooks"].as_object().unwrap();
         assert_eq!(
             hooks.keys().map(String::as_str).collect::<Vec<_>>(),
