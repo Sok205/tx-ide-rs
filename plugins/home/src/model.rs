@@ -432,9 +432,10 @@ impl Home {
         } else {
             MAIN_FOOTER
         };
-        let theme = if self.themed { " · b theme" } else { "" };
         let close = if self.popup { " · q close" } else { "" };
-        format!("{hint}{theme}{close}")
+        // Last, so a narrow popup cuts it rather than `q close`.
+        let theme = if self.themed { " · b theme" } else { "" };
+        format!("{hint}{close}{theme}")
     }
 
     /// The first unfolded agent whose [`Detail`] the context lacks.
@@ -1384,6 +1385,13 @@ pub(crate) mod tests {
         home.themed = false;
         assert_eq!(home.key(KeyCode::Char('b')), Outcome::Stay);
         assert_eq!(home.footer(), MAIN_FOOTER);
+    }
+
+    #[test]
+    fn b_theme_comes_after_q_close() {
+        let mut popup = Home::new_popup(context());
+        popup.themed = true;
+        assert_eq!(popup.footer(), format!("{MAIN_FOOTER} · q close · b theme"));
     }
 
     #[test]
