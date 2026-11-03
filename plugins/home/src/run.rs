@@ -13,10 +13,15 @@ use std::io;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, Event,
+    KeyCode, KeyEventKind, KeyModifiers,
+};
+use ratatui::crossterm::execute;
 use tx_client::tmux::Ui;
 use tx_core::{LlmEngineState, TxCore};
 
+use crate::backdrop::{self, Backdrop};
 use crate::data;
 use crate::detail::detail;
 use crate::model::{Action, AssistantState, Context, GRACE, Home, Outcome, accept};
@@ -60,8 +65,22 @@ pub fn run(core: &TxCore, home: &mut Home, options: &Options) -> io::Result<Opti
         let (requests, worker_requests) = channel();
         let (worker_replies, replies) = channel();
         scope.spawn(move || worker(core, &worker_requests, &worker_replies));
+        let mut backdrop = backdrop::chosen().map(|constructor| constructor());
         let mut terminal = ratatui::try_init()?;
-        let result = event_loop(home, options, &mut terminal, &requests, &replies);
+        if backdrop.is_some() {
+            execute!(io::stdout(), EnableMouseCapture, EnableFocusChange)?;
+        }
+        let result = event_loop(
+            home,
+            options,
+            &mut terminal,
+            &requests,
+            &replies,
+            &mut backdrop,
+        );
+        if backdrop.is_some() {
+            let _ = execute!(io::stdout(), DisableMouseCapture, DisableFocusChange);
+        }
         ratatui::restore();
         // Dropping `requests` ends the worker once its current request is done.
         result
@@ -210,9 +229,10 @@ fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     requests: &Sender<Request>,
     replies: &Receiver<Reply>,
+    backdrop: &mut Option<Box<dyn Backdrop>>,
 ) -> io::Result<Option<Action>> {
     let started = Instant::now();
-    let tick = Duration::from_millis(1000 / FPS);
+    let mut focused = true;
     let mut data = Data {
         requests,
         replies,
@@ -230,21 +250,52 @@ fn event_loop(
             return Err(io::Error::other("the data worker stopped"));
         }
     }
-    let mut frame = 0_usize;
     let mut changed = true;
     loop {
         changed |= data.receive(home)?;
         data.request(home)?;
-        if changed || spinning(home) {
-            terminal.draw(|f| ui::draw(home, frame, f.area(), f.buffer_mut()))?;
-            frame = frame.wrapping_add(1);
+        let animating = focused && backdrop.is_some();
+        if changed || animating || spinning(home) {
+            // A coarse spinner clock, so it turns at 4 Hz whatever the frame rate.
+            let spinner = (started.elapsed().as_millis() / 250) as usize;
+            terminal.draw(|f| {
+                ui::draw_frame(
+                    home,
+                    spinner,
+                    backdrop
+                        .as_deref_mut()
+                        .map(|backdrop| backdrop as &mut dyn Backdrop),
+                    started.elapsed(),
+                    f.area(),
+                    f.buffer_mut(),
+                );
+            })?;
             changed = false;
         }
+        let tick = match &backdrop {
+            Some(backdrop) if focused => Duration::from_millis(1000 / backdrop.frames_per_second()),
+            _ => Duration::from_millis(1000 / FPS),
+        };
         if !event::poll(tick)? {
             continue;
         }
         let key = match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
+            Event::Mouse(event) => {
+                if let Some(backdrop) = backdrop.as_deref_mut() {
+                    backdrop.mouse(event);
+                }
+                continue;
+            }
+            Event::FocusLost => {
+                focused = false;
+                continue;
+            }
+            Event::FocusGained => {
+                focused = true;
+                changed = true;
+                continue;
+            }
             Event::Resize(..) => {
                 changed = true;
                 continue;
