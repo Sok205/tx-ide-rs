@@ -31,7 +31,7 @@ const WAKE_DEPOSIT: f32 = 0.5;
 /// How far a full wake moves the water towards (and past) `WATER_LIGHT`.
 const WAKE_LIGHT: f32 = 0.6;
 /// Seconds a still pointer keeps the fish curious: a terminal never says the mouse has left.
-const POINTER_MEMORY: f32 = 3.0;
+const POINTER_MEMORY: f64 = 3.0;
 
 pub fn pond() -> Box<dyn Backdrop> {
     Box::<Pond>::default()
@@ -47,12 +47,12 @@ struct Pond {
     cells: usize,
     /// The last painted area, which mouse events are relative to.
     area: Rect,
-    /// Simulated seconds.
-    clock: f32,
+    /// Simulated seconds; f64 so a pond open for days keeps its precision.
+    clock: f64,
     ripples: Vec<Ripple>,
     pellets: Vec<Pellet>,
     /// In pixels, and the `clock` it last moved at.
-    pointer: Option<((f32, f32), f32)>,
+    pointer: Option<((f32, f32), f64)>,
     wake: Wake,
     #[cfg(test)]
     steps: usize,
@@ -101,7 +101,7 @@ impl Pond {
         self.remainder += gap.as_secs_f32().min(MAX_GAP);
         while self.remainder >= STEP {
             self.remainder -= STEP;
-            self.clock += STEP;
+            self.clock += f64::from(STEP);
             let now = self.clock;
             // All fish steer off the same moment.
             let neighbours = self.fish.clone();

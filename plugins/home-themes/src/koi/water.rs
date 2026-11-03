@@ -18,13 +18,13 @@ const PELLET: Color = Color::Rgb(222, 158, 82);
 
 pub struct Ripple {
     pub center: (f32, f32),
-    pub born: f32,
+    pub born: f64,
     pub strength: f32,
 }
 
 pub struct Pellet {
     pub position: (f32, f32),
-    pub born: f32,
+    pub born: f64,
 }
 
 /// The cell over pixel `point`, unless it is outside `area` or one of home's text cells.
@@ -54,12 +54,12 @@ impl Ripple {
         1.8 + 1.4 * self.strength
     }
 
-    pub fn alive(&self, now: f32) -> bool {
-        now - self.born < self.lifetime()
+    pub fn alive(&self, now: f64) -> bool {
+        ((now - self.born) as f32) < self.lifetime()
     }
 
-    pub fn draw(&self, now: f32, area: Rect, text: &Buffer, buffer: &mut Buffer) {
-        let age = now - self.born;
+    pub fn draw(&self, now: f64, area: Rect, text: &Buffer, buffer: &mut Buffer) {
+        let age = (now - self.born) as f32;
         let radius = RIPPLE_SPEED * age;
         let brightness = (0.4 + 0.6 * self.strength) * (1.0 - age / self.lifetime());
         let color = palette(dim(RIPPLE_LIGHT, brightness));
@@ -79,14 +79,14 @@ impl Ripple {
 }
 
 impl Pellet {
-    pub fn alive(&self, now: f32) -> bool {
-        now - self.born < PELLET_LIFETIME
+    pub fn alive(&self, now: f64) -> bool {
+        ((now - self.born) as f32) < PELLET_LIFETIME
     }
 
     /// Darkens as it sinks.
-    pub fn draw(&self, now: f32, area: Rect, text: &Buffer, buffer: &mut Buffer) {
+    pub fn draw(&self, now: f64, area: Rect, text: &Buffer, buffer: &mut Buffer) {
         if let Some(cell) = surface_cell(area, text, self.position) {
-            let sunk = (now - self.born) / PELLET_LIFETIME;
+            let sunk = (now - self.born) as f32 / PELLET_LIFETIME;
             buffer[cell]
                 .set_char('·')
                 .set_fg(palette(dim(PELLET, 1.0 - 0.7 * sunk)));
