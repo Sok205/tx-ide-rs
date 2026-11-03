@@ -634,8 +634,8 @@ fn check_agent(
     }
 }
 
-/// `${VAR}` stands for a secret, and only as the whole value of an `env` or `headers` entry:
-/// that is the form every engine can pass through.
+/// `${VAR}` stands for a secret, and only as the whole value of an `env` or `headers` entry, or
+/// as `Bearer ${VAR}` in the `Authorization` header: the forms every engine can pass through.
 fn check_server(
     definitions: &McpDefinitions,
     name: &str,
@@ -667,24 +667,39 @@ fn check_server(
         }
     }
     for (entry, value) in secrets {
-        if value.contains("${") && !is_whole_variable(value) {
+        let bearer = secrets_key == "headers" && entry.eq_ignore_ascii_case(AUTHORIZATION_HEADER);
+        let allowed =
+            variable_name(value).is_some() || (bearer && bearer_variable(value).is_some());
+        if value.contains("${") && !allowed {
             problems.push(problem(format!(
-                "{name}.{secrets_key}.{entry}: a variable must be the whole value, `${{NAME}}`"
+                "{name}.{secrets_key}.{entry}: a variable must be the whole value, `${{NAME}}`{}",
+                if bearer { " (or `Bearer ${NAME}`)" } else { "" }
             )));
         }
     }
 }
 
-fn is_whole_variable(value: &str) -> bool {
+/// The one header that may hold a variable inside its value: `Bearer ${NAME}`, which Codex
+/// passes as `bearer_token_env_var`.
+pub const AUTHORIZATION_HEADER: &str = "Authorization";
+const BEARER_PREFIX: &str = "Bearer ";
+
+/// `NAME` when `value` is exactly `${NAME}`.
+pub fn variable_name(value: &str) -> Option<&str> {
     value
         .strip_prefix("${")
         .and_then(|rest| rest.strip_suffix('}'))
-        .is_some_and(|name| {
+        .filter(|name| {
             name.chars()
                 .next()
                 .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
                 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
+}
+
+/// `NAME` when `value` is exactly `Bearer ${NAME}`.
+pub fn bearer_variable(value: &str) -> Option<&str> {
+    value.strip_prefix(BEARER_PREFIX).and_then(variable_name)
 }
 
 #[cfg(test)]
@@ -807,7 +822,7 @@ mod tests {
         write(&root.join("agents/bad.md"), "---\nname: bad\n---\n");
         write(
             &root.join("mcp.json"),
-            "{\"mcpServers\": {\n  \"probe\": {\"command\": \"${BIN}\", \"env\": {\"A\": \"x${B}\", \"C\": \"${C}\"}}\n}}",
+            "{\"mcpServers\": {\n  \"probe\": {\"command\": \"${BIN}\", \"env\": {\"A\": \"x${B}\", \"C\": \"${C}\"}},\n  \"web\": {\"type\": \"http\", \"url\": \"u\", \"headers\": {\"Authorization\": \"Bearer ${T}\", \"X\": \"Bearer ${T}\"}}\n}}",
         );
         let report = Definitions::new([root.clone()]).check(&[]).unwrap();
         let lines: Vec<String> = report
@@ -834,9 +849,10 @@ mod tests {
                 "agents/pm.md:6: \"mcp__other__x\" cuts from \"other\", which is not in `mcpServers`",
                 "mcp.json:2: probe.command: `${VAR}` is allowed only as a whole `env` or `headers` value",
                 "mcp.json:2: probe.env.A: a variable must be the whole value, `${NAME}`",
+                "mcp.json:3: web.headers.X: a variable must be the whole value, `${NAME}`",
             ]
         );
-        assert_eq!((report.agents, report.skills, report.servers), (2, 0, 1));
+        assert_eq!((report.agents, report.skills, report.servers), (2, 0, 2));
         let named = Definitions::new([root])
             .check(&["probe".to_owned(), "x".to_owned()])
             .unwrap();
