@@ -67,7 +67,7 @@ pub const EFFORT_KEY: &str = "effort";
 /// through; the API refuses anything else (codex-cli 0.164.0: "Supported values are: 'none',
 /// 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'"), so tx checks up front.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", try_from = "String")]
 pub enum Effort {
     None,
     Minimal,
@@ -103,17 +103,29 @@ impl Effort {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("unknown effort {0:?} (codex expects none, minimal, low, medium, high, xhigh or max)")]
+#[error(
+    "unknown effort {0:?} (codex expects 1-5 or none, minimal, low, medium, high, xhigh or max)"
+)]
 pub struct InvalidEffort(pub String);
 
 impl FromStr for Effort {
     type Err = InvalidEffort;
 
+    /// A word, or a level `1`–`5` on the tx scale (`tx_core::effort_word`).
     fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let word = tx_core::effort_word(text).unwrap_or(text);
         Self::ALL
             .into_iter()
-            .find(|effort| effort.as_str() == text)
+            .find(|effort| effort.as_str() == word)
             .ok_or_else(|| InvalidEffort(text.to_owned()))
+    }
+}
+
+impl TryFrom<String> for Effort {
+    type Error = InvalidEffort;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
     }
 }
 
@@ -930,7 +942,8 @@ mod tests {
         use serde_json::json;
         let session = record(serde_json::Value::Null);
         for (options, needle) in [
-            (json!({"effort": "extreme"}), "unknown variant `extreme`"),
+            (json!({"effort": "extreme"}), "unknown effort \"extreme\""),
+            (json!({"effort": "6"}), "expects 1-5 or none"),
             (json!({"effort": true}), "invalid type: boolean `true`"),
             (json!({"model": ""}), "model must not be empty"),
             (json!({"model": ["a"]}), "invalid type: sequence"),
@@ -955,6 +968,38 @@ mod tests {
         assert_eq!(Effort::None.as_str(), "none");
         assert_eq!(Effort::XHigh.as_str(), "xhigh");
         assert!("ultra".parse::<Effort>().is_err());
+    }
+
+    /// `1`–`5` are the tx scale; `none` and `minimal` have no level.
+    #[test]
+    fn levels_one_to_five_are_the_scale_words() {
+        let levels = [
+            ("1", Effort::Low),
+            ("2", Effort::Medium),
+            ("3", Effort::High),
+            ("4", Effort::XHigh),
+            ("5", Effort::Max),
+        ];
+        for (level, effort) in levels {
+            assert_eq!(level.parse::<Effort>().unwrap(), effort);
+            assert_eq!(
+                serde_json::from_value::<Effort>(level.into()).unwrap(),
+                effort
+            );
+        }
+        for text in ["0", "6", "x", "-1", "03"] {
+            let error = text.parse::<Effort>().unwrap_err().to_string();
+            assert!(error.contains("expects 1-5 or none, minimal"), "{error}");
+        }
+    }
+
+    #[test]
+    fn configure_stores_a_level_as_its_word() {
+        use serde_json::json;
+        let configured = adapter()
+            .configure(&record(serde_json::Value::Null), &json!({"effort": "4"}))
+            .unwrap();
+        assert_eq!(configured, json!({"effort": "xhigh"}));
     }
 
     #[test]

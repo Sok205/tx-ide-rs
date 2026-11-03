@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod config;
 pub mod core;
+pub mod effort;
 pub mod engine;
 pub mod error;
 pub mod events;
@@ -32,6 +33,7 @@ pub use core::{
     CreateOptions, DeliveryReceipt, ExecutionLocation, ForkOptions, LaunchOptions, ListFilter,
     RefreshResult, SendOptions, Sender, TxCore,
 };
+pub use effort::{EFFORT_SCALE, deserialize_effort, deserialize_optional_effort, effort_word};
 pub use engine::{
     Conversation, EngineError, Input, Key, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction,
     engine_data, hook_shell_command,
