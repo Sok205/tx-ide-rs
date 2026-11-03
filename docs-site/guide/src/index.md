@@ -25,7 +25,7 @@ one front end; every action an operator, a key binding or an agent takes goes th
 
 ## What is in the box
 
-- `tx-core`, the library: agent records, the lifecycle (create, fork, respawn, stop, archive),
+- `tx-core`, the library: agent records, the lifecycle (create, fork, respawn, stop),
   messaging, the plugin host. It never parses arguments and never reads the environment.
 - Two engine adapters, for Claude Code and Codex, which turn a launch request into a command line
   and turn the engine's hook events into agent states.

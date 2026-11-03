@@ -9,7 +9,7 @@ Every agent has one file, `<data>/agents/<id>/agent.json`, and it is the truth. 
 [`Agent`](../internal/tx_core/agent/struct.Agent.html) holds the `id` (a uuid), the `name` (the
 tmux session name), the `engine` (`claude` or `codex`), the `roles`, the `working_directory` (its
 worktree), the `state`, timestamps (`last_modified_at` on every write, `last_activity_at` only
-when the state moves, `archived_at` while archived), `tags`, `parent_id` (ancestry only), and
+when the state moves), `tags`, `parent_id` (ancestry only), and
 `ext`: plugin- and engine-owned data that core never reads.
 
 tmux holds only the link: the session option `@tx-id` is the record id. Session and pane ids are
@@ -46,10 +46,10 @@ built-in `tx` verb:
   conversation (the engine's `resume`).
 - **stop** (`tx stop TARGET`): types the engine's exit command (`/exit`, `/quit`), waits, and
   kills what is left after a grace period.
-- **archive** (`tx archive TARGET`): stops a running agent, then hides it from `tx ls`. Nothing is
-  deleted, and a respawn brings it back.
-- **refresh** (`tx refresh [TARGET]`): marks a record whose tmux session is gone as ended. Reads
-  (`tx ls`, `tx show`) never touch tmux.
+
+There is no archive: an ended agent is finished, `tx ls --ended` lists it, and a respawn brings
+it back. There is no refresh verb either: `tx ls` and `tx show` first mark a record whose tmux
+session is gone as ended, then read.
 
 `tx interrupt`, `tx rename` and `tx tag` round it out.
 
@@ -59,7 +59,7 @@ Every agent runs in its own worktree of the checkout it was given:
 `<data>/worktrees/<repo-key>/<repo>--<name>`, made with `git worktree add --detach … HEAD`. The
 `<repo-key>` is the repository's name plus eight hex digits of a hash of its git common
 directory, so same-named repositories stay apart. The agent's name is the first of `name`,
-`name-2`, … `name-99` not held by an unarchived record. A `--cwd` that is not a git checkout fails
+`name-2`, … `name-99` not held by a running record. A `--cwd` that is not a git checkout fails
 with git's message. The worktree is detached; the agent makes its own branch.
 
 ## Roles, profiles and skills

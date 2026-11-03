@@ -57,19 +57,3 @@ with a single append, so `tail -f` never sees a torn line. On an event, re-read 
 
 **run** holds `tmux.sock`, tx's server. The directory is mode 0700, and the socket path must
 stay at or under 100 bytes, within the Unix socket path limit.
-
-## `tx migrate`
-
-Older versions kept everything in one directory (`~/.tx-core`, or `$TX_CORE_HOME`), with records
-at `sessions/<id>.json`. `tx migrate [--from DIR]` moves such a home into the five directories
-once: roles to `<data>/roles` and `<config>/roles`, `plugins.yaml` to config, records, the log,
-plugin data and resources to data, profiles to state. It refuses while the old server has
-sessions, when the old home already says `MOVED-TO`, and when a destination already holds
-something, so two homes are never merged. It keeps the old directory and finishes with
-`ui install`.
-
-The same command upgrades every version-1 record to `<data>/agents/<id>/agent.json`. Until it has
-run, every other verb refuses with a pointer to `tx migrate`, since the upgrade needs the engine
-plugins and moves files. Each original is kept under `<data>/migration-backup/`; records it cannot
-map go to `<data>/legacy/` and are reported, never aborting the run; a record whose engine plugin
-is disabled waits for a later run.
