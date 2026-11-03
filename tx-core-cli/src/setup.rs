@@ -17,6 +17,7 @@ pub const DEFAULT_APPNAME: &str = "tx-ide";
 /// Under the data dir the roles plugins ship (written by `ui install`); under the config dir
 /// the user's own.
 pub const ROLES_DIR: &str = "roles";
+/// Under each definition root: the skills, the shipped ones and then the user's.
 pub const SKILLS_DIR: &str = "skills";
 /// The internal binary the wired hooks run; installed next to `tx`.
 pub const TXI: &str = "txi";
@@ -183,9 +184,11 @@ fn default_profile_dirs(directories: &Directories) -> Vec<PathBuf> {
     ]
 }
 
-/// Without `--skill-dir`: `skills/` under each default profile dir.
+/// Without `--skill-dir`: `skills/` under each definition root, the shipped ones and then the
+/// user's.
 fn default_skill_dirs(directories: &Directories) -> Vec<PathBuf> {
-    default_profile_dirs(directories)
+    directories
+        .definition_roots()
         .into_iter()
         .map(|dir| dir.join(SKILLS_DIR))
         .collect()

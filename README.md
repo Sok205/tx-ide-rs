@@ -62,9 +62,10 @@ to this one; it is reachable at the tag `old-tx-final`.
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
 carries everything; only `tx` / `txi` touch `std::env`. Without `--profile-dir` / `--skill-dir`,
-`tx` resolves roles from `<data>/roles` (the roles the core ships from `tx-core/agents/` — COMMON, DEVELOPER, ORCHESTRATOR, QA, TX-ASSISTANT, the COMMON.local overlay and the tx-* skills — plus any a plugin adds, written by `ui install`) and
-then `<config>/roles` (yours, never pruned, overriding a shipped role of the same name), with
-skills under each one's `skills/`.
+`tx` resolves roles from `<data>/roles` (the roles the core ships from `tx-core/agents/` — COMMON, DEVELOPER, ORCHESTRATOR, QA, TX-ASSISTANT and the COMMON.local overlay — plus any a plugin adds, written by `ui install`) and
+then `<config>/roles` (yours, never pruned, overriding a shipped role of the same name). Skills
+resolve from `<data>/definitions/skills` (the tx-* skills the core ships from `config/tx/`,
+written by `ui install`) and then `<config>/definitions/skills` (yours).
 
 ## Where files live
 
@@ -74,8 +75,8 @@ match `[A-Za-z0-9_.-]+`. Each directory resolves, first match wins:
 
 | directory | flag | exported by core | XDG variable | default | holds |
 |---|---|---|---|---|---|
-| config | `--config-dir` | `TX_CONFIG_DIR` | `$XDG_CONFIG_HOME/<app>` | `~/.config/<app>` | `config.yaml`, `roles/` (yours) |
-| data | `--data-dir` | `TX_DATA_DIR` | `$XDG_DATA_HOME/<app>` | `~/.local/share/<app>` | `agents/<id>/agent.json` (and the agent's `archive/`), `log.jsonl`, `plugins/<id>/`, `roles/` (shipped), `bin/`, `keys/`, `conf/`, `tmux.conf` |
+| config | `--config-dir` | `TX_CONFIG_DIR` | `$XDG_CONFIG_HOME/<app>` | `~/.config/<app>` | `config.yaml`, `roles/`, `definitions/` (yours) |
+| data | `--data-dir` | `TX_DATA_DIR` | `$XDG_DATA_HOME/<app>` | `~/.local/share/<app>` | `agents/<id>/agent.json` (and the agent's `archive/`), `log.jsonl`, `plugins/<id>/`, `roles/` and `definitions/` (shipped), `bin/`, `keys/`, `conf/`, `tmux.conf` |
 | state | `--state-dir` | `TX_STATE_DIR` | `$XDG_STATE_HOME/<app>` | `~/.local/state/<app>` | `locks/`, `profiles/<id>.md` |
 | cache | `--cache-dir` | `TX_CACHE_DIR` | `$XDG_CACHE_HOME/<app>` | `~/.cache/<app>` | nothing yet |
 | run | `--run-dir` | `TX_RUN_DIR` | `$XDG_RUNTIME_DIR/<app>` | `$TMPDIR/<app>.$USER` (else `/tmp`) | `tmux.sock` (the directory is mode 0700) |
@@ -517,7 +518,7 @@ disabled; `kill`'s is the template) and a `tx-core-cli/tests/<id>.rs` through th
 executables such as a `claude` that sleeps).
 
 Resources land under the data dir when `ui install` runs: `bin/` and `keys/` executable,
-`conf/` and `roles/` (the `agents/` resources) plain; files there that no active plugin provides are deleted, so a plugin
+`conf/`, `roles/` (the `agents/` resources) and `definitions/` plain; files there that no active plugin provides are deleted, so a plugin
 that publishes any of these must also be listed in `tests/ide.rs::ui_install_materialises_resources`.
 
 ### Adding a key

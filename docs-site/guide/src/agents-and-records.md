@@ -69,8 +69,9 @@ A **profile** is the list of roles an agent was launched with, resolved into one
 to `<state>/profiles/<id>.md`. Roles resolve from `<data>/roles` (the ones tx ships, written by
 `tx ui install`) and then `<config>/roles` (yours, overriding a shipped role of the same name);
 every directory's `<NAME>.local.md` extends the base. A role may open with frontmatter granting
-**skills** (`skills: [tx-sessions, tx-artifacts]`); each resolves to a `skills/<name>/` directory,
-which the engine links into the worktree (`.claude/skills/` or `.agents/skills/`).
+**skills** (`skills: [tx-sessions, tx-artifacts]`); each resolves to a `skills/<name>/` directory
+under `<data>/definitions` (the shipped ones) or `<config>/definitions` (yours, which win), which
+the engine links into the worktree (`.claude/skills/` or `.agents/skills/`).
 
 The shipped roles are **COMMON** (be concise, introduce yourself, change agents and views only
 through `tx`, read the message envelopes, use artifacts for deliverables), **DEVELOPER** (short

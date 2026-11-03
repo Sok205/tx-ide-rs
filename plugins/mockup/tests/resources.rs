@@ -21,7 +21,7 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
 fn the_skill_and_overlay_come_from_the_core() {
     let (_dir, core) = core(&PluginConfig::default());
     assert!(core.plugin_resources("agents/").is_empty());
-    let resources = core.resources("agents/");
+    let resources = core.resources("");
     let find = |name: &str| {
         resources
             .iter()
@@ -33,7 +33,7 @@ fn the_skill_and_overlay_come_from_the_core() {
     let overlay = std::str::from_utf8(find("agents/COMMON.local.md").bytes).unwrap();
     assert!(overlay.starts_with("---\nskills: [tx-mockup]"), "{overlay}");
 
-    let skill = std::str::from_utf8(find("agents/skills/tx-mockup/SKILL.md").bytes).unwrap();
+    let skill = std::str::from_utf8(find("definitions/skills/tx-mockup/SKILL.md").bytes).unwrap();
     assert!(skill.contains("name: tx-mockup"), "{skill}");
     assert!(skill.contains("tx mockup show"), "{skill}");
     assert!(skill.contains("\"frames\""), "{skill}");

@@ -20,11 +20,16 @@ pub const PLUGINS_DIR: &str = "plugins";
 pub const WORKTREES_DIR: &str = "worktrees";
 /// Under an agent's directory: the engine's archive of its conversations (`LlmEngine::archive`).
 pub const ARCHIVE_DIR: &str = "archive";
+/// Under the data directory: the definitions tx ships (`agents/`, `skills/`, `mcp.json`), written
+/// by `ui install`. Not `<data>/agents/`, which holds the agent records.
+pub const SHIPPED_DEFINITIONS_DIR: &str = "definitions";
+/// Under the config directory: the user's own definitions, in the same layout; they win by name.
+pub const USER_DEFINITIONS_DIR: &str = "definitions";
 
 /// The five directories tx keeps its files in, resolved by the front end (XDG, `TX_APPNAME`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Directories {
-    /// Written by the user: `config.yaml`, `roles/` and the skills under it.
+    /// Written by the user: `config.yaml`, `roles/`, `definitions/`.
     pub config: PathBuf,
     /// Must survive: records, the log, plugin data, the files `ui install` generates.
     pub data: PathBuf,
@@ -57,6 +62,15 @@ impl Directories {
             ("--state-dir", &self.state),
             ("--cache-dir", &self.cache),
             ("--run-dir", &self.run),
+        ]
+    }
+
+    /// The definition layers, lowest first: the shipped `<data>/definitions/`, then the user's
+    /// `<config>/definitions/`, which wins by name.
+    pub fn definition_roots(&self) -> [PathBuf; 2] {
+        [
+            self.data.join(SHIPPED_DEFINITIONS_DIR),
+            self.config.join(USER_DEFINITIONS_DIR),
         ]
     }
 

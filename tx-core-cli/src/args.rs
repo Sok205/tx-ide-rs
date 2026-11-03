@@ -49,13 +49,14 @@ verbs:
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
 else the XDG variable, else the XDG default:
-  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           config.yaml, roles/ (your own)
-  data    $XDG_DATA_HOME/<app>, ~/.local/share/<app>        records, log, plugin data, roles/ (shipped)
+  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           config.yaml, roles/, definitions/ (your own)
+  data    $XDG_DATA_HOME/<app>, ~/.local/share/<app>        records, log, plugin data, roles/, definitions/ (shipped)
   state   $XDG_STATE_HOME/<app>, ~/.local/state/<app>       locks, profiles
   cache   $XDG_CACHE_HOME/<app>, ~/.cache/<app>
   run     $XDG_RUNTIME_DIR/<app>, $TMPDIR/<app>.<user>      tmux.sock
 Roles resolve from --profile-dir, else <data>/roles (written by `ui install`), then <config>/roles;
-skills from --skill-dir, else skills/ under those two.
+skills from --skill-dir, else <data>/definitions/skills (written by `ui install`), then
+<config>/definitions/skills.
 The config file is <config>/config.yaml (--config FILE overrides); every key is optional:
   agent:                        defaults for create; a flag given replaces its key
     engine: claude              claude | codex

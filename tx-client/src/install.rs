@@ -19,7 +19,14 @@ const INSTALLED: &str = "keys/.installed";
 const IDE_FRAGMENT: &str = "ide";
 const LEGACY_HINT: &str = "legacy bindings may remain; restart the server to drop them";
 /// The resource kinds `ui install` materialises under the data dir.
-const KINDS: [&str; 5] = ["bin", "keys", "conf", NVIM_RESOURCE, ROLES_RESOURCE];
+const KINDS: [&str; 6] = [
+    "bin",
+    "keys",
+    "conf",
+    NVIM_RESOURCE,
+    ROLES_RESOURCE,
+    tx_core::config::SHIPPED_DEFINITIONS_DIR,
+];
 /// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
 /// view's runtimepath by `views::open`.
 pub const NVIM_RESOURCE: &str = "nvim";
@@ -231,9 +238,9 @@ fn kind_dir(data: &Path, kind: &str) -> PathBuf {
     }
 }
 
-/// Writes every `bin/`, `keys/`, `conf/`, `nvim/` and `agents/` resource under `data` and
-/// deletes files in those directories that no resource accounts for. `bin/` and `keys/` files
-/// are executable: scripts, and fragments that `run-shell` executes.
+/// Writes every `bin/`, `keys/`, `conf/`, `nvim/`, `agents/` and `definitions/` resource under
+/// `data` and deletes files in those directories that no resource accounts for. `bin/` and
+/// `keys/` files are executable: scripts, and fragments that `run-shell` executes.
 fn materialise(data: &Path, resources: &[Resource]) -> Result<(), VerbError> {
     let mut keep: HashSet<PathBuf> = HashSet::from([data.join(INSTALLED)]);
     for resource in resources {
@@ -543,6 +550,10 @@ mod tests {
         );
         assert_eq!(kind_dir(data, "agents"), Path::new("/d/roles"));
         assert_eq!(kind_dir(data, "keys"), Path::new("/d/keys"));
+        assert_eq!(
+            install_path(data, "definitions/skills/x/SKILL.md"),
+            Path::new("/d/definitions/skills/x/SKILL.md")
+        );
         assert_eq!(
             install_path(data, "bin/tmux-nav"),
             Path::new("/d/bin/tmux-nav")
