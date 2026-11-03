@@ -1,10 +1,10 @@
 //! The Claude Code engine for tx-core: `claude <conversation> [--model M] --effort E --no-chrome
 //! --strict-mcp-config --setting-sources "" --tools Bash,Read,Edit,Write[,Skill] [--plugin-dir
-//! <cwd>/.claude/tx-plugin] [--system-prompt <profile text>] --settings <launch settings>
+//! <cwd>/.claude/tx-plugin] [--append-system-prompt <profile text>] --settings <launch settings>
 //! --dangerously-skip-permissions [prompt]`.
 //!
-//! The launch is a clean slate: the profile text replaces Claude Code's own system prompt, only
-//! the [`BASE_TOOLS`] are offered (plus `Skill` when the profile grants a skill), and no setting
+//! The launch is a clean slate: Claude Code's own system prompt with the profile text appended,
+//! only the [`BASE_TOOLS`] offered (plus `Skill` when the profile grants a skill), and no setting
 //! source is read — no user, project or local settings, hooks, CLAUDE.md, auto-memory, skills or
 //! commands, and with `--strict-mcp-config` no MCP servers or claude.ai connectors. What the
 //! session still needs is restated in [`launch_settings`]. Granted skills reach it as the skills
@@ -65,7 +65,7 @@ pub const SESSION_ID_FLAG: &str = "--session-id";
 pub const FORK_SESSION_FLAG: &str = "--fork-session";
 pub const EFFORT_FLAG: &str = "--effort";
 pub const NO_CHROME_FLAG: &str = "--no-chrome";
-pub const SYSTEM_PROMPT_FLAG: &str = "--system-prompt";
+pub const APPEND_SYSTEM_PROMPT_FLAG: &str = "--append-system-prompt";
 pub const TOOLS_FLAG: &str = "--tools";
 /// Drops every MCP server not passed with `--mcp-config`, the claude.ai connectors included.
 pub const STRICT_MCP_CONFIG_FLAG: &str = "--strict-mcp-config";
@@ -230,7 +230,7 @@ impl ClaudeAdapter {
         }
         if !request.profile.text().is_empty() {
             args.extend([
-                SYSTEM_PROMPT_FLAG.to_owned(),
+                APPEND_SYSTEM_PROMPT_FLAG.to_owned(),
                 request.profile.text().to_owned(),
             ]);
         }
@@ -1013,7 +1013,7 @@ mod tests {
                     &["--resume", "chat-42", "--effort", "high"][..],
                     &MINIMAL[..],
                     &[
-                        "--system-prompt",
+                        "--append-system-prompt",
                         "role",
                         "--settings",
                         SETTINGS,
@@ -1097,7 +1097,7 @@ mod tests {
                 "Bash,Read,Edit,Write,Skill",
                 "--plugin-dir",
                 &plugin_dir.to_string_lossy(),
-                "--system-prompt",
+                "--append-system-prompt",
                 "# Role\nbe good",
                 "--settings",
                 SETTINGS,

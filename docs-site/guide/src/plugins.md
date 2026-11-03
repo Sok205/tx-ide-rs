@@ -8,9 +8,9 @@ verbs and key. Verbs starting with `_` are internal: key bindings, hooks and pop
 
 **`engine-claude`** registers the Claude Code adapter. It launches a minimal session,
 `claude --session-id <tx id> --strict-mcp-config --setting-sources "" --tools
-Bash,Read,Edit,Write[,Skill] --system-prompt <profile> --dangerously-skip-permissions …`
-(or `--resume`, or `--resume … --fork-session` for a fork): the profile replaces Claude Code's
-own system prompt, and no setting source is read, so no user or project settings, CLAUDE.md,
+Bash,Read,Edit,Write[,Skill] --append-system-prompt <profile> --dangerously-skip-permissions …`
+(or `--resume`, or `--resume … --fork-session` for a fork): the profile is appended to Claude
+Code's own system prompt, and no setting source is read, so no user or project settings, CLAUDE.md,
 auto-memory, MCP servers, claude.ai connectors, or synced or bundled skills reach the session.
 Granted skills are delivered as a per-agent plugin named `tx` (`tx:<skill>`) under
 `.claude/tx-plugin/`, passed with `--plugin-dir`. It wires Claude's hooks to `txi hook <Event>`. It keeps
