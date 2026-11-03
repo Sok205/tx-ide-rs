@@ -521,12 +521,19 @@ mod tests {
     #[test]
     fn clicks_are_capped() {
         let mut pines = painted();
-        let column = pines.trees[0].x as u16;
+        let column = pines.trees[0].x as usize;
+        let row = (pines.surface[column] / 2) as u16;
+        let ground_top = pines.ground_top();
         for _ in 0..200 {
-            pines.mouse(click(column, 12));
+            for branch in 0..pines.width() {
+                if pines.surface[branch] < ground_top {
+                    pines.depth[branch] = MAX_BRANCH_SNOW;
+                }
+            }
+            pines.mouse(click(column as u16, row));
         }
         let shaken = pines.flakes.iter().filter(|flake| flake.shaken).count();
-        assert!(shaken <= MAX_SHAKEN, "{shaken}");
+        assert_eq!(shaken, MAX_SHAKEN);
     }
 
     #[test]

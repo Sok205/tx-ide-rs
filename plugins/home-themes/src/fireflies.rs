@@ -101,7 +101,7 @@ fn paint_scene(width: u16, rows: u32) -> Vec<Color> {
             })
         })
         .collect();
-    let mut fill = |x: i32, y: i32, color: Color| {
+    let mut paint = |x: i32, y: i32, color: Color| {
         if (0..i32::from(width)).contains(&x) && (0..rows as i32).contains(&y) {
             scene[y as usize * usize::from(width) + x as usize] = color;
         }
@@ -112,15 +112,15 @@ fn paint_scene(width: u16, rows: u32) -> Vec<Color> {
         let canopy_radius = rows_pixels * height * 0.22;
         let canopy_y = rows_pixels * (1.0 - height * 0.6);
         for y in (canopy_y as i32)..rows as i32 {
-            fill(trunk_x - 1, y, TREE);
-            fill(trunk_x, y, TREE);
-            fill(trunk_x + 1, y, TREE);
+            paint(trunk_x - 1, y, TREE);
+            paint(trunk_x, y, TREE);
+            paint(trunk_x + 1, y, TREE);
         }
         let reach = canopy_radius.ceil() as i32;
         for dy in -reach..=reach {
             for dx in -reach..=reach {
                 if ((dx * dx + dy * dy) as f32).sqrt() <= canopy_radius {
-                    fill(trunk_x + dx, canopy_y as i32 + dy, TREE);
+                    paint(trunk_x + dx, canopy_y as i32 + dy, TREE);
                 }
             }
         }
@@ -129,7 +129,7 @@ fn paint_scene(width: u16, rows: u32) -> Vec<Color> {
         let grass = 0.15 + 0.1 * value_noise(f32::from(x) * 0.05, 0.0, 3);
         let top = (rows_pixels * (1.0 - grass)) as i32;
         for y in top..rows as i32 {
-            fill(i32::from(x), y, GRASS);
+            paint(i32::from(x), y, GRASS);
         }
     }
     scene

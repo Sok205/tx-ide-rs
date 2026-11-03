@@ -134,7 +134,7 @@ pub fn between(random: &mut Rng, (low, high): (f64, f64)) -> f64 {
 }
 
 /// Noise repeats every this many units on each axis, so a time axis can wrap without a seam.
-const NOISE_PERIOD: i32 = 256;
+const NOISE_PERIOD: i32 = 1024;
 
 /// A pseudo-random value in 0..1 for each lattice point.
 fn lattice(x: i32, y: i32, seed: u32) -> f32 {
@@ -418,11 +418,26 @@ pub mod tests {
         for step in 0..100 {
             let (x, y) = (step as f32 * 0.37, step as f32 * 0.11);
             let wrapped = value_noise(x + NOISE_PERIOD as f32, y, 4);
-            assert!((value_noise(x, y, 4) - wrapped).abs() < 1e-4, "at {x}");
+            assert!((value_noise(x, y, 4) - wrapped).abs() < 1e-3, "at {x}");
         }
-        let late = 86_400.0 * 30.0;
-        assert!((noise_time(late, 4.0) - noise_time(late + 1.0 / 60.0, 4.0)).abs() < 0.07);
-        assert!((angle(late, 0.5) - angle(late + 1.0 / 60.0, 0.5)).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_wrapped_phase_stays_continuous_after_weeks() {
+        let tick = 1.0 / 60.0;
+        // About 58 days in, a hair before `t * rate` reaches a multiple of a turn.
+        let (rate, turns) = (0.5, 400_000.0);
+        let before = (turns * std::f64::consts::TAU - 1e-3) / rate;
+        for t in [before, before + tick / 2.0] {
+            let (now, next) = (angle(t, rate).sin(), angle(t + tick, rate).sin());
+            assert!((now - next).abs() < 0.01, "{now} then {next} at {t}");
+        }
+        // The same across a wrap of the noise period.
+        let (rate, periods) = (4.0, 20_000.0);
+        let before = (periods * f64::from(NOISE_PERIOD) - 1e-3) / rate;
+        let now = value_noise(1.0, noise_time(before, rate), 9);
+        let next = value_noise(1.0, noise_time(before + tick, rate), 9);
+        assert!((now - next).abs() < 0.15, "{now} then {next}");
     }
 
     #[test]

@@ -484,6 +484,38 @@ mod tests {
         });
     }
 
+    /// The shimmer as first written, worked out wholly in f64 so it is exact at any age.
+    fn original_water(x: i32, y: i32, seconds: f64) -> Color {
+        let (x, y) = (f64::from(x), f64::from(y));
+        let wave = (x * 0.21 + y * 0.13 + seconds * 0.02).sin()
+            + (x * 0.07 - y * 0.19 - seconds * 0.013).sin();
+        let shades = f64::from(WATER_SHADES);
+        let mix = (((wave + 2.0) / 4.0 * shades).round() / shades) as f32;
+        let channel = |deep: f32, light: f32| (deep + (light - deep) * mix).round() as u8;
+        Color::Rgb(
+            channel(WATER_DEEP.0, WATER_LIGHT.0),
+            channel(WATER_DEEP.1, WATER_LIGHT.1),
+            channel(WATER_DEEP.2, WATER_LIGHT.2),
+        )
+    }
+
+    #[test]
+    fn the_shimmer_keeps_its_original_look_at_any_age() {
+        let month = 30.0 * 86_400.0;
+        for seconds in [0.0, 3.0, 1000.0, month, month + 3.0] {
+            let differ = (0..140)
+                .flat_map(|y| (0..250).map(move |x| (x, y)))
+                .filter(|&(x, y)| water(x, y, seconds, 0.0) != original_water(x, y, seconds))
+                .count();
+            // A pixel right on a shade boundary may round either way; a changed pattern moves
+            // thousands.
+            assert!(
+                differ <= 35,
+                "{differ} of 35000 pixels differ at {seconds} s"
+            );
+        }
+    }
+
     #[test]
     fn a_long_gap_is_clamped() {
         let mut pond = Pond::default();

@@ -356,7 +356,7 @@ impl Fish {
         let widest = self.length * 0.15;
         let fin = dim(FIN, self.depth);
 
-        let angle = |from: (f32, f32), to: (f32, f32)| (to.1 - from.1).atan2(to.0 - from.0);
+        let bearing = |from: (f32, f32), to: (f32, f32)| (to.1 - from.1).atan2(to.0 - from.0);
         let at = |origin: (f32, f32), angle: f32, distance: f32| {
             (
                 origin.0 + angle.cos() * distance,
@@ -364,13 +364,13 @@ impl Fish {
             )
         };
         let tail = spine[SEGMENTS - 1];
-        let backward = angle(spine[SEGMENTS - 2], tail);
+        let backward = bearing(spine[SEGMENTS - 2], tail);
         for side in [-1.0, 1.0] {
             let lobe = at(tail, backward + side * 0.5, self.length * 0.2);
             stroke(pixels, tail, lobe, 0.8, fin);
         }
         let shoulder = spine[3];
-        let forward = angle(shoulder, spine[2]);
+        let forward = bearing(shoulder, spine[2]);
         let flap = 0.25 * beat.sin();
         for side in [-1.0, 1.0] {
             let tip = at(shoulder, forward + side * (2.0 + flap), self.length * 0.15);
