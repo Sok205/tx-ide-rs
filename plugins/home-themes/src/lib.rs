@@ -8,12 +8,14 @@ use std::path::Path;
 use tx_core::{Plugin, PluginError, Registry};
 use tx_home::backdrop::{Catalogue, Constructor, install};
 
+pub mod common;
 pub mod koi;
+pub mod stars;
 
 pub const PLUGIN_ID: &str = "home-themes";
 
 /// The only place theme names appear; the first is the default.
-pub const THEMES: &[(&str, Constructor)] = &[("koi", koi::pond)];
+pub const THEMES: &[(&str, Constructor)] = &[("koi", koi::pond), ("stars", stars::sky)];
 
 const OFF: &str = "off";
 
@@ -104,7 +106,7 @@ mod tests {
     fn an_unknown_name_lists_the_known_ones() {
         assert_eq!(
             theme(&json!({"theme": "nope"})).unwrap_err(),
-            r#"settings.theme must be one of: koi, got "nope""#
+            r#"settings.theme must be one of: koi, stars, got "nope""#
         );
     }
 

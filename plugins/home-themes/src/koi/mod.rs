@@ -461,29 +461,12 @@ mod tests {
         }
     }
 
-    /// Every changed cell is bytes into tmux, which all panes share: a gliding pond repaints its
-    /// fish, not its water.
     #[test]
-    fn a_frame_repaints_few_cells() {
-        let mut pond = Pond {
+    fn stays_within_the_budget() {
+        crate::common::tests::assert_within_budget(&mut Pond {
             random: Rng::with_seed(7),
             ..Pond::default()
-        };
-        let area = Rect::new(0, 0, 250, 70);
-        let blank = Buffer::empty(area);
-        let mut previous = Buffer::empty(area);
-        pond.paint(Duration::ZERO, area, None, &blank, &mut previous);
-        let frames = 30;
-        let mut changed = 0;
-        for frame in 1..=frames {
-            let mut buffer = Buffer::empty(area);
-            let elapsed = Duration::from_millis(frame * 1000 / pond.frames_per_second());
-            pond.paint(elapsed, area, None, &blank, &mut buffer);
-            changed += previous.diff(&buffer).len();
-            previous = buffer;
-        }
-        let per_frame = changed / frames as usize;
-        assert!(per_frame < 500, "{per_frame} of {} cells", area.area());
+        });
     }
 
     #[test]
