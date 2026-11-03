@@ -129,6 +129,11 @@ pub fn distance(first: (f32, f32), second: (f32, f32)) -> f32 {
     (first.0 - second.0).hypot(first.1 - second.1)
 }
 
+/// The angle from `from` to `to`, in radians; y grows downwards.
+pub fn bearing(from: (f32, f32), to: (f32, f32)) -> f32 {
+    (to.1 - from.1).atan2(to.0 - from.0)
+}
+
 pub fn between(random: &mut Rng, (low, high): (f64, f64)) -> f64 {
     low + (high - low) * random.f64()
 }
@@ -266,12 +271,67 @@ pub mod tests {
         shown
     }
 
-    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    pub fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
         MouseEvent {
             kind,
             column,
             row,
             modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    pub fn click(column: u16, row: u16) -> MouseEvent {
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row)
+    }
+
+    /// Paints 0x0, 1x1, 80x24 and 250x70, each with no logo box and with one where it fits.
+    pub fn assert_paints_any_area(backdrop: &mut dyn Backdrop) {
+        let (logo_width, logo_height) = backdrop.logo_size();
+        for (width, height) in [(0, 0), (1, 1), (80, 24), (250, 70)] {
+            let area = Rect::new(0, 0, width, height);
+            let boxes = [
+                None,
+                (width >= logo_width && height >= logo_height)
+                    .then(|| Rect::new(0, 0, logo_width, logo_height)),
+            ];
+            for logo in boxes {
+                let mut buffer = Buffer::empty(area);
+                backdrop.paint(
+                    Duration::from_secs(3),
+                    area,
+                    logo,
+                    &Buffer::empty(area),
+                    &mut buffer,
+                );
+            }
+        }
+    }
+
+    /// Paints 250x70, 10x3, 0x0, then 80x24, text over the whole content, clicking and dragging
+    /// in the middle before each.
+    pub fn assert_survives_shrinking(backdrop: &mut dyn Backdrop) {
+        for (second, (width, height)) in [(250, 70), (10, 3), (0, 0), (80, 24)]
+            .into_iter()
+            .enumerate()
+        {
+            let area = Rect::new(0, 0, width, height);
+            let (logo, content) = layout(area, backdrop.logo_size());
+            let mut text = Buffer::empty(area);
+            text.set_style(content, Style::new().bg(Color::Red));
+            backdrop.mouse(click(width / 2, height / 2));
+            backdrop.mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                width / 2,
+                height / 2,
+            ));
+            let mut buffer = Buffer::empty(area);
+            backdrop.paint(
+                Duration::from_secs(second as u64),
+                area,
+                logo,
+                &text,
+                &mut buffer,
+            );
         }
     }
 

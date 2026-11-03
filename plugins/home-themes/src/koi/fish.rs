@@ -7,7 +7,7 @@ use fastrand::Rng;
 use ratatui::style::Color;
 use tx_home::backdrop::{Pixels, dim};
 
-use crate::common::{angle, distance};
+use crate::common::{angle, bearing, distance};
 
 pub const SEGMENTS: usize = 14;
 
@@ -356,7 +356,6 @@ impl Fish {
         let widest = self.length * 0.15;
         let fin = dim(FIN, self.depth);
 
-        let bearing = |from: (f32, f32), to: (f32, f32)| (to.1 - from.1).atan2(to.0 - from.0);
         let at = |origin: (f32, f32), angle: f32, distance: f32| {
             (
                 origin.0 + angle.cos() * distance,

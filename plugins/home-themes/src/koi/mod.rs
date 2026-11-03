@@ -232,24 +232,16 @@ impl Backdrop for Pond {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+    use ratatui::crossterm::event::MouseEventKind;
     use ratatui::style::Style;
     use tx_home::backdrop::layout;
 
     use super::*;
     use crate::common::MAX_GAP;
     use crate::common::tests::{
-        assert_no_boxes_under_text, assert_nothing_bright_under_text, assert_within_budget,
+        assert_no_boxes_under_text, assert_nothing_bright_under_text, assert_paints_any_area,
+        assert_survives_shrinking, assert_within_budget, click,
     };
-
-    fn click(column: u16, row: u16) -> MouseEvent {
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            modifiers: KeyModifiers::NONE,
-        }
-    }
 
     fn seeded() -> Pond {
         Pond {
@@ -460,27 +452,8 @@ mod tests {
     }
 
     #[test]
-    fn the_pond_paints_any_area_without_panicking() {
-        let mut pond = Pond::default();
-        let (logo_width, logo_height) = pond.logo_size();
-        for (width, height) in [(0, 0), (1, 1), (80, 24), (250, 70)] {
-            let area = Rect::new(0, 0, width, height);
-            let boxes = [
-                None,
-                (width >= logo_width && height >= logo_height)
-                    .then(|| Rect::new(0, 0, logo_width, logo_height)),
-            ];
-            for logo in boxes {
-                let mut buffer = Buffer::empty(area);
-                pond.paint(
-                    Duration::from_secs(3),
-                    area,
-                    logo,
-                    &Buffer::empty(area),
-                    &mut buffer,
-                );
-            }
-        }
+    fn paints_any_area_without_panicking() {
+        assert_paints_any_area(&mut Pond::default());
     }
 
     #[test]
@@ -543,23 +516,6 @@ mod tests {
 
     #[test]
     fn a_shrinking_area_never_panics() {
-        let mut pond = Pond::default();
-        for (second, (width, height)) in [(250, 70), (10, 3), (0, 0), (80, 24)]
-            .into_iter()
-            .enumerate()
-        {
-            let area = Rect::new(0, 0, width, height);
-            let (logo, content) = layout(area, pond.logo_size());
-            let mut text = Buffer::empty(area);
-            text.set_style(content, Style::new().bg(Color::Red));
-            let mut buffer = Buffer::empty(area);
-            pond.paint(
-                Duration::from_secs(second as u64),
-                area,
-                logo,
-                &text,
-                &mut buffer,
-            );
-        }
+        assert_survives_shrinking(&mut Pond::default());
     }
 }

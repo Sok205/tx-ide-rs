@@ -12,8 +12,8 @@ use ratatui::style::Color;
 use tx_home::backdrop::{Backdrop, Pixels};
 
 use crate::common::{
-    Pointer, STEP, Steps, distance, draw_logo, fill, glow, logo_size, pixel_of, quantised,
-    value_noise,
+    Pointer, STEP, Steps, bearing, between, distance, draw_logo, fill, glow, logo_size, pixel_of,
+    quantised, value_noise,
 };
 
 const SKY_TOP: Color = Color::Rgb(6, 9, 24);
@@ -31,11 +31,11 @@ const LOGO_BOTTOM: Color = Color::Rgb(112, 164, 82);
 const CELLS_PER_FIREFLY: usize = 200;
 const FIREFLIES: (usize, usize) = (20, 40);
 /// Pixels per second.
-const SPEED: (f32, f32) = (6.0, 12.0);
+const SPEED: (f64, f64) = (6.0, 12.0);
 /// Radians per second the wander may turn at, and the most any steering may.
 const WANDER_TURN: f32 = 1.5;
 const TURN_CAP: f32 = 3.5;
-const PULSE_SECONDS: (f32, f32) = (3.0, 7.0);
+const PULSE_SECONDS: (f64, f64) = (3.0, 7.0);
 const PULL_RANGE: f32 = 25.0;
 /// Inside this the pull bends into a circle round the pointer.
 const ORBIT_RADIUS: f32 = 8.0;
@@ -55,7 +55,7 @@ struct Firefly {
     speed: f32,
     /// Extra speed from a scatter, dying down.
     burst: f32,
-    period: f32,
+    period: f64,
     offset: f32,
 }
 
@@ -73,18 +73,10 @@ struct Meadow {
     pointer: Pointer,
 }
 
-fn angle_to(from: (f32, f32), to: (f32, f32)) -> f32 {
-    (to.1 - from.1).atan2(to.0 - from.0)
-}
-
 /// Turns `heading` towards `desired` by at most `max_turn`, the short way round.
 fn steer(heading: f32, desired: f32, max_turn: f32) -> f32 {
     let difference = (desired - heading + PI).rem_euclid(TAU) - PI;
     heading + difference.clamp(-max_turn, max_turn)
-}
-
-fn between(random: &mut Rng, (low, high): (f32, f32)) -> f32 {
-    low + (high - low) * random.f32()
 }
 
 fn paint_scene(width: u16, rows: u32) -> Vec<Color> {
@@ -146,7 +138,7 @@ impl Meadow {
             .map(|_| Firefly {
                 position: (self.random.f32() * width, self.random.f32() * rows),
                 heading: self.random.f32() * TAU,
-                speed: between(&mut self.random, SPEED),
+                speed: between(&mut self.random, SPEED) as f32,
                 burst: 0.0,
                 period: between(&mut self.random, PULSE_SECONDS),
                 offset: self.random.f32(),
@@ -169,13 +161,13 @@ impl Meadow {
             let centre = (bounds.0 / 2.0, bounds.1 / 2.0);
             firefly.heading = steer(
                 firefly.heading,
-                angle_to(firefly.position, centre),
+                bearing(firefly.position, centre),
                 TURN_CAP * STEP,
             );
         } else if let Some(pointer) = near {
             // Straight at the pointer from afar, bending to sideways as it closes in.
             let closeness = 1.0 - (distance(pointer, firefly.position) / ORBIT_RADIUS).min(1.0);
-            let desired = angle_to(firefly.position, pointer) + FRAC_PI_2 * closeness;
+            let desired = bearing(firefly.position, pointer) + FRAC_PI_2 * closeness;
             firefly.heading = steer(firefly.heading, desired, TURN_CAP * STEP);
         }
         let speed = firefly.speed + firefly.burst;
@@ -200,8 +192,7 @@ impl Meadow {
 
     /// How lit a firefly is: off for part of every period, then swelling and fading.
     fn brightness(&self, firefly: &Firefly) -> f32 {
-        let phase =
-            ((self.clock / f64::from(firefly.period)).fract() as f32 + firefly.offset).fract();
+        let phase = ((self.clock / firefly.period).fract() as f32 + firefly.offset).fract();
         ((0.5 - 0.5 * (phase * TAU).cos() - 0.3) / 0.7).max(0.0)
     }
 
@@ -264,7 +255,7 @@ impl Backdrop for Meadow {
             MouseEventKind::Down(MouseButton::Left) => {
                 for firefly in &mut self.fireflies {
                     if distance(point, firefly.position) <= SCATTER_RANGE {
-                        firefly.heading = angle_to(point, firefly.position);
+                        firefly.heading = bearing(point, firefly.position);
                         firefly.burst = BURST_SPEED;
                     }
                 }
@@ -279,24 +270,15 @@ impl Backdrop for Meadow {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
-    use ratatui::style::Style;
+    use ratatui::crossterm::event::MouseEventKind;
     use tx_home::backdrop::layout;
 
     use super::*;
     use crate::common::MAX_GAP;
     use crate::common::tests::{
-        assert_no_boxes_under_text, assert_nothing_bright_under_text, assert_within_budget,
+        assert_no_boxes_under_text, assert_nothing_bright_under_text, assert_paints_any_area,
+        assert_survives_shrinking, assert_within_budget, click,
     };
-
-    fn click(column: u16, row: u16) -> MouseEvent {
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            modifiers: KeyModifiers::NONE,
-        }
-    }
 
     fn seeded() -> Meadow {
         Meadow {
@@ -328,49 +310,12 @@ mod tests {
 
     #[test]
     fn paints_any_area_without_panicking() {
-        let mut meadow = Meadow::default();
-        let (logo_width, logo_height) = meadow.logo_size();
-        for (width, height) in [(0, 0), (1, 1), (80, 24), (250, 70)] {
-            let area = Rect::new(0, 0, width, height);
-            let boxes = [
-                None,
-                (width >= logo_width && height >= logo_height)
-                    .then(|| Rect::new(0, 0, logo_width, logo_height)),
-            ];
-            for logo in boxes {
-                let mut buffer = Buffer::empty(area);
-                meadow.paint(
-                    Duration::from_secs(3),
-                    area,
-                    logo,
-                    &Buffer::empty(area),
-                    &mut buffer,
-                );
-            }
-        }
+        assert_paints_any_area(&mut Meadow::default());
     }
 
     #[test]
     fn a_shrinking_area_never_panics() {
-        let mut meadow = Meadow::default();
-        for (second, (width, height)) in [(250, 70), (10, 3), (0, 0), (80, 24)]
-            .into_iter()
-            .enumerate()
-        {
-            let area = Rect::new(0, 0, width, height);
-            let (logo, content) = layout(area, meadow.logo_size());
-            let mut text = Buffer::empty(area);
-            text.set_style(content, Style::new().bg(Color::Red));
-            meadow.mouse(click(width / 2, height / 2));
-            let mut buffer = Buffer::empty(area);
-            meadow.paint(
-                Duration::from_secs(second as u64),
-                area,
-                logo,
-                &text,
-                &mut buffer,
-            );
-        }
+        assert_survives_shrinking(&mut Meadow::default());
     }
 
     #[test]
