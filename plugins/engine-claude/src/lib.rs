@@ -1,12 +1,13 @@
 //! The Claude Code engine for tx-core: `claude <conversation> [--model M] --effort E --no-chrome
-//! --strict-mcp-config --setting-sources "" --tools Bash,Read,Edit,Write[,Skill] [--plugin-dir
-//! <cwd>/.claude/tx-plugin] [--append-system-prompt <profile text>] --settings <launch settings>
-//! --dangerously-skip-permissions [prompt]`.
+//! --strict-mcp-config --setting-sources "" --tools <tools> [--disallowedTools <tools>]
+//! [--mcp-config <servers>] [--plugin-dir <cwd>/.claude/tx-plugin] [--append-system-prompt
+//! <profile text>] --settings <launch settings> --dangerously-skip-permissions [prompt]`.
 //!
 //! The launch is a clean slate: Claude Code's own system prompt with the profile text appended,
-//! only the [`BASE_TOOLS`] offered (plus `Skill` when the profile grants a skill), and no setting
-//! source is read — no user, project or local settings, hooks, CLAUDE.md, auto-memory, skills or
-//! commands, and with `--strict-mcp-config` no MCP servers or claude.ai connectors. What the
+//! only the built-in tools of [`tools`] offered ([`BASE_TOOLS`] unless an agent definition lists
+//! others), only the agent definition's MCP servers, and no setting source is read — no user,
+//! project or local settings, hooks, CLAUDE.md, auto-memory, skills or commands, and with
+//! `--strict-mcp-config` no other MCP servers or claude.ai connectors. What the
 //! session still needs is restated in [`launch_settings`]. Granted skills reach it as the skills
 //! of a plugin named [`PLUGIN_NAME`] (so `tx:<skill>`): a manifest and one link per skill under
 //! [`PLUGIN_DIR`] in the working directory. The conversation flags depend on the launch mode:
@@ -47,9 +48,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, WorkspaceAction, engine_data,
-    hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
+    Agent, BuiltInTools, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan,
+    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
+    WorkspaceAction, engine_data, hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -75,8 +76,17 @@ pub const SETTING_SOURCES_FLAG: &str = "--setting-sources";
 pub const SETTING_SOURCES: &str = "";
 /// The built-in tools every launch offers.
 pub const BASE_TOOLS: [&str; 4] = ["Bash", "Read", "Edit", "Write"];
-/// Offered on top of [`BASE_TOOLS`] when the profile grants a skill.
+/// Offered on top of the listed tools when the profile grants a skill: without it the skills
+/// are not listed to the model.
 pub const SKILL_TOOL: &str = "Skill";
+/// Offered on top of the listed tools when the profile has an MCP server: with it the servers'
+/// tools stay deferred; without it every schema loads up front.
+pub const TOOL_SEARCH_TOOL: &str = "ToolSearch";
+/// `--tools` value for every built-in tool: an agent definition without a `tools` list.
+pub const ALL_TOOLS: &str = "default";
+pub const DISALLOWED_TOOLS_FLAG: &str = "--disallowedTools";
+/// Takes the agent's MCP servers as inline JSON, in Claude's `.mcp.json` format.
+pub const MCP_CONFIG_FLAG: &str = "--mcp-config";
 pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
 pub const SETTINGS_FLAG: &str = "--settings";
 /// The slash command that exits the CLI cleanly: its `SessionEnd` hook fires and the
@@ -215,8 +225,20 @@ impl ClaudeAdapter {
             SETTING_SOURCES_FLAG.to_owned(),
             SETTING_SOURCES.to_owned(),
             TOOLS_FLAG.to_owned(),
-            tools(!request.profile.skill_dirs().is_empty()),
+            tools(request.profile),
         ]);
+        if !request.profile.disallowed_tools().is_empty() {
+            args.extend([
+                DISALLOWED_TOOLS_FLAG.to_owned(),
+                request.profile.disallowed_tools().join(","),
+            ]);
+        }
+        if !request.profile.mcp_servers().is_empty() {
+            args.extend([
+                MCP_CONFIG_FLAG.to_owned(),
+                serde_json::json!({ "mcpServers": request.profile.mcp_servers() }).to_string(),
+            ]);
+        }
         if !request.profile.skill_dirs().is_empty() {
             args.extend([
                 PLUGIN_DIR_FLAG.to_owned(),
@@ -492,11 +514,22 @@ pub fn conversation_started(current: &Value, payload: &Value) -> Option<Value> {
     Some(Value::Object(data))
 }
 
-/// The `--tools` list: [`BASE_TOOLS`], plus [`SKILL_TOOL`] when a skill is granted.
-pub fn tools(skills_granted: bool) -> String {
-    let mut tools = BASE_TOOLS.to_vec();
-    if skills_granted {
-        tools.push(SKILL_TOOL);
+/// The `--tools` list: [`BASE_TOOLS`] without an agent definition, [`ALL_TOOLS`] for one
+/// without a `tools` list, else its list; then [`SKILL_TOOL`] when a skill is granted and
+/// [`TOOL_SEARCH_TOOL`] when an MCP server is.
+pub fn tools(profile: &Profile) -> String {
+    let mut tools: Vec<String> = match profile.tools() {
+        BuiltInTools::EngineBase => BASE_TOOLS.iter().map(|tool| (*tool).to_owned()).collect(),
+        BuiltInTools::All => return ALL_TOOLS.to_owned(),
+        BuiltInTools::Listed(tools) => tools.clone(),
+    };
+    for (needed, tool) in [
+        (!profile.skill_dirs().is_empty(), SKILL_TOOL),
+        (!profile.mcp_servers().is_empty(), TOOL_SEARCH_TOOL),
+    ] {
+        if needed && !tools.iter().any(|listed| listed == tool) {
+            tools.push(tool.to_owned());
+        }
     }
     tools.join(",")
 }
@@ -1069,6 +1102,64 @@ mod tests {
             .fork(&LaunchRequest::new(&session, &profile), &source, "")
             .unwrap();
         assert_eq!(plan.args[..2], argv(&["--resume", source.id.as_str()]));
+    }
+
+    #[test]
+    fn an_agent_definition_sets_tools_cuts_and_mcp_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let servers = std::collections::BTreeMap::from([(
+            "probe".to_owned(),
+            tx_core::definitions::McpServer::Stdio {
+                command: "python3".into(),
+                args: vec!["probe.py".into()],
+                env: std::collections::BTreeMap::new(),
+            },
+        )]);
+        let resolved = |tools: tx_core::BuiltInTools, mcp_servers| ResolvedProfile {
+            skill_dirs: vec![PathBuf::from("/skills/one")],
+            tools,
+            disallowed_tools: vec!["mcp__probe__delete".into(), "Agent".into()],
+            mcp_servers,
+            ..ResolvedProfile::default()
+        };
+        let launch = |resolved: ResolvedProfile| {
+            let profile = Profile::write(resolved, &dir.path().join("p.md")).unwrap();
+            let session = record(dir.path(), serde_json::Value::Null);
+            adapter()
+                .start(&LaunchRequest::new(&session, &profile), "go")
+                .unwrap()
+                .args
+        };
+        let value_of = |args: &[String], flag: &str| {
+            let at = args.iter().position(|arg| arg == flag)?;
+            Some(args[at + 1].clone())
+        };
+        let args = launch(resolved(
+            tx_core::BuiltInTools::Listed(vec!["Bash".into(), "Read".into()]),
+            servers.clone(),
+        ));
+        assert_eq!(
+            value_of(&args, "--tools").as_deref(),
+            Some("Bash,Read,Skill,ToolSearch")
+        );
+        assert_eq!(
+            value_of(&args, "--disallowedTools").as_deref(),
+            Some("mcp__probe__delete,Agent")
+        );
+        let config: Value =
+            serde_json::from_str(&value_of(&args, "--mcp-config").unwrap()).unwrap();
+        assert_eq!(
+            config,
+            serde_json::json!({"mcpServers": {"probe": {"type": "stdio", "command": "python3", "args": ["probe.py"]}}})
+        );
+        assert!(args.contains(&"--strict-mcp-config".to_owned()));
+        // No tools list: every built-in; no MCP server: no --mcp-config.
+        let args = launch(resolved(
+            tx_core::BuiltInTools::All,
+            std::collections::BTreeMap::new(),
+        ));
+        assert_eq!(value_of(&args, "--tools").as_deref(), Some("default"));
+        assert_eq!(value_of(&args, "--mcp-config"), None);
     }
 
     #[test]
