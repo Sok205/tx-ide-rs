@@ -45,6 +45,9 @@ const WIPE_HALF_WIDTH: f32 = 5.0;
 const WIPE_LENGTH: f32 = 40.0;
 /// Seconds before droplets form again in a wiped streak.
 const REFILL_SECONDS: f64 = 8.0;
+/// How far a fresh streak shows `CLEAR`; in fine shades, so it fades through the refill.
+const WIPE_TINT: f32 = 0.3;
+const WIPE_SHADES: u8 = 21;
 const MAX_WIPES: usize = 16;
 
 pub fn window() -> Box<dyn Backdrop> {
@@ -247,7 +250,14 @@ impl Window {
                     wipe.start.0.round() as i32 + x,
                     wipe.start.1.round() as i32 + y,
                 );
-                glow(pixels, &self.lights, point, CLEAR, 0.3 * fade, BLOB_SHADES);
+                glow(
+                    pixels,
+                    &self.lights,
+                    point,
+                    CLEAR,
+                    WIPE_TINT * fade,
+                    WIPE_SHADES,
+                );
             }
         }
     }
@@ -419,6 +429,28 @@ mod tests {
         }
         assert_eq!(window.droplets.len(), 1);
         assert_eq!(window.droplets[0].mass, 2.0);
+    }
+
+    #[test]
+    fn a_wiped_streak_fades_through_its_refill() {
+        let mut window = bare();
+        let area = Rect::new(0, 0, 80, 24);
+        window.mouse(click(10, 10));
+        let mut tinted = Vec::new();
+        for tick in 1..=85 {
+            let elapsed = Duration::from_millis(tick * 100);
+            let mut shown = Buffer::empty(area);
+            window.paint(elapsed, area, None, &Buffer::empty(area), &mut shown);
+            if tick % 10 == 0 && tick <= 70 {
+                let wipes = std::mem::take(&mut window.wipes);
+                let mut plain = Buffer::empty(area);
+                window.paint(elapsed, area, None, &Buffer::empty(area), &mut plain);
+                window.wipes = wipes;
+                tinted.push(shown[(10, 10)] != plain[(10, 10)]);
+            }
+        }
+        assert_eq!(tinted, [true; 7], "seconds 1 to 7");
+        assert!(window.wipes.is_empty(), "refilled after 8 s");
     }
 
     #[test]
