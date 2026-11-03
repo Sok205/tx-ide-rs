@@ -1,9 +1,6 @@
 //! Drawing: the session list with its header and footer, and the plugins / keys sub-lists,
 //! rendered into a [`Buffer`]. Colours go through [`palette`], so `TX_HOME_COLORS=256` swaps
 //! the true-colour constants for the nearest entries of the 256-colour palette.
-
-use std::sync::OnceLock;
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -12,6 +9,7 @@ use ratatui::widgets::{Block, Widget};
 use tx_client::render::reltime;
 use tx_core::LlmEngineState;
 
+use crate::backdrop::palette;
 use crate::model::{AgentRow, AssistantState, Context, Detail, Home, Row, View};
 
 pub const ACCENT: Color = Color::Rgb(122, 162, 247);
@@ -29,28 +27,6 @@ const NAME_W: usize = 24;
 const SPINNER: [char; 4] = ['◐', '◓', '◑', '◒'];
 const DAY: f64 = 86_400.0;
 const DETAIL_INDENT: &str = "      ";
-
-/// `color`, or its 256-colour palette entry when `TX_HOME_COLORS=256`.
-fn palette(color: Color) -> Color {
-    static INDEXED: OnceLock<bool> = OnceLock::new();
-    let indexed_palette =
-        INDEXED.get_or_init(|| std::env::var("TX_HOME_COLORS").is_ok_and(|value| value == "256"));
-    if *indexed_palette {
-        indexed(color)
-    } else {
-        color
-    }
-}
-
-/// The nearest entry of the 6x6x6 colour cube.
-fn indexed(color: Color) -> Color {
-    let Color::Rgb(red, green, blue) = color else {
-        return color;
-    };
-    let level = |channel: u8| (u16::from(channel) * 5 + 127) / 255;
-    let index = 16 + 36 * level(red) + 6 * level(green) + level(blue);
-    Color::Indexed(u8::try_from(index).expect("cube indices are at most 231"))
-}
 
 fn fg(color: Color) -> Style {
     Style::new().fg(palette(color))
@@ -899,13 +875,5 @@ mod tests {
             "{}",
             status("kill")
         );
-    }
-
-    #[test]
-    fn the_256_colour_palette_maps_rgb_into_the_cube_and_leaves_others() {
-        assert_eq!(indexed(Color::Rgb(0, 0, 0)), Color::Indexed(16));
-        assert_eq!(indexed(Color::Rgb(255, 255, 255)), Color::Indexed(231));
-        assert_eq!(indexed(Color::Rgb(255, 0, 0)), Color::Indexed(196));
-        assert_eq!(indexed(Color::Red), Color::Red);
     }
 }
