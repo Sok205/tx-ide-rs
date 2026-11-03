@@ -13,6 +13,7 @@ pub mod abyss;
 pub mod fireflies;
 pub mod koi;
 pub mod rain;
+pub mod snow;
 pub mod stars;
 
 pub const PLUGIN_ID: &str = "home-themes";
@@ -24,6 +25,7 @@ pub const THEMES: &[(&str, Constructor)] = &[
     ("fireflies", fireflies::meadow),
     ("rain", rain::window),
     ("abyss", abyss::deep),
+    ("snow", snow::pines),
 ];
 
 const OFF: &str = "off";
