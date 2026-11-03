@@ -116,7 +116,10 @@ fn a_failed_warm_leaves_its_reason_in_the_plugin_dir() {
     let output = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(output.status.code(), Some(1));
     let reason = std::fs::read_to_string(&failure).unwrap();
-    assert!(reason.contains("COMMON"), "{reason:?}");
+    assert!(
+        reason.contains("unknown role \"TX-ASSISTANT\""),
+        "{reason:?}"
+    );
     cli.ok(&["ui", "install"]);
     let output = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(
@@ -138,7 +141,10 @@ fn a_failed_ask_leaves_its_reason_like_warm() {
     let output = cli.run(&["assistant", "ask", "hello"], &env, "");
     assert_eq!(output.status.code(), Some(1));
     let reason = std::fs::read_to_string(&failure).unwrap();
-    assert!(reason.contains("COMMON"), "{reason:?}");
+    assert!(
+        reason.contains("unknown role \"TX-ASSISTANT\""),
+        "{reason:?}"
+    );
 }
 
 #[test]
@@ -178,7 +184,10 @@ fn warm_without_the_roles_installed_fails() {
     let output = cli.run(&["assistant", "warm"], &[("PATH", &path)], "");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("COMMON"), "{stderr:?}");
+    assert!(
+        stderr.contains("unknown role \"TX-ASSISTANT\""),
+        "{stderr:?}"
+    );
     assert!(output.stdout.is_empty());
 }
 

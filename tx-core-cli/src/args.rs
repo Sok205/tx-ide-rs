@@ -7,15 +7,17 @@ use tx_core::{CoreError, EngineKind};
 
 pub const USAGE: &str = "\
 usage: tx [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR] [--run-dir DIR] [--socket PATH]
-           [--plugins FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
+           [--config FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
 
 verbs:
-  create NAME --cwd DIR --engine ENGINE --prompt T [--role R]... [--option KEY=VALUE]... [--model M]
+  create NAME --cwd DIR --prompt T [--engine ENGINE] [--role R]... [--option KEY=VALUE]... [--model M]
                 [--effort E] [--parent ID] [--tag T]... [--env KEY=VALUE]...
                                                                     start an agent; prints its id. It runs in its own
                                                                     worktree of the checkout DIR (name NAME, else NAME-2 …).
                                                                     --model M and --effort E are --option model=M / effort=E;
-                                                                    the engine validates every option
+                                                                    effort is 1-5 (or the engine's own word);
+                                                                    the engine validates every option. A flag not given
+                                                                    comes from `agent:` in the config file
   fork SOURCE --prompt T [--name NAME] [--tag T]... [--option KEY=VALUE]... [--model M] [--effort E]
                                                                     a new agent continuing SOURCE's conversation in a branch,
                                                                     in its own worktree at SOURCE's committed HEAD (uncommitted
@@ -47,14 +49,21 @@ verbs:
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
 else the XDG variable, else the XDG default:
-  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           plugins.yaml, roles/ (your own)
+  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           config.yaml, roles/ (your own)
   data    $XDG_DATA_HOME/<app>, ~/.local/share/<app>        records, log, plugin data, roles/ (shipped)
   state   $XDG_STATE_HOME/<app>, ~/.local/state/<app>       locks, profiles
   cache   $XDG_CACHE_HOME/<app>, ~/.cache/<app>
   run     $XDG_RUNTIME_DIR/<app>, $TMPDIR/<app>.<user>      tmux.sock
 Roles resolve from --profile-dir, else <data>/roles (written by `ui install`), then <config>/roles;
 skills from --skill-dir, else skills/ under those two.
-Plugins are switched in <config>/plugins.yaml (see --plugins).
+The config file is <config>/config.yaml (--config FILE overrides); every key is optional:
+  agent:                        defaults for create; a flag given replaces its key
+    engine: claude              claude | codex
+    roles: [COMMON, DEVELOPER]  any --role replaces the whole list
+    model: claude-opus-5-5      null: the engine's own default
+    effort: 3                   1-5 (or the engine's own word); null: the engine's own default
+  plugins:                      one entry per plugin id (see `plugins`)
+    <id>: { enabled: true, settings: {...} }
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -77,7 +86,7 @@ pub struct Global {
     pub profile_dirs: Vec<PathBuf>,
     pub skill_dirs: Vec<PathBuf>,
     pub env: Vec<(String, String)>,
-    pub plugins: Option<PathBuf>,
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,7 +97,9 @@ pub enum Verb {
         parent: Option<String>,
         tags: Vec<String>,
         env: Vec<(String, String)>,
-        engine: EngineKind,
+        /// `None`: the config file's `agent.engine`.
+        engine: Option<EngineKind>,
+        /// Empty: the config file's `agent.roles`.
         roles: Vec<String>,
         /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
         /// a repeated key is settled by the engine's options object, last one wins.
@@ -292,9 +303,9 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 cursor.next();
                 global.env.push(env_pair(cursor.value("--env")?)?);
             }
-            Some("--plugins") => {
+            Some("--config") => {
                 cursor.next();
-                global.plugins = Some(cursor.value("--plugins")?.into());
+                global.config = Some(cursor.value("--config")?.into());
             }
             _ => break,
         }
@@ -410,8 +421,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         }
     }
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
-    let engine = engine.ok_or_else(|| usage("create needs --engine ENGINE (claude or codex)"))?;
-    let prompt = prompt.ok_or_else(|| usage("--prompt is required with --engine"))?;
+    let prompt = prompt.ok_or_else(|| usage("create needs --prompt T"))?;
     Ok(Verb::Create {
         name,
         cwd,
@@ -495,10 +505,10 @@ mod tests {
     }
 
     #[test]
-    fn plugins_flag_and_unknown_verbs_go_to_plugins() {
-        let invocation = parse_str("--plugins p.yaml frob a b").unwrap();
+    fn config_flag_and_unknown_verbs_go_to_plugins() {
+        let invocation = parse_str("--config p.yaml frob a b").unwrap();
         assert_eq!(
-            invocation.global.plugins,
+            invocation.global.config,
             Some(Path::new("p.yaml").to_owned())
         );
         assert_eq!(
@@ -568,7 +578,7 @@ mod tests {
         assert_eq!(parent.as_deref(), Some("p-1"));
         assert_eq!(tags, ["a", "b"]);
         assert_eq!(env, [("K".to_owned(), "V".to_owned())]);
-        assert_eq!(engine, EngineKind::Claude);
+        assert_eq!(engine, Some(EngineKind::Claude));
         assert_eq!(roles, ["dev", "ops"]);
         assert_eq!(
             options,
@@ -580,6 +590,17 @@ mod tests {
             ]
         );
         assert_eq!(prompt, "go");
+    }
+
+    #[test]
+    fn create_without_engine_or_roles_leaves_them_to_the_config_file() {
+        let Verb::Create { engine, roles, .. } =
+            parse_str("create w --cwd /w --prompt go").unwrap().verb
+        else {
+            panic!()
+        };
+        assert_eq!(engine, None);
+        assert!(roles.is_empty());
     }
 
     #[test]
@@ -648,8 +669,7 @@ mod tests {
         for (line, needle) in [
             ("create", "name"),
             ("create n", "--cwd"),
-            ("create n --cwd /w", "--engine"),
-            ("create n --cwd /w --prompt go", "--engine"),
+            ("create n --cwd /w", "--prompt"),
             (
                 "create n --cwd /w --engine claude --option model",
                 "KEY=VALUE",
@@ -673,7 +693,7 @@ mod tests {
             ),
             (
                 "create n --cwd /w --engine claude --model m",
-                "--prompt is required with --engine",
+                "create needs --prompt T",
             ),
             ("create n --cwd /w --bogus --engine claude", "--bogus"),
             ("create n extra --cwd /w --engine claude", "extra"),

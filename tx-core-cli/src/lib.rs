@@ -2,5 +2,6 @@
 //! library: argument parsing, the plugin switchboard and opening the core.
 
 pub mod args;
+pub mod config;
 pub mod plugins;
 pub mod setup;

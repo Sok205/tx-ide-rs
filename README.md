@@ -15,7 +15,8 @@ nvim and tmux config (`config/`).
 
 ```bash
 git clone <this-repo> ~/tx-ide-rs
-~/tx-ide-rs/install            # cargo install tx and txi; tx ui install; link ~/.config/nvim and ~/.tmux.conf
+~/tx-ide-rs/install            # cargo install tx and txi; tx ui install; link ~/.config/nvim and ~/.tmux.conf;
+                               # write ~/.config/tx-ide/config.yaml with the defaults (once)
 ~/tx-ide-rs/install --dry-run  # print every change first
 tx ui attach                  # the IDE
 ```
@@ -73,7 +74,7 @@ match `[A-Za-z0-9_.-]+`. Each directory resolves, first match wins:
 
 | directory | flag | exported by core | XDG variable | default | holds |
 |---|---|---|---|---|---|
-| config | `--config-dir` | `TX_CONFIG_DIR` | `$XDG_CONFIG_HOME/<app>` | `~/.config/<app>` | `plugins.yaml`, `roles/` (yours) |
+| config | `--config-dir` | `TX_CONFIG_DIR` | `$XDG_CONFIG_HOME/<app>` | `~/.config/<app>` | `config.yaml`, `roles/` (yours) |
 | data | `--data-dir` | `TX_DATA_DIR` | `$XDG_DATA_HOME/<app>` | `~/.local/share/<app>` | `agents/<id>/agent.json` (and the agent's `archive/`), `log.jsonl`, `plugins/<id>/`, `roles/` (shipped), `bin/`, `keys/`, `conf/`, `tmux.conf` |
 | state | `--state-dir` | `TX_STATE_DIR` | `$XDG_STATE_HOME/<app>` | `~/.local/state/<app>` | `locks/`, `profiles/<id>.md` |
 | cache | `--cache-dir` | `TX_CACHE_DIR` | `$XDG_CACHE_HOME/<app>` | `~/.cache/<app>` | nothing yet |
@@ -269,12 +270,47 @@ Every session carries `TX_SESSION_ID`, `TX_TMUX_SOCKET`, the five `TX_*_DIR` and
 run `tx send <name> …` and the message arrives as `<from-agent session="…">`. `tx` treats the
 caller as an agent only when `$TMUX` names tx's own socket; anywhere else the sender is the user.
 
+## Configuration
+
+One file, `<config>/config.yaml` (by default `~/.config/tx-ide/config.yaml`; `--config FILE`
+overrides). `tx help` prints the path. `install` writes it once, with every default spelled out
+(a copy of `config/tx-ide/config.yaml`); after that it is yours, and `install` never touches it
+again. Open it in any editor. Every key is optional: a key you delete, or a missing file, falls
+back to the same default. In short:
+
+```yaml
+agent:                         # defaults for `tx create`; a flag given replaces its key
+  engine: claude               # claude | codex
+  roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
+  model: claude-opus-5-5       # null: the engine's own default
+  effort: 3                    # 1-5 (or the engine's own word); null: the engine's own default
+
+plugins:                       # one entry per plugin id; see Plugins below
+  engine-codex: { enabled: false }
+  assistant:
+    settings: { model: opus, effort: 2 }
+  artifacts:
+    settings: { editor: nvim }
+```
+
+So `tx create w --cwd . --prompt "…"` starts a Claude agent on Opus 5.5 at effort 3 (high), with
+the COMMON and DEVELOPER roles. Effort is 1–5 (or the engine's own word): 1 = low, 2 = medium,
+3 = high, 4 = xhigh, 5 = max, the same for every engine, in this file, `--effort` and
+`--option effort=`; the record stores the word. Codex's `none` and `minimal` are words only. With `--engine codex`, pass `--model` / `--effort` too (or set them to
+`null`): the defaults name a Claude model.
+An unknown key, a bad value or malformed YAML stops `tx` with a usage error naming the file. The
+directories, the socket, the roles and skills directories and `--env` stay flags and environment
+variables (see "Where files live" above); they are not in this file.
+
+Plugin settings read today: `assistant` (`model`, `effort`: what the tx-assistant is launched
+with) and `artifacts` (`editor`: the program an artifact's view runs).
+
 ## Plugins
 
 Everything but the core is a plugin: a crate under `plugins/<id>/` implementing `tx_core::Plugin`,
 which fills any of four slots — engines, event sinks, verbs, resources (`tx-core/src/plugin.rs`). `tx`
-links them through `tx-core-cli/src/plugins.rs::MANIFEST` and switches them in
-`<config>/plugins.yaml` (`--plugins FILE` overrides):
+links them through `tx-core-cli/src/plugins.rs::MANIFEST` and switches them in the `plugins:`
+section of the config file (see [Configuration](#configuration)):
 
 ```yaml
 plugins:
@@ -283,8 +319,8 @@ plugins:
     settings: { editor: nvim }
 ```
 
-Missing file = everything on; an unknown id or a malformed file is a usage error. The id of a
-retired plugin (`hooks`) is skipped, so an older file keeps loading. `tx plugins`
+No entry = the plugin is on; an unknown id is a usage error. The id of a retired plugin (`hooks`,
+`history`) is skipped, so an older file keeps loading. `tx plugins`
 lists ids and status; `tx help` lists plugin verbs. Plugins keep per-session data in the
 record's `ext.<id>` object via `TxCore::update_ext`.
 
@@ -311,7 +347,7 @@ like its verbs.
 | `artifacts` | `artifact <sub>` and `group <session> [<group> \| --clear]`, the internal `_artifact-menu`, `_artifact-pick`, `_artifact-go`; owns `ext.artifacts` (`{"group": …}`; a legacy `bound` on records written before artifact views is read until the process launch leaves core); every artifact has a kind: a `document` (a file, edited in place under `artifact path <id>` and snapshotted by `artifact modify <id>`) opens in a tx-client view of kind `editor`; a `diff` (`create --kind diff [--cwd W] [--base SHA]`: `git diff <base>` of worktree W plus its untracked files, the base pinned to a commit at create, the patch being the artifact's versioned content `current.patch` that `modify` and `open` re-snapshot) opens in a view of kind `diff` running `nvim -c "DiffviewOpen <base>"` in the worktree, or when the worktree is gone in a temporary detached worktree at the base with the patch applied (made from the worktree's git common directory, recorded as `repository` at create, else a sibling checkout; its close step is kept in `<id>/.cleanup.json` by view name and run by `artifact close <id>`, by `doctor --repair`, or by the next `open` once the view has ended), or when no checkout exists as the patch in an editor; any other kind (a `tour`) is opened by convention, `tx <kind> open <id>` run in-process by the plugin registering that verb, else "no opener for kind"; the view is bound to the artifact (`@tx-view-bound`) and found again by that binding, so `artifact open` and prefix+a on an artifact already open show its view instead of starting another (`artifact open` switches the client to it when run inside the server, else prints its name); `archive <id>` hides a finished artifact from prefix+a and `ls` (content kept; `ls --archived` includes it, `unarchive` brings it back), `ls --kind K` filters by kind; `group <view>` prints a view's resolved group (its parent agent's override, else its artifact's) and refuses to set one; and the store `<data>/plugins/artifacts/` (`<id>.json` with `kind` and `archived`, both optional on read so older records are documents; `<id>/current<ext>`, `<id>/revs/<n><ext>`, its own `.log.jsonl`, `.locks/` and `.worktrees/`); setting `editor` (default `nvim`) is what an artifact's view runs; resources `keys/artifacts.tmux` (prefix+a) and `bin/tmux-artifact-menu` |
 | `tour` | `tour create <stops.lua> --title T [--cwd W]` checks the stops with `nvim --clean -l` (they must load as a Lua list) and registers an artifact of kind `tour` (`{"kind": "tour", "worktree": <absolute W, default cwd>, "stops": "current.lua"}`) through the artifacts service; `tour open <id> [--tag T]`, also what `artifact open` and prefix+a run for a tour, shows the view already bound to it, else starts a view of kind `tour` running nvim in the worktree with `require("tx-tour")(<current.lua>)` on `VimEnter` (after tx-client's runtimepath `-c`), or fails with "tour worktree `<W>` is gone"; a tour is revised like a document (`artifact path` + `artifact modify`). The stops file is Lua run inside nvim at create and at every open: it is as trusted as whoever wrote it |
 | `timeline` | `timeline [--last DURATION] [--snapshot]` and `timeline health`, the internal `_timeline-resident`, `_timeline-attach` (start or attach the resident `tx-timeline` view; q detaches, the view stays warm) and `_timeline-json`; reads each record's transcript through `TxCore::conversation` (the engine names it), model and effort from the engine data, `status` (live state), `ext.edit` (group); working / idle spans come from the transcripts' turn markers; resource `keys/timeline.tmux` (prefix+T) |
-| `home` | `home` (the home in an 80% popup on the current client), the internal `_home-install <session>` (the floor on a home view: the `@tx-home-floor` mark, `remain-on-exit` with `remain-on-exit-format` `tx home: working…` and a `pane-died` hook on its pane, all pane-scoped; the TUI replaces a shell or a dead pane, never an editor or a nested client, and comes back as a first open while the assistant is down), `_home-tui <pane> [--first] [--returned-from S] [--popup] [--choice FILE]` (the TUI; on exit leaves one line in its choice file: `attach <name>`, `resume <id>`, `new <cwd>`, `stop <id>`, `ask <text>`, `artifacts <id>`, `timeline`, `tutor`, `warm`; `--first` applies a 400 ms grace and starts `assistant warm` detached when no assistant runs: none, a stopped one or a failed warm), `_home-perform <pane>` (the hook: runs the choice — a nested attach of the picked session in the pane, `respawn`, `_new-agent --cwd`, `stop`, `assistant warm` then a detached `assistant ask`, `_artifact-menu`, `_timeline-attach`, `tutor start` — then the TUI again, selecting the session the pane last showed) and `_home-open <pane> <client>` (prefix+m: the popup, whose `attach` is a `switch-client`); reads `TxCore` (records, live state, transcripts through `tx-chat`'s readers, the assistant plugin's `warm.failed`), git (the main checkout and branch of each worktree, cached) and `tx artifact ls`; a `menu:` entry in `plugins.yaml` (the plugin's old id) is ignored; resource `keys/home.tmux` (prefix+m) |
+| `home` | `home` (the home in an 80% popup on the current client), the internal `_home-install <session>` (the floor on a home view: the `@tx-home-floor` mark, `remain-on-exit` with `remain-on-exit-format` `tx home: working…` and a `pane-died` hook on its pane, all pane-scoped; the TUI replaces a shell or a dead pane, never an editor or a nested client, and comes back as a first open while the assistant is down), `_home-tui <pane> [--first] [--returned-from S] [--popup] [--choice FILE]` (the TUI; on exit leaves one line in its choice file: `attach <name>`, `resume <id>`, `new <cwd>`, `stop <id>`, `ask <text>`, `artifacts <id>`, `timeline`, `tutor`, `warm`; `--first` applies a 400 ms grace and starts `assistant warm` detached when no assistant runs: none, a stopped one or a failed warm), `_home-perform <pane>` (the hook: runs the choice — a nested attach of the picked session in the pane, `respawn`, `_new-agent --cwd`, `stop`, `assistant warm` then a detached `assistant ask`, `_artifact-menu`, `_timeline-attach`, `tutor start` — then the TUI again, selecting the session the pane last showed) and `_home-open <pane> <client>` (prefix+m: the popup, whose `attach` is a `switch-client`); reads `TxCore` (records, live state, transcripts through `tx-chat`'s readers, the assistant plugin's `warm.failed`), git (the main checkout and branch of each worktree, cached) and `tx artifact ls`; a `menu:` entry in `config.yaml` (the plugin's old id) is ignored; resource `keys/home.tmux` (prefix+m) |
 
 The picker's role column reads `ext.spawn.kind`, which a later plugin writes; until then every
 process session shows `shell`.
@@ -323,7 +359,7 @@ dirs but COMMON, which every agent gets; `none` first, DEVELOPER preselected). N
 The session is created in the popup; the outcome lands on the client's status line.
 
 `assistant warm` creates `tx-assistant` with the engine `claude`, roles COMMON + TX-ASSISTANT, under a lock (two warms never make two assistants); an ended assistant is respawned in place (same record and worktree) rather than replaced by `tx-assistant-2`; a failure is kept in `<data>/plugins/assistant/warm.failed` (removed by the next success) for the home's header; the assistant's home repository is seeded as trusted in Claude's config file when that file exists, so the first launch does not stop on the trust dialog. It uses
-model `opus`, effort `medium`, tag `tx-system`, in the data dir (so the engine's skill links
+model `opus`, effort `2` (medium), tag `tx-system`, in the data dir (so the engine's skill links
 land under `<data>/.claude/skills`). A `Running` record whose tmux session is gone is
 refreshed to `Exited` and the assistant started again.
 
@@ -404,7 +440,7 @@ directories that no active plugin provides are deleted, so `tx` needs nothing fr
 tree at run time. It refuses a binary or directory path containing whitespace, a backslash, a
 backtick or any of `"'$#;`, since the paths are spliced into tmux config lines.
 
-Disabling a plugin in `plugins.yaml` and re-running `ui install` removes that plugin's keys, even
+Disabling a plugin in `config.yaml` and re-running `ui install` removes that plugin's keys, even
 on a running server: `ui install` unbinds the keys the plugin's fragment declared, clears the
 options and hooks it declared, and prints `reloaded`. When it finds no previous
 `keys/.installed` on a running server (a server set up by an older `ui install`), it also prints
@@ -431,7 +467,7 @@ tx ui attach     # then prefix+t
 ```
 
 `tx ui view open … -- PROGRAM` is the way to start a shell or any other non-LLM program on the
-core's server; `tx create` starts agents only (`--engine` and `--prompt` are required). A
+core's server; `tx create` starts agents only (`--cwd` and `--prompt` are required). A
 record with `"kind": "process"` left on disk by an older build is skipped by every read and
 named on stderr when `tx` opens the core.
 
@@ -497,7 +533,7 @@ A key is a plugin, with:
   mode 0755).
 
 Nothing else in the source needs editing: `ui install` finds the fragment by its resource name,
-and `<id>: { enabled: false }` in `plugins.yaml` turns the key off. Adding a key also means
+and `<id>: { enabled: false }` in `config.yaml` turns the key off. Adding a key also means
 extending `tx-core-cli/tests/ide.rs`: the expected conf (`expected_conf`) with the new
 `run-shell` line, `start_server`'s probe and `ui_install_fragment_loads` with the new bind, and
 `fragments_do_nothing_outside_an_installed_server` with the id.
@@ -516,7 +552,7 @@ add now and breaking to add later.
 | Lifecycle hooks | `trait EventSink: Send + Sync { fn on_event(&self, e: &Event); }` + `TxCore::subscribe(Box<dyn EventSink>)`; `Event` carries the session id | called after locks drop; no `Result` (hooks cannot veto); no `&TxCore` (re-entry would deadlock on flock) |
 | Engine input | built: `receive_message` / `stop` / `interrupt` return an `Input` (a line, submitted or not, or one key) | pure; core still types it |
 | Chat ops (resume, fork, transcripts) | separate crate with a second registry keyed by engine id, `trait EngineChatOps` | one future `resume` field on `LaunchRequest` |
-| Declarative engines | one plugin `Declared { id, program, args }` with `{profile_file}`/`{model}`/`{prompt}` substitution, registered N times from `plugins.yaml` settings | ids validated by the registry |
+| Declarative engines | one plugin `Declared { id, program, args }` with `{profile_file}`/`{model}`/`{prompt}` substitution, registered N times from `config.yaml` plugin settings | ids validated by the registry |
 | Launch decorators | a fourth registry slot letting a plugin edit a `LaunchPlan` (per-session hook injection without touching `~/.claude`) | pure, ordered by manifest |
 
 Before freezing the API: add `Send + Sync` to `LlmEngine`, put a session id in every log

@@ -26,6 +26,12 @@ impl Cli {
             .tempdir_in("/tmp")
             .unwrap();
         let path = shim_path_in(&dir.path().join("shim"), &[("claude", "exec sleep 30")]);
+        // Stand-ins for the default `agent.roles`, which `ui install` would write.
+        let roles = dir.path().join("default-roles");
+        std::fs::create_dir_all(&roles).unwrap();
+        for role in common::DEFAULT_ROLES {
+            std::fs::write(roles.join(format!("{role}.md")), "stand-in role\n").unwrap();
+        }
         Self { dir, path }
     }
 
@@ -37,6 +43,10 @@ impl Cli {
         let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .args(directory_flags(&self.state()))
+            .arg("--profile-dir")
+            .arg(self.dir.path().join("default-roles"))
+            .arg("--profile-dir")
+            .arg(self.state().join("roles"))
             .env("PATH", &self.path)
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID");
@@ -360,13 +370,10 @@ fn usage_level_inputs_are_table_driven() {
             vec!["create", "--cwd", "/", "n"],
             "create needs a session name",
         ),
-        (
-            vec!["create", "n", "--cwd", "/"],
-            "create needs --engine ENGINE",
-        ),
+        (vec!["create", "n", "--cwd", "/"], "create needs --prompt T"),
         (
             vec!["create", "n", "--cwd", "/", "--engine", "claude"],
-            "--prompt is required with --engine",
+            "create needs --prompt T",
         ),
         (vec!["send", "x", "--"], "send needs the message text"),
         (vec!["send", "--"], "send needs the message text"),

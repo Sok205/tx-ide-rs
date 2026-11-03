@@ -86,8 +86,23 @@ impl Sandbox {
         repository_at(&self.path().join("work"))
     }
 
+    /// Stand-ins for the roles `ui install` writes, where it writes them for `application`, so
+    /// a `create` without `--role` (the default `agent.roles`) resolves.
+    fn install_default_roles(&self, application: &str) {
+        let roles = self
+            .home()
+            .join(".local/share")
+            .join(application)
+            .join("roles");
+        std::fs::create_dir_all(&roles).unwrap();
+        for role in ["COMMON", "DEVELOPER"] {
+            std::fs::write(roles.join(format!("{role}.md")), "stand-in role\n").unwrap();
+        }
+    }
+
     /// `create NAME --cwd <repository> --engine claude --prompt start`, with the fake `claude`.
     fn create(&self, name: &str, environment: &[(&str, &str)]) -> String {
+        self.install_default_roles("tx-ide");
         let work = self.repository();
         self.ok(
             &[
@@ -109,6 +124,11 @@ impl Sandbox {
     /// An agent whose `claude` writes its environment to `env.txt` in its worktree, then the
     /// parsed lines.
     fn session_environment(&self, environment: &[(&str, &str)]) -> Vec<(String, String)> {
+        let application = environment
+            .iter()
+            .find(|(key, _)| *key == "TX_APPNAME")
+            .map_or("tx-ide", |(_, value)| *value);
+        self.install_default_roles(application);
         let work = self.repository();
         let path = shim_path_in(
             &self.path().join("probe-shim"),
@@ -262,4 +282,31 @@ fn an_invalid_application_name_is_refused_before_any_file() {
     // Empty means unset.
     sandbox.ok(&["engines"], &[("TX_APPNAME", "")]);
     assert!(sandbox.home().join(".local/share/tx-ide").is_dir());
+}
+
+/// With no flags, the config file is `$XDG_CONFIG_HOME/<app>/config.yaml`, else
+/// `~/.config/<app>/config.yaml`.
+#[test]
+fn the_config_file_lives_in_the_config_directory() {
+    let sandbox = Sandbox::new();
+    let write = |directory: &Path| {
+        std::fs::create_dir_all(directory).unwrap();
+        std::fs::write(
+            directory.join("config.yaml"),
+            "plugins:\n  engine-codex: { enabled: false }\n",
+        )
+        .unwrap();
+    };
+    write(&sandbox.home().join(".config/tx-ide"));
+    assert_eq!(sandbox.ok(&["engines"], &[]), "claude\n");
+    let xdg = sandbox.path().join("xdg-config");
+    assert_eq!(
+        sandbox.ok(&["engines"], &[("XDG_CONFIG_HOME", xdg.to_str().unwrap())]),
+        "claude\ncodex\n"
+    );
+    write(&xdg.join("tx-ide"));
+    assert_eq!(
+        sandbox.ok(&["engines"], &[("XDG_CONFIG_HOME", xdg.to_str().unwrap())]),
+        "claude\n"
+    );
 }

@@ -455,7 +455,7 @@ fn draw_plugins(home: &Home, row: usize, area: Rect, buf: &mut Buffer, themed: b
         rows,
         row,
         highlight: false,
-        hint: "read-only · plugins.yaml switches them · esc back",
+        hint: "read-only · config.yaml switches them · esc back",
     };
     draw_list(&list, area, buf, themed);
 }

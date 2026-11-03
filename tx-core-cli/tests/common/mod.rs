@@ -52,14 +52,32 @@ pub struct Cli {
     pub dir: tempfile::TempDir,
 }
 
+/// The roles `create` gets when no `--role` is given (`agent.roles` in `config.yaml`).
+pub const DEFAULT_ROLES: [&str; 2] = ["COMMON", "DEVELOPER"];
+
 impl Cli {
     pub fn new() -> Self {
-        Self {
-            dir: tempfile::Builder::new()
-                .prefix("tx")
-                .tempdir_in("/tmp")
-                .unwrap(),
+        let dir = tempfile::Builder::new()
+            .prefix("tx")
+            .tempdir_in("/tmp")
+            .unwrap();
+        // A real install has the default roles (`ui install` writes them); a test that never
+        // runs it finds stand-ins here, outside the state dir, below any role it installs.
+        let roles = dir.path().join("default-roles");
+        std::fs::create_dir_all(&roles).unwrap();
+        for role in DEFAULT_ROLES {
+            std::fs::write(roles.join(format!("{role}.md")), "stand-in role\n").unwrap();
         }
+        Self { dir }
+    }
+    /// `--profile-dir` for the stand-in default roles, then the state dir's own roles, which win.
+    pub fn role_flags(&self) -> Vec<std::ffi::OsString> {
+        vec![
+            "--profile-dir".into(),
+            self.dir.path().join("default-roles").into_os_string(),
+            "--profile-dir".into(),
+            self.state().join("roles").into_os_string(),
+        ]
     }
     pub fn state(&self) -> PathBuf {
         self.dir.path().join("state")
@@ -74,12 +92,13 @@ impl Cli {
     }
     pub fn write_yaml(&self, text: &str) {
         std::fs::create_dir_all(self.state()).unwrap();
-        std::fs::write(self.state().join("plugins.yaml"), text).unwrap();
+        std::fs::write(self.state().join("config.yaml"), text).unwrap();
     }
     pub fn command(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .args(directory_flags(&self.state()))
+            .args(self.role_flags())
             .args(args)
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID")

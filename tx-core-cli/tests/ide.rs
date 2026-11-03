@@ -105,7 +105,7 @@ fn start_server(cli: &Cli) {
     );
 }
 
-fn plugins_yaml_disabling(id: &str) -> String {
+fn config_disabling(id: &str) -> String {
     format!("plugins:\n  {id}: {{ enabled: false }}\n")
 }
 
@@ -340,7 +340,7 @@ fn disabling_kill_removes_its_key_on_reload() {
     let cli = Cli::new();
     cli.ok(&["ui", "install"]);
     start_server(&cli);
-    cli.write_yaml(&plugins_yaml_disabling("kill"));
+    cli.write_yaml(&config_disabling("kill"));
     let out = cli.ok(&["ui", "install"]);
     assert_eq!(out, format!("{}\nreloaded\n", cli.conf().display()));
     let kill = cli.tmux_out(&["list-keys", "-T", "prefix", "X"]);
@@ -378,7 +378,7 @@ fn disabling_labels_unsets_border_format_on_reload() {
         cli.tmux_out(&["show-hooks", "-g", "after-new-window"])
             .contains("@tx-view")
     );
-    cli.write_yaml(&plugins_yaml_disabling("labels"));
+    cli.write_yaml(&config_disabling("labels"));
     let out = cli.ok(&["ui", "install"]);
     assert!(out.contains("reloaded"), "{out:?}");
     assert!(!out.contains("legacy"), "{out:?}");
@@ -500,7 +500,7 @@ fn resource_verb_prints_bytes_and_fails_on_unknown() {
         "tx _resource: no such resource: nope/x\n"
     );
     cli.fails(&["_resource"], 2);
-    cli.write_yaml(&plugins_yaml_disabling("kill"));
+    cli.write_yaml(&config_disabling("kill"));
     let stderr = cli.fails(&["_resource", "keys/kill.tmux"], 1);
     assert!(stderr.contains("no such resource"), "{stderr:?}");
 }
@@ -530,18 +530,14 @@ fn ui_install_refuses_unsafe_paths() {
 }
 
 fn attach_command(cli: &Cli) -> String {
-    format!(
-        "{} {} ui attach",
-        env!("CARGO_BIN_EXE_tx"),
-        cli.arguments()
-    )
+    format!("{} {} ui attach", env!("CARGO_BIN_EXE_tx"), cli.arguments())
 }
 
 #[test]
 fn ui_attach_lands_in_a_view_home() {
     require_tmux!();
     let cli = Cli::new();
-    cli.write_yaml(&plugins_yaml_disabling("assistant"));
+    cli.write_yaml(&config_disabling("assistant"));
     cli.create("a");
     cli.in_outer_pane(&attach_command(&cli));
     assert!(
@@ -580,7 +576,7 @@ fn home_tui_shown(cli: &Cli) -> bool {
 fn ui_attach_inside_another_tmux_says_its_prefix_wins() {
     require_tmux!();
     let cli = Cli::new();
-    cli.write_yaml(&plugins_yaml_disabling("assistant"));
+    cli.write_yaml(&config_disabling("assistant"));
     let output = cli.run(
         &["ui", "attach"],
         &[("TMUX", "/tmp/not-the-core.sock,1,0")],
@@ -600,7 +596,7 @@ fn ui_attach_inside_another_tmux_says_its_prefix_wins() {
 fn ui_attach_inside_the_core_switches_the_client() {
     require_tmux!();
     let cli = Cli::new();
-    cli.write_yaml(&plugins_yaml_disabling("assistant"));
+    cli.write_yaml(&config_disabling("assistant"));
     cli.create("other");
     cli.in_outer_pane(&format!(
         "TMUX= tmux -S {} attach -t =other",
@@ -742,7 +738,7 @@ fn ui_attach_without_the_roles_installed_shows_the_failed_assistant() {
 fn ui_attach_installs_the_floor_on_an_existing_shell_home() {
     require_tmux!();
     let cli = Cli::new();
-    cli.write_yaml(&plugins_yaml_disabling("assistant"));
+    cli.write_yaml(&config_disabling("assistant"));
     cli.ok(&["ui", "install"]);
     assert!(
         cli.tmux(&["new-session", "-d", "-s", "home", "sh"])
@@ -822,7 +818,7 @@ fn ui_attach_with_home_disabled_opens_a_shell() {
 fn ui_attach_with_home_disabled_after_it_was_enabled_repairs_the_pane() {
     require_tmux!();
     let cli = Cli::new();
-    cli.write_yaml(&plugins_yaml_disabling("assistant"));
+    cli.write_yaml(&config_disabling("assistant"));
     cli.in_outer_pane(&attach_command(&cli));
     assert!(
         cli.wait_for(10, || home_tui_shown(&cli)),

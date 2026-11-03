@@ -1,4 +1,4 @@
-//! What `tx` and `txi` share: the five directories, the core config, `plugins.yaml`, opening the core,
+//! What `tx` and `txi` share: the five directories, the core config, `config.yaml`, opening the core,
 //! and how a failure maps to an exit code.
 
 use std::ffi::OsString;
@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tx_core::{CoreConfig, CoreError, Directories, PluginConfig, TxCore};
 
 use crate::args::{self, Global};
+use crate::config::Config;
 use crate::plugins;
 
 /// Renames all five directories at once, as `NVIM_APPNAME` does for nvim.
@@ -241,14 +242,31 @@ pub fn core_config_in(
     Ok(config)
 }
 
-/// `--plugins`, else `<config>/plugins.yaml`; reads the file, creates nothing.
-pub fn plugin_config(global: &Global, config: &CoreConfig) -> Result<PluginConfig, Failure> {
-    let yaml = global
-        .plugins
+/// `--config FILE`, else `<config>/config.yaml`.
+pub fn config_file(global: &Global, config: &CoreConfig) -> PathBuf {
+    global
+        .config
         .clone()
         .map(absolute)
-        .unwrap_or_else(|| config.directories.config.join(plugins::FILE_NAME));
-    plugins::load(&yaml, &plugins::known_ids(), plugins::RESERVED).map_err(Failure::Usage)
+        .unwrap_or_else(|| config.directories.config.join(crate::config::FILE_NAME))
+}
+
+/// The config file; reads it, creates nothing.
+pub fn load_config(global: &Global, config: &CoreConfig) -> Result<Config, Failure> {
+    crate::config::load(&config_file(global, config)).map_err(Failure::Usage)
+}
+
+/// The `plugins:` section of the config file, checked against the manifest.
+pub fn plugin_config(global: &Global, config: &CoreConfig) -> Result<PluginConfig, Failure> {
+    let path = config_file(global, config);
+    let file = crate::config::load(&path).map_err(Failure::Usage)?;
+    plugins::plugin_config(
+        file.plugins,
+        &plugins::known_ids(),
+        plugins::RESERVED,
+        &path,
+    )
+    .map_err(Failure::Usage)
 }
 
 /// The plugin verbs this invocation would see, without opening the core (so `help` and an

@@ -7,12 +7,12 @@ use std::process::{Command, ExitCode};
 
 use tx_client::tmux::Ui;
 use tx_core::{
-    AgentId, CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter,
-    SendOptions, Sender, TxCore,
+    AgentId, CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, SendOptions, Sender,
+    TxCore,
 };
 use tx_core_cli::args::{self, Invocation, Verb};
 
-use tx_core_cli::setup::{Failure, open, preview_verbs};
+use tx_core_cli::setup::{Failure, config_file, core_config, load_config, open, preview_verbs};
 
 fn main() -> ExitCode {
     let args: Result<Vec<String>, args::UsageError> = std::env::args_os()
@@ -70,7 +70,13 @@ fn sender_from_env(core: &TxCore, via: Option<String>) -> Result<Sender, CoreErr
 fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     if invocation.verb == Verb::Help {
         print!("{}", args::USAGE);
-        // A broken plugins.yaml still gets the built-in usage.
+        if let Ok(config) = core_config(&invocation.global) {
+            println!(
+                "Config file here: {}",
+                config_file(&invocation.global, &config).display()
+            );
+        }
+        // A broken config.yaml still gets the built-in usage.
         if let Ok(verbs) = preview_verbs(&invocation.global)
             && !verbs.is_empty()
         {
@@ -134,6 +140,18 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             // Records whose session vanished without a hook (a crash, a `kill -9`, a reboot)
             // read `ended` before they are listed.
             core.refresh_all()?;
+            let defaults = load_config(&invocation.global, core.config())?.agent;
+            let engine = engine.unwrap_or(defaults.engine);
+            let roles = if roles.is_empty() {
+                defaults.roles
+            } else {
+                roles
+            };
+            // The file's model and effort go first, so a flag for the same key wins.
+            let file_options = [("model", defaults.model), ("effort", defaults.effort)]
+                .into_iter()
+                .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value)));
+            let options: Vec<(String, String)> = file_options.chain(options).collect();
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
                 None => None,
@@ -229,10 +247,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
         }
         Verb::Show { target } => {
-            let session = core
-                .refresh_agent(&core.resolve(&target)?)?
-                .agent()
-                .clone();
+            let session = core.refresh_agent(&core.resolve(&target)?)?.agent().clone();
             let text = session.to_json().map_err(|error| {
                 CoreError::Store(tx_core::StoreError::Encode {
                     id: session.id.clone(),

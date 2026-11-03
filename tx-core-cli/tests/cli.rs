@@ -32,7 +32,7 @@ fn usage_errors_exit_2_without_touching_state() {
     assert!(cli.fails(&["create", "x"], 2).contains("--cwd"));
     assert!(
         cli.fails(&["create", "x", "--cwd", "/"], 2)
-            .contains("create needs --engine ENGINE")
+            .contains("create needs --prompt T")
     );
     // An engine outside the closed set is a misuse that names the set.
     let stderr = cli.fails(
@@ -333,6 +333,7 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
                 "--run-dir",
                 "run",
             ])
+            .args(cli.role_flags())
             .args(args)
             .env("PATH", &path)
             .env_remove("TMUX")
@@ -440,10 +441,81 @@ fn ls_and_show_see_vanished_sessions_as_ended() {
     let record: serde_json::Value = serde_json::from_str(&cli.ok(&["show", "shown"])).unwrap();
     assert_eq!(record["id"], shown.as_str());
     assert_eq!(record["state"], "ended");
-    assert!(cli.tmux(&["kill-session", "-t", "=listed"]).status.success());
+    assert!(
+        cli.tmux(&["kill-session", "-t", "=listed"])
+            .status
+            .success()
+    );
     assert_eq!(cli.ok(&["ls"]), "");
     assert!(
         cli.ok(&["ls", "--ended"])
             .contains(&format!("{listed}\tlisted\tended\t"))
     );
+}
+
+/// `create` without `--engine` and `--role` takes `agent:` from the config file: built-in
+/// defaults with no file, the file's values once written, and a flag beats the file.
+#[test]
+fn create_fills_unflagged_options_from_the_config_file() {
+    require_tmux!();
+    let cli = Cli::new();
+    let path = cli.fake_claude_path();
+    let create = |name: &str, extra: &[&str]| {
+        let cwd = cli.repository(name);
+        let mut args = vec!["create", name, "--cwd", cwd.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&["--prompt", "start"]);
+        let output = cli.run(&args, &[("PATH", path.as_str())], "");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let shown: serde_json::Value = serde_json::from_str(&cli.ok(&["show", name])).unwrap();
+        shown
+    };
+
+    let bare = create("bare", &[]);
+    assert_eq!(bare["engine"], "claude");
+    assert_eq!(bare["roles"], serde_json::json!(["COMMON", "DEVELOPER"]));
+    assert_eq!(bare["ext"]["claude"]["model"], "claude-opus-5-5");
+    assert_eq!(bare["ext"]["claude"]["effort"], "high");
+
+    cli.write_yaml("agent:\n  roles: [COMMON]\n  model: sonnet\n  effort: low\n");
+    let filed = create("filed", &[]);
+    assert_eq!(filed["roles"], serde_json::json!(["COMMON"]));
+    assert_eq!(filed["ext"]["claude"]["model"], "sonnet");
+    assert_eq!(filed["ext"]["claude"]["effort"], "low");
+
+    let flagged = create("flagged", &["--role", "DEVELOPER", "--model", "opus"]);
+    assert_eq!(flagged["roles"], serde_json::json!(["DEVELOPER"]));
+    assert_eq!(flagged["ext"]["claude"]["model"], "opus");
+    assert_eq!(flagged["ext"]["claude"]["effort"], "low");
+
+    // A level on the 1-5 scale, from the file or a flag, is stored as the engine's word.
+    cli.write_yaml("agent:\n  effort: 4\n");
+    let leveled = create("leveled", &[]);
+    assert_eq!(leveled["ext"]["claude"]["effort"], "xhigh");
+    let level_flag = create("level-flag", &["--effort", "1"]);
+    assert_eq!(level_flag["ext"]["claude"]["effort"], "low");
+    let level_option = create("level-option", &["--option", "effort=5"]);
+    assert_eq!(level_option["ext"]["claude"]["effort"], "max");
+}
+
+/// `help` names the config file it would read; a typo in it stops every other verb.
+#[test]
+fn help_names_the_config_file_and_a_bad_key_is_a_usage_error() {
+    let cli = Cli::new();
+    let help = cli.ok(&["help"]);
+    assert!(
+        help.contains(&format!(
+            "Config file here: {}",
+            cli.state().join("config.yaml").display()
+        )),
+        "{help}"
+    );
+    cli.write_yaml("agent:\n  modle: sonnet\n");
+    let stderr = cli.fails(&["engines"], 2);
+    assert!(stderr.contains("config.yaml"), "{stderr}");
+    assert!(stderr.contains("modle"), "{stderr}");
 }

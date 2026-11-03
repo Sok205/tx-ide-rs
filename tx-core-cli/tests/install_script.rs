@@ -34,13 +34,19 @@ fn dry_run(home: &Path) -> String {
         // The script under test may itself sit in an agent worktree of the real data dir.
         .env_remove("TX_DATA_DIR")
         .env_remove("XDG_DATA_HOME")
+        .env_remove("TX_CONFIG_DIR")
+        .env_remove("XDG_CONFIG_HOME")
         .env_remove("TX_APPNAME")
         .env_remove("TX_IDE_HOME")
         .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("CODEX_HOME")
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     let mut plain = String::new();
     let mut rest = text.as_str();
@@ -127,12 +133,24 @@ fn a_compact_file_with_old_entries_lists_what_goes_and_keeps_the_rest() {
     let output = dry_run(home.path());
 
     assert!(output.contains("would remove these entries"), "{output}");
-    assert!(output.contains(&format!("- PreToolUse: {OURS_WORK}")), "{output}");
+    assert!(
+        output.contains(&format!("- PreToolUse: {OURS_WORK}")),
+        "{output}"
+    );
     assert!(output.contains(&format!("- Stop: {OURS_POST}")), "{output}");
-    assert!(!output.contains("- statusLine:"), "the statusLine stays: {output}");
-    assert!(!output.contains(&format!("- PreToolUse: {FOREIGN}")), "{output}");
+    assert!(
+        !output.contains("- statusLine:"),
+        "the statusLine stays: {output}"
+    );
+    assert!(
+        !output.contains(&format!("- PreToolUse: {FOREIGN}")),
+        "{output}"
+    );
     // The diff it prints keeps the foreign entry and the statusLine.
-    assert!(output.contains(&format!("+            \"command\": \"{FOREIGN}\"")), "{output}");
+    assert!(
+        output.contains(&format!("+            \"command\": \"{FOREIGN}\"")),
+        "{output}"
+    );
     assert!(output.contains("+  \"statusLine\""), "{output}");
     // A dry run changes nothing.
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), compact);
@@ -156,6 +174,8 @@ fn refuses_to_run_from_an_agent_worktree() {
         .env("HOME", home.path())
         .env_remove("TX_DATA_DIR")
         .env_remove("XDG_DATA_HOME")
+        .env_remove("TX_CONFIG_DIR")
+        .env_remove("XDG_CONFIG_HOME")
         .env_remove("TX_APPNAME")
         .env_remove("TX_IDE_HOME")
         .env_remove("CLAUDE_CONFIG_DIR")
@@ -164,6 +184,38 @@ fn refuses_to_run_from_an_agent_worktree() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     let text = String::from_utf8_lossy(&output.stdout);
-    assert!(text.contains("run install from the main checkout"), "{text}");
-    assert!(!text.contains("Rename the old install"), "stops before the switch: {text}");
+    assert!(
+        text.contains("run install from the main checkout"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Rename the old install"),
+        "stops before the switch: {text}"
+    );
+}
+
+/// Step 2c: a missing config file would be written from the repository's defaults; an existing
+/// one is left as it is. `$XDG_CONFIG_HOME` and `$TX_APPNAME` place it as tx would look for it.
+#[test]
+fn the_config_file_is_written_once_and_never_overwritten() {
+    if !have("jq") {
+        return;
+    }
+    let home = home();
+    let file = home.path().join(".config/tx-ide/config.yaml");
+    let reported = |output: &str, verdict: &str| {
+        output
+            .lines()
+            .any(|line| line.contains(&format!("{} ", file.display())) && line.contains(verdict))
+    };
+    let output = dry_run(home.path());
+    assert!(
+        reported(&output, "would write the defaults from"),
+        "{output}"
+    );
+    assert!(!file.exists(), "a dry run writes nothing");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "agent: { model: sonnet }\n").unwrap();
+    let output = dry_run(home.path());
+    assert!(reported(&output, "exists — left as it is"), "{output}");
 }

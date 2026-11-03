@@ -366,7 +366,7 @@ fn view_option(cli: &Cli, view: &str, option: &str) -> String {
     cli.tmux_out(&["show-options", "-vt", &format!("={view}:"), option])
 }
 
-/// A plugins.yaml naming a stand-in editor that just stays alive.
+/// A config.yaml naming a stand-in editor that just stays alive.
 fn fake_editor(cli: &Cli) -> String {
     let path = cli.shim_path(&[("fake-nvim", "exec sleep 60")]);
     let dir = path.split(':').next().unwrap();
@@ -476,7 +476,7 @@ fn artifact_open_starts_the_server_when_none_runs() {
 fn operator(cli: &Cli) -> (String, String) {
     fake_editor(cli);
     // The menu would pop up on this first attach and take the keys.
-    let yaml = std::fs::read_to_string(cli.state().join("plugins.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(cli.state().join("config.yaml")).unwrap();
     cli.write_yaml(&format!("{yaml}  home: {{ enabled: false }}\n"));
     cli.ok(&["ui", "install"]);
     let path = cli.fake_claude_path();

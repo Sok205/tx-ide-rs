@@ -1,6 +1,6 @@
 //! The assistant plugin's resources and create options, through the core.
 
-use tx_assistant::{AssistantPlugin, create_options, latest_ended};
+use tx_assistant::{AssistantPlugin, Settings, create_options, latest_ended};
 use tx_core::{CoreConfig, LaunchOptions, PluginConfig, TxCore};
 
 fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
@@ -41,7 +41,7 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
     let (dir, core) = core(&PluginConfig::default());
     // Trust seeding reads Claude's config file from the environment; keep it off the real HOME.
     unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", dir.path().join("claude-config")) };
-    let options = create_options(&core).unwrap();
+    let options = create_options(&core, &Settings::default()).unwrap();
     assert_eq!(options.name, "tx-assistant");
     let home = core.config().plugin_data_dir("assistant").join("home");
     assert_eq!(options.cwd, home);
@@ -62,7 +62,10 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
         .unwrap();
     assert!(head.status.success(), "one commit to branch worktrees from");
     // Second time: the same repository, untouched.
-    assert_eq!(create_options(&core).unwrap().cwd, home);
+    assert_eq!(
+        create_options(&core, &Settings::default()).unwrap().cwd,
+        home
+    );
     assert_eq!(options.tags, ["tx-system"]);
     let LaunchOptions::Agent {
         engine,
@@ -76,10 +79,7 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
     };
     assert_eq!(engine, tx_core::EngineKind::Claude);
     assert_eq!(profile, ["COMMON", "TX-ASSISTANT"]);
-    assert_eq!(
-        options,
-        serde_json::json!({"model": "opus", "effort": "medium"})
-    );
+    assert_eq!(options, serde_json::json!({"model": "opus", "effort": "2"}));
     assert_eq!(initial_prompt, tx_assistant::GREETING);
 }
 
