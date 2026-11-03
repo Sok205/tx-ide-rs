@@ -19,12 +19,14 @@ use crate::common::{
 const SKY_TOP: Color = Color::Rgb(9, 13, 24);
 const SKY_HORIZON: Color = Color::Rgb(30, 40, 58);
 const SKY_SHADES: u8 = 3;
-/// The lightest sky: text cells show the sky as it is, and snow under them no brighter.
-const TEXT_CEILING: Color = SKY_HORIZON;
 const PINE_LIT: Color = Color::Rgb(17, 38, 44);
 const PINE_SHADED: Color = Color::Rgb(10, 25, 31);
-const GROUND: Color = Color::Rgb(112, 130, 160);
-const SNOW: Color = Color::Rgb(232, 240, 252);
+/// Moonlit snow, dim so home's footer stays readable on it.
+const GROUND: Color = Color::Rgb(40, 50, 72);
+const SNOW: Color = Color::Rgb(50, 60, 84);
+/// The lightest snow: text cells show the sky and the ground as they are, and flakes under them
+/// no brighter.
+const TEXT_CEILING: Color = SNOW;
 const FLAKE_NEAR: Color = Color::Rgb(246, 250, 255);
 const FLAKE_FAR: Color = Color::Rgb(150, 168, 198);
 const LOGO_TOP: Color = Color::Rgb(244, 248, 255);
@@ -357,7 +359,9 @@ mod tests {
 
     use super::*;
     use crate::common::MAX_GAP;
-    use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
+    use crate::common::tests::{
+        assert_no_boxes_under_text, assert_nothing_bright_under_text, assert_within_budget,
+    };
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
         MouseEvent {
@@ -451,6 +455,11 @@ mod tests {
     #[test]
     fn stays_within_the_budget() {
         assert_within_budget(&mut seeded());
+    }
+
+    #[test]
+    fn no_boxes_under_text() {
+        assert_no_boxes_under_text(&mut seeded());
     }
 
     #[test]

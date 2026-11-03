@@ -238,6 +238,9 @@ mod tests {
 
     use super::*;
     use crate::common::MAX_GAP;
+    use crate::common::tests::{
+        assert_no_boxes_under_text, assert_nothing_bright_under_text, assert_within_budget,
+    };
 
     fn click(column: u16, row: u16) -> MouseEvent {
         MouseEvent {
@@ -248,12 +251,16 @@ mod tests {
         }
     }
 
-    /// A seeded pond painted once at 80x24, with its school spawned but not yet moved.
-    fn painted() -> (Pond, Rect) {
-        let mut pond = Pond {
+    fn seeded() -> Pond {
+        Pond {
             random: Rng::with_seed(7),
             ..Pond::default()
-        };
+        }
+    }
+
+    /// A seeded pond painted once at 80x24, with its school spawned but not yet moved.
+    fn painted() -> (Pond, Rect) {
+        let mut pond = seeded();
         let area = Rect::new(0, 0, 80, 24);
         let (logo, _) = layout(area, pond.logo_size());
         let blank = Buffer::empty(area);
@@ -478,10 +485,17 @@ mod tests {
 
     #[test]
     fn stays_within_the_budget() {
-        crate::common::tests::assert_within_budget(&mut Pond {
-            random: Rng::with_seed(7),
-            ..Pond::default()
-        });
+        assert_within_budget(&mut seeded());
+    }
+
+    #[test]
+    fn nothing_bright_under_text() {
+        assert_nothing_bright_under_text(&mut seeded(), TEXT_CEILING);
+    }
+
+    #[test]
+    fn no_boxes_under_text() {
+        assert_no_boxes_under_text(&mut seeded());
     }
 
     /// The shimmer as first written, worked out wholly in f64 so it is exact at any age.

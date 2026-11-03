@@ -381,6 +381,85 @@ pub mod tests {
         }
     }
 
+    /// Paints 15 s at its fps with the home-like text layer, at 250x70 and then at 80x24, each
+    /// frame twice: with the text and with no text. A glyph's bg darker than 70% of the scene its
+    /// cell and both neighbours, across or down, show without text is a box. The ceiling makes one
+    /// under something bright passing by; a box in more than half the frames is one the operator
+    /// would see, so that fails, wherever the cap came from.
+    pub fn assert_no_boxes_under_text(backdrop: &mut dyn Backdrop) {
+        let fps = backdrop.frames_per_second();
+        let mut frame = 0;
+        for area in [Rect::new(0, 0, 250, 70), Rect::new(0, 0, 80, 24)] {
+            let (logo, content) = layout(area, backdrop.logo_size());
+            let text = home_like_text(area, content);
+            let blank = Buffer::empty(area);
+            let glyphs: Vec<_> = area
+                .positions()
+                .filter(|position| {
+                    let drawn = &text[*position];
+                    drawn.symbol() != " " && drawn.bg == Color::Reset
+                })
+                .collect();
+            let mut boxed = vec![0; glyphs.len()];
+            let frames = 15 * fps;
+            for _ in 0..frames {
+                let elapsed = Duration::from_millis(frame * 1000 / fps);
+                frame += 1;
+                let (mut shown, mut scene) = (Buffer::empty(area), Buffer::empty(area));
+                backdrop.paint(elapsed, area, logo, &text, &mut shown);
+                // The same instant again: no step is due, so only the text layer differs.
+                backdrop.paint(elapsed, area, logo, &blank, &mut scene);
+                for position in area
+                    .positions()
+                    .filter(|position| !is_text(&text[*position]))
+                {
+                    assert_eq!(
+                        shown[position], scene[position],
+                        "a repaint at the same instant changed {position:?}"
+                    );
+                }
+                // Off the area counts as dark: there is no scene on that side to stand out from.
+                let shade = |x: i32, y: i32| {
+                    let Some(behind) = u16::try_from(x)
+                        .ok()
+                        .zip(u16::try_from(y).ok())
+                        .and_then(|position| scene.cell(position))
+                    else {
+                        return 0.0;
+                    };
+                    if behind.symbol() == "▀" {
+                        (luminance(behind.fg) + luminance(behind.bg)) / 2.0
+                    } else {
+                        luminance(behind.bg)
+                    }
+                };
+                for (count, position) in boxed.iter_mut().zip(&glyphs) {
+                    let (x, y) = (i32::from(position.x), i32::from(position.y));
+                    // A lone bright pixel the cap hides leaves the cell like its neighbours; a
+                    // box is darker than the scene on both sides of it, across or down.
+                    let across = shade(x - 1, y).min(shade(x, y)).min(shade(x + 1, y));
+                    let down = shade(x, y - 1).min(shade(x, y)).min(shade(x, y + 1));
+                    if luminance(shown[*position].bg) + 1.0 < 0.7 * across.max(down) {
+                        *count += 1;
+                    }
+                }
+            }
+            let boxes: Vec<_> = glyphs
+                .iter()
+                .zip(&boxed)
+                .filter(|(_, count)| **count * 2 > frames)
+                .map(|(position, _)| (position.x, position.y))
+                .collect();
+            assert!(
+                boxes.is_empty(),
+                "{} boxes under the text at {}x{}: {boxes:?}",
+                boxes.len(),
+                area.width,
+                area.height
+            );
+        }
+    }
+
     #[test]
     fn quantised_snaps_to_steps() {
         let (black, white) = (Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255));
@@ -460,6 +539,8 @@ pub mod tests {
         AfterAClick,
         EveryFourSeconds,
         TwoFramesAfterAClick,
+        /// Always, but text cells stay dark: a ceiling below a bright floor.
+        UnderBrightGround,
     }
 
     /// A theme that misbehaves on its cue, to prove the helpers catch it.
@@ -493,7 +574,7 @@ pub mod tests {
             _: Duration,
             area: Rect,
             _: Option<Rect>,
-            _: &Buffer,
+            text: &Buffer,
             buffer: &mut Buffer,
         ) {
             self.frames += 1;
@@ -504,6 +585,7 @@ pub mod tests {
                 Cue::TwoFramesAfterAClick => {
                     self.clicked.map(|clicked| clicked + 2) == Some(self.frames)
                 }
+                Cue::UnderBrightGround => true,
             };
             let background = if flood {
                 Color::Rgb(255, 255, 255)
@@ -511,6 +593,14 @@ pub mod tests {
                 Color::Rgb(0, 0, 0)
             };
             buffer.set_style(area, Style::new().bg(background));
+            if matches!(self.cue, Cue::UnderBrightGround) {
+                for position in area
+                    .positions()
+                    .filter(|position| is_text(&text[*position]))
+                {
+                    buffer[position].set_bg(Color::Rgb(0, 0, 0));
+                }
+            }
         }
 
         fn mouse(&mut self, event: MouseEvent) {
@@ -527,6 +617,12 @@ pub mod tests {
     #[should_panic(expected = "under the text")]
     fn the_ceiling_check_sees_what_a_click_lights_up() {
         assert_nothing_bright_under_text(&mut probe(Cue::AfterAClick), Color::Rgb(30, 30, 30));
+    }
+
+    #[test]
+    #[should_panic(expected = "boxes under the text")]
+    fn the_box_check_sees_dark_text_cells_on_a_bright_ground() {
+        assert_no_boxes_under_text(&mut probe(Cue::UnderBrightGround));
     }
 
     #[test]

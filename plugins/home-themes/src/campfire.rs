@@ -1,5 +1,6 @@
-//! A small fire at the bottom centre: a few shades of orange glow flickering on a slow timer,
-//! and sparks that rise with a sway, cooling from yellow to red to dark. A click stokes it.
+//! A small fire at the bottom centre, on dark ground under home's footer: a few shades of orange
+//! glow flickering on a slow timer, and sparks that rise with a sway, cooling from yellow to red
+//! to dark. A click stokes it.
 
 use std::time::Duration;
 
@@ -17,8 +18,11 @@ use crate::common::{
 const NIGHT: Color = Color::Rgb(14, 9, 10);
 const EMBER_GLOW: Color = Color::Rgb(214, 96, 22);
 const GLOW_SHADES: u8 = 5;
-/// Text cells show the night as it is, so the glow never makes the list hard to read.
-const TEXT_CEILING: Color = NIGHT;
+/// The glow's second-brightest shade: a list row over the glow shows it as it is, or near enough
+/// at the core that it is not a dark box, and stays readable.
+const TEXT_CEILING: Color = Color::Rgb(164, 74, 19);
+/// Pixel rows of dark ground under the fire: the bottom cell row, where home's footer goes.
+const GROUND_ROWS: f32 = 2.0;
 const FLAME_HOT: Color = Color::Rgb(255, 226, 120);
 const FLAME_COOL: Color = Color::Rgb(240, 120, 30);
 const SPARK_HOT: Color = Color::Rgb(255, 222, 110);
@@ -91,7 +95,7 @@ impl Campfire {
     fn centre(&self) -> (f32, f32) {
         (
             f32::from(self.area.width) / 2.0,
-            f32::from(self.area.height) * 2.0 - 1.0 - FLAME_HEIGHT,
+            f32::from(self.area.height) * 2.0 - GROUND_ROWS - 1.0 - FLAME_HEIGHT,
         )
     }
 
@@ -129,14 +133,15 @@ impl Campfire {
 
     fn draw_glow(&self, pixels: &mut Pixels) {
         let (width, rows) = (f32::from(pixels.width()), f32::from(pixels.height()));
-        let (centre_x, centre_y) = (width / 2.0, rows - 1.0);
+        let ground = rows - GROUND_ROWS;
+        let (centre_x, centre_y) = (width / 2.0, ground - 1.0);
         let (radius_x, radius_y) = ((width * 0.12).max(8.0), rows * 0.35);
         let flicker = 0.8 + 0.2 * value_noise(noise_time(self.clock, 0.8), 0.0, 5) + self.stoke();
         let (left, right) = (
             (centre_x - radius_x).floor() as i32,
             (centre_x + radius_x).ceil() as i32,
         );
-        for y in (centre_y - radius_y).floor() as i32..rows as i32 {
+        for y in (centre_y - radius_y).floor() as i32..ground as i32 {
             for x in left..=right {
                 let reach =
                     ((x as f32 - centre_x) / radius_x).hypot((y as f32 - centre_y) / radius_y);
@@ -153,7 +158,7 @@ impl Campfire {
     fn draw_flame(&self, pixels: &mut Pixels) {
         let (centre_x, base) = (
             i32::from(pixels.width() / 2),
-            i32::from(pixels.height()) - 1,
+            i32::from(pixels.height()) - GROUND_ROWS as i32 - 1,
         );
         for across in -FLAME_HALF_WIDTH..=FLAME_HALF_WIDTH {
             let taper = 1.0 - across.abs() as f32 / (FLAME_HALF_WIDTH + 1) as f32;
@@ -215,7 +220,9 @@ mod tests {
 
     use super::*;
     use crate::common::MAX_GAP;
-    use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
+    use crate::common::tests::{
+        assert_no_boxes_under_text, assert_nothing_bright_under_text, assert_within_budget,
+    };
 
     fn click(column: u16, row: u16) -> MouseEvent {
         MouseEvent {
@@ -298,6 +305,11 @@ mod tests {
     #[test]
     fn stays_within_the_budget() {
         assert_within_budget(&mut seeded());
+    }
+
+    #[test]
+    fn no_boxes_under_text() {
+        assert_no_boxes_under_text(&mut seeded());
     }
 
     #[test]

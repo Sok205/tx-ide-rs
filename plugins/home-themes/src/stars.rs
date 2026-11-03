@@ -258,7 +258,9 @@ mod tests {
 
     use super::*;
     use crate::common::MAX_GAP;
-    use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
+    use crate::common::tests::{
+        assert_no_boxes_under_text, assert_nothing_bright_under_text, assert_within_budget,
+    };
 
     fn click(column: u16, row: u16) -> MouseEvent {
         MouseEvent {
@@ -348,6 +350,11 @@ mod tests {
     #[test]
     fn stays_within_the_budget() {
         assert_within_budget(&mut seeded());
+    }
+
+    #[test]
+    fn no_boxes_under_text() {
+        assert_no_boxes_under_text(&mut seeded());
     }
 
     #[test]
