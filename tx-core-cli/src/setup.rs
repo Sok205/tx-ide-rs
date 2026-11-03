@@ -31,6 +31,8 @@ pub enum Failure {
     Verb(tx_core::VerbError),
     /// The environment names an invalid application or leaves a directory unresolvable.
     Environment(String),
+    /// A definition file that cannot be read where a listing needs it.
+    Definition(tx_core::definitions::DefinitionError),
 }
 
 impl From<CoreError> for Failure {
@@ -47,6 +49,7 @@ impl std::fmt::Display for Failure {
             Failure::Plugin(error) => error.fmt(f),
             Failure::Verb(error) => error.fmt(f),
             Failure::Environment(text) => f.write_str(text),
+            Failure::Definition(error) => error.fmt(f),
         }
     }
 }

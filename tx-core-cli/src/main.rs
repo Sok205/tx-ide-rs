@@ -96,10 +96,31 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             "unknown verb {name:?}"
         ))));
     }
+    // The definitions are files under two roots: no core to open, nothing created.
+    match &invocation.verb {
+        Verb::Definitions { kind } => {
+            let directories = core_config(&invocation.global)?.directories;
+            tx_core_cli::definitions::list(&directories, *kind, &mut std::io::stdout().lock())
+                .map_err(Failure::Definition)?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Verb::Check { names } => {
+            let directories = core_config(&invocation.global)?.directories;
+            let clean =
+                tx_core_cli::definitions::check(&directories, names, &mut std::io::stdout().lock())
+                    .map_err(Failure::Definition)?;
+            return Ok(if clean {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            });
+        }
+        _ => {}
+    }
     let core = open(&invocation.global)?;
     let mut out = std::io::stdout().lock();
     match invocation.verb {
-        Verb::Help => unreachable!(),
+        Verb::Help | Verb::Definitions { .. } | Verb::Check { .. } => unreachable!(),
         Verb::Engines => {
             for kind in core.engine_kinds() {
                 writeln!(out, "{kind}").ok();

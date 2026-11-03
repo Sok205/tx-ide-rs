@@ -1,0 +1,106 @@
+//! `tx definitions` and `tx check`: list and validate the agent, skill and MCP definitions. Both
+//! read only the definition roots, never the core's state.
+
+use std::io::Write;
+
+use tx_core::Directories;
+use tx_core::definitions::{DefinitionError, Definitions, McpServer, read_agent, read_skill};
+
+use crate::args::DefinitionKind;
+
+/// `name<TAB>description` per definition (for a server: its type and URL or command). One kind
+/// prints bare rows; every kind prints each under a `<kind>:` heading, empty kinds included. An
+/// agent or skill that does not read is listed as invalid; a broken `mcp.json` fails the listing.
+pub fn list(
+    directories: &Directories,
+    kind: Option<DefinitionKind>,
+    out: &mut dyn Write,
+) -> Result<(), DefinitionError> {
+    let definitions = Definitions::new(directories.definition_roots());
+    let kinds = match kind {
+        Some(kind) => vec![kind],
+        None => DefinitionKind::ALL.to_vec(),
+    };
+    for (index, kind) in kinds.iter().enumerate() {
+        let rows = rows(&definitions, *kind)?;
+        if kinds.len() > 1 {
+            if index > 0 {
+                writeln!(out).ok();
+            }
+            writeln!(out, "{}:", kind.as_str()).ok();
+        }
+        for (name, description) in rows {
+            writeln!(out, "{name}\t{description}").ok();
+        }
+    }
+    Ok(())
+}
+
+fn rows(
+    definitions: &Definitions,
+    kind: DefinitionKind,
+) -> Result<Vec<(String, String)>, DefinitionError> {
+    Ok(match kind {
+        DefinitionKind::Agents => definitions
+            .agent_files()?
+            .into_iter()
+            .map(|(name, path)| {
+                let description = read_agent(&path).map(|agent| agent.description);
+                (name, described(description))
+            })
+            .collect(),
+        DefinitionKind::Skills => definitions
+            .skill_directories()?
+            .into_iter()
+            .map(|(name, directory)| {
+                let description = read_skill(&directory).map(|skill| skill.description);
+                (name, described(description))
+            })
+            .collect(),
+        DefinitionKind::Mcp => definitions
+            .mcp_servers()?
+            .into_iter()
+            .map(|(name, (server, _))| {
+                let description = match server {
+                    McpServer::Stdio { command, args, .. } => {
+                        format!("stdio {}", [vec![command], args].concat().join(" "))
+                    }
+                    McpServer::Http { url, .. } => format!("http {url}"),
+                };
+                (name, description)
+            })
+            .collect(),
+    })
+}
+
+/// The description on one line; a file that does not read is still listed, pointing at `check`.
+fn described(description: Result<String, DefinitionError>) -> String {
+    match description {
+        Ok(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
+        Err(_) => INVALID.to_owned(),
+    }
+}
+
+const INVALID: &str = "(invalid: see `tx check`)";
+
+/// Prints `path:line: message` per problem and returns whether there were none; on success, one
+/// line saying what was checked.
+pub fn check(
+    directories: &Directories,
+    names: &[String],
+    out: &mut dyn Write,
+) -> Result<bool, DefinitionError> {
+    let report = Definitions::new(directories.definition_roots()).check(names)?;
+    for problem in &report.problems {
+        writeln!(out, "{problem}").ok();
+    }
+    if report.problems.is_empty() {
+        writeln!(
+            out,
+            "ok: {} agents, {} skills, {} MCP servers",
+            report.agents, report.skills, report.servers
+        )
+        .ok();
+    }
+    Ok(report.problems.is_empty())
+}

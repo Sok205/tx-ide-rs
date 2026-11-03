@@ -44,6 +44,11 @@ verbs:
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
   engines                                                           the engines whose plugin is enabled (claude, codex)
+  definitions [agents|skills|mcp]                                   name and description of each definition, every kind
+                                                                    or one; yours (<config>/definitions) win by name over
+                                                                    the shipped ones (<data>/definitions)
+  check [NAME]...                                                   validate the definitions, all or those named (agents,
+                                                                    skills, MCP servers); path:line per problem, exit 1
   plugins                                                           id and active|disabled per plugin
 
 TARGET is a session id or name. Files live in five directories named after the application,
@@ -156,12 +161,44 @@ pub enum Verb {
     },
     Engines,
     Plugins,
+    /// `check [NAME]...`: validate the definitions, all of them or those named.
+    Check {
+        names: Vec<String>,
+    },
+    /// `definitions [agents|skills|mcp]`: list them, every kind or one.
+    Definitions {
+        kind: Option<DefinitionKind>,
+    },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
     Plugin {
         name: String,
         argv: Vec<String>,
     },
     Help,
+}
+
+/// What `tx definitions` lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefinitionKind {
+    Agents,
+    Skills,
+    Mcp,
+}
+
+impl DefinitionKind {
+    pub const ALL: [DefinitionKind; 3] = [
+        DefinitionKind::Agents,
+        DefinitionKind::Skills,
+        DefinitionKind::Mcp,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DefinitionKind::Agents => "agents",
+            DefinitionKind::Skills => "skills",
+            DefinitionKind::Mcp => "mcp",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,6 +410,24 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         },
         Some("respawn") => Verb::Respawn {
             target: target(&mut cursor, "respawn")?,
+        },
+        Some("check") => Verb::Check {
+            names: cursor.rest(),
+        },
+        Some("definitions") => Verb::Definitions {
+            kind: match cursor.next() {
+                None => None,
+                Some(text) => Some(
+                    DefinitionKind::ALL
+                        .into_iter()
+                        .find(|kind| kind.as_str() == text)
+                        .ok_or_else(|| {
+                            usage(format!(
+                                "definitions lists agents, skills or mcp, got {text:?}"
+                            ))
+                        })?,
+                ),
+            },
         },
         Some(other) => Verb::Plugin {
             name: other.to_owned(),
@@ -834,6 +889,23 @@ mod tests {
             Verb::Respawn { target: "x".into() }
         );
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
+        assert_eq!(
+            parse_str("check pm linear").unwrap().verb,
+            Verb::Check {
+                names: vec!["pm".into(), "linear".into()]
+            }
+        );
+        assert_eq!(
+            parse_str("definitions mcp").unwrap().verb,
+            Verb::Definitions {
+                kind: Some(DefinitionKind::Mcp)
+            }
+        );
+        assert_eq!(
+            parse_str("definitions").unwrap().verb,
+            Verb::Definitions { kind: None }
+        );
+        assert!(parse_str("definitions roles").is_err());
         assert_eq!(parse_str("help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("--help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("").unwrap_err().0, "missing verb");
