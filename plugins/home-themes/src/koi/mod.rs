@@ -34,6 +34,9 @@ const CLICK_SCATTER: f32 = 3.0;
 const WAKE_DEPOSIT: f32 = 0.5;
 /// How far a full wake moves the water towards (and past) `WATER_LIGHT`.
 const WAKE_LIGHT: f32 = 0.6;
+/// Live ripples at most: each repaints its whole ring every frame, so rapid clicks would flood
+/// tmux.
+const MAX_RIPPLES: usize = 12;
 /// Seconds a still pointer keeps the fish curious: a terminal never says the mouse has left.
 const POINTER_MEMORY: f64 = 3.0;
 
@@ -77,6 +80,14 @@ fn water(x: i32, y: i32, seconds: f32, wake: f32) -> Color {
         channel(WATER_DEEP.1, WATER_LIGHT.1),
         channel(WATER_DEEP.2, WATER_LIGHT.2),
     )
+}
+
+/// Adds `ripple`, dropping the oldest when `MAX_RIPPLES` are live.
+fn add_ripple(ripples: &mut Vec<Ripple>, ripple: Ripple) {
+    if ripples.len() == MAX_RIPPLES {
+        ripples.remove(0);
+    }
+    ripples.push(ripple);
 }
 
 impl Pond {
@@ -125,11 +136,14 @@ impl Pond {
                 fish.swim(STEP, &neighbours, bounds, attractions, &mut self.random);
                 let head = fish.head();
                 if fish.bursting && !was_bursting {
-                    self.ripples.push(Ripple {
-                        center: head,
-                        born: now,
-                        strength: BURST_RIPPLE,
-                    });
+                    add_ripple(
+                        &mut self.ripples,
+                        Ripple {
+                            center: head,
+                            born: now,
+                            strength: BURST_RIPPLE,
+                        },
+                    );
                 }
                 if let Some(eaten) = self
                     .pellets
@@ -137,11 +151,14 @@ impl Pond {
                     .position(|pellet| distance(head, pellet.position) <= EAT_RANGE)
                 {
                     self.pellets.swap_remove(eaten);
-                    self.ripples.push(Ripple {
-                        center: head,
-                        born: now,
-                        strength: EAT_RIPPLE,
-                    });
+                    add_ripple(
+                        &mut self.ripples,
+                        Ripple {
+                            center: head,
+                            born: now,
+                            strength: EAT_RIPPLE,
+                        },
+                    );
                 }
                 self.wake.deposit(head, WAKE_DEPOSIT);
             }
@@ -228,11 +245,14 @@ impl Backdrop for Pond {
                         born: self.clock,
                     });
                 }
-                self.ripples.push(Ripple {
-                    center: point,
-                    born: self.clock,
-                    strength: 1.0,
-                });
+                add_ripple(
+                    &mut self.ripples,
+                    Ripple {
+                        center: point,
+                        born: self.clock,
+                        strength: 1.0,
+                    },
+                );
             }
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
                 self.pointer = Some((point, self.clock));
@@ -301,6 +321,20 @@ mod tests {
             assert!(distance(pellet.position, (10.0, 11.0)) <= 3.0);
         }
         assert_eq!(pond.ripples.len(), 1);
+    }
+
+    #[test]
+    fn ripples_are_capped_dropping_the_oldest() {
+        let (mut pond, _) = painted();
+        for column in 0..50 {
+            pond.mouse(click(column, 5));
+        }
+        assert_eq!(pond.ripples.len(), MAX_RIPPLES);
+        assert_eq!(pond.ripples[MAX_RIPPLES - 1].center, (49.0, 11.0));
+        assert_eq!(
+            pond.ripples[0].center,
+            (f32::from(50 - MAX_RIPPLES as u16), 11.0)
+        );
     }
 
     #[test]
@@ -462,7 +496,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "10 rapid clicks peak at 1339 changed cells, over the 1200 burst budget; koi needs a fix"]
     fn stays_within_the_budget() {
         crate::common::tests::assert_within_budget(&mut Pond {
             random: Rng::with_seed(7),
