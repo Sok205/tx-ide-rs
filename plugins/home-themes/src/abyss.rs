@@ -51,7 +51,7 @@ const SHY_SPEED: f32 = 10.0;
 const SQUEEZE: f32 = 0.3;
 
 pub fn deep() -> Box<dyn Backdrop> {
-    Box::new(Abyss::default())
+    Box::<Abyss>::default()
 }
 
 struct Jelly {
@@ -74,7 +74,7 @@ struct Fleck {
 }
 
 struct Ring {
-    center: (f32, f32),
+    centre: (f32, f32),
     born: f64,
 }
 
@@ -204,7 +204,7 @@ impl Abyss {
         let squeeze = (jelly.contraction(self.clock) * PULSE_LEVELS).round() / PULSE_LEVELS;
         let lit = self.clock < jelly.lit_until;
         let brightness = if lit { 1.0 } else { 0.4 + 0.25 * squeeze };
-        let (center_x, center_y) = (jelly.position.0.round(), jelly.position.1.round());
+        let (centre_x, centre_y) = (jelly.position.0.round(), jelly.position.1.round());
         let half_width = jelly.radius * (1.0 - 0.3 * squeeze);
         let height = (jelly.radius * 0.7 * (1.0 + 0.25 * squeeze)).round();
         for rise in 0..=height as i32 {
@@ -212,19 +212,19 @@ impl Abyss {
             for offset in -(across.round() as i32)..=across.round() as i32 {
                 let rim = rise == 0 || rise == height as i32 || offset.abs() as f32 >= across - 0.5;
                 let amount = if rim { brightness } else { brightness * 0.5 };
-                let point = (center_x as i32 + offset, center_y as i32 - rise);
+                let point = (centre_x as i32 + offset, centre_y as i32 - rise);
                 glow(pixels, &self.water, point, jelly.tint, amount, GLOW_SHADES);
             }
         }
         let length = jelly.tentacle_length;
         for index in 0..jelly.tentacles {
             let along = index as f32 / (jelly.tentacles - 1) as f32;
-            let start = center_x - half_width * 0.7 + along * half_width * 1.4;
+            let start = centre_x - half_width * 0.7 + along * half_width * 1.4;
             for step in 1..=length {
                 let sway =
                     (angle(self.clock, 0.5) + index as f32 * 1.7 + step as f32 * 0.45).sin() * 1.5;
                 let fade = 1.0 - step as f32 / length as f32;
-                let point = ((start + sway).round() as i32, center_y as i32 + step);
+                let point = ((start + sway).round() as i32, centre_y as i32 + step);
                 glow(
                     pixels,
                     &self.water,
@@ -245,8 +245,8 @@ impl Abyss {
         for sample in 0..samples {
             let angle = sample as f32 / samples as f32 * 2.0 * PI;
             let point = (
-                (ring.center.0 + radius * angle.cos()).round() as i32,
-                (ring.center.1 + radius * angle.sin()).round() as i32,
+                (ring.centre.0 + radius * angle.cos()).round() as i32,
+                (ring.centre.1 + radius * angle.sin()).round() as i32,
             );
             glow(pixels, &self.water, point, RING, fade * 0.6, GLOW_SHADES);
         }
@@ -297,7 +297,7 @@ impl Backdrop for Abyss {
             MouseEventKind::Down(MouseButton::Left) => {
                 if self.rings.len() < MAX_RINGS {
                     self.rings.push(Ring {
-                        center: point,
+                        centre: point,
                         born: self.clock,
                     });
                 }

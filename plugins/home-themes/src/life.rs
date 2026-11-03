@@ -22,7 +22,7 @@ const TEXT_CEILING: Color = LIVE;
 const LOGO_TOP: Color = Color::Rgb(176, 236, 224);
 const LOGO_BOTTOM: Color = Color::Rgb(84, 160, 158);
 /// Seconds per generation.
-const STEP: f32 = 0.25;
+const GENERATION: f32 = 0.25;
 /// Share of the opening board that starts alive: sparse, so a step flips few cells.
 const SOUP_DENSITY: f32 = 0.05;
 /// A reseed drops a patch this big, half alive, somewhere on the board.
@@ -149,7 +149,7 @@ impl Life {
             self.respawn(area);
         }
         self.area = area;
-        for _ in 0..self.steps.due(elapsed, STEP) {
+        for _ in 0..self.steps.due(elapsed, GENERATION) {
             self.step();
         }
     }
@@ -297,7 +297,7 @@ mod tests {
             &blank,
             &mut blank.clone(),
         );
-        assert!(life.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(life.steps.taken <= (MAX_GAP / GENERATION).ceil() as usize);
     }
 
     #[test]

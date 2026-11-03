@@ -120,7 +120,7 @@ impl Pond {
                     add_ripple(
                         &mut self.ripples,
                         Ripple {
-                            center: head,
+                            centre: head,
                             born: now,
                             strength: BURST_RIPPLE,
                         },
@@ -136,7 +136,7 @@ impl Pond {
                     add_ripple(
                         &mut self.ripples,
                         Ripple {
-                            center: head,
+                            centre: head,
                             born: now,
                             strength: EAT_RIPPLE,
                         },
@@ -216,7 +216,7 @@ impl Backdrop for Pond {
                 add_ripple(
                     &mut self.ripples,
                     Ripple {
-                        center: point,
+                        centre: point,
                         born: self.clock,
                         strength: 1.0,
                     },
@@ -298,9 +298,9 @@ mod tests {
             pond.mouse(click(column, 5));
         }
         assert_eq!(pond.ripples.len(), MAX_RIPPLES);
-        assert_eq!(pond.ripples[MAX_RIPPLES - 1].center, (49.0, 11.0));
+        assert_eq!(pond.ripples[MAX_RIPPLES - 1].centre, (49.0, 11.0));
         assert_eq!(
-            pond.ripples[0].center,
+            pond.ripples[0].centre,
             (f32::from(50 - MAX_RIPPLES as u16), 11.0)
         );
     }
@@ -417,7 +417,7 @@ mod tests {
             2.0 * f32::from(content.y + content.height / 2),
         );
         pond.ripples.push(Ripple {
-            center: centre,
+            centre,
             born: -2.5,
             strength: 1.0,
         });

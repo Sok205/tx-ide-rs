@@ -17,7 +17,7 @@ const RIPPLE_LIGHT: Color = Color::Rgb(112, 130, 196);
 const PELLET: Color = Color::Rgb(222, 158, 82);
 
 pub struct Ripple {
-    pub center: (f32, f32),
+    pub centre: (f32, f32),
     pub born: f64,
     pub strength: f32,
 }
@@ -69,8 +69,8 @@ impl Ripple {
         for sample in 0..samples {
             let angle = TAU * sample as f32 / samples as f32;
             let point = (
-                self.center.0 + radius * angle.cos(),
-                self.center.1 + radius * angle.sin(),
+                self.centre.0 + radius * angle.cos(),
+                self.centre.1 + radius * angle.sin(),
             );
             if let Some(cell) = surface_cell(area, text, point) {
                 buffer[cell].set_char(tangent(angle)).set_fg(color);
