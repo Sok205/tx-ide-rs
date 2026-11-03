@@ -28,16 +28,32 @@ pub trait Backdrop {
 }
 
 pub type Constructor = fn() -> Box<dyn Backdrop>;
+pub type Theme = (&'static str, Constructor);
+/// Called with the chosen theme's name, `None` for off.
+pub type Remember = Box<dyn Fn(Option<&str>) + Send + Sync>;
 
-static CHOSEN: OnceLock<Constructor> = OnceLock::new();
-
-/// The first install wins: one `tx` process runs `register` twice (`preview_verbs`, then `open`).
-pub fn install(constructor: Constructor) {
-    let _ = CHOSEN.set(constructor);
+pub struct Catalogue {
+    pub themes: &'static [Theme],
+    /// The theme home starts with; `None` is off.
+    pub start: Option<usize>,
+    pub remember: Remember,
 }
 
-pub fn chosen() -> Option<Constructor> {
-    CHOSEN.get().copied()
+static CATALOGUE: OnceLock<Catalogue> = OnceLock::new();
+
+/// The first install wins: one `tx` process runs `register` twice (`preview_verbs`, then `open`).
+pub fn install(catalogue: Catalogue) {
+    let _ = CATALOGUE.set(catalogue);
+}
+
+pub fn catalogue() -> Option<&'static Catalogue> {
+    CATALOGUE.get()
+}
+
+/// The next position after `current`: 0, 1, …, len-1, then `None` (off), then 0.
+pub fn next(current: Option<usize>, len: usize) -> Option<usize> {
+    let following = current.map_or(0, |index| index + 1);
+    (following < len).then_some(following)
 }
 
 /// Whether home drew this cell: a glyph, or a background such as the cursor bar.
@@ -270,9 +286,29 @@ mod tests {
         fn b() -> Box<dyn Backdrop> {
             unreachable!()
         }
-        install(a);
-        install(b);
-        assert!(std::ptr::fn_addr_eq(chosen().unwrap(), a as Constructor));
+        static FIRST: [Theme; 1] = [("a", a)];
+        static SECOND: [Theme; 1] = [("b", b)];
+        let catalogue = |themes| Catalogue {
+            themes,
+            start: Some(0),
+            remember: Box::new(|_| {}),
+        };
+        install(catalogue(&FIRST));
+        install(catalogue(&SECOND));
+        assert_eq!(super::catalogue().unwrap().themes[0].0, "a");
+    }
+
+    #[test]
+    fn next_cycles_through_every_theme_then_off() {
+        let mut position = None;
+        let mut sequence = Vec::new();
+        for _ in 0..5 {
+            position = next(position, 3);
+            sequence.push(position);
+        }
+        assert_eq!(sequence, [Some(0), Some(1), Some(2), None, Some(0)]);
+        assert_eq!(next(None, 0), None);
+        assert_eq!(next(Some(0), 0), None);
     }
 
     #[test]

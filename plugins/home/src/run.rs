@@ -67,7 +67,12 @@ pub fn run(core: &TxCore, home: &mut Home, options: &Options) -> io::Result<Opti
         let (requests, worker_requests) = channel();
         let (worker_replies, replies) = channel();
         scope.spawn(move || worker(core, &worker_requests, &worker_replies));
-        let mut backdrop = backdrop::chosen().map(|constructor| constructor());
+        let catalogue = backdrop::catalogue();
+        home.themed = catalogue.is_some();
+        let mut theme = catalogue.and_then(|catalogue| catalogue.start);
+        let mut backdrop = catalogue
+            .zip(theme)
+            .map(|(catalogue, index)| (catalogue.themes[index].1)());
         let mut terminal = ratatui::try_init()?;
         if backdrop.is_some() {
             execute!(io::stdout(), EnableMouseCapture, EnableFocusChange)?;
@@ -78,6 +83,7 @@ pub fn run(core: &TxCore, home: &mut Home, options: &Options) -> io::Result<Opti
             &mut terminal,
             &requests,
             &replies,
+            &mut theme,
             &mut backdrop,
         );
         if backdrop.is_some() {
@@ -231,6 +237,7 @@ fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     requests: &Sender<Request>,
     replies: &Receiver<Reply>,
+    theme: &mut Option<usize>,
     backdrop: &mut Option<Box<dyn Backdrop>>,
 ) -> io::Result<Option<Action>> {
     let started = Instant::now();
@@ -256,6 +263,7 @@ fn event_loop(
     let mut last_frame = started;
     loop {
         changed |= data.receive(home)?;
+        changed |= home.expire_notice(Instant::now());
         data.request(home)?;
         let animating = clock.running() && backdrop.is_some();
         let interval = match &backdrop {
@@ -329,9 +337,35 @@ fn event_loop(
                 Outcome::Stay => {}
                 Outcome::Close => return Ok(None),
                 Outcome::Run(action) => return Ok(Some(action)),
+                Outcome::NextTheme => {
+                    let catalogue = backdrop::catalogue().expect("`t` needs a catalogue");
+                    let was_on = backdrop.is_some();
+                    *theme = backdrop::next(*theme, catalogue.themes.len());
+                    let chosen = theme.map(|index| &catalogue.themes[index]);
+                    *backdrop = chosen.map(|(_, constructor)| constructor());
+                    match modes_change(was_on, backdrop.is_some()) {
+                        Some(true) => {
+                            execute!(io::stdout(), EnableMouseCapture, EnableFocusChange)?;
+                        }
+                        Some(false) => {
+                            execute!(io::stdout(), DisableMouseCapture, DisableFocusChange)?;
+                        }
+                        None => {}
+                    }
+                    let name = chosen.map(|(name, _)| *name);
+                    (catalogue.remember)(name);
+                    home.notify(format!("theme: {}", name.unwrap_or("off")));
+                    clock = Clock::new(Instant::now());
+                }
             }
         }
     }
+}
+
+/// What to do with mouse capture and focus reporting when the backdrop goes from `before` to
+/// `after`: `Some(true)` turns them on, `Some(false)` off, `None` leaves them.
+fn modes_change(before: bool, after: bool) -> Option<bool> {
+    (before != after).then_some(after)
 }
 
 /// The backdrop's time: it stands still while the pane is unfocused.
@@ -400,6 +434,14 @@ mod tests {
         home.context.agents.clear();
         home.context.assistant = AssistantState::Creating;
         assert!(spinning(&home));
+    }
+
+    #[test]
+    fn cycling_to_off_and_back_toggles_the_terminal_modes() {
+        assert_eq!(modes_change(true, true), None);
+        assert_eq!(modes_change(true, false), Some(false));
+        assert_eq!(modes_change(false, false), None);
+        assert_eq!(modes_change(false, true), Some(true));
     }
 
     #[test]

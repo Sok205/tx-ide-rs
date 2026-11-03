@@ -799,6 +799,13 @@ mod tests {
     }
 
     #[test]
+    fn a_notice_is_drawn_in_the_footer_line() {
+        let mut home = Home::new(context());
+        home.notify("theme: off".into());
+        assert_eq!(text(&render(&home)).pop().unwrap(), "theme: off");
+    }
+
+    #[test]
     fn the_footer_changes_when_finding_asking_and_confirming() {
         let last = |home: &Home| text(&render(home)).pop().unwrap();
         let mut home = Home::new(context());
