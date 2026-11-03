@@ -11,7 +11,7 @@ use tx_home::backdrop::{dim, is_text, palette};
 /// Pixels per second a ripple's ring grows.
 const RIPPLE_SPEED: f32 = 9.0;
 const PELLET_LIFETIME: f32 = 12.0;
-const WAKE_DECAY: f32 = 0.9;
+const WAKE_DECAY: f32 = 0.98;
 
 const RIPPLE_LIGHT: Color = Color::Rgb(112, 130, 196);
 const PELLET: Color = Color::Rgb(222, 158, 82);
@@ -157,6 +157,17 @@ mod tests {
         assert_eq!(tangent(PI / 2.0), '-');
         assert_eq!(tangent(PI / 4.0), '/');
         assert_eq!(tangent(-PI / 4.0), '\\');
+    }
+
+    #[test]
+    fn a_wake_keeps_half_its_energy_for_half_a_second() {
+        let mut wake = Wake::new(41, 41);
+        wake.deposit((20.5, 20.5), 1.0);
+        for _ in 0..30 {
+            wake.step();
+        }
+        let left: f32 = wake.energy.iter().sum();
+        assert!(left > 0.5, "{left}");
     }
 
     #[test]
