@@ -6,11 +6,13 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::quantised;
+use crate::common::{
+    Pointer, STEP, Steps, between, distance, draw_logo, fill, glow, logo_size, pixel_of, quantised,
+};
 
 const NIGHT: Color = Color::Rgb(6, 7, 12);
 const WARM: Color = Color::Rgb(78, 52, 34);
@@ -28,9 +30,6 @@ const TRAIL_SHADES: u8 = 3;
 const CLEAR: Color = Color::Rgb(44, 52, 64);
 const LOGO_TOP: Color = Color::Rgb(226, 238, 252);
 const LOGO_BOTTOM: Color = Color::Rgb(142, 170, 204);
-const STEP: f32 = 1.0 / 60.0;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
 const CELLS_PER_DROPLET: usize = 150;
 const MAX_DROPLETS: usize = 200;
 const MAX_MASS: f32 = 4.0;
@@ -42,8 +41,6 @@ const SPAWN_SECONDS: (f64, f64) = (0.3, 0.8);
 const SLIDE_SECONDS: (f64, f64) = (0.3, 0.9);
 const REST_SECONDS: (f64, f64) = (1.5, 6.0);
 const HOVER_RANGE: f32 = 8.0;
-/// Seconds a still pointer keeps holding droplets: a terminal never says the mouse has left.
-const POINTER_MEMORY: f64 = 3.0;
 const WIPE_HALF_WIDTH: f32 = 5.0;
 const WIPE_LENGTH: f32 = 40.0;
 /// Seconds before droplets form again in a wiped streak.
@@ -79,8 +76,7 @@ impl Wipe {
 #[derive(Default)]
 struct Window {
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The last painted area, which mouse events are relative to and the lights were built for.
     area: Rect,
     /// One colour per pixel, row by row.
@@ -92,27 +88,10 @@ struct Window {
     next_droplet: f64,
     /// Simulated seconds; f64 so a window open for days keeps its precision.
     clock: f64,
-    /// In pixels, and the `clock` it last moved at.
-    pointer: Option<((f32, f32), f64)>,
-    #[cfg(test)]
-    steps: usize,
-}
-
-fn between(random: &mut Rng, (low, high): (f64, f64)) -> f64 {
-    low + (high - low) * random.f64()
-}
-
-fn distance(first: (f32, f32), second: (f32, f32)) -> f32 {
-    (first.0 - second.0).hypot(first.1 - second.1)
+    pointer: Pointer,
 }
 
 impl Window {
-    fn noticed_pointer(&self) -> Option<(f32, f32)> {
-        self.pointer
-            .filter(|(_, moved)| self.clock - moved <= POINTER_MEMORY)
-            .map(|(point, _)| point)
-    }
-
     /// Soft round lights on near-black; where they overlap the stronger one wins.
     fn blur_lights(&mut self, width: u16, rows: u16) {
         let blobs: Vec<_> = (0..self.random.usize(BLOBS.0..=BLOBS.1))
@@ -218,7 +197,7 @@ impl Window {
     fn step(&mut self) {
         self.clock += f64::from(STEP);
         let now = self.clock;
-        let pointer = self.noticed_pointer();
+        let pointer = self.pointer.noticed(self.clock);
         for index in 0..self.droplets.len() {
             if now >= self.droplets[index].next_slide && now >= self.droplets[index].slide_until {
                 self.start_slide(index);
@@ -256,28 +235,8 @@ impl Window {
         if area != self.area {
             self.respawn(area);
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.step();
-            #[cfg(test)]
-            {
-                self.steps += 1;
-            }
-        }
-    }
-
-    /// Pixel (x, y) `amount` of the way from the glass behind it to `light`; nothing off the glass.
-    fn glow(&self, pixels: &mut Pixels, (x, y): (i32, i32), light: Color, amount: f32, shades: u8) {
-        let on_glass = (0..i32::from(pixels.width())).contains(&x)
-            && (0..i32::from(pixels.height())).contains(&y);
-        if on_glass {
-            let behind = self.lights[y as usize * usize::from(pixels.width()) + x as usize];
-            pixels.set(x, y, quantised(behind, light, amount, shades));
         }
     }
 
@@ -289,7 +248,7 @@ impl Window {
                     wipe.start.0.round() as i32 + x,
                     wipe.start.1.round() as i32 + y,
                 );
-                self.glow(pixels, point, CLEAR, 0.3 * fade, BLOB_SHADES);
+                glow(pixels, &self.lights, point, CLEAR, 0.3 * fade, BLOB_SHADES);
             }
         }
     }
@@ -301,7 +260,7 @@ impl Backdrop for Window {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -314,16 +273,20 @@ impl Backdrop for Window {
     ) {
         self.advance(elapsed, area);
         let mut pixels = Pixels::new(area.width, area.height);
-        let width = usize::from(area.width);
-        for (index, color) in self.lights.iter().enumerate() {
-            pixels.set((index % width) as i32, (index / width) as i32, *color);
-        }
+        fill(&mut pixels, &self.lights);
         for wipe in &self.wipes {
             self.draw_wipe(wipe, &mut pixels);
         }
         for &(x, y, born) in &self.trails {
             let fade = 1.0 - ((self.clock - born) / TRAIL_SECONDS) as f32;
-            self.glow(&mut pixels, (x, y), TRAIL, 0.5 * fade, TRAIL_SHADES);
+            glow(
+                &mut pixels,
+                &self.lights,
+                (x, y),
+                TRAIL,
+                0.5 * fade,
+                TRAIL_SHADES,
+            );
         }
         for droplet in &self.droplets {
             let (x, y) = (
@@ -331,35 +294,24 @@ impl Backdrop for Window {
                 droplet.position.1.round() as i32,
             );
             for below in 0..droplet.mass.floor() as i32 {
-                self.glow(&mut pixels, (x, y + below), DROPLET, 0.55, DROPLET_SHADES);
+                glow(
+                    &mut pixels,
+                    &self.lights,
+                    (x, y + below),
+                    DROPLET,
+                    0.55,
+                    DROPLET_SHADES,
+                );
             }
         }
         pixels.render(area, text, NIGHT, TEXT_CEILING, buffer);
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                let color = quantised(
-                    LOGO_TOP,
-                    LOGO_BOTTOM,
-                    row as f32 / (LOGO.len() - 1) as f32,
-                    LOGO.len() as u8,
-                );
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(color));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_TOP, LOGO_BOTTOM, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        if !self.area.contains(Position::new(event.column, event.row)) {
+        let Some(point) = pixel_of(self.area, event) else {
             return;
-        }
-        let point = (
-            f32::from(event.column - self.area.x),
-            f32::from(event.row - self.area.y) * 2.0 + 1.0,
-        );
+        };
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) if self.wipes.len() < MAX_WIPES => {
                 let wipe = Wipe {
@@ -371,7 +323,7 @@ impl Backdrop for Window {
                 self.wipes.push(wipe);
             }
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
-                self.pointer = Some((point, self.clock));
+                self.pointer.moved(point, self.clock);
             }
             _ => {}
         }
@@ -385,6 +337,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
     use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
 
     fn click(column: u16, row: u16) -> MouseEvent {
@@ -480,7 +433,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         paint(&mut window, Duration::ZERO, area);
         paint(&mut window, Duration::from_secs(3600), area);
-        assert!(window.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(window.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]
@@ -572,7 +525,7 @@ mod tests {
             ..click(80, 0)
         });
         assert!(window.wipes.is_empty());
-        assert_eq!(window.pointer, None);
+        assert_eq!(window.pointer.noticed(window.clock), None);
     }
 
     #[test]
@@ -583,7 +536,7 @@ mod tests {
             ..click(10, 5)
         };
         window.mouse(moved);
-        assert_eq!(window.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(window.pointer.noticed(window.clock), Some((10.0, 11.0)));
         for tick in 1..=80 {
             paint(
                 &mut window,
@@ -591,6 +544,6 @@ mod tests {
                 Rect::new(0, 0, 80, 24),
             );
         }
-        assert_eq!(window.noticed_pointer(), None);
+        assert_eq!(window.pointer.noticed(window.clock), None);
     }
 }

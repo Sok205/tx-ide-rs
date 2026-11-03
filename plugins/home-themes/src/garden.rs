@@ -7,11 +7,11 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::quantised;
+use crate::common::{STEP, Steps, between, draw_logo, fill, logo_size, pixel_of};
 
 const RIDGE: Color = Color::Rgb(44, 48, 64);
 const FURROW: Color = Color::Rgb(34, 38, 52);
@@ -34,9 +34,6 @@ const MAX_STONES: usize = 6;
 const MAX_STROKES: usize = 64;
 const LEAF_EVERY_SECONDS: (f64, f64) = (10.0, 20.0);
 const LEAF_CROSSING_SECONDS: (f64, f64) = (8.0, 10.0);
-const STEP: f32 = 1.0 / 60.0;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
 
 pub fn sand() -> Box<dyn Backdrop> {
     Box::<Garden>::default()
@@ -57,8 +54,7 @@ struct Leaf {
 #[derive(Default)]
 struct Garden {
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The last painted area, which mouse events are relative to and the sand was raked for.
     area: Rect,
     /// One colour per pixel, row by row.
@@ -75,13 +71,7 @@ struct Garden {
     leaf: Option<Leaf>,
     next_leaf: f64,
     #[cfg(test)]
-    steps: usize,
-    #[cfg(test)]
     reflows: usize,
-}
-
-fn between(random: &mut Rng, (low, high): (f64, f64)) -> f64 {
-    low + (high - low) * random.f64()
 }
 
 impl Garden {
@@ -179,13 +169,7 @@ impl Garden {
         if self.dirty {
             self.reflow();
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.clock += f64::from(STEP);
             let now = self.clock;
             if self
@@ -202,10 +186,6 @@ impl Garden {
                     seconds: between(&mut self.random, LEAF_CROSSING_SECONDS) as f32,
                 });
                 self.next_leaf = now + between(&mut self.random, LEAF_EVERY_SECONDS);
-            }
-            #[cfg(test)]
-            {
-                self.steps += 1;
             }
         }
     }
@@ -227,7 +207,7 @@ impl Backdrop for Garden {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -240,40 +220,20 @@ impl Backdrop for Garden {
     ) {
         self.advance(elapsed, area);
         let mut pixels = Pixels::new(area.width, area.height);
-        let width = usize::from(area.width);
-        for (index, color) in self.grid.iter().enumerate() {
-            pixels.set((index % width) as i32, (index / width) as i32, *color);
-        }
+        fill(&mut pixels, &self.grid);
         if let Some(leaf) = &self.leaf {
             self.draw_leaf(leaf, &mut pixels);
         }
         pixels.render(area, text, FURROW, TEXT_CEILING, buffer);
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                let color = quantised(
-                    LOGO_TOP,
-                    LOGO_BOTTOM,
-                    row as f32 / (LOGO.len() - 1) as f32,
-                    LOGO.len() as u8,
-                );
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(color));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_TOP, LOGO_BOTTOM, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        if !self.area.contains(Position::new(event.column, event.row)) {
+        let Some((x, y)) = pixel_of(self.area, event) else {
             self.drag_from = None;
             return;
-        }
-        let point = (
-            i32::from(event.column - self.area.x),
-            i32::from(event.row - self.area.y) * 2 + 1,
-        );
+        };
+        let point = (x as i32, y as i32);
         match event.kind {
             // A terminal can't tell a click from the start of a drag, so every press sets a stone.
             MouseEventKind::Down(MouseButton::Left) => {
@@ -306,6 +266,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
     use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
 
     const AREA: Rect = Rect::new(0, 0, 80, 24);
@@ -399,7 +360,7 @@ mod tests {
         let mut garden = Garden::default();
         paint(&mut garden, Duration::ZERO, AREA);
         paint(&mut garden, Duration::from_secs(3600), AREA);
-        assert!(garden.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(garden.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]

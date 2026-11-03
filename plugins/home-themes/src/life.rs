@@ -8,11 +8,11 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::quantised;
+use crate::common::{Steps, draw_logo, logo_size, pixel_of};
 
 const VOID: Color = Color::Rgb(5, 9, 12);
 const LIVE: Color = Color::Rgb(22, 92, 94);
@@ -21,9 +21,8 @@ const BORN: Color = Color::Rgb(96, 214, 196);
 const TEXT_CEILING: Color = LIVE;
 const LOGO_TOP: Color = Color::Rgb(176, 236, 224);
 const LOGO_BOTTOM: Color = Color::Rgb(84, 160, 158);
+/// Seconds per generation.
 const STEP: f32 = 0.25;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
 /// Share of the opening board that starts alive: sparse, so a step flips few cells.
 const SOUP_DENSITY: f32 = 0.05;
 /// A reseed drops a patch this big, half alive, somewhere on the board.
@@ -50,8 +49,7 @@ enum Cell {
 #[derive(Default)]
 struct Life {
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The last painted area, which mouse events are relative to and the board was built for.
     area: Rect,
     width: usize,
@@ -59,8 +57,6 @@ struct Life {
     cells: Vec<Cell>,
     scratch: Vec<Cell>,
     still_steps: u32,
-    #[cfg(test)]
-    steps: usize,
 }
 
 impl Life {
@@ -144,23 +140,13 @@ impl Life {
             self.sprinkle();
             self.still_steps = 0;
         }
-        #[cfg(test)]
-        {
-            self.steps += 1;
-        }
     }
 
     fn advance(&mut self, elapsed: Duration, area: Rect) {
         if area != self.area {
             self.respawn(area);
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.step();
         }
     }
@@ -182,7 +168,7 @@ impl Backdrop for Life {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -208,32 +194,15 @@ impl Backdrop for Life {
             );
         }
         pixels.render(area, text, VOID, TEXT_CEILING, buffer);
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                let color = quantised(
-                    LOGO_TOP,
-                    LOGO_BOTTOM,
-                    row as f32 / (LOGO.len() - 1) as f32,
-                    LOGO.len() as u8,
-                );
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(color));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_TOP, LOGO_BOTTOM, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        if !self.area.contains(Position::new(event.column, event.row)) {
+        let Some((x, y)) = pixel_of(self.area, event) else {
             return;
-        }
+        };
         if event.kind == MouseEventKind::Down(MouseButton::Left) {
-            let point = (
-                i32::from(event.column - self.area.x),
-                i32::from(event.row - self.area.y) * 2 + 1,
-            );
+            let point = (x as i32, y as i32);
             let away = (
                 if 2 * point.0 >= self.width as i32 {
                     1
@@ -258,6 +227,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
     use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
 
     fn click(column: u16, row: u16) -> MouseEvent {
@@ -370,7 +340,7 @@ mod tests {
             &blank,
             &mut blank.clone(),
         );
-        assert!(life.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(life.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]

@@ -6,11 +6,14 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::{quantised, value_noise};
+use crate::common::{
+    Pointer, STEP, Steps, between, distance, draw_logo, fill, glow, logo_size, pixel_of, quantised,
+    value_noise,
+};
 
 const NAVY: Color = Color::Rgb(7, 10, 30);
 const INDIGO: Color = Color::Rgb(30, 22, 64);
@@ -38,12 +41,7 @@ const LINK_RANGE: f32 = 15.0;
 const LINKS: usize = 3;
 const LOGO_TOP: Color = Color::Rgb(238, 240, 255);
 const LOGO_BOTTOM: Color = Color::Rgb(150, 160, 222);
-const STEP: f32 = 1.0 / 60.0;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
 const MAX_METEORS: usize = 64;
-/// Seconds a still pointer keeps its lines: a terminal never says the mouse has left.
-const POINTER_MEMORY: f64 = 3.0;
 
 pub fn sky() -> Box<dyn Backdrop> {
     Box::<Sky>::default()
@@ -71,8 +69,7 @@ struct Meteor {
 #[derive(Default)]
 struct Sky {
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The last painted area, which mouse events are relative to and the sky was built for.
     area: Rect,
     /// One colour per pixel, row by row.
@@ -82,18 +79,7 @@ struct Sky {
     next_meteor: f64,
     /// Simulated seconds; f64 so a sky open for days keeps its precision.
     clock: f64,
-    /// In pixels, and the `clock` it last moved at.
-    pointer: Option<((f32, f32), f64)>,
-    #[cfg(test)]
-    steps: usize,
-}
-
-fn between(random: &mut Rng, (low, high): (f64, f64)) -> f64 {
-    low + (high - low) * random.f64()
-}
-
-fn distance(first: (f32, f32), second: (f32, f32)) -> f32 {
-    (first.0 - second.0).hypot(first.1 - second.1)
+    pointer: Pointer,
 }
 
 /// Darker overhead, lighter at the horizon, with soft wavy edges between the bands.
@@ -108,12 +94,6 @@ fn shade(x: u16, y: u16, rows: u16) -> Color {
 }
 
 impl Sky {
-    fn noticed_pointer(&self) -> Option<(f32, f32)> {
-        self.pointer
-            .filter(|(_, moved)| self.clock - moved <= POINTER_MEMORY)
-            .map(|(point, _)| point)
-    }
-
     fn respawn(&mut self, area: Rect) {
         self.area = area;
         let (width, rows) = (area.width, area.height * 2);
@@ -155,13 +135,7 @@ impl Sky {
         if area != self.area {
             self.respawn(area);
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.clock += f64::from(STEP);
             let now = self.clock;
             for meteor in &mut self.meteors {
@@ -178,26 +152,12 @@ impl Sky {
                 self.launch(start);
                 self.next_meteor = now + between(&mut self.random, METEOR_SECONDS);
             }
-            #[cfg(test)]
-            {
-                self.steps += 1;
-            }
         }
         for star in &mut self.stars {
             if self.clock >= star.next {
                 star.level = self.random.usize(..TWINKLE_LEVELS.len());
                 star.next = self.clock + between(&mut self.random, TWINKLE_SECONDS);
             }
-        }
-    }
-
-    /// Pixel (x, y) `amount` of the way from the sky behind it to `light`; nothing off the sky.
-    fn glow(&self, pixels: &mut Pixels, (x, y): (i32, i32), light: Color, amount: f32) {
-        let on_sky = (0..i32::from(pixels.width())).contains(&x)
-            && (0..i32::from(pixels.height())).contains(&y);
-        if on_sky {
-            let behind = self.gradient[y as usize * usize::from(pixels.width()) + x as usize];
-            pixels.set(x, y, quantised(behind, light, amount, GLOW_SHADES));
         }
     }
 
@@ -233,7 +193,8 @@ impl Sky {
                 (meteor.head.0 - direction.0 * back).round() as i32,
                 (meteor.head.1 - direction.1 * back).round() as i32,
             );
-            self.glow(pixels, point, METEOR, fade * (1.0 - back / meteor.length));
+            let amount = fade * (1.0 - back / meteor.length);
+            glow(pixels, &self.gradient, point, METEOR, amount, GLOW_SHADES);
         }
     }
 }
@@ -244,7 +205,7 @@ impl Backdrop for Sky {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -257,56 +218,37 @@ impl Backdrop for Sky {
     ) {
         self.advance(elapsed, area);
         let mut pixels = Pixels::new(area.width, area.height);
-        let width = usize::from(area.width);
-        for (index, color) in self.gradient.iter().enumerate() {
-            pixels.set((index % width) as i32, (index / width) as i32, *color);
-        }
-        if let Some(pointer) = self.noticed_pointer() {
+        fill(&mut pixels, &self.gradient);
+        if let Some(pointer) = self.pointer.noticed(self.clock) {
             self.draw_links(pointer, &mut pixels);
         }
         for star in &self.stars {
-            self.glow(
+            glow(
                 &mut pixels,
+                &self.gradient,
                 star.position,
                 star.tint,
                 TWINKLE_LEVELS[star.level],
+                GLOW_SHADES,
             );
         }
         for meteor in &self.meteors {
             self.draw_meteor(meteor, &mut pixels);
         }
         pixels.render(area, text, NAVY, TEXT_CEILING, buffer);
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                let color = quantised(
-                    LOGO_TOP,
-                    LOGO_BOTTOM,
-                    row as f32 / (LOGO.len() - 1) as f32,
-                    LOGO.len() as u8,
-                );
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(color));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_TOP, LOGO_BOTTOM, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        if !self.area.contains(Position::new(event.column, event.row)) {
+        let Some(point) = pixel_of(self.area, event) else {
             return;
-        }
-        let point = (
-            f32::from(event.column - self.area.x),
-            f32::from(event.row - self.area.y) * 2.0 + 1.0,
-        );
+        };
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) if self.meteors.len() < MAX_METEORS => {
                 self.launch(point);
             }
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
-                self.pointer = Some((point, self.clock));
+                self.pointer.moved(point, self.clock);
             }
             _ => {}
         }
@@ -320,6 +262,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
     use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
 
     fn click(column: u16, row: u16) -> MouseEvent {
@@ -404,7 +347,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         paint(&mut sky, Duration::ZERO, area);
         paint(&mut sky, Duration::from_secs(3600), area);
-        assert!(sky.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(sky.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]
@@ -451,7 +394,7 @@ mod tests {
             ..click(80, 0)
         });
         assert!(sky.meteors.is_empty());
-        assert_eq!(sky.pointer, None);
+        assert_eq!(sky.pointer.noticed(sky.clock), None);
     }
 
     #[test]
@@ -462,13 +405,13 @@ mod tests {
             ..click(10, 5)
         };
         sky.mouse(moved);
-        assert_eq!(sky.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(sky.pointer.noticed(sky.clock), Some((10.0, 11.0)));
         let area = Rect::new(0, 0, 80, 24);
         for tick in 1..=80 {
             paint(&mut sky, Duration::from_millis(tick * 50), area);
         }
-        assert_eq!(sky.noticed_pointer(), None);
+        assert_eq!(sky.pointer.noticed(sky.clock), None);
         sky.mouse(moved);
-        assert_eq!(sky.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(sky.pointer.noticed(sky.clock), Some((10.0, 11.0)));
     }
 }

@@ -8,11 +8,14 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::{quantised, value_noise};
+use crate::common::{
+    Pointer, STEP, Steps, distance, draw_logo, fill, glow, logo_size, pixel_of, quantised,
+    value_noise,
+};
 
 const WATER: Color = Color::Rgb(2, 6, 14);
 const CAUSTIC: Color = Color::Rgb(9, 32, 46);
@@ -35,9 +38,6 @@ const PULSE_LEVELS: f32 = 3.0;
 const CELLS_PER_JELLY: usize = 700;
 const JELLIES: (usize, usize) = (4, 7);
 const CELLS_PER_FLECK: usize = 150;
-const STEP: f32 = 1.0 / 60.0;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
 const MAX_RINGS: usize = 8;
 const RING_SPEED: f32 = 30.0;
 const RING_SECONDS: f64 = 0.8;
@@ -47,8 +47,6 @@ const LIT_SECONDS: f64 = 2.0;
 /// Pixels from the pointer inside which a jellyfish is pushed away, at pixels per second.
 const SHY_REACH: f32 = 20.0;
 const SHY_SPEED: f32 = 10.0;
-/// Seconds a still pointer keeps its effect: a terminal never says the mouse has left.
-const POINTER_MEMORY: f64 = 3.0;
 /// The part of each pulse spent contracting; the rest is a glide.
 const SQUEEZE: f32 = 0.3;
 
@@ -83,8 +81,7 @@ struct Ring {
 #[derive(Default)]
 struct Abyss {
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The last painted area, which mouse events are relative to and the scene was built for.
     area: Rect,
     /// One colour per pixel, row by row.
@@ -94,14 +91,7 @@ struct Abyss {
     rings: Vec<Ring>,
     /// Simulated seconds; f64 so a scene open for days keeps its precision.
     clock: f64,
-    /// In pixels, and the `clock` it last moved at.
-    pointer: Option<((f32, f32), f64)>,
-    #[cfg(test)]
-    steps: usize,
-}
-
-fn distance(first: (f32, f32), second: (f32, f32)) -> f32 {
-    (first.0 - second.0).hypot(first.1 - second.1)
+    pointer: Pointer,
 }
 
 impl Jelly {
@@ -117,12 +107,6 @@ impl Jelly {
 }
 
 impl Abyss {
-    fn noticed_pointer(&self) -> Option<(f32, f32)> {
-        self.pointer
-            .filter(|(_, moved)| self.clock - moved <= POINTER_MEMORY)
-            .map(|(point, _)| point)
-    }
-
     fn spawn_jelly(&mut self, vertical: f32) -> Jelly {
         let radius = 4.0 + 3.0 * self.random.f32();
         Jelly {
@@ -165,17 +149,11 @@ impl Abyss {
         if area != self.area {
             self.respawn(area);
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
         let rows = f32::from(area.height) * 2.0;
         let width = f32::from(area.width);
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.clock += f64::from(STEP);
-            let pointer = self.noticed_pointer();
+            let pointer = self.pointer.noticed(self.clock);
             for index in 0..self.jellies.len() {
                 let jelly = &mut self.jellies[index];
                 jelly.position.1 -= (2.5 + 4.0 * jelly.contraction(self.clock)) * STEP;
@@ -206,10 +184,6 @@ impl Abyss {
             }
             let now = self.clock;
             self.rings.retain(|ring| now - ring.born < RING_SECONDS);
-            #[cfg(test)]
-            {
-                self.steps += 1;
-            }
         }
     }
 
@@ -222,16 +196,6 @@ impl Abyss {
                 quantised(WATER, CAUSTIC, light, CAUSTIC_SHADES)
             })
         }));
-    }
-
-    /// Pixel (x, y) `amount` of the way from the water behind it to `light`; nothing off screen.
-    fn glow(&self, pixels: &mut Pixels, (x, y): (i32, i32), light: Color, amount: f32) {
-        let on_screen = (0..i32::from(pixels.width())).contains(&x)
-            && (0..i32::from(pixels.height())).contains(&y);
-        if on_screen {
-            let behind = self.water[y as usize * usize::from(pixels.width()) + x as usize];
-            pixels.set(x, y, quantised(behind, light, amount, GLOW_SHADES));
-        }
     }
 
     fn draw_jelly(&self, jelly: &Jelly, pixels: &mut Pixels) {
@@ -247,7 +211,7 @@ impl Abyss {
                 let rim = rise == 0 || rise == height as i32 || offset.abs() as f32 >= across - 0.5;
                 let amount = if rim { brightness } else { brightness * 0.5 };
                 let point = (center_x as i32 + offset, center_y as i32 - rise);
-                self.glow(pixels, point, jelly.tint, amount);
+                glow(pixels, &self.water, point, jelly.tint, amount, GLOW_SHADES);
             }
         }
         let length = jelly.tentacle_length;
@@ -259,7 +223,14 @@ impl Abyss {
                     (self.clock as f32 * 0.5 + index as f32 * 1.7 + step as f32 * 0.45).sin() * 1.5;
                 let fade = 1.0 - step as f32 / length as f32;
                 let point = ((start + sway).round() as i32, center_y as i32 + step);
-                self.glow(pixels, point, jelly.tint, brightness * 0.8 * fade);
+                glow(
+                    pixels,
+                    &self.water,
+                    point,
+                    jelly.tint,
+                    brightness * 0.8 * fade,
+                    GLOW_SHADES,
+                );
             }
         }
     }
@@ -275,7 +246,7 @@ impl Abyss {
                 (ring.center.0 + radius * angle.cos()).round() as i32,
                 (ring.center.1 + radius * angle.sin()).round() as i32,
             );
-            self.glow(pixels, point, RING, fade * 0.6);
+            glow(pixels, &self.water, point, RING, fade * 0.6, GLOW_SHADES);
         }
     }
 }
@@ -286,7 +257,7 @@ impl Backdrop for Abyss {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -300,13 +271,10 @@ impl Backdrop for Abyss {
         self.advance(elapsed, area);
         self.caustic(area.width, area.height * 2);
         let mut pixels = Pixels::new(area.width, area.height);
-        let width = usize::from(area.width);
-        for (index, color) in self.water.iter().enumerate() {
-            pixels.set((index % width) as i32, (index / width) as i32, *color);
-        }
+        fill(&mut pixels, &self.water);
         for fleck in &self.snow {
             let point = (fleck.position.0 as i32, fleck.position.1 as i32);
-            self.glow(&mut pixels, point, SNOW, 1.0);
+            glow(&mut pixels, &self.water, point, SNOW, 1.0, GLOW_SHADES);
         }
         for jelly in &self.jellies {
             self.draw_jelly(jelly, &mut pixels);
@@ -315,31 +283,13 @@ impl Backdrop for Abyss {
             self.draw_ring(ring, &mut pixels);
         }
         pixels.render(area, text, WATER, TEXT_CEILING, buffer);
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                let color = quantised(
-                    LOGO_TOP,
-                    LOGO_BOTTOM,
-                    row as f32 / (LOGO.len() - 1) as f32,
-                    LOGO.len() as u8,
-                );
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(color));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_TOP, LOGO_BOTTOM, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        if !self.area.contains(Position::new(event.column, event.row)) {
+        let Some(point) = pixel_of(self.area, event) else {
             return;
-        }
-        let point = (
-            f32::from(event.column - self.area.x),
-            f32::from(event.row - self.area.y) * 2.0 + 1.0,
-        );
+        };
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if self.rings.len() < MAX_RINGS {
@@ -355,7 +305,7 @@ impl Backdrop for Abyss {
                 }
             }
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
-                self.pointer = Some((point, self.clock));
+                self.pointer.moved(point, self.clock);
             }
             _ => {}
         }
@@ -369,6 +319,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
     use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
 
     fn click(column: u16, row: u16) -> MouseEvent {
@@ -453,7 +404,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         paint(&mut abyss, Duration::ZERO, area);
         paint(&mut abyss, Duration::from_secs(3600), area);
-        assert!(abyss.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(abyss.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]
@@ -518,7 +469,7 @@ mod tests {
             ..click(80, 0)
         });
         assert!(abyss.rings.is_empty());
-        assert_eq!(abyss.pointer, None);
+        assert_eq!(abyss.pointer.noticed(abyss.clock), None);
     }
 
     #[test]
@@ -529,11 +480,11 @@ mod tests {
             ..click(10, 5)
         };
         abyss.mouse(moved);
-        assert_eq!(abyss.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(abyss.pointer.noticed(abyss.clock), Some((10.0, 11.0)));
         let area = Rect::new(0, 0, 80, 24);
         for tick in 1..=80 {
             paint(&mut abyss, Duration::from_millis(tick * 50), area);
         }
-        assert_eq!(abyss.noticed_pointer(), None);
+        assert_eq!(abyss.pointer.noticed(abyss.clock), None);
     }
 }

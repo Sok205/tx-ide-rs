@@ -6,11 +6,11 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::{quantised, value_noise};
+use crate::common::{STEP, Steps, draw_logo, logo_size, pixel_of, quantised, value_noise};
 
 const NIGHT: Color = Color::Rgb(14, 9, 10);
 const EMBER_GLOW: Color = Color::Rgb(214, 96, 22);
@@ -34,9 +34,6 @@ const STOKE_SECONDS: f64 = 1.5;
 const STOKE_RAMP: f64 = 0.5;
 const STOKE_LIGHT: f32 = 0.3;
 const SPAWN_CHANCE: f32 = 0.1;
-const STEP: f32 = 1.0 / 60.0;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
 
 pub fn embers() -> Box<dyn Backdrop> {
     Box::<Campfire>::default()
@@ -79,16 +76,13 @@ fn spark_color(age: f32) -> Color {
 #[derive(Default)]
 struct Campfire {
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The last painted area, which mouse events are relative to and the fire was built for.
     area: Rect,
     sparks: Vec<Spark>,
     /// Simulated seconds; f64 so a fire left open for days keeps its precision.
     clock: f64,
     stoked_until: f64,
-    #[cfg(test)]
-    steps: usize,
 }
 
 impl Campfire {
@@ -116,22 +110,12 @@ impl Campfire {
             self.area = area;
             self.sparks.clear();
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.clock += f64::from(STEP);
             let now = self.clock;
             self.sparks.retain(|spark| spark.age(now) < 1.0);
             if self.sparks.len() < IDLE_SPARKS && self.random.f32() < SPAWN_CHANCE {
                 self.spark(14.0);
-            }
-            #[cfg(test)]
-            {
-                self.steps += 1;
             }
         }
     }
@@ -187,7 +171,7 @@ impl Backdrop for Campfire {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -207,25 +191,11 @@ impl Backdrop for Campfire {
             pixels.set(x, y, spark_color(spark.age(self.clock)));
         }
         pixels.render(area, text, NIGHT, TEXT_CEILING, buffer);
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                let color = quantised(
-                    LOGO_TOP,
-                    LOGO_BOTTOM,
-                    row as f32 / (LOGO.len() - 1) as f32,
-                    LOGO.len() as u8,
-                );
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(color));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_TOP, LOGO_BOTTOM, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        let inside = self.area.contains(Position::new(event.column, event.row));
+        let inside = pixel_of(self.area, event).is_some();
         if inside && event.kind == MouseEventKind::Down(MouseButton::Left) {
             self.stoked_until = self.clock + STOKE_SECONDS;
             for _ in 0..BURST.min(MAX_SPARKS.saturating_sub(self.sparks.len())) {
@@ -242,6 +212,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
     use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
 
     fn click(column: u16, row: u16) -> MouseEvent {
@@ -319,7 +290,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         paint(&mut fire, Duration::ZERO, area);
         paint(&mut fire, Duration::from_secs(3600), area);
-        assert!(fire.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(fire.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]
@@ -380,7 +351,6 @@ mod tests {
         let (_, start_y) = fire.sparks[0].position(fire.clock);
         let lifetime = fire.sparks[0].lifetime;
         fire.sparks[0].born = fire.clock;
-        fire.last = Some(Duration::ZERO);
         let mut elapsed = Duration::ZERO;
         while elapsed.as_secs_f32() < lifetime / 2.0 {
             elapsed += Duration::from_millis(100);

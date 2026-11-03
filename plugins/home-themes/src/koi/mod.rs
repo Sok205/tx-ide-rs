@@ -9,11 +9,12 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels, palette};
 
-use fish::{Attractions, Fish, distance};
+use crate::common::{Pointer, STEP, Steps, distance, draw_logo, logo_size, pixel_of};
+use fish::{Attractions, Fish};
 use water::{Pellet, Ripple, Wake};
 
 const WATER_DEEP: (f32, f32, f32) = (14.0, 16.0, 38.0);
@@ -23,9 +24,6 @@ const WATER_SHADES: f32 = 3.0;
 const LOGO_WHITE: Color = Color::Rgb(255, 244, 226);
 /// The brightest water: text cells show the water as it is, and fish under them no brighter.
 const TEXT_CEILING: Color = Color::Rgb(30, 40, 82);
-const STEP: f32 = 1.0 / 60.0;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
 /// How close a head must come to a pellet to eat it.
 const EAT_RANGE: f32 = 1.5;
 const EAT_RIPPLE: f32 = 0.4;
@@ -37,8 +35,6 @@ const WAKE_LIGHT: f32 = 0.6;
 /// Live ripples at most: each repaints its whole ring every frame, so rapid clicks would flood
 /// tmux.
 const MAX_RIPPLES: usize = 12;
-/// Seconds a still pointer keeps the fish curious: a terminal never says the mouse has left.
-const POINTER_MEMORY: f64 = 3.0;
 
 pub fn pond() -> Box<dyn Backdrop> {
     Box::<Pond>::default()
@@ -48,8 +44,7 @@ pub fn pond() -> Box<dyn Backdrop> {
 struct Pond {
     fish: Vec<Fish>,
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The area, in cells, the fish were spawned for.
     cells: usize,
     /// The last painted area, which mouse events are relative to.
@@ -58,11 +53,8 @@ struct Pond {
     clock: f64,
     ripples: Vec<Ripple>,
     pellets: Vec<Pellet>,
-    /// In pixels, and the `clock` it last moved at.
-    pointer: Option<((f32, f32), f64)>,
+    pointer: Pointer,
     wake: Wake,
-    #[cfg(test)]
-    steps: usize,
 }
 
 /// `wake`: the wake's energy here, lightening the water. The shimmer drifts over minutes.
@@ -91,12 +83,6 @@ fn add_ripple(ripples: &mut Vec<Ripple>, ripple: Ripple) {
 }
 
 impl Pond {
-    fn noticed_pointer(&self) -> Option<(f32, f32)> {
-        self.pointer
-            .filter(|(_, moved)| self.clock - moved <= POINTER_MEMORY)
-            .map(|(point, _)| point)
-    }
-
     fn swim(&mut self, elapsed: Duration, area: Rect) {
         let cells = usize::from(area.width) * usize::from(area.height);
         let bounds = (f32::from(area.width), f32::from(area.height) * 2.0);
@@ -112,18 +98,12 @@ impl Pond {
             self.area = area;
             self.wake = Wake::new(usize::from(area.width), usize::from(area.height) * 2);
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.clock += f64::from(STEP);
             let now = self.clock;
             // All fish steer off the same moment.
             let neighbours = self.fish.clone();
-            let pointer = self.noticed_pointer();
+            let pointer = self.pointer.noticed(self.clock);
             for fish in &mut self.fish {
                 let head = fish.head();
                 let attractions = Attractions {
@@ -165,10 +145,6 @@ impl Pond {
             self.wake.step();
             self.ripples.retain(|ripple| ripple.alive(now));
             self.pellets.retain(|pellet| pellet.alive(now));
-            #[cfg(test)]
-            {
-                self.steps += 1;
-            }
         }
     }
 }
@@ -179,7 +155,7 @@ impl Backdrop for Pond {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -215,25 +191,13 @@ impl Backdrop for Pond {
         for pellet in &self.pellets {
             pellet.draw(self.clock, area, text, buffer);
         }
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(LOGO_WHITE));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_WHITE, LOGO_WHITE, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        if !self.area.contains(Position::new(event.column, event.row)) {
+        let Some(point) = pixel_of(self.area, event) else {
             return;
-        }
-        let point = (
-            f32::from(event.column - self.area.x),
-            f32::from(event.row - self.area.y) * 2.0 + 1.0,
-        );
+        };
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let count = self.random.usize(3..=5);
@@ -255,7 +219,7 @@ impl Backdrop for Pond {
                 );
             }
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
-                self.pointer = Some((point, self.clock));
+                self.pointer.moved(point, self.clock);
             }
             _ => {}
         }
@@ -269,6 +233,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
 
     fn click(column: u16, row: u16) -> MouseEvent {
         MouseEvent {
@@ -365,7 +330,7 @@ mod tests {
         let blank = Buffer::empty(area);
         let mut farthest: f32 = 0.0;
         for tick in 1..=200 {
-            pond.pointer = Some((pointer, pond.clock));
+            pond.pointer.moved(pointer, pond.clock);
             pond.paint(
                 Duration::from_millis(tick * 50),
                 area,
@@ -388,11 +353,11 @@ mod tests {
             ..click(10, 5)
         };
         pond.mouse(moved);
-        assert_eq!(pond.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(pond.pointer.noticed(pond.clock), Some((10.0, 11.0)));
         run(&mut pond, area, 4);
-        assert_eq!(pond.noticed_pointer(), None);
+        assert_eq!(pond.pointer.noticed(pond.clock), None);
         pond.mouse(moved);
-        assert_eq!(pond.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(pond.pointer.noticed(pond.clock), Some((10.0, 11.0)));
     }
 
     #[test]
@@ -405,7 +370,7 @@ mod tests {
         });
         assert!(pond.pellets.is_empty());
         assert!(pond.ripples.is_empty());
-        assert_eq!(pond.pointer, None);
+        assert_eq!(pond.pointer.noticed(pond.clock), None);
     }
 
     #[test]
@@ -511,7 +476,7 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         pond.paint(Duration::ZERO, area, None, &blank, &mut buffer);
         pond.paint(Duration::from_secs(3600), area, None, &blank, &mut buffer);
-        assert!(pond.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(pond.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]

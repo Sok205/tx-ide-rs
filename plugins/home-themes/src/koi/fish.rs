@@ -7,6 +7,8 @@ use fastrand::Rng;
 use ratatui::style::Color;
 use tx_home::backdrop::{Pixels, dim};
 
+use crate::common::distance;
+
 pub const SEGMENTS: usize = 14;
 
 /// The turn rate is capped at `TURNING * speed / length`, so the turn radius is `length / TURNING`.
@@ -75,10 +77,6 @@ pub struct Fish {
     pub(super) depth: f32,
     /// Offsets the tail wave so the fish don't beat in step.
     beat: f32,
-}
-
-pub fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
-    (to.0 - from.0).hypot(to.1 - from.1)
 }
 
 /// Straight at the food.

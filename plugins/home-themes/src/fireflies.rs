@@ -7,11 +7,14 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::{quantised, value_noise};
+use crate::common::{
+    Pointer, STEP, Steps, distance, draw_logo, fill, glow, logo_size, pixel_of, quantised,
+    value_noise,
+};
 
 const SKY_TOP: Color = Color::Rgb(6, 9, 24);
 const SKY_HORIZON: Color = Color::Rgb(18, 30, 52);
@@ -40,11 +43,6 @@ const SCATTER_RANGE: f32 = 15.0;
 const BURST_SPEED: f32 = 45.0;
 /// Seconds for a burst to die down to a third.
 const BURST_DECAY: f32 = 0.4;
-const STEP: f32 = 1.0 / 60.0;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
-/// Seconds a still pointer keeps its pull: a terminal never says the mouse has left.
-const POINTER_MEMORY: f64 = 3.0;
 
 pub fn meadow() -> Box<dyn Backdrop> {
     Box::<Meadow>::default()
@@ -64,8 +62,7 @@ struct Firefly {
 #[derive(Default)]
 struct Meadow {
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The last painted area, which mouse events are relative to and the meadow was built for.
     area: Rect,
     /// One colour per pixel, row by row.
@@ -73,14 +70,7 @@ struct Meadow {
     fireflies: Vec<Firefly>,
     /// Simulated seconds; f64 so a meadow open for days keeps its precision.
     clock: f64,
-    /// In pixels, and the `clock` it last moved at.
-    pointer: Option<((f32, f32), f64)>,
-    #[cfg(test)]
-    steps: usize,
-}
-
-fn distance(first: (f32, f32), second: (f32, f32)) -> f32 {
-    (first.0 - second.0).hypot(first.1 - second.1)
+    pointer: Pointer,
 }
 
 fn angle_to(from: (f32, f32), to: (f32, f32)) -> f32 {
@@ -146,12 +136,6 @@ fn paint_scene(width: u16, rows: u16) -> Vec<Color> {
 }
 
 impl Meadow {
-    fn noticed_pointer(&self) -> Option<(f32, f32)> {
-        self.pointer
-            .filter(|(_, moved)| self.clock - moved <= POINTER_MEMORY)
-            .map(|(point, _)| point)
-    }
-
     fn respawn(&mut self, area: Rect) {
         self.area = area;
         let (width, rows) = (f32::from(area.width), f32::from(area.height * 2));
@@ -204,22 +188,12 @@ impl Meadow {
         if area != self.area {
             self.respawn(area);
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
         let bounds = (f32::from(area.width), f32::from(area.height * 2));
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.clock += f64::from(STEP);
-            let pointer = self.noticed_pointer();
+            let pointer = self.pointer.noticed(self.clock);
             for firefly in &mut self.fireflies {
                 Self::step_firefly(firefly, &mut self.random, pointer, bounds);
-            }
-            #[cfg(test)]
-            {
-                self.steps += 1;
             }
         }
     }
@@ -228,16 +202,6 @@ impl Meadow {
     fn brightness(&self, firefly: &Firefly) -> f32 {
         let phase = (self.clock as f32 / firefly.period + firefly.offset).fract();
         ((0.5 - 0.5 * (phase * TAU).cos() - 0.3) / 0.7).max(0.0)
-    }
-
-    /// Pixel (x, y) `amount` of the way from the scene behind it to `light`; nothing off it.
-    fn glow(&self, pixels: &mut Pixels, (x, y): (i32, i32), amount: f32) {
-        let on_scene = (0..i32::from(pixels.width())).contains(&x)
-            && (0..i32::from(pixels.height())).contains(&y);
-        if on_scene {
-            let behind = self.scene[y as usize * usize::from(pixels.width()) + x as usize];
-            pixels.set(x, y, quantised(behind, GLOW, amount, GLOW_SHADES));
-        }
     }
 
     fn draw_firefly(&self, firefly: &Firefly, pixels: &mut Pixels) {
@@ -250,9 +214,17 @@ impl Meadow {
             firefly.position.1.round() as i32,
         );
         for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-            self.glow(pixels, (x + dx, y + dy), brightness * 0.4);
+            let point = (x + dx, y + dy);
+            glow(
+                pixels,
+                &self.scene,
+                point,
+                GLOW,
+                brightness * 0.4,
+                GLOW_SHADES,
+            );
         }
-        self.glow(pixels, (x, y), brightness);
+        glow(pixels, &self.scene, (x, y), GLOW, brightness, GLOW_SHADES);
     }
 }
 
@@ -262,7 +234,7 @@ impl Backdrop for Meadow {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -275,39 +247,18 @@ impl Backdrop for Meadow {
     ) {
         self.advance(elapsed, area);
         let mut pixels = Pixels::new(area.width, area.height);
-        let width = usize::from(area.width);
-        for (index, color) in self.scene.iter().enumerate() {
-            pixels.set((index % width) as i32, (index / width) as i32, *color);
-        }
+        fill(&mut pixels, &self.scene);
         for firefly in &self.fireflies {
             self.draw_firefly(firefly, &mut pixels);
         }
         pixels.render(area, text, SKY_TOP, TEXT_CEILING, buffer);
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                let color = quantised(
-                    LOGO_TOP,
-                    LOGO_BOTTOM,
-                    row as f32 / (LOGO.len() - 1) as f32,
-                    LOGO.len() as u8,
-                );
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(color));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_TOP, LOGO_BOTTOM, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        if !self.area.contains(Position::new(event.column, event.row)) {
+        let Some(point) = pixel_of(self.area, event) else {
             return;
-        }
-        let point = (
-            f32::from(event.column - self.area.x),
-            f32::from(event.row - self.area.y) * 2.0 + 1.0,
-        );
+        };
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 for firefly in &mut self.fireflies {
@@ -318,7 +269,7 @@ impl Backdrop for Meadow {
                 }
             }
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
-                self.pointer = Some((point, self.clock));
+                self.pointer.moved(point, self.clock);
             }
             _ => {}
         }
@@ -332,6 +283,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
     use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
 
     fn click(column: u16, row: u16) -> MouseEvent {
@@ -424,7 +376,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         paint(&mut meadow, Duration::ZERO, area);
         paint(&mut meadow, Duration::from_secs(3600), area);
-        assert!(meadow.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(meadow.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]
@@ -496,7 +448,7 @@ mod tests {
             ..click(80, 0)
         });
         assert_eq!(meadow.fireflies[0].burst, 0.0);
-        assert_eq!(meadow.pointer, None);
+        assert_eq!(meadow.pointer.noticed(meadow.clock), None);
     }
 
     #[test]
@@ -507,13 +459,13 @@ mod tests {
             ..click(10, 5)
         };
         meadow.mouse(moved);
-        assert_eq!(meadow.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(meadow.pointer.noticed(meadow.clock), Some((10.0, 11.0)));
         let area = Rect::new(0, 0, 80, 24);
         for tick in 1..=80 {
             paint(&mut meadow, Duration::from_millis(tick * 50), area);
         }
-        assert_eq!(meadow.noticed_pointer(), None);
+        assert_eq!(meadow.pointer.noticed(meadow.clock), None);
         meadow.mouse(moved);
-        assert_eq!(meadow.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(meadow.pointer.noticed(meadow.clock), Some((10.0, 11.0)));
     }
 }

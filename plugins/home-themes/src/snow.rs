@@ -8,11 +8,13 @@ use std::time::Duration;
 use fastrand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, LOGO, Pixels, palette};
+use tx_home::backdrop::{Backdrop, Pixels};
 
-use crate::common::{quantised, value_noise};
+use crate::common::{
+    Pointer, STEP, Steps, draw_logo, fill, logo_size, pixel_of, quantised, value_noise,
+};
 
 const SKY_TOP: Color = Color::Rgb(9, 13, 24);
 const SKY_HORIZON: Color = Color::Rgb(30, 40, 58);
@@ -44,11 +46,6 @@ const SHAKE_FLAKES: usize = 14;
 const MAX_SHAKEN: usize = 64;
 /// How far past a pine's branches a click still counts as on it.
 const NEAR_PINE: i32 = 4;
-const STEP: f32 = 1.0 / 60.0;
-/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
-const MAX_GAP: f32 = 0.25;
-/// Seconds a still pointer keeps blowing: a terminal never says the mouse has left.
-const POINTER_MEMORY: f64 = 3.0;
 
 pub fn pines() -> Box<dyn Backdrop> {
     Box::<Pines>::default()
@@ -80,8 +77,7 @@ struct Flake {
 #[derive(Default)]
 struct Pines {
     random: Rng,
-    last: Option<Duration>,
-    remainder: f32,
+    steps: Steps,
     /// The last painted area, which mouse events are relative to and the scene was built for.
     area: Rect,
     /// Sky, ground and pines: one colour per pixel, row by row.
@@ -96,10 +92,7 @@ struct Pines {
     flakes: Vec<Flake>,
     /// Simulated seconds; f64 so a scene open for days keeps its precision.
     clock: f64,
-    /// In pixels, and the `clock` it last moved at.
-    pointer: Option<((f32, f32), f64)>,
-    #[cfg(test)]
-    steps: usize,
+    pointer: Pointer,
 }
 
 impl Pine {
@@ -116,12 +109,6 @@ impl Pine {
 }
 
 impl Pines {
-    fn noticed_pointer(&self) -> Option<(f32, f32)> {
-        self.pointer
-            .filter(|(_, moved)| self.clock - moved <= POINTER_MEMORY)
-            .map(|(point, _)| point)
-    }
-
     fn width(&self) -> usize {
         usize::from(self.area.width)
     }
@@ -274,24 +261,14 @@ impl Pines {
         if area != self.area {
             self.respawn(area);
         }
-        let gap = self
-            .last
-            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
-        self.last = Some(elapsed);
-        self.remainder += gap.as_secs_f32().min(MAX_GAP);
-        while self.remainder >= STEP {
-            self.remainder -= STEP;
+        for _ in 0..self.steps.due(elapsed, STEP) {
             self.clock += f64::from(STEP);
             self.step();
-            #[cfg(test)]
-            {
-                self.steps += 1;
-            }
         }
     }
 
     fn step(&mut self) {
-        let wind = self.noticed_pointer();
+        let wind = self.pointer.noticed(self.clock);
         let width = f32::from(self.area.width);
         for index in (0..self.flakes.len()).rev() {
             let flake = &mut self.flakes[index];
@@ -325,7 +302,7 @@ impl Backdrop for Pines {
     }
 
     fn logo_size(&self) -> (u16, u16) {
-        (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+        logo_size()
     }
 
     fn paint(
@@ -338,10 +315,7 @@ impl Backdrop for Pines {
     ) {
         self.advance(elapsed, area);
         let mut pixels = Pixels::new(area.width, area.height);
-        let width = self.width();
-        for (index, color) in self.scene.iter().enumerate() {
-            pixels.set((index % width) as i32, (index / width) as i32, *color);
-        }
+        fill(&mut pixels, &self.scene);
         for (column, depth) in self.depth.iter().enumerate() {
             for lift in 1..=i32::from(*depth) {
                 pixels.set(column as i32, self.surface[column] - lift, SNOW);
@@ -352,35 +326,17 @@ impl Backdrop for Pines {
             pixels.set(self.column(flake) as i32, flake.y as i32, color);
         }
         pixels.render(area, text, SKY_TOP, TEXT_CEILING, buffer);
-        if let Some(logo) = logo {
-            for (row, line) in LOGO.iter().enumerate() {
-                let color = quantised(
-                    LOGO_TOP,
-                    LOGO_BOTTOM,
-                    row as f32 / (LOGO.len() - 1) as f32,
-                    LOGO.len() as u8,
-                );
-                for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
-                    buffer[(logo.x + column as u16, logo.y + row as u16)]
-                        .set_char(glyph)
-                        .set_fg(palette(color));
-                }
-            }
-        }
+        draw_logo(logo, LOGO_TOP, LOGO_BOTTOM, buffer);
     }
 
     fn mouse(&mut self, event: MouseEvent) {
-        if !self.area.contains(Position::new(event.column, event.row)) {
+        let Some(point) = pixel_of(self.area, event) else {
             return;
-        }
-        let point = (
-            f32::from(event.column - self.area.x),
-            f32::from(event.row - self.area.y) * 2.0 + 1.0,
-        );
+        };
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => self.shake(point),
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
-                self.pointer = Some((point, self.clock));
+                self.pointer.moved(point, self.clock);
             }
             _ => {}
         }
@@ -394,6 +350,7 @@ mod tests {
     use tx_home::backdrop::layout;
 
     use super::*;
+    use crate::common::MAX_GAP;
     use crate::common::tests::{assert_nothing_bright_under_text, assert_within_budget};
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
@@ -482,7 +439,7 @@ mod tests {
         let mut pines = Pines::default();
         paint(&mut pines, Duration::ZERO, AREA);
         paint(&mut pines, Duration::from_secs(3600), AREA);
-        assert!(pines.steps <= (MAX_GAP / STEP).ceil() as usize);
+        assert!(pines.steps.taken <= (MAX_GAP / STEP).ceil() as usize);
     }
 
     #[test]
@@ -556,7 +513,7 @@ mod tests {
         pines.mouse(click(500, 500));
         pines.mouse(mouse(MouseEventKind::Moved, 80, 0));
         assert_eq!(pines.flakes.len(), flakes);
-        assert_eq!(pines.pointer, None);
+        assert_eq!(pines.pointer.noticed(pines.clock), None);
     }
 
     #[test]
@@ -564,12 +521,12 @@ mod tests {
         let mut pines = painted();
         let moved = mouse(MouseEventKind::Moved, 10, 5);
         pines.mouse(moved);
-        assert_eq!(pines.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(pines.pointer.noticed(pines.clock), Some((10.0, 11.0)));
         for tick in 1..=80 {
             paint(&mut pines, Duration::from_millis(tick * 50), AREA);
         }
-        assert_eq!(pines.noticed_pointer(), None);
+        assert_eq!(pines.pointer.noticed(pines.clock), None);
         pines.mouse(moved);
-        assert_eq!(pines.noticed_pointer(), Some((10.0, 11.0)));
+        assert_eq!(pines.pointer.noticed(pines.clock), Some((10.0, 11.0)));
     }
 }

@@ -1,6 +1,137 @@
 //! Helpers more than one theme uses.
 
+use std::time::Duration;
+
+use fastrand::Rng;
+use ratatui::buffer::Buffer;
+use ratatui::crossterm::event::MouseEvent;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
+use tx_home::backdrop::{LOGO, Pixels, palette};
+
+/// Seconds of simulation per fixed step.
+pub const STEP: f32 = 1.0 / 60.0;
+/// The most simulated time one paint catches up on, so a long pause doesn't replay hours.
+pub const MAX_GAP: f32 = 0.25;
+/// Seconds a still pointer is remembered: a terminal never says the mouse has left.
+pub const POINTER_MEMORY: f64 = 3.0;
+
+/// Turns paint times into a count of fixed simulation steps.
+#[derive(Default)]
+pub struct Steps {
+    last: Option<Duration>,
+    remainder: f64,
+    #[cfg(test)]
+    pub taken: usize,
+}
+
+impl Steps {
+    /// How many `step`-second steps the paint at `elapsed` runs, catching up on `MAX_GAP` at most.
+    pub fn due(&mut self, elapsed: Duration, step: f32) -> usize {
+        let gap = self
+            .last
+            .map_or(Duration::ZERO, |last| elapsed.saturating_sub(last));
+        self.last = Some(elapsed);
+        self.remainder += gap.as_secs_f64().min(f64::from(MAX_GAP));
+        let step = f64::from(step);
+        let mut due = 0;
+        while self.remainder >= step {
+            self.remainder -= step;
+            due += 1;
+        }
+        #[cfg(test)]
+        {
+            self.taken += due;
+        }
+        due
+    }
+}
+
+/// Where the pointer last moved, in pixels, and the clock it moved at.
+#[derive(Default)]
+pub struct Pointer(Option<((f32, f32), f64)>);
+
+impl Pointer {
+    pub fn moved(&mut self, point: (f32, f32), clock: f64) {
+        self.0 = Some((point, clock));
+    }
+
+    /// The pointer, unless it has been still for longer than `POINTER_MEMORY`.
+    pub fn noticed(&self, clock: f64) -> Option<(f32, f32)> {
+        self.0
+            .filter(|(_, moved)| clock - moved <= POINTER_MEMORY)
+            .map(|(point, _)| point)
+    }
+}
+
+/// The pixel under `event`, relative to `area`; `None` outside it.
+pub fn pixel_of(area: Rect, event: MouseEvent) -> Option<(f32, f32)> {
+    area.contains(Position::new(event.column, event.row))
+        .then(|| {
+            (
+                f32::from(event.column - area.x),
+                f32::from(event.row - area.y) * 2.0 + 1.0,
+            )
+        })
+}
+
+pub fn logo_size() -> (u16, u16) {
+    (LOGO[0].chars().count() as u16, LOGO.len() as u16)
+}
+
+/// `LOGO`'s glyphs over the scene in `logo`, shaded row by row from `top` to `bottom`; its spaces
+/// show the scene.
+pub fn draw_logo(logo: Option<Rect>, top: Color, bottom: Color, buffer: &mut Buffer) {
+    let Some(logo) = logo else {
+        return;
+    };
+    for (row, line) in LOGO.iter().enumerate() {
+        let color = quantised(
+            top,
+            bottom,
+            row as f32 / (LOGO.len() - 1) as f32,
+            LOGO.len() as u8,
+        );
+        for (column, glyph) in line.chars().enumerate().filter(|(_, glyph)| *glyph != ' ') {
+            buffer[(logo.x + column as u16, logo.y + row as u16)]
+                .set_char(glyph)
+                .set_fg(palette(color));
+        }
+    }
+}
+
+/// Copies `scene`, one colour per pixel row by row, into `pixels`.
+pub fn fill(pixels: &mut Pixels, scene: &[Color]) {
+    let width = usize::from(pixels.width());
+    for (index, color) in scene.iter().enumerate() {
+        pixels.set((index % width) as i32, (index / width) as i32, *color);
+    }
+}
+
+/// Pixel (x, y) `amount` of the way from `scene` behind it to `light`; nothing off the scene.
+pub fn glow(
+    pixels: &mut Pixels,
+    scene: &[Color],
+    (x, y): (i32, i32),
+    light: Color,
+    amount: f32,
+    shades: u8,
+) {
+    let on_scene =
+        (0..i32::from(pixels.width())).contains(&x) && (0..i32::from(pixels.height())).contains(&y);
+    if on_scene {
+        let behind = scene[y as usize * usize::from(pixels.width()) + x as usize];
+        pixels.set(x, y, quantised(behind, light, amount, shades));
+    }
+}
+
+pub fn distance(first: (f32, f32), second: (f32, f32)) -> f32 {
+    (first.0 - second.0).hypot(first.1 - second.1)
+}
+
+pub fn between(random: &mut Rng, (low, high): (f64, f64)) -> f64 {
+    low + (high - low) * random.f64()
+}
 
 /// A pseudo-random value in 0..1 for each lattice point.
 fn lattice(x: i32, y: i32, seed: u32) -> f32 {
@@ -264,6 +395,15 @@ pub mod tests {
                 "{lowest}..{highest} for seed {seed}"
             );
         }
+    }
+
+    #[test]
+    fn steps_clamp_the_gap_and_carry_the_rest() {
+        let mut steps = Steps::default();
+        assert_eq!(steps.due(Duration::from_secs(5), 0.25), 0);
+        assert_eq!(steps.due(Duration::from_secs(3600), 0.25), 1);
+        assert_eq!(steps.due(Duration::from_millis(3_600_100), 0.25), 0);
+        assert_eq!(steps.due(Duration::from_millis(3_600_400), 0.25), 1);
     }
 
     #[test]
