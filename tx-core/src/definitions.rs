@@ -1,0 +1,597 @@
+//! Definitions: agents (`agents/<name>.md`, Claude's agent format, reduced), skills
+//! (`skills/<name>/SKILL.md`, the Agent Skills standard) and MCP servers (`mcp.json`, Claude's
+//! `.mcp.json` format), read from layered roots. A later root wins by name: an agent, a skill, or
+//! a server key inside `mcp.json`. The roots are `Directories::definition_roots`: the shipped
+//! `<data>/definitions/`, then the user's `<config>/definitions/`.
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
+
+pub const AGENTS_DIR: &str = "agents";
+pub const AGENT_SUFFIX: &str = ".md";
+pub const SKILLS_DIR: &str = "skills";
+pub const SKILL_FILE: &str = "SKILL.md";
+pub const MCP_FILE: &str = "mcp.json";
+const FRONTMATTER_DELIMITER: &str = "---";
+
+/// A definition file that cannot be used, at `path` and, when known, a 1-based `line`.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{}{}: {message}", path.display(), line.map(|line| format!(":{line}")).unwrap_or_default())]
+pub struct DefinitionError {
+    pub path: PathBuf,
+    pub line: Option<usize>,
+    pub message: String,
+}
+
+impl DefinitionError {
+    pub fn new(path: &Path, line: Option<usize>, message: impl Into<String>) -> Self {
+        Self {
+            path: path.to_owned(),
+            line,
+            message: message.into(),
+        }
+    }
+
+    fn io(path: &Path, error: io::Error) -> Self {
+        Self::new(path, None, error.to_string())
+    }
+}
+
+/// An agent: its frontmatter and the prompt after it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentDefinition {
+    pub name: String,
+    pub description: String,
+    /// The built-in tools it gets; `None` is the engine's default set.
+    pub tools: Option<Vec<String>>,
+    pub mcp_servers: Vec<String>,
+    pub disallowed_tools: Vec<String>,
+    pub skills: Vec<String>,
+    pub prompt: String,
+    pub path: PathBuf,
+    /// The frontmatter text, for `line_of`; its line 1 is the file's line 2.
+    frontmatter: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct AgentFrontmatter {
+    name: String,
+    description: String,
+    #[serde(default)]
+    tools: Option<NameList>,
+    #[serde(default)]
+    mcp_servers: NameList,
+    #[serde(default)]
+    disallowed_tools: NameList,
+    #[serde(default)]
+    skills: NameList,
+}
+
+/// A list of names, written as a YAML list or as one comma-separated string (`Bash, Read`), as
+/// Claude accepts both.
+#[derive(Default)]
+struct NameList(Vec<String>);
+
+impl<'de> Deserialize<'de> for NameList {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct NameListVisitor;
+
+        impl<'de> Visitor<'de> for NameListVisitor {
+            type Value = NameList;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a list of names or a comma-separated string")
+            }
+
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<NameList, E> {
+                Ok(NameList(
+                    text.split(',')
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                ))
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<NameList, A::Error> {
+                let mut names = Vec::new();
+                while let Some(name) = sequence.next_element::<String>()? {
+                    names.push(name);
+                }
+                Ok(NameList(names))
+            }
+        }
+
+        deserializer.deserialize_any(NameListVisitor)
+    }
+}
+
+impl AgentDefinition {
+    /// The 1-based line of the file on which the frontmatter key `key` starts, when present.
+    pub fn line_of(&self, key: &str) -> Option<usize> {
+        self.frontmatter
+            .lines()
+            .position(|line| {
+                line.strip_prefix(key)
+                    .is_some_and(|rest| rest.starts_with(':'))
+            })
+            .map(|index| index + 2)
+    }
+}
+
+/// A skill: its directory and the two frontmatter keys every engine reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillDefinition {
+    pub name: String,
+    pub description: String,
+    pub directory: PathBuf,
+}
+
+/// The Agent Skills standard allows further keys (`license`, `metadata`, …); only these two are
+/// read.
+#[derive(Deserialize)]
+struct SkillFrontmatter {
+    name: String,
+    description: String,
+}
+
+/// One server of `mcp.json`. `type` may be left out for a stdio server, as in Claude's format.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum McpServer {
+    Stdio {
+        command: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+        env: BTreeMap<String, String>,
+    },
+    Http {
+        url: String,
+        #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+        headers: BTreeMap<String, String>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpServerFields {
+    #[serde(rename = "type")]
+    transport: Option<String>,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    env: Option<BTreeMap<String, String>>,
+    url: Option<String>,
+    headers: Option<BTreeMap<String, String>>,
+}
+
+impl<'de> Deserialize<'de> for McpServer {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let fields = McpServerFields::deserialize(deserializer)?;
+        let refuse = |transport: &str, key: &str| {
+            de::Error::custom(format!("a {transport} server has no `{key}`"))
+        };
+        match fields.transport.as_deref().unwrap_or("stdio") {
+            "stdio" => {
+                if fields.url.is_some() {
+                    return Err(refuse("stdio", "url"));
+                }
+                if fields.headers.is_some() {
+                    return Err(refuse("stdio", "headers"));
+                }
+                Ok(McpServer::Stdio {
+                    command: fields
+                        .command
+                        .ok_or_else(|| de::Error::missing_field("command"))?,
+                    args: fields.args.unwrap_or_default(),
+                    env: fields.env.unwrap_or_default(),
+                })
+            }
+            "http" => {
+                for (key, present) in [
+                    ("command", fields.command.is_some()),
+                    ("args", fields.args.is_some()),
+                    ("env", fields.env.is_some()),
+                ] {
+                    if present {
+                        return Err(refuse("http", key));
+                    }
+                }
+                Ok(McpServer::Http {
+                    url: fields.url.ok_or_else(|| de::Error::missing_field("url"))?,
+                    headers: fields.headers.unwrap_or_default(),
+                })
+            }
+            other => Err(de::Error::custom(format!(
+                "unknown server type {other:?} (tx supports stdio and http)"
+            ))),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct McpFile {
+    mcp_servers: BTreeMap<String, McpServer>,
+}
+
+/// One `mcp.json`, read: its servers and its text (for the line of a server key).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpDefinitions {
+    pub path: PathBuf,
+    pub servers: BTreeMap<String, McpServer>,
+    text: String,
+}
+
+impl McpDefinitions {
+    /// The 1-based line on which the server key `name` is written.
+    pub fn line_of(&self, name: &str) -> Option<usize> {
+        let quoted = format!("\"{name}\"");
+        self.text
+            .lines()
+            .position(|line| {
+                line.split_once(&quoted)
+                    .is_some_and(|(_, rest)| rest.trim_start().starts_with(':'))
+            })
+            .map(|index| index + 1)
+    }
+}
+
+/// Splits `text` into the frontmatter between the opening and closing `---` lines and the body.
+fn split_frontmatter<'a>(
+    path: &Path,
+    text: &'a str,
+) -> Result<(&'a str, &'a str), DefinitionError> {
+    let Some(rest) = text
+        .strip_prefix(FRONTMATTER_DELIMITER)
+        .and_then(|rest| rest.strip_prefix('\n'))
+    else {
+        return Err(DefinitionError::new(
+            path,
+            Some(1),
+            "the file must open with a `---` frontmatter block",
+        ));
+    };
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end() == FRONTMATTER_DELIMITER {
+            return Ok((&rest[..offset], &rest[offset + line.len()..]));
+        }
+        offset += line.len();
+    }
+    Err(DefinitionError::new(
+        path,
+        Some(1),
+        "unclosed frontmatter block",
+    ))
+}
+
+/// Parses YAML frontmatter that starts on line 2 of the file at `path`.
+fn parse_frontmatter<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+    frontmatter: &str,
+) -> Result<T, DefinitionError> {
+    serde_norway::from_str(frontmatter).map_err(|error| {
+        let line = error.location().map(|location| location.line() + 1);
+        DefinitionError::new(path, line, strip_location(&error.to_string()))
+    })
+}
+
+/// serde_norway and serde_json end their messages with ` at line L column C`; the line is
+/// reported as `path:line` instead.
+fn strip_location(message: &str) -> String {
+    match message.rfind(" at line ") {
+        Some(index) => message[..index].to_owned(),
+        None => message.to_owned(),
+    }
+}
+
+fn stem_of(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default()
+        .strip_suffix(AGENT_SUFFIX)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Reads `agents/<name>.md`; `name` must match the file name.
+pub fn read_agent(path: &Path) -> Result<AgentDefinition, DefinitionError> {
+    let text = std::fs::read_to_string(path).map_err(|error| DefinitionError::io(path, error))?;
+    let (frontmatter, body) = split_frontmatter(path, &text)?;
+    let parsed: AgentFrontmatter = parse_frontmatter(path, frontmatter)?;
+    let agent = AgentDefinition {
+        name: parsed.name,
+        description: parsed.description,
+        tools: parsed.tools.map(|tools| tools.0),
+        mcp_servers: parsed.mcp_servers.0,
+        disallowed_tools: parsed.disallowed_tools.0,
+        skills: parsed.skills.0,
+        prompt: body.trim().to_owned(),
+        path: path.to_owned(),
+        frontmatter: frontmatter.to_owned(),
+    };
+    let stem = stem_of(path);
+    if agent.name != stem {
+        return Err(DefinitionError::new(
+            path,
+            agent.line_of("name"),
+            format!(
+                "name {:?} does not match the file name {stem:?}",
+                agent.name
+            ),
+        ));
+    }
+    Ok(agent)
+}
+
+/// Reads `skills/<name>/SKILL.md`; `name` must match the directory name.
+pub fn read_skill(directory: &Path) -> Result<SkillDefinition, DefinitionError> {
+    let path = directory.join(SKILL_FILE);
+    let text = std::fs::read_to_string(&path).map_err(|error| DefinitionError::io(&path, error))?;
+    let (frontmatter, _) = split_frontmatter(&path, &text)?;
+    let parsed: SkillFrontmatter = parse_frontmatter(&path, frontmatter)?;
+    let directory_name = directory
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if parsed.name != directory_name {
+        return Err(DefinitionError::new(
+            &path,
+            frontmatter
+                .lines()
+                .position(|line| line.starts_with("name:"))
+                .map(|index| index + 2),
+            format!(
+                "name {:?} does not match the directory name {directory_name:?}",
+                parsed.name
+            ),
+        ));
+    }
+    Ok(SkillDefinition {
+        name: parsed.name,
+        description: parsed.description,
+        directory: directory.to_owned(),
+    })
+}
+
+/// Reads one `mcp.json`.
+pub fn read_mcp(path: &Path) -> Result<McpDefinitions, DefinitionError> {
+    let text = std::fs::read_to_string(path).map_err(|error| DefinitionError::io(path, error))?;
+    let file: McpFile = serde_json::from_str(&text).map_err(|error| {
+        DefinitionError::new(path, Some(error.line()), strip_location(&error.to_string()))
+    })?;
+    Ok(McpDefinitions {
+        path: path.to_owned(),
+        servers: file.mcp_servers,
+        text,
+    })
+}
+
+/// The entries of `directory`, sorted; none when it does not exist.
+fn entries(directory: &Path) -> Result<Vec<PathBuf>, DefinitionError> {
+    let read = match std::fs::read_dir(directory) {
+        Ok(read) => read,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(DefinitionError::io(directory, error)),
+    };
+    let mut paths = read
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| DefinitionError::io(directory, error))?;
+    paths.sort();
+    Ok(paths)
+}
+
+/// The definition roots, lowest first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Definitions {
+    roots: Vec<PathBuf>,
+}
+
+impl Definitions {
+    pub fn new(roots: impl IntoIterator<Item = PathBuf>) -> Self {
+        Self {
+            roots: roots.into_iter().collect(),
+        }
+    }
+
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Every agent name with the file that wins for it.
+    pub fn agent_files(&self) -> Result<BTreeMap<String, PathBuf>, DefinitionError> {
+        let mut files = BTreeMap::new();
+        for root in &self.roots {
+            for path in entries(&root.join(AGENTS_DIR))? {
+                if path.is_file() && path.extension().is_some_and(|extension| extension == "md") {
+                    files.insert(stem_of(&path), path);
+                }
+            }
+        }
+        Ok(files)
+    }
+
+    /// Every skill name with the directory that wins for it: one holding a `SKILL.md`.
+    pub fn skill_directories(&self) -> Result<BTreeMap<String, PathBuf>, DefinitionError> {
+        let mut directories = BTreeMap::new();
+        for root in &self.roots {
+            for path in entries(&root.join(SKILLS_DIR))? {
+                if path.join(SKILL_FILE).is_file() {
+                    let name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    directories.insert(name, path);
+                }
+            }
+        }
+        Ok(directories)
+    }
+
+    /// Every `mcp.json` that exists, lowest root first.
+    pub fn mcp_files(&self) -> Vec<PathBuf> {
+        self.roots
+            .iter()
+            .map(|root| root.join(MCP_FILE))
+            .filter(|path| path.is_file())
+            .collect()
+    }
+
+    pub fn agent(&self, name: &str) -> Result<AgentDefinition, DefinitionError> {
+        match self.agent_files()?.get(name) {
+            Some(path) => read_agent(path),
+            None => Err(self.unknown("agent", name, AGENTS_DIR)),
+        }
+    }
+
+    pub fn skill(&self, name: &str) -> Result<SkillDefinition, DefinitionError> {
+        match self.skill_directories()?.get(name) {
+            Some(directory) => read_skill(directory),
+            None => Err(self.unknown("skill", name, SKILLS_DIR)),
+        }
+    }
+
+    /// Every server across the `mcp.json` files, a later file's key winning, with the file it
+    /// came from.
+    pub fn mcp_servers(&self) -> Result<BTreeMap<String, (McpServer, PathBuf)>, DefinitionError> {
+        let mut servers = BTreeMap::new();
+        for path in self.mcp_files() {
+            for (name, server) in read_mcp(&path)?.servers {
+                servers.insert(name, (server, path.clone()));
+            }
+        }
+        Ok(servers)
+    }
+
+    fn unknown(&self, kind: &str, name: &str, directory: &str) -> DefinitionError {
+        let searched = self
+            .roots
+            .iter()
+            .map(|root| root.join(directory).display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let user = self.roots.last().map(|root| root.join(directory));
+        DefinitionError::new(
+            &user.unwrap_or_default(),
+            None,
+            format!("unknown {kind} {name:?} (searched {searched})"),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn an_agent_reads_lists_and_comma_strings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agents/pm.md");
+        write(
+            &path,
+            "---\nname: pm\ndescription: Triages.\ntools: Bash, Read\nmcpServers: [linear]\n\
+             disallowedTools: mcp__linear__delete_comment\nskills:\n  - tx-artifacts\n---\n\nThe prompt.\n",
+        );
+        let agent = read_agent(&path).unwrap();
+        assert_eq!(
+            agent.tools,
+            Some(vec!["Bash".to_owned(), "Read".to_owned()])
+        );
+        assert_eq!(agent.mcp_servers, ["linear"]);
+        assert_eq!(agent.disallowed_tools, ["mcp__linear__delete_comment"]);
+        assert_eq!(agent.skills, ["tx-artifacts"]);
+        assert_eq!(agent.prompt, "The prompt.");
+        assert_eq!(agent.line_of("skills"), Some(7));
+    }
+
+    #[test]
+    fn an_unknown_key_is_refused_at_its_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agents/pm.md");
+        write(&path, "---\nname: pm\ndescription: x\nmodel: opus\n---\n");
+        let error = read_agent(&path).unwrap_err();
+        assert_eq!(error.line, Some(4));
+        assert!(
+            error.message.starts_with("unknown field `model`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_name_must_match_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agents/pm.md");
+        write(&path, "---\nname: other\ndescription: x\n---\n");
+        let error = read_agent(&path).unwrap_err();
+        assert_eq!(error.line, Some(2));
+    }
+
+    #[test]
+    fn servers_default_to_stdio_and_refuse_foreign_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        write(
+            &path,
+            r#"{"mcpServers": {"probe": {"command": "python3", "args": ["p.py"]},
+                "linear": {"type": "http", "url": "https://mcp.linear.app/mcp"}}}"#,
+        );
+        let definitions = read_mcp(&path).unwrap();
+        assert!(matches!(
+            definitions.servers["probe"],
+            McpServer::Stdio { .. }
+        ));
+        assert_eq!(definitions.line_of("linear"), Some(2));
+        write(
+            &path,
+            "{\"mcpServers\": {\n  \"x\": {\"type\": \"http\", \"url\": \"u\", \"command\": \"c\"}}}",
+        );
+        let error = read_mcp(&path).unwrap_err();
+        assert_eq!(error.message, "a http server has no `command`");
+        assert_eq!(error.line, Some(2));
+    }
+
+    #[test]
+    fn a_later_root_wins_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (shipped, user) = (dir.path().join("data"), dir.path().join("config"));
+        write(
+            &shipped.join("agents/a.md"),
+            "---\nname: a\ndescription: shipped\n---\n",
+        );
+        write(
+            &user.join("agents/a.md"),
+            "---\nname: a\ndescription: yours\n---\n",
+        );
+        write(
+            &shipped.join("skills/s/SKILL.md"),
+            "---\nname: s\ndescription: d\n---\n",
+        );
+        write(
+            &shipped.join("mcp.json"),
+            r#"{"mcpServers": {"m": {"command": "a"}}}"#,
+        );
+        write(
+            &user.join("mcp.json"),
+            r#"{"mcpServers": {"m": {"command": "b"}}}"#,
+        );
+        let definitions = Definitions::new([shipped, user.clone()]);
+        assert_eq!(definitions.agent("a").unwrap().description, "yours");
+        assert_eq!(definitions.skill("s").unwrap().description, "d");
+        let servers = definitions.mcp_servers().unwrap();
+        assert_eq!(servers["m"].1, user.join("mcp.json"));
+        assert!(definitions.agent("missing").is_err());
+    }
+}

@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod config;
 pub mod core;
+pub mod definitions;
 pub mod effort;
 pub mod engine;
 pub mod error;
