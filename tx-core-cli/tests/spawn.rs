@@ -18,7 +18,7 @@ fn answers(cwd: &str) -> String {
         "engine": "claude",
         "model": "fable",
         "effort": "low",
-        "role": "DEVELOPER",
+        "agent": "developer",
         "tags": "tutor, api",
         "cwd": cwd,
     })
@@ -54,7 +54,9 @@ fn new_agent_creates_the_session_the_form_describes() {
     assert!(worktree.ends_with("proj--health"), "{worktree:?}");
     assert!(worktree.join("README.md").is_file());
     assert_eq!(json["engine"], "claude");
-    assert_eq!(json["roles"], serde_json::json!(["COMMON", "DEVELOPER"]));
+    // The picked definition brings its roles: the record names none.
+    assert_eq!(json["roles"], serde_json::json!([]));
+    assert_eq!(json["definition"]["agent"], "developer");
     // Options are engine data: the default model passes nothing, the effort lands in `ext`.
     assert_eq!(json["ext"]["claude"]["effort"], "low");
     assert_eq!(json["ext"]["claude"].get("model"), None);
@@ -146,6 +148,6 @@ fn disabled_spawn_hides_the_verb_and_the_key() {
     cli.ok(&["ui", "install"]);
     assert!(!cli.state().join("keys/spawn.tmux").exists());
     // The roles are the core's, not the plugin's: still installed.
-    assert!(cli.state().join("roles/DEVELOPER.md").exists());
+    assert!(cli.state().join("roles/COMMON.md").exists());
     assert!(cli.state().join("roles/TX-ASSISTANT.md").exists());
 }

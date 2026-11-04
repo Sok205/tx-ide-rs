@@ -1,13 +1,11 @@
 //! tx-core plugin `spawn`: prefix+n. In the key's popup (bin/tmux-new-agent) an nvim form
 //! (nvim/tx-new-agent.lua, embedded here and written to a temp dir at run time) asks for the
-//! agent's name, tags, project, prompt, engine, model, effort and role; `_new-agent` then
-//! creates the agent session and reports on the firing client's status line.
+//! agent's name, tags, project, prompt, engine, model, effort and agent definition;
+//! `_new-agent` then creates the agent session and reports on the firing client's status line.
 //!
-//! The project is the firing pane's directory (the poc has no projects config). The roles are
-//! the `*.md` files in the core's profile dirs minus COMMON, which every agent gets. The plugin
-//! ships the tx editions of the COMMON, DEVELOPER, ORCHESTRATOR and QA roles and their skills
-//! (`agents/` in this crate) as `agents/` resources, which `tx ui install` materialises under
-//! `<data>/roles/`.
+//! The project is the firing pane's directory (the poc has no projects config). The agents are
+//! the agent definitions (`tx definitions agents`), the configured default (`agent.definition`)
+//! preselected; each brings its own prompt, tools, skills and roles.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,18 +15,13 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tx_client::tmux::Ui;
+use tx_core::definitions::{DefinitionError, Definitions};
 use tx_core::{
-    CreateOptions, EngineKind, LaunchOptions, Plugin, PluginError, Registry, TxCore, Verb,
-    VerbError, VerbIo,
+    CreateOptions, DefinitionChoice, EngineKind, LaunchOptions, Plugin, PluginError, Registry,
+    TxCore, Verb, VerbError, VerbIo,
 };
 
 pub const PLUGIN_ID: &str = "spawn";
-/// The role every agent gets, never offered in the form.
-pub const COMMON_ROLE: &str = "COMMON";
-/// The role option that adds nothing to COMMON.
-pub const NO_ROLE: &str = "none";
-/// Preselected when the profile dirs have it.
-pub const DEFAULT_ROLE: &str = "DEVELOPER";
 pub const DEFAULT_TAG: &str = "agent";
 /// Preselected effort; every engine listed in [`EFFORTS`] accepts it.
 pub const DEFAULT_EFFORT: &str = "high";
@@ -88,30 +81,17 @@ pub struct Reply {
     pub engine: EngineKind,
     pub model: String,
     pub effort: String,
-    pub role: String,
+    pub agent: String,
     pub tags: String,
     pub cwd: String,
 }
 
-/// The role names offered: every `<NAME>.md` (not `.local.md`) in `dirs`, minus COMMON,
-/// sorted and deduplicated.
-pub fn role_names(dirs: &[PathBuf]) -> Vec<String> {
-    let mut names: Vec<String> = dirs
-        .iter()
-        .filter_map(|dir| fs::read_dir(dir).ok())
-        .flatten()
-        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-        .filter(|file_name| !file_name.ends_with(tx_core::profile::LOCAL_SUFFIX))
-        .filter_map(|file_name| {
-            file_name
-                .strip_suffix(tx_core::profile::ROLE_SUFFIX)
-                .map(str::to_owned)
-        })
-        .filter(|name| name != COMMON_ROLE)
-        .collect();
-    names.sort();
-    names.dedup();
-    names
+/// The agent definitions offered: every winning `agents/<name>.md` under the definition roots,
+/// sorted.
+pub fn agent_names(
+    roots: impl IntoIterator<Item = PathBuf>,
+) -> Result<Vec<String>, DefinitionError> {
+    Ok(Definitions::new(roots).agent_files()?.into_keys().collect())
 }
 
 /// The pane's directory as the one project, named after its last component.
@@ -143,10 +123,12 @@ fn efforts_for(engine: &str) -> &'static [&'static str] {
 }
 
 /// The form's spec: the one project, the engines, each one's models (its default first) and
-/// efforts, the roles (none first), and what is preselected; `result` is where the answers go.
+/// efforts, the agents, and what is preselected (the agent: `default_agent` when offered, else
+/// the first); `result` is where the answers go.
 pub fn form_spec(
     result: &Path,
-    roles: &[String],
+    agents: &[String],
+    default_agent: Option<&str>,
     project: (&str, &str),
     engines: &[&str],
 ) -> Value {
@@ -158,14 +140,10 @@ pub fn form_spec(
         .iter()
         .map(|engine| ((*engine).to_owned(), json!(efforts_for(engine))))
         .collect();
-    let role_options: Vec<&str> = std::iter::once(NO_ROLE)
-        .chain(roles.iter().map(String::as_str))
-        .collect();
-    let role = if role_options.contains(&DEFAULT_ROLE) {
-        DEFAULT_ROLE
-    } else {
-        NO_ROLE
-    };
+    let agent = default_agent
+        .filter(|agent| agents.iter().any(|offered| offered == agent))
+        .or(agents.first().map(String::as_str))
+        .unwrap_or_default();
     let (project_name, project_path) = project;
     json!({
         "result": result,
@@ -177,8 +155,8 @@ pub fn form_spec(
         "efforts": efforts,
         "engine": engines[0],
         "effort": DEFAULT_EFFORT,
-        "roles": role_options,
-        "role": role,
+        "agents": agents,
+        "agent": agent,
         "tags_hint": TAGS_HELP,
     })
 }
@@ -198,15 +176,12 @@ pub fn tags_of(tags: &str) -> Vec<String> {
     }
 }
 
-/// The session the answers describe: COMMON plus the picked role, the model only when it is
-/// not the engine's default. The engine validates the options when the session is created.
+/// The session the answers describe: the picked agent definition (which brings its roles), the
+/// model only when it is not the engine's default. The engine validates the options when the
+/// session is created.
 pub fn create_options(reply: &Reply) -> CreateOptions {
-    let mut roles = vec![COMMON_ROLE.to_owned()];
-    if reply.role != NO_ROLE {
-        roles.push(reply.role.clone());
-    }
     let mut launch = LaunchOptions::agent(reply.engine)
-        .profile(roles)
+        .definition(DefinitionChoice::new(&reply.agent))
         .option("effort", reply.effort.as_str())
         .initial_prompt(&reply.prompt);
     if reply.model != default_model(reply.engine.as_str()) {
@@ -297,11 +272,26 @@ impl Verb for NewAgent {
             ui.display_status(client, "prefix+n: no engine plugin is active");
             return Ok(1);
         }
+        let agents = match agent_names(core.config().directories.definition_roots()) {
+            Ok(agents) if agents.is_empty() => {
+                ui.display_status(
+                    client,
+                    "prefix+n: no agent definitions (run `tx ui install`)",
+                );
+                return Ok(1);
+            }
+            Ok(agents) => agents,
+            Err(error) => {
+                ui.display_status(client, &format!("prefix+n: {error}"));
+                return Ok(1);
+            }
+        };
         let directory = std::env::temp_dir().join(format!("tx-new-agent-{}", process::id()));
         fs::create_dir_all(&directory).map_err(io_failed(&directory))?;
         let spec = form_spec(
             &directory.join("answers.json"),
-            &role_names(&core.config().profile_dirs),
+            &agents,
+            core.config().default_definition.as_deref(),
             (&project_name, &project_path),
             &engines,
         );
@@ -338,18 +328,19 @@ mod tests {
             engine: EngineKind::Codex,
             model: "gpt-6-sol".into(),
             effort: "xhigh".into(),
-            role: "DEVELOPER".into(),
+            agent: "qa".into(),
             tags: "tutor, api".into(),
             cwd: "/p/my proj".into(),
         }
     }
 
     #[test]
-    fn the_spec_preselects_the_first_engine_its_default_model_high_and_developer() {
-        let roles = ["DEVELOPER".to_owned(), "REVIEWER".to_owned()];
+    fn the_spec_preselects_the_first_engine_its_default_model_high_and_the_default_agent() {
+        let agents = ["claude".to_owned(), "developer".to_owned(), "qa".to_owned()];
         let spec = form_spec(
             Path::new("/t/answers.json"),
-            &roles,
+            &agents,
+            Some("developer"),
             ("web", "/srv/web"),
             &["claude", "codex", "aider"],
         );
@@ -371,15 +362,19 @@ mod tests {
         );
         assert_eq!(spec["efforts"]["aider"], spec["efforts"]["claude"]);
         assert_eq!(spec["effort"], "high");
-        assert_eq!(spec["roles"], json!(["none", "DEVELOPER", "REVIEWER"]));
-        assert_eq!(spec["role"], "DEVELOPER");
-        let without_developer = form_spec(
-            Path::new("/t/answers.json"),
-            &["REVIEWER".to_owned()],
-            ("web", "/srv/web"),
-            &["claude"],
-        );
-        assert_eq!(without_developer["role"], "none");
+        assert_eq!(spec["agents"], json!(["claude", "developer", "qa"]));
+        assert_eq!(spec["agent"], "developer");
+        // A default that is not offered (or none at all) preselects the first agent.
+        for default in [Some("ghost"), None] {
+            let spec = form_spec(
+                Path::new("/t/answers.json"),
+                &agents,
+                default,
+                ("web", "/srv/web"),
+                &["claude"],
+            );
+            assert_eq!(spec["agent"], "claude", "{default:?}");
+        }
     }
 
     #[test]
@@ -392,27 +387,27 @@ mod tests {
     }
 
     #[test]
-    fn roles_are_the_md_files_minus_common_and_locals() {
-        let dir = tempfile::tempdir().unwrap();
-        let other = tempfile::tempdir().unwrap();
-        for name in [
-            "COMMON.md",
-            "DEVELOPER.md",
-            "DEVELOPER.local.md",
-            "notes.txt",
+    fn the_agents_are_the_definitions_of_every_root() {
+        let shipped = tempfile::tempdir().unwrap();
+        let user = tempfile::tempdir().unwrap();
+        for (root, name) in [
+            (&shipped, "developer"),
+            (&shipped, "qa"),
+            (&user, "developer"),
+            (&user, "mine"),
         ] {
-            fs::write(dir.path().join(name), "x").unwrap();
+            let agents = root.path().join("agents");
+            fs::create_dir_all(&agents).unwrap();
+            fs::write(agents.join(format!("{name}.md")), "x").unwrap();
         }
-        for name in ["REVIEWER.md", "DEVELOPER.md"] {
-            fs::write(other.path().join(name), "x").unwrap();
-        }
-        let dirs = [
-            dir.path().to_path_buf(),
-            other.path().to_path_buf(),
+        fs::write(shipped.path().join("agents/notes.txt"), "x").unwrap();
+        let roots = [
+            shipped.path().to_path_buf(),
+            user.path().to_path_buf(),
             PathBuf::from("/nonexistent"),
         ];
-        assert_eq!(role_names(&dirs), ["DEVELOPER", "REVIEWER"]);
-        assert!(role_names(&[]).is_empty());
+        assert_eq!(agent_names(roots).unwrap(), ["developer", "mine", "qa"]);
+        assert!(agent_names([]).unwrap().is_empty());
     }
 
     #[test]
@@ -422,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn the_answers_become_an_agent_session_under_common_and_the_role() {
+    fn the_answers_become_an_agent_session_of_the_picked_definition() {
         let options = create_options(&reply());
         assert_eq!(options.name, "health");
         assert_eq!(options.cwd, PathBuf::from("/p/my proj"));
@@ -432,34 +427,31 @@ mod tests {
             profile,
             options,
             initial_prompt,
-            ..
+            definition,
         } = options.launch
         else {
             panic!("an agent launch");
         };
         assert_eq!(engine, EngineKind::Codex);
-        assert_eq!(profile, ["COMMON", "DEVELOPER"]);
+        // The definition brings its roles: the launch names none.
+        assert!(profile.is_empty());
+        assert_eq!(definition, Some(DefinitionChoice::new("qa")));
         assert_eq!(options, json!({"effort": "xhigh", "model": "gpt-6-sol"}));
         assert_eq!(initial_prompt, "add GET /health");
     }
 
     #[test]
-    fn the_default_model_and_no_role_pass_nothing_extra() {
+    fn the_default_model_passes_nothing_extra() {
         let defaults = Reply {
             model: "gpt-6-astra".into(),
-            role: NO_ROLE.into(),
             tags: String::new(),
             ..reply()
         };
         let options = create_options(&defaults);
         assert_eq!(options.tags, [DEFAULT_TAG]);
-        let LaunchOptions::Agent {
-            profile, options, ..
-        } = options.launch
-        else {
+        let LaunchOptions::Agent { options, .. } = options.launch else {
             panic!("an agent launch");
         };
-        assert_eq!(profile, ["COMMON"]);
         assert_eq!(options, json!({"effort": "xhigh"}));
     }
 

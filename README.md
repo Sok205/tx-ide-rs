@@ -62,10 +62,12 @@ to this one; it is reachable at the tag `old-tx-final`.
 
 The library never parses arguments and never reads the process environment. `CoreConfig`
 carries everything; only `tx` / `txi` touch `std::env`. Without `--profile-dir` / `--skill-dir`,
-`tx` resolves roles from `<data>/roles` (the roles the core ships from `tx-core/agents/` — COMMON, DEVELOPER, ORCHESTRATOR, QA, TX-ASSISTANT and the COMMON.local overlay — plus any a plugin adds, written by `ui install`) and
+`tx` resolves roles from `<data>/roles` (the roles the core ships from `tx-core/agents/` — COMMON, TX-ASSISTANT and the COMMON.local overlay — plus any a plugin adds, written by `ui install`) and
 then `<config>/roles` (yours, never pruned, overriding a shipped role of the same name). Skills
 resolve from `<data>/definitions/skills` (the tx-* skills the core ships from `config/tx/`,
-written by `ui install`) and then `<config>/definitions/skills` (yours).
+written by `ui install`) and then `<config>/definitions/skills` (yours). The personas are agent
+definitions, shipped from `config/tx/agents/` (`developer`, `qa` and `orchestrator`, beside the
+plain `claude`): each has its own prompt and names the shared roles it runs on (`roles: [COMMON]`).
 
 ## Where files live
 
@@ -282,7 +284,8 @@ back to the same default. In short:
 ```yaml
 agent:                         # defaults for `tx create`; a flag given replaces its key
   engine: claude               # claude | codex
-  roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
+  roles: []                    # empty: the definition's `roles`; any --role replaces the whole list
+  definition: developer        # the agent definition without --agent; null: roles alone
   model: claude-opus-5-5       # null: the engine's own default
   effort: 3                    # 1-5 (or the engine's own word); null: the engine's own default
 
@@ -294,8 +297,8 @@ plugins:                       # one entry per plugin id; see Plugins below
     settings: { editor: nvim }
 ```
 
-So `tx create w --cwd . --prompt "…"` starts a Claude agent on Opus 5.5 at effort 3 (high), with
-the COMMON and DEVELOPER roles. Effort is 1–5 (or the engine's own word): 1 = low, 2 = medium,
+So `tx create w --cwd . --prompt "…"` starts a Claude agent on Opus 5.5 at effort 3 (high), as
+the `developer` agent definition on the COMMON role. Effort is 1–5 (or the engine's own word): 1 = low, 2 = medium,
 3 = high, 4 = xhigh, 5 = max, the same for every engine, in this file, `--effort` and
 `--option effort=`; the record stores the word. Codex's `none` and `minimal` are words only. With `--engine codex`, pass `--model` / `--effort` too (or set them to
 `null`): the defaults name a Claude model.
@@ -355,8 +358,8 @@ process session shows `shell`.
 
 `_new-agent` runs main's nvim form (`plugins/spawn/nvim/tx-new-agent.lua`, embedded and written
 to a temp dir at run time): name, tags, project (the firing pane's directory), prompt, engine
-(`core.engine_kinds()`), model, effort (`low` to `max`) and role (every `<NAME>.md` in the profile
-dirs but COMMON, which every agent gets; `none` first, DEVELOPER preselected). Needs `nvim`.
+(`core.engine_kinds()`), model, effort (`low` to `max`) and agent (every agent definition, the
+configured `agent.definition` preselected; it brings its own roles). Needs `nvim`.
 The session is created in the popup; the outcome lands on the client's status line.
 
 `assistant warm` creates `tx-assistant` with the engine `claude`, roles COMMON + TX-ASSISTANT, under a lock (two warms never make two assistants); an ended assistant is respawned in place (same record and worktree) rather than replaced by `tx-assistant-2`; a failure is kept in `<data>/plugins/assistant/warm.failed` (removed by the next success) for the home's header; the assistant's home repository is seeded as trusted in Claude's config file when that file exists, so the first launch does not stop on the trust dialog. It uses

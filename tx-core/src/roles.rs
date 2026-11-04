@@ -17,15 +17,6 @@ pub const SHIPPED: &[(&str, &[u8])] = &[
         include_bytes!("../agents/COMMON.local.md"),
     ),
     (
-        "agents/DEVELOPER.md",
-        include_bytes!("../agents/DEVELOPER.md"),
-    ),
-    (
-        "agents/ORCHESTRATOR.md",
-        include_bytes!("../agents/ORCHESTRATOR.md"),
-    ),
-    ("agents/QA.md", include_bytes!("../agents/QA.md")),
-    (
         "agents/TX-ASSISTANT.md",
         include_bytes!("../agents/TX-ASSISTANT.md"),
     ),
@@ -36,6 +27,14 @@ pub const SHIPPED: &[(&str, &[u8])] = &[
     (
         "definitions/agents/developer.md",
         include_bytes!("../../config/tx/agents/developer.md"),
+    ),
+    (
+        "definitions/agents/orchestrator.md",
+        include_bytes!("../../config/tx/agents/orchestrator.md"),
+    ),
+    (
+        "definitions/agents/qa.md",
+        include_bytes!("../../config/tx/agents/qa.md"),
     ),
     (
         "definitions/mcp.json",

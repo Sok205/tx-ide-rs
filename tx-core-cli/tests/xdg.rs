@@ -87,7 +87,7 @@ impl Sandbox {
     }
 
     /// Stand-ins for the roles `ui install` writes, where it writes them for `application`, so
-    /// a `create` without `--role` (the default `agent.roles`) resolves.
+    /// a `create` without `--role` (the default definition's `roles`) resolves.
     fn install_default_roles(&self, application: &str) {
         let roles = self
             .home()
@@ -95,9 +95,7 @@ impl Sandbox {
             .join(application)
             .join("roles");
         std::fs::create_dir_all(&roles).unwrap();
-        for role in ["COMMON", "DEVELOPER"] {
-            std::fs::write(roles.join(format!("{role}.md")), "stand-in role\n").unwrap();
-        }
+        std::fs::write(roles.join("COMMON.md"), "stand-in role\n").unwrap();
     }
 
     /// `create NAME --cwd <repository> --engine claude --prompt start`, with the fake `claude`.

@@ -3,7 +3,7 @@
 //! ```yaml
 //! agent:                         # defaults for `tx create`; flags override
 //!   engine: claude
-//!   roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
+//!   roles: []                    # empty: the definition's `roles`; any --role replaces the whole list
 //!   definition: developer        # the agent definition without --agent; null: roles alone
 //!   model: claude-opus-5-5       # null: the engine's own default
 //!   effort: 3                    # 1-5 (or the engine's word); null: the engine's own default
@@ -40,9 +40,10 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 pub struct AgentDefaults {
     pub engine: EngineKind,
+    /// Empty: the definition's own `roles`.
     pub roles: Vec<String>,
-    /// The agent definition every launch without `--agent` runs (its tools and skills; the
-    /// roles still give the prompt). `null`: roles alone, with the engine's base tools.
+    /// The agent definition every launch without `--agent` runs (its prompt, tools, skills and
+    /// roles). `null`: roles alone, with the engine's base tools.
     pub definition: Option<String>,
     pub model: Option<String>,
     /// A number on the tx scale or an engine's word, as text; the engine checks it.
@@ -54,7 +55,7 @@ impl Default for AgentDefaults {
     fn default() -> Self {
         Self {
             engine: EngineKind::Claude,
-            roles: vec!["COMMON".to_owned(), "DEVELOPER".to_owned()],
+            roles: Vec::new(),
             definition: Some("developer".to_owned()),
             model: Some("claude-opus-5-5".to_owned()),
             effort: Some("3".to_owned()),
@@ -136,7 +137,7 @@ mod tests {
     fn a_missing_file_is_every_default() {
         let config = load(Path::new("/nonexistent/tx/config.yaml")).unwrap();
         assert_eq!(config.agent.engine, EngineKind::Claude);
-        assert_eq!(config.agent.roles, ["COMMON", "DEVELOPER"]);
+        assert!(config.agent.roles.is_empty());
     }
 
     #[test]

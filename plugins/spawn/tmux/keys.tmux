@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # keys: n
 # tx key plugin `spawn`: prefix+n asks for a new agent's name, tags, prompt, project, engine,
-# model, effort and role in a popup on the firing client, then creates the agent session through
+# model, effort and agent in a popup on the firing client, then creates the agent session through
 # `tx _new-agent`. Run by `run-shell` from the server's tmux.conf, which `tx ui install`
 # writes; @tx-data names the directory holding bin/tmux-new-agent.
 #

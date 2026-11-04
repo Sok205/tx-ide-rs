@@ -485,7 +485,9 @@ fn create_fills_unflagged_options_from_the_config_file() {
 
     let bare = create("bare", &[]);
     assert_eq!(bare["engine"], "claude");
-    assert_eq!(bare["roles"], serde_json::json!(["COMMON", "DEVELOPER"]));
+    // No roles named: the default definition's `roles` apply at every launch.
+    assert_eq!(bare["roles"], serde_json::json!([]));
+    assert_eq!(bare["definition"]["agent"], "developer");
     assert_eq!(bare["ext"]["claude"]["model"], "claude-opus-5-5");
     assert_eq!(bare["ext"]["claude"]["effort"], "high");
 
@@ -495,8 +497,8 @@ fn create_fills_unflagged_options_from_the_config_file() {
     assert_eq!(filed["ext"]["claude"]["model"], "sonnet");
     assert_eq!(filed["ext"]["claude"]["effort"], "low");
 
-    let flagged = create("flagged", &["--role", "DEVELOPER", "--model", "opus"]);
-    assert_eq!(flagged["roles"], serde_json::json!(["DEVELOPER"]));
+    let flagged = create("flagged", &["--role", "REVIEWER", "--model", "opus"]);
+    assert_eq!(flagged["roles"], serde_json::json!(["REVIEWER"]));
     assert_eq!(flagged["ext"]["claude"]["model"], "opus");
     assert_eq!(flagged["ext"]["claude"]["effort"], "low");
 

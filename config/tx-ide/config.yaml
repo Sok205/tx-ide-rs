@@ -6,8 +6,8 @@
 # Defaults for `tx create`; a flag given on the command line replaces its key.
 agent:
   engine: claude               # claude | codex
-  roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
-  definition: developer        # the agent definition without --agent (its tools and skills; the roles give the prompt); null: roles alone
+  roles: []                    # empty: the definition's own `roles`; any --role replaces the whole list
+  definition: developer        # the agent definition without --agent (its prompt, tools, skills and roles); null: roles alone
   model: claude-opus-5-5       # Opus 5.5; null: the engine's own default (for claude, settings.json)
   effort: 3                    # 1-5: low|medium|high|xhigh|max, or the engine's word (codex also none|minimal); null: the engine's own
 

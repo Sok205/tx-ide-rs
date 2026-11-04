@@ -73,12 +73,12 @@ every directory's `<NAME>.local.md` extends the base. A role may open with front
 under `<data>/definitions` (the shipped ones) or `<config>/definitions` (yours, which win), which
 the engine links into the worktree (`.claude/skills/` or `.agents/skills/`).
 
-The shipped roles are **COMMON** (be concise, introduce yourself, change agents and views only
-through `tx`, read the message envelopes, use artifacts for deliverables), **DEVELOPER** (short
-chat with reasoning in artifacts, full variable names, branch in your worktree, no PR or merge
-unasked), **ORCHESTRATOR**, **QA** and **TX-ASSISTANT**. The new-agent form and the assistant add
-COMMON. `tx create` runs the `--role`s given; without any, it runs `config.yaml`'s `agent.roles`,
-or with `--agent` the definition's `roles`.
+Roles are the prompt text several agents share; the personas are agent definitions (below). The
+shipped roles are **COMMON** (be concise, introduce yourself, change agents and views only through
+`tx`, read the message envelopes, use artifacts for deliverables), which every shipped definition
+names in its `roles`, and **TX-ASSISTANT**, which the assistant runs on. `tx create` runs the
+`--role`s given; without any, it runs `config.yaml`'s `agent.roles`, which by default is empty:
+the definition's `roles`.
 
 ## Agent definitions
 
@@ -103,8 +103,12 @@ config. The record keeps `definition: {agent, skills, mcp_servers, tools}`, and 
 resolves it again, so a respawn keeps the extras and picks up an edited definition. With `--agent`
 the default roles of `config.yaml` do not apply: a launch without `--role` runs the definition's
 `roles` (resolved again at every launch, like the rest of it), and `--role` replaces them. Without it, the launch runs `config.yaml`'s
-`agent.definition` (default `developer`: today's worker tools and the tx skills) on top of the
-roles, which give the prompt; `definition: null` leaves roles alone with the engine's base tools.
+`agent.definition` (default `developer`). The shipped definitions are **developer** (short chat
+with reasoning in artifacts, full variable names, branch in your worktree, no PR or merge unasked;
+the worker tools and the tx skills), **qa** (verifies one PR in a sandbox and reports evidence),
+**orchestrator** (runs a multi-team programme, never writes code) and **claude** (plain Claude
+Code); the first three run on COMMON. `definition: null` leaves roles alone with the engine's base
+tools.
 A record from before definitions adopts the default at its next respawn. A secret an MCP server names (`${NAME}`) is taken
 from the environment of the `tx` that launches the agent (create or respawn) and set in the
 session; when it is unset the launch is refused, on both engines.

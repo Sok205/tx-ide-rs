@@ -16,7 +16,7 @@
 --       }
 --     ]
 --   }
--- Spawn pattern (from DEVELOPER.md):
+-- Spawn pattern:
 --   nvim -c "lua require('agent-tour').apply_tour('/tmp/claude-tour/<session>.json')"
 
 local M = {}
