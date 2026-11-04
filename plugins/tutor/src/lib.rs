@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tx_client::tmux::{Ui, shell_quote};
-use tx_client::views::{self, ViewKind, ViewRequest, default_shell};
+use tx_client::views::{self, SplitDirection, SplitRequest, ViewKind, ViewRequest, default_shell};
 use tx_core::{Agent, ListFilter, Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo};
 
 pub mod bundle;
@@ -387,27 +387,27 @@ impl<'a> Tutor<'a> {
             },
         )
         .map_err(failed)?;
-        // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
-        let cwd = project.to_string_lossy().replace('#', "##");
         let shell = default_shell();
-        let session = format!("={view}:");
-        self.ui
-            .run(&["split-window", "-h", "-t", &session, "-c", &cwd, &shell])
-            .map_err(failed)?;
-        let top_right = format!("={view}:.{{top-right}}");
-        self.ui
-            .run(&[
-                "split-window",
-                "-v",
-                "-l",
-                "50%",
-                "-t",
-                &top_right,
-                "-c",
-                &cwd,
-                &shell,
-            ])
-            .map_err(failed)?;
+        let shell_pane = |target: &str, direction, size| {
+            views::split(
+                &self.ui,
+                &SplitRequest {
+                    target,
+                    direction,
+                    size,
+                    program: &shell,
+                    arguments: &[],
+                    working_directory: project,
+                },
+            )
+            .map_err(failed)
+        };
+        shell_pane(&format!("={view}:"), SplitDirection::Horizontal, None)?;
+        shell_pane(
+            &format!("={view}:.{{top-right}}"),
+            SplitDirection::Vertical,
+            Some("50%"),
+        )?;
         let keys_source = self.packs().join(KEYS_FILE);
         let text = std::fs::read_to_string(&keys_source)
             .map_err(|error| failed(format!("{}: {error}", keys_source.display())))?;
@@ -417,19 +417,18 @@ impl<'a> Tutor<'a> {
             .map_err(|error| failed(format!("{}: {error}", rendered.display())))?;
         let show = keys_pane_command(&self.ui.argv(&[]), &rendered);
         let top_left = format!("={view}:.{{top-left}}");
-        self.ui
-            .run(&[
-                "split-window",
-                "-v",
-                "-l",
-                &KEYS_LINES.to_string(),
-                "-t",
-                &top_left,
-                "-c",
-                &cwd,
-                &show,
-            ])
-            .map_err(failed)?;
+        views::split(
+            &self.ui,
+            &SplitRequest {
+                target: &top_left,
+                direction: SplitDirection::Vertical,
+                size: Some(&KEYS_LINES.to_string()),
+                program: &show,
+                arguments: &[],
+                working_directory: project,
+            },
+        )
+        .map_err(failed)?;
         self.ui.select_pane(&top_left);
         Ok(())
     }
