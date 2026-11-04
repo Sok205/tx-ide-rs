@@ -167,8 +167,23 @@ mod tests {
     #[test]
     fn open_parses_every_flag_and_the_command_after_the_dashes() {
         let parsed = parse_open(&words(&[
-            "qa-shell", "--kind", "shell", "--parent", "qa-agent", "--cwd", "/tmp/repo", "--tag",
-            "qa", "--tag", "x", "--bound", "a50727bb", "--", "zsh", "-l", "--kind",
+            "qa-shell",
+            "--kind",
+            "shell",
+            "--parent",
+            "qa-agent",
+            "--cwd",
+            "/tmp/repo",
+            "--tag",
+            "qa",
+            "--tag",
+            "x",
+            "--bound",
+            "a50727bb",
+            "--",
+            "zsh",
+            "-l",
+            "--kind",
         ]))
         .unwrap();
         assert_eq!(

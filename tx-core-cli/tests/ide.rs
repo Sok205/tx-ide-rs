@@ -651,7 +651,11 @@ fn ui_attach_lands_on_the_home_tui_and_the_assistant_comes_up_behind_it() {
     cli.in_outer_pane(&format!("sh {}", script.display()));
     // `ui install` ran just before; under the other suites' load the attach can take a while.
     assert!(
-        cli.wait_for(15, || cli.tmux_out(&["list-clients", "-F", "#{client_session}"]) == "home"),
+        cli.wait_for(15, || cli.tmux_out(&[
+            "list-clients",
+            "-F",
+            "#{client_session}"
+        ]) == "home"),
         "no client attached to home"
     );
     assert!(
@@ -780,13 +784,15 @@ fn ui_attach_installs_the_floor_on_an_existing_shell_home() {
 fn ui_attach_with_home_disabled_opens_a_shell() {
     require_tmux!();
     let cli = Cli::new();
-    cli.write_yaml(
-        "plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n",
-    );
+    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
     cli.create("a");
     cli.in_outer_pane(&attach_command(&cli));
     assert!(
-        cli.wait_for(5, || cli.tmux_out(&["list-clients", "-F", "#{client_session}"]) == "home"),
+        cli.wait_for(5, || cli.tmux_out(&[
+            "list-clients",
+            "-F",
+            "#{client_session}"
+        ]) == "home"),
         "no client attached to home"
     );
     let shell = std::path::Path::new(&std::env::var("SHELL").unwrap_or_else(|_| "sh".into()))
@@ -803,7 +809,13 @@ fn ui_attach_with_home_disabled_opens_a_shell() {
             "#{pane_current_command}"
         ]) == shell),
         "{}",
-        cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_current_command}"])
+        cli.tmux_out(&[
+            "display-message",
+            "-p",
+            "-t",
+            "=home:",
+            "#{pane_current_command}"
+        ])
     );
     let pane = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_id}"]);
     assert!(

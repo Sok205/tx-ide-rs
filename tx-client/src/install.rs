@@ -161,7 +161,10 @@ fn fail(io: &mut VerbIo<'_>, message: &str) -> Result<i32, VerbError> {
 }
 
 fn usage(io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
-    let _ = writeln!(io.stderr, "usage: tx ui install | attach | view <open|ls|close> …");
+    let _ = writeln!(
+        io.stderr,
+        "usage: tx ui install | attach | view <open|ls|close> …"
+    );
     Ok(2)
 }
 

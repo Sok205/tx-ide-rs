@@ -422,7 +422,9 @@ fn every_agent_gets_its_own_detached_worktree_under_a_free_name() {
     // Stopped: the name is free again, but its tree is still on disk, so the next tree is
     // `w-3`.
     core.stop_agent(&first).unwrap();
-    let third = core.get_agent(&core.create_agent(agent("w", &repository)).unwrap()).unwrap();
+    let third = core
+        .get_agent(&core.create_agent(agent("w", &repository)).unwrap())
+        .unwrap();
     assert_eq!(third.name, "w");
     assert_eq!(third.working_directory, expected("w-3"));
     assert!(expected("w").is_dir(), "stop never removes a worktree");
@@ -594,11 +596,7 @@ fn resolve_prefers_running_then_most_recent_ended() {
         "the most recent ended one when none is running"
     );
     let third = core.create_agent(agent("n", &repository)).unwrap();
-    assert_eq!(
-        core.resolve("n").unwrap(),
-        third,
-        "the running one wins"
-    );
+    assert_eq!(core.resolve("n").unwrap(), third, "the running one wins");
 }
 
 #[test]

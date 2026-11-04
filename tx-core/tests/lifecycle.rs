@@ -455,10 +455,7 @@ fn respawn_refusals_change_nothing() {
         .iter()
         .map(|line| line["type"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(
-        types,
-        ["created", "stopped", "created", "renamed"]
-    );
+    assert_eq!(types, ["created", "stopped", "created", "renamed"]);
 }
 
 #[test]

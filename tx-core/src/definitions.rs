@@ -575,7 +575,11 @@ impl Definitions {
                 .get(name)
                 .ok_or_else(|| self.unknown("skill", name, SKILLS_DIR))?;
             if let Some(provider) = read_skill(directory)?.provided_by {
-                if !resolved.provided_skills.iter().any(|(listed, _)| listed == name) {
+                if !resolved
+                    .provided_skills
+                    .iter()
+                    .any(|(listed, _)| listed == name)
+                {
                     resolved.provided_skills.push((name.clone(), provider));
                 }
                 continue;

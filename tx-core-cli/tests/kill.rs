@@ -123,7 +123,10 @@ fn kill_refuses_an_agent_session_without_a_record() {
     let output = cli.run(&["kill", "ghost"], &[], "");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("'ghost' is an agent's session"), "{stderr:?}");
+    assert!(
+        stderr.contains("'ghost' is an agent's session"),
+        "{stderr:?}"
+    );
     assert!(cli.tmux(&["has-session", "-t", "=ghost"]).status.success());
 }
 
