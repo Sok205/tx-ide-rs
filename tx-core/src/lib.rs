@@ -29,7 +29,7 @@ pub mod tmux;
 pub mod worktree;
 
 pub use agent::{Agent, AgentId, DefinitionChoice, RecordError, validate_name};
-pub use config::{CoreConfig, Directories, MAX_SOCKET_PATH_BYTES};
+pub use config::{AgentDefaults, CoreConfig, Directories, MAX_SOCKET_PATH_BYTES};
 pub use core::{
     CreateOptions, DeliveryReceipt, ExecutionLocation, ForkOptions, LaunchOptions, ListFilter,
     RefreshResult, SendOptions, Sender, TxCore,

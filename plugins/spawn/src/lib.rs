@@ -291,7 +291,7 @@ impl Verb for NewAgent {
         let spec = form_spec(
             &directory.join("answers.json"),
             &agents,
-            core.config().default_definition.as_deref(),
+            core.config().agent_defaults.definition.as_deref(),
             (&project_name, &project_path),
             &engines,
         );
