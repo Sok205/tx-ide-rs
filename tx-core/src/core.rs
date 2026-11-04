@@ -726,7 +726,12 @@ impl TxCore {
         // The real directory: git is asked about the real checkout, and the record and every
         // workspace path say so.
         let cwd = std::fs::canonicalize(&opts.cwd).map_err(store_io(&opts.cwd))?;
-        let opts = CreateOptions { cwd, ..opts };
+        let mut opts = CreateOptions { cwd, ..opts };
+        // A launch without its own agent definition runs the configured default.
+        let LaunchOptions::Agent { definition, .. } = &mut opts.launch;
+        if definition.is_none() {
+            *definition = self.default_definition();
+        }
         // Pure checks before the lock: an unknown engine, a missing prompt or an unknown role never
         // touches state.
         let LaunchOptions::Agent {
@@ -978,6 +983,10 @@ impl TxCore {
             .engines
             .get(session.engine)
             .ok_or(CoreError::EngineDisabled(session.engine))?;
+        // A record from before agent definitions adopts the configured default, on the record.
+        if session.definition.is_none() {
+            session.definition = self.default_definition();
+        }
         let resolved = self.resolve_profile(&session.roles, session.definition.as_ref())?;
         if session.state != LlmEngineState::Ended || self.tmux.is_live(id)?.is_some() {
             return Err(CoreError::StillRunning(id.clone()));
@@ -1006,6 +1015,14 @@ impl TxCore {
             events.push(exited_before_registration(&session));
         }
         Ok((session, events))
+    }
+
+    /// `config.yaml`'s `agent.definition`, as a choice with no extras.
+    fn default_definition(&self) -> Option<DefinitionChoice> {
+        self.config
+            .default_definition
+            .as_ref()
+            .map(DefinitionChoice::new)
     }
 
     /// The profile a launch runs: the roles' text and skills, with the agent definition and its

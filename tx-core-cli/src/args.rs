@@ -76,6 +76,7 @@ The config file is <config>/config.yaml (--config FILE overrides); every key is 
   agent:                        defaults for create; a flag given replaces its key
     engine: claude              claude | codex
     roles: [COMMON, DEVELOPER]  any --role replaces the whole list
+    definition: developer       the agent definition without --agent (null: roles alone)
     model: claude-opus-5-5      null: the engine's own default
     effort: 3                   1-5 (or the engine's own word); null: the engine's own default
   plugins:                      one entry per plugin id (see `plugins`)

@@ -34,6 +34,10 @@ pub const SHIPPED: &[(&str, &[u8])] = &[
         include_bytes!("../../config/tx/agents/claude.md"),
     ),
     (
+        "definitions/agents/developer.md",
+        include_bytes!("../../config/tx/agents/developer.md"),
+    ),
+    (
         "definitions/mcp.json",
         include_bytes!("../../config/tx/mcp.json"),
     ),

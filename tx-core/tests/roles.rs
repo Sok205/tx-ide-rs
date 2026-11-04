@@ -31,6 +31,7 @@ fn the_shipped_roles_and_definitions_are_resources_of_the_core() {
             "agents/QA.md",
             "agents/TX-ASSISTANT.md",
             "definitions/agents/claude.md",
+            "definitions/agents/developer.md",
             "definitions/mcp.json",
             "definitions/skills/batch/SKILL.md",
             "definitions/skills/built-in-browser/SKILL.md",

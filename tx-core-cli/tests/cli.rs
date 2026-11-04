@@ -52,7 +52,12 @@ fn usage_errors_exit_2_without_touching_state() {
                 .contains(&format!("unknown verb {retired:?}"))
         );
     }
-    assert!(!cli.state().exists());
+    // Nothing beyond the harness's stand-in definition.
+    assert_eq!(
+        std::fs::read_dir(cli.state()).unwrap().count(),
+        1,
+        "usage errors touched the state dir"
+    );
     assert!(cli.ok(&["help"]).starts_with("usage: tx"));
 }
 
@@ -344,6 +349,7 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
             .output()
             .unwrap()
     };
+    common::stand_in_definition(&cli.dir.path().join("config"));
     // Relative directory flags still yield absolute paths inside the session environment.
     let rel = relative(&[
         "create",

@@ -94,6 +94,10 @@ pub struct CoreConfig {
     pub tmux_socket: Option<PathBuf>,
     /// Base environment for every session, applied before the per-session env.
     pub env: Vec<(String, String)>,
+    /// The agent definition a launch without one of its own runs (create, fork, and the respawn
+    /// of a record from before definitions): `config.yaml`'s `agent.definition`. `None`: roles
+    /// alone, with the engine's base tools.
+    pub default_definition: Option<String>,
     /// The caller's environment. Never passed into a session whole: a launch takes from it only
     /// the variables its MCP servers name (`${NAME}`), and refuses when one is unset.
     pub caller_env: Vec<(String, String)>,
@@ -111,6 +115,7 @@ impl CoreConfig {
             directories,
             tmux_socket: None,
             env: Vec::new(),
+            default_definition: None,
             caller_env: Vec::new(),
             profile_dirs: Vec::new(),
             skill_dirs: Vec::new(),
@@ -125,6 +130,11 @@ impl CoreConfig {
 
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn default_definition(mut self, name: impl Into<String>) -> Self {
+        self.default_definition = Some(name.into());
         self
     }
 

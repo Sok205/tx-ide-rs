@@ -292,6 +292,10 @@ pub fn open(global: &Global) -> Result<TxCore, Failure> {
 /// stderr, once per invocation.
 pub fn open_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
     let cfg = plugin_config(global, &config)?;
+    let config = match load_config(global, &config)?.agent.definition {
+        Some(name) => config.default_definition(name),
+        None => config,
+    };
     let mut core = TxCore::open(config)?;
     core.plug(plugins::manifest(), &cfg)
         .map_err(Failure::Plugin)?;

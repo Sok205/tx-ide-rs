@@ -97,7 +97,10 @@ prompt after any `--role` text, its skills plus the `--skill` extras, its tools 
 extras, and exactly its MCP servers plus the `--mcp` extras — nothing from the engine's own
 config. The record keeps `definition: {agent, skills, mcp_servers, tools}`, and every launch
 resolves it again, so a respawn keeps the extras and picks up an edited definition. With `--agent`
-the default roles of `config.yaml` do not apply. A secret an MCP server names (`${NAME}`) is taken
+the default roles of `config.yaml` do not apply. Without it, the launch runs `config.yaml`'s
+`agent.definition` (default `developer`: today's worker tools and the tx skills) on top of the
+roles, which give the prompt; `definition: null` leaves roles alone with the engine's base tools.
+A record from before definitions adopts the default at its next respawn. A secret an MCP server names (`${NAME}`) is taken
 from the environment of the `tx` that launches the agent (create or respawn) and set in the
 session; when it is unset the launch is refused, on both engines.
 
