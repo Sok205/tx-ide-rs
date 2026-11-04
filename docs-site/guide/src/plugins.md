@@ -24,8 +24,8 @@ settings merged into every launch's `--settings`, under tx's own keys; `~/.claud
 is never read. Reference skills (`metadata.provided-by: claude-bundled|claude-synced`, frontmatter only) are
 delivered without their text passing through tx. A synced skill is a link in the per-agent plugin
 to `~/.claude/skills/synced/<account>/<name>/`. Bundled skills stay off (`disableBundledSkills`)
-unless the agent lists one. Then every other bundled skill of the installed Claude is turned off
-(`skillOverrides`), from a list probed once per Claude version; the built-in `plugin-authoring`
+unless the agent lists one. Claude cannot turn them on one by one, so that turns the whole bundle
+on, and `tx check` and `tx create` warn with the known names. The built-in `plugin-authoring`
 plugin is off unless listed. Before each launch the plugin marks the worktree trusted in Claude's config file
 (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`), so it never stops on the trust dialog. It wires Claude's hooks to `txi hook <Event>`. It keeps
 `conversation_id`, `transcript_path`, `model` and `effort` under `ext.claude`, archives each

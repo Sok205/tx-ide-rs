@@ -189,6 +189,27 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 .profile(roles)
                 .initial_prompt(prompt);
             if let Some(choice) = definition {
+                // Claude turns its bundled skills on all at once: say so before the launch.
+                if engine == tx_core::EngineKind::Claude
+                    && let Ok(agent) = tx_core::definitions::Definitions::new(
+                        core.config().directories.definition_roots(),
+                    )
+                    .agent(&choice.agent)
+                {
+                    let skills: Vec<String> = agent
+                        .skills
+                        .into_iter()
+                        .chain(choice.skills.clone())
+                        .collect();
+                    if let Some(warning) = tx_core_cli::definitions::bundle_warning(
+                        &core.config().directories,
+                        &skills,
+                    )
+                    .map_err(Failure::Definition)?
+                    {
+                        eprintln!("tx: warning: {warning}");
+                    }
+                }
                 launch = launch.definition(choice);
             }
             for (key, value) in options {

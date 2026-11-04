@@ -82,8 +82,8 @@ pub const FORCED: [&str; 6] = [
     "Claude Code's built-in plugins (cc-plugin-agents-md, telemetry, privacy)",
     "a userEmail system reminder from the subscription's OAuth profile",
     "Claude Code's own system prompt: the profile text is appended to it",
-    "for an agent that lists a bundled skill: any bundled skill the Claude account gates in, \
-     which the probe (dummy token) cannot see, so it is not on the off-list",
+    "for an agent that lists a bundled skill: every bundled skill of this Claude version, the \
+     account-gated ones included (Claude turns the bundle on whole)",
     "unverified: whether a logged-in session also loads the claude.ai-synced skills on its own \
      (anthropic-skills:*) under --setting-sources \"\"",
 ];
@@ -229,17 +229,6 @@ pub struct ClaudeAdapter {
     /// Claude's JSON config file, where `prepare` marks each worktree trusted; `None` trusts
     /// nothing (tests).
     pub trust_file: Option<PathBuf>,
-    /// tx's cache directory, where the installed Claude's bundled skills are probed into once per
-    /// version; `None` refuses an agent that lists a bundled skill.
-    pub cache_dir: Option<PathBuf>,
-}
-
-/// A launch's bundled skills: the ones the agent lists, and every other one the installed Claude
-/// has, which `skillOverrides` turns off.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BundledSkills {
-    pub listed: Vec<String>,
-    pub off: Vec<String>,
 }
 
 /// Under Claude's home: one directory per claude.ai account, each holding its synced skills.
@@ -264,13 +253,7 @@ impl ClaudeAdapter {
             claude_home: claude_home.into(),
             claude_settings: serde_json::Map::new(),
             trust_file: None,
-            cache_dir: None,
         }
-    }
-
-    pub fn cache_dir(mut self, directory: impl Into<PathBuf>) -> Self {
-        self.cache_dir = Some(directory.into());
-        self
     }
 
     pub fn claude_settings(mut self, settings: serde_json::Map<String, Value>) -> Self {
@@ -346,7 +329,7 @@ impl ClaudeAdapter {
             launch_settings(
                 &self.claude_settings,
                 request.hook_command,
-                &self.bundled_skills(request.profile)?,
+                &request.profile.provided_by(SkillProvider::ClaudeBundled),
             ),
             SKIP_PERMISSIONS_FLAG.to_owned(),
         ]);
@@ -368,42 +351,6 @@ impl ClaudeAdapter {
             plan = plan.workspace(link);
         }
         Ok(plan)
-    }
-
-    /// The listed `claude-bundled` skills, and the off-list: every other bundled skill of the
-    /// installed Claude, probed once per version (`probe`). `None` when none is listed: then
-    /// every bundled skill stays off with `disableBundledSkills`, whatever the version has. A
-    /// launch that lists one is refused when the version cannot be probed or lacks the skill.
-    fn bundled_skills(&self, profile: &Profile) -> Result<Option<BundledSkills>, EngineError> {
-        let listed: Vec<String> = profile
-            .provided_by(SkillProvider::ClaudeBundled)
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-        if listed.is_empty() {
-            return Ok(None);
-        }
-        let cache = self.cache_dir.as_deref().ok_or_else(|| {
-            EngineError::Refused("claude: no cache directory to probe the bundled skills in".into())
-        })?;
-        let built_ins = probe::built_ins(cache).map_err(|error| {
-            EngineError::Refused(format!("claude: cannot list the bundled skills: {error}"))
-        })?;
-        if let Some(missing) = listed
-            .iter()
-            .find(|name| !built_ins.bundled_skills.contains(name))
-        {
-            return Err(EngineError::Refused(format!(
-                "claude: Claude Code {} has no bundled skill {missing:?}",
-                built_ins.version
-            )));
-        }
-        let off = built_ins
-            .bundled_skills
-            .into_iter()
-            .filter(|name| !listed.contains(name))
-            .collect();
-        Ok(Some(BundledSkills { listed, off }))
     }
 
     /// The operator's claude.ai-synced copy of each listed `claude-synced` skill:
@@ -696,39 +643,25 @@ pub fn tools(profile: &Profile) -> String {
 /// auto-memory off, and `skipDangerousModePermissionPrompt` keeps
 /// `--dangerously-skip-permissions` from asking for confirmation (default answer: exit). Every
 /// [`HOOK_EVENTS`] entry is wired to `hook_command` (no hooks when it is empty).
-/// The operator's `claude_settings` come first, so tx's own keys win. Without listed bundled
-/// skills (`None`) every bundled skill is off (`disableBundledSkills`); with some, the others are
-/// turned off one by one (`skillOverrides`), since `disableBundledSkills` cannot be lifted per
-/// skill. The built-in `plugin-authoring` plugin is off unless listed.
+/// The operator's `claude_settings` come first, so tx's own keys win. Claude's bundled skills
+/// are all off (`disableBundledSkills`) unless the agent lists one, which turns the whole bundle
+/// on: Claude cannot turn them on one by one, and `tx check` / `tx create` say so. The built-in
+/// `plugin-authoring` plugin is off unless listed.
 pub fn launch_settings(
     claude_settings: &serde_json::Map<String, Value>,
     hook_command: &[String],
-    bundled: &Option<BundledSkills>,
+    bundled: &[&str],
 ) -> String {
     let mut settings = Value::Object(claude_settings.clone());
     for (key, value) in [
         ("autoMemoryEnabled", false),
-        ("disableBundledSkills", bundled.is_none()),
+        ("disableBundledSkills", bundled.is_empty()),
         ("skipDangerousModePermissionPrompt", true),
     ] {
         settings[key] = Value::Bool(value);
     }
-    let lists = |name: &str| {
-        bundled
-            .as_ref()
-            .is_some_and(|bundled| bundled.listed.iter().any(|listed| listed == name))
-    };
-    if !lists(PLUGIN_AUTHORING_SKILL) {
+    if !bundled.contains(&PLUGIN_AUTHORING_SKILL) {
         settings["enabledPlugins"] = serde_json::json!({ PLUGIN_AUTHORING_PLUGIN: false });
-    }
-    if let Some(bundled) = bundled {
-        settings["skillOverrides"] = Value::Object(
-            bundled
-                .off
-                .iter()
-                .map(|name| (name.clone(), Value::from("off")))
-                .collect(),
-        );
     }
     if !hook_command.is_empty() {
         settings["hooks"] = hook_settings(hook_command);
@@ -847,8 +780,7 @@ impl tx_core::Plugin for ClaudePlugin {
         r.engine(Box::new(
             ClaudeAdapter::new(claude_home_from_env())
                 .claude_settings(settings.claude_settings)
-                .trust_file(claude_config_file_from_env())
-                .cache_dir(r.config().directories.cache.clone()),
+                .trust_file(claude_config_file_from_env()),
         ));
         Ok(())
     }
@@ -1380,8 +1312,7 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        let settings: Value =
-            serde_json::from_str(&launch_settings(&operator, &[], &None)).unwrap();
+        let settings: Value = serde_json::from_str(&launch_settings(&operator, &[], &[])).unwrap();
         assert_eq!(
             settings,
             serde_json::json!({
@@ -1395,18 +1326,22 @@ mod tests {
     }
 
     #[test]
-    fn listed_bundled_skills_leave_every_other_one_off() {
-        let bundled = Some(BundledSkills {
-            listed: vec!["loop".into(), "plugin-authoring".into()],
-            off: vec!["simplify".into(), "debug".into()],
-        });
+    fn a_listed_bundled_skill_turns_the_whole_bundle_on() {
         let settings: Value =
-            serde_json::from_str(&launch_settings(&serde_json::Map::new(), &[], &bundled)).unwrap();
+            serde_json::from_str(&launch_settings(&serde_json::Map::new(), &[], &["loop"]))
+                .unwrap();
         assert_eq!(settings["disableBundledSkills"], false);
+        assert_eq!(settings.get("skillOverrides"), None);
         assert_eq!(
-            settings["skillOverrides"],
-            serde_json::json!({"simplify": "off", "debug": "off"})
+            settings["enabledPlugins"],
+            serde_json::json!({"cc-plugin-plugin-authoring@builtin": false})
         );
+        let settings: Value = serde_json::from_str(&launch_settings(
+            &serde_json::Map::new(),
+            &[],
+            &["plugin-authoring"],
+        ))
+        .unwrap();
         assert_eq!(
             settings.get("enabledPlugins"),
             None,

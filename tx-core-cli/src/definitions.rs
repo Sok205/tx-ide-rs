@@ -99,6 +99,52 @@ fn described(description: Result<String, DefinitionError>) -> String {
 
 const INVALID: &str = "(invalid: see `tx check`)";
 
+/// The engine-provided skills among `skills`, by name, from their reference `SKILL.md`.
+fn provided_skills(
+    directories: &Directories,
+    skills: &[String],
+) -> Result<Vec<(String, SkillProvider)>, DefinitionError> {
+    let directories = Definitions::new(directories.definition_roots()).skill_directories()?;
+    Ok(skills
+        .iter()
+        .filter_map(|name| {
+            let skill = read_skill(directories.get(name)?).ok()?;
+            Some((name.clone(), skill.provided_by?))
+        })
+        .collect())
+}
+
+/// Claude turns its bundled skills on all at once: listing one brings in every one. The known
+/// names are the shipped `claude-bundled` references; the version may ship more.
+pub fn bundle_warning(
+    directories: &Directories,
+    skills: &[String],
+) -> Result<Option<String>, DefinitionError> {
+    let listed: Vec<String> = provided_skills(directories, skills)?
+        .into_iter()
+        .filter(|(_, provider)| *provider == SkillProvider::ClaudeBundled)
+        .map(|(name, _)| name)
+        .collect();
+    if listed.is_empty() {
+        return Ok(None);
+    }
+    let all: Vec<String> = Definitions::new(directories.definition_roots())
+        .skill_directories()?
+        .into_iter()
+        .filter(|(_, directory)| {
+            read_skill(directory)
+                .is_ok_and(|skill| skill.provided_by == Some(SkillProvider::ClaudeBundled))
+        })
+        .map(|(name, _)| name)
+        .collect();
+    Ok(Some(format!(
+        "bundled skill {} brings in all bundled skills: {}, and any others this Claude version \
+         ships",
+        listed.join(", "),
+        all.join(", ")
+    )))
+}
+
 /// Prints `path:line: message` per problem and returns whether there were none; on success, one
 /// line saying what was checked. With an engine, it also prints what that engine carries on
 /// every launch that no flag removes, then per agent what it gets that its file does not say.
@@ -116,6 +162,17 @@ pub fn check(
     }
     if engine != Some(EngineKind::Codex) {
         writeln!(out, "{}", baseline_line()).ok();
+        for agent in &report.agent_definitions {
+            if let Some(warning) = bundle_warning(directories, &agent.skills)? {
+                writeln!(
+                    out,
+                    "{}:{}: warning: {warning}",
+                    agent.path.display(),
+                    agent.line_of("skills").unwrap_or(1)
+                )
+                .ok();
+            }
+        }
     }
     if let Some(engine) = engine {
         let (forced, notes): (&[&str], fn(&_) -> Vec<String>) = match engine {
@@ -161,41 +218,20 @@ pub fn check(
                 }
             }
         }
-        // Reference skills: Claude must have each one; Codex has none of them.
-        let skills = Definitions::new(directories.definition_roots()).skill_directories()?;
-        let bundled = match engine {
-            EngineKind::Claude => Some(
-                crate::tools::claude_built_ins(directories)
-                    .map_err(|message| DefinitionError::new(&directories.cache, None, message))?,
-            ),
-            EngineKind::Codex => None,
-        };
+        // Reference skills: a synced one must be on this machine; Codex has none of them.
         for agent in &report.agent_definitions {
-            for name in &agent.skills {
-                let Some(provider) = skills
-                    .get(name)
-                    .and_then(|directory| tx_core::definitions::read_skill(directory).ok())
-                    .and_then(|skill| skill.provided_by)
-                else {
-                    continue;
-                };
-                let problem = match (engine, provider, &bundled) {
-                    (EngineKind::Codex, provider, _) => Some(format!(
+            for (name, provider) in provided_skills(directories, &agent.skills)? {
+                let problem = match (engine, provider) {
+                    (EngineKind::Codex, provider) => Some(format!(
                         "skill {name:?} is provided by {}: not on codex",
                         provider.as_str()
                     )),
-                    (EngineKind::Claude, SkillProvider::ClaudeBundled, Some(built_ins))
-                        if !built_ins.bundled_skills.contains(name) =>
+                    (EngineKind::Claude, SkillProvider::ClaudeSynced)
+                        if !tx_engine_claude::synced_skill_exists(&name) =>
                     {
                         Some(format!(
-                            "Claude Code {} has no bundled skill {name:?}",
-                            built_ins.version
+                            "no claude.ai-synced skill {name:?} on this machine"
                         ))
-                    }
-                    (EngineKind::Claude, SkillProvider::ClaudeSynced, _)
-                        if !tx_engine_claude::synced_skill_exists(name) =>
-                    {
-                        Some(format!("no claude.ai-synced skill {name:?} on this machine"))
                     }
                     _ => None,
                 };
