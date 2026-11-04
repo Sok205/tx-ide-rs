@@ -1,6 +1,10 @@
 //! The Codex engine for tx-core: `codex [resume ID | fork ID] [-m <model>] -c model_reasoning_effort=<effort>
-//! [-c developer_instructions=<profile text>] --dangerously-bypass-approvals-and-sandbox
-//! --dangerously-bypass-hook-trust [prompt]`, with granted skills linked under `.agents/skills`.
+//! [-c developer_instructions=<profile text>] [-c hooks.…] --disable apps [-c mcp_servers.…]
+//! [<tool switches>] --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust
+//! [prompt]`, with granted skills linked under `.agents/skills`. An agent gets exactly the MCP
+//! servers its definition declares ([`mcp_overrides`]: ChatGPT apps and every server of the
+//! operator's `config.toml` are switched off), and an agent definition's built-in `tools` become
+//! the [`tool_switches`] that remove what it does not offer.
 //! Without a `model` option Codex runs the user's configured default (`model` in its
 //! `config.toml`): tx never overrides it.
 //!
@@ -28,15 +32,17 @@
 //! recorded `transcript_path` when that file is gone. The rollout's name carries its creation
 //! time, so a record without a `transcript_path` cannot be restored and says so.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tx_core::definitions::{AUTHORIZATION_HEADER, McpServer, bearer_variable, variable_name};
 use tx_core::{
-    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, WorkspaceAction, engine_data,
-    hook_shell_command, mirror_file, mirror_file_exact,
+    Agent, BuiltInTools, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan,
+    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
+    WorkspaceAction, engine_data, hook_shell_command, mirror_file, mirror_file_exact,
 };
 
 pub const CODEX_BIN: &str = "codex";
@@ -52,6 +58,34 @@ pub const REASONING_EFFORT_KEY: &str = "model_reasoning_effort";
 pub const DEVELOPER_INSTRUCTIONS_KEY: &str = "developer_instructions";
 pub const BYPASS_APPROVALS_FLAG: &str = "--dangerously-bypass-approvals-and-sandbox";
 pub const BYPASS_HOOK_TRUST_FLAG: &str = "--dangerously-bypass-hook-trust";
+pub const DISABLE_FLAG: &str = "--disable";
+/// The feature behind ChatGPT's apps and connectors: off on every launch, so an agent gets only
+/// the MCP servers it declares.
+pub const APPS_FEATURE: &str = "apps";
+/// The operator's own config, whose MCP servers every launch switches off.
+pub const CONFIG_FILE: &str = "config.toml";
+const MCP_TOOL_PREFIX: &str = "mcp__";
+/// Codex's built-in tools have no allowlist; each Claude tool name an agent definition leaves out
+/// (or cuts) is a switch that removes Codex's counterpart. A group is off only when none of its
+/// names is offered.
+pub const BUILT_IN_SWITCHES: [(&[&str], [&str; 2]); 5] = [
+    (&["Bash"], [DISABLE_FLAG, "shell_tool"]),
+    (
+        &["WebSearch", "WebFetch"],
+        ["-c", "web_search=\"disabled\""],
+    ),
+    (
+        &["Agent", "Task"],
+        ["-c", "features.multi_agent_v2.disable_native_tools=true"],
+    ),
+    (
+        &["AskUserQuestion"],
+        ["-c", "tools.experimental_request_user_input.enabled=false"],
+    ),
+    (&["ScheduleWakeup"], [DISABLE_FLAG, "sleep_tool"]),
+];
+/// Codex-only tools no Claude name stands for: off for an agent definition with a `tools` list.
+pub const CODEX_ONLY_FEATURES: [&str; 2] = ["goals", "tool_suggest"];
 /// The slash command that exits the CLI cleanly, idle or mid-turn (codex-cli 0.164.0: exit 0
 /// within half a second). Not Ctrl-C: idle it exits at once, but mid-turn it opens a menu.
 pub const QUIT_COMMAND: &str = "/quit";
@@ -167,7 +201,7 @@ impl CodexAdapter {
         mut args: Vec<String>,
         stored_data: Option<Value>,
         prompt: &str,
-    ) -> LaunchPlan {
+    ) -> Result<LaunchPlan, EngineError> {
         let data = engine_data(self, request.session);
         let option = |key: &str| data.get(key).and_then(Value::as_str);
         let effort = option(EFFORT_KEY).unwrap_or(DEFAULT_EFFORT.as_str());
@@ -186,6 +220,11 @@ impl CodexAdapter {
                 args.extend(["-c".to_owned(), hook_override(request.hook_command, event)]);
             }
         }
+        args.extend([DISABLE_FLAG.to_owned(), APPS_FEATURE.to_owned()]);
+        for override_ in mcp_overrides(request.profile, &self.configured_servers()?)? {
+            args.extend(["-c".to_owned(), override_]);
+        }
+        args.extend(tool_switches(request.profile));
         args.extend([
             BYPASS_APPROVALS_FLAG.to_owned(),
             BYPASS_HOOK_TRUST_FLAG.to_owned(),
@@ -198,7 +237,24 @@ impl CodexAdapter {
         for link in skill_links(SKILLS_DIR, request.profile.skill_dirs()) {
             plan = plan.workspace(link);
         }
-        plan
+        Ok(plan)
+    }
+
+    /// The MCP server names in `<codex home>/config.toml`; none without the file.
+    fn configured_servers(&self) -> Result<Vec<String>, EngineError> {
+        let path = self.codex_home.join(CONFIG_FILE);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(source) => return Err(EngineError::Io { path, source }),
+        };
+        let config: toml::Table = text
+            .parse()
+            .map_err(|error| EngineError::Refused(format!("{}: {error}", path.display())))?;
+        Ok(match config.get("mcp_servers") {
+            Some(toml::Value::Table(servers)) => servers.keys().cloned().collect(),
+            _ => Vec::new(),
+        })
     }
 
     pub fn new(codex_home: impl Into<PathBuf>) -> Self {
@@ -275,7 +331,7 @@ impl LlmEngine for CodexAdapter {
     }
 
     fn start(&self, request: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {
-        Ok(self.plan(request, Vec::new(), None, prompt))
+        self.plan(request, Vec::new(), None, prompt)
     }
 
     fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
@@ -283,7 +339,7 @@ impl LlmEngine for CodexAdapter {
             RESUME_SUBCOMMAND.to_owned(),
             self.conversation_of(request.session, "resume")?.to_owned(),
         ];
-        Ok(self.plan(request, args, None, ""))
+        self.plan(request, args, None, "")
     }
 
     /// The fork record's data starts as a copy of the source's, so the plan stores it minus
@@ -301,7 +357,7 @@ impl LlmEngine for CodexAdapter {
             FORK_CWD_OVERRIDE.to_owned(),
         ];
         let fork_data = without_conversation(engine_data(self, request.session));
-        Ok(self.plan(request, args, Some(fork_data), prompt))
+        self.plan(request, args, Some(fork_data), prompt)
     }
 
     fn stop(&self, _: &Agent) -> Option<Input> {
@@ -422,6 +478,149 @@ pub fn without_conversation(data: &Value) -> Value {
 pub fn hook_override(hook_command: &[String], event: &str) -> String {
     let command = Value::from(hook_shell_command(hook_command, event)).to_string();
     format!("hooks.{event}=[{{matcher=\"\",hooks=[{{type=\"command\",command={command}}}]}}]")
+}
+
+/// A TOML string: a JSON string is a valid TOML basic string.
+fn toml_string(text: &str) -> String {
+    Value::from(text).to_string()
+}
+
+fn toml_strings(items: &[String]) -> String {
+    Value::from(items.to_vec()).to_string()
+}
+
+fn toml_table(entries: &BTreeMap<String, String>) -> String {
+    let fields: Vec<String> = entries
+        .iter()
+        .map(|(key, value)| format!("{} = {}", toml_string(key), toml_string(value)))
+        .collect();
+    format!("{{{}}}", fields.join(", "))
+}
+
+/// The `-c` overrides that give the agent exactly its MCP servers: each declared server as
+/// `mcp_servers.<name>.*`, minus what `disallowedTools` cuts (`mcp__<server>` drops the server,
+/// `mcp__<server>__<tool>` one tool), and `enabled=false` for every server of the operator's
+/// `config.toml` it does not declare. A secret (`${NAME}`) is never expanded: an `env` entry
+/// passes the variable of the same name through (`env_vars`); a header passes it as
+/// `env_http_headers`, or `bearer_token_env_var` for `Authorization: Bearer ${NAME}`.
+pub fn mcp_overrides(profile: &Profile, configured: &[String]) -> Result<Vec<String>, EngineError> {
+    let mut cut_tools: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut cut_servers: Vec<&str> = Vec::new();
+    for tool in profile.disallowed_tools() {
+        let Some(rest) = tool.strip_prefix(MCP_TOOL_PREFIX) else {
+            continue;
+        };
+        match rest.split_once("__") {
+            Some((server, name)) if !name.is_empty() && name != "*" => {
+                cut_tools.entry(server).or_default().push(name.to_owned())
+            }
+            Some((server, _)) => cut_servers.push(server),
+            None => cut_servers.push(rest),
+        }
+    }
+    let mut overrides = Vec::new();
+    for (name, server) in profile.mcp_servers() {
+        if cut_servers.contains(&name.as_str()) {
+            continue;
+        }
+        let key = |field: &str| format!("mcp_servers.{name}.{field}");
+        match server {
+            McpServer::Stdio { command, args, env } => {
+                overrides.push(format!("{}={}", key("command"), toml_string(command)));
+                if !args.is_empty() {
+                    overrides.push(format!("{}={}", key("args"), toml_strings(args)));
+                }
+                let mut literal = BTreeMap::new();
+                let mut passed = Vec::new();
+                for (variable, value) in env {
+                    match variable_name(value) {
+                        Some(source) if source == variable => passed.push(variable.clone()),
+                        Some(source) => {
+                            return Err(EngineError::Refused(format!(
+                                "codex: MCP server {name}: env {variable}=${{{source}}}: codex passes a variable only under its own name"
+                            )));
+                        }
+                        None => {
+                            literal.insert(variable.clone(), value.clone());
+                        }
+                    }
+                }
+                if !literal.is_empty() {
+                    overrides.push(format!("{}={}", key("env"), toml_table(&literal)));
+                }
+                if !passed.is_empty() {
+                    overrides.push(format!("{}={}", key("env_vars"), toml_strings(&passed)));
+                }
+            }
+            McpServer::Http { url, headers } => {
+                overrides.push(format!("{}={}", key("url"), toml_string(url)));
+                let mut literal = BTreeMap::new();
+                let mut from_environment = BTreeMap::new();
+                for (header, value) in headers {
+                    if header.eq_ignore_ascii_case(AUTHORIZATION_HEADER)
+                        && let Some(variable) = bearer_variable(value)
+                    {
+                        overrides.push(format!(
+                            "{}={}",
+                            key("bearer_token_env_var"),
+                            toml_string(variable)
+                        ));
+                    } else if let Some(variable) = variable_name(value) {
+                        from_environment.insert(header.clone(), variable.to_owned());
+                    } else {
+                        literal.insert(header.clone(), value.clone());
+                    }
+                }
+                if !literal.is_empty() {
+                    overrides.push(format!("{}={}", key("http_headers"), toml_table(&literal)));
+                }
+                if !from_environment.is_empty() {
+                    overrides.push(format!(
+                        "{}={}",
+                        key("env_http_headers"),
+                        toml_table(&from_environment)
+                    ));
+                }
+            }
+        }
+        if let Some(tools) = cut_tools.get(name.as_str()) {
+            overrides.push(format!("{}={}", key("disabled_tools"), toml_strings(tools)));
+        }
+    }
+    for name in configured {
+        if !profile.mcp_servers().contains_key(name) || cut_servers.contains(&name.as_str()) {
+            overrides.push(format!("mcp_servers.{name}.enabled=false"));
+        }
+    }
+    Ok(overrides)
+}
+
+/// The switches that take away the built-in tools an agent definition does not offer: every
+/// [`BUILT_IN_SWITCHES`] group none of whose names is offered, and the [`CODEX_ONLY_FEATURES`]
+/// for a definition with a `tools` list. Without a definition nothing is switched.
+pub fn tool_switches(profile: &Profile) -> Vec<String> {
+    let offered = |name: &str| {
+        let listed = match profile.tools() {
+            BuiltInTools::EngineBase | BuiltInTools::All => true,
+            BuiltInTools::Listed(tools) => tools.iter().any(|tool| tool == name),
+        };
+        listed && !profile.disallowed_tools().iter().any(|tool| tool == name)
+    };
+    if *profile.tools() == BuiltInTools::EngineBase {
+        return Vec::new();
+    }
+    let mut switches = Vec::new();
+    for (names, switch) in BUILT_IN_SWITCHES {
+        if !names.iter().any(|name| offered(name)) {
+            switches.extend(switch.map(str::to_owned));
+        }
+    }
+    if matches!(profile.tools(), BuiltInTools::Listed(_)) {
+        for feature in CODEX_ONLY_FEATURES {
+            switches.extend([DISABLE_FLAG.to_owned(), feature.to_owned()]);
+        }
+    }
+    switches
 }
 
 /// One symlink per granted skill dir: `<engine dir>/<skill name>` → the skill dir.
@@ -721,11 +920,95 @@ mod tests {
             argv(&[
                 "-c",
                 "model_reasoning_effort=high",
+                "--disable",
+                "apps",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
             ])
         );
         assert!(plan.workspace.is_empty());
+    }
+
+    #[test]
+    fn an_agent_definition_gets_exactly_its_servers_and_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "model = \"m\"\n[mcp_servers.other]\ncommand = \"x\"\n[mcp_servers.probe]\ncommand = \"old\"\n",
+        )
+        .unwrap();
+        let servers = BTreeMap::from([
+            (
+                "probe".to_owned(),
+                McpServer::Stdio {
+                    command: "python3".into(),
+                    args: vec!["probe.py".into()],
+                    env: BTreeMap::from([
+                        ("MODE".to_owned(), "test".to_owned()),
+                        ("TOKEN".to_owned(), "${TOKEN}".to_owned()),
+                    ]),
+                },
+            ),
+            (
+                "web".to_owned(),
+                McpServer::Http {
+                    url: "https://x/mcp".into(),
+                    headers: BTreeMap::from([
+                        ("Authorization".to_owned(), "Bearer ${WEB_TOKEN}".to_owned()),
+                        ("X-Key".to_owned(), "${KEY}".to_owned()),
+                        ("X-Team".to_owned(), "tx".to_owned()),
+                    ]),
+                },
+            ),
+        ]);
+        let profile = Profile::write(
+            ResolvedProfile {
+                tools: BuiltInTools::Listed(vec!["Bash".into(), "WebFetch".into()]),
+                disallowed_tools: vec!["mcp__probe__delete_thing".into()],
+                mcp_servers: servers,
+                ..ResolvedProfile::default()
+            },
+            &dir.path().join("p.md"),
+        )
+        .unwrap();
+        let session = record(serde_json::Value::Null);
+        let args = CodexAdapter::new(dir.path())
+            .start(&LaunchRequest::new(&session, &profile), "go")
+            .unwrap()
+            .args;
+        let overrides: Vec<&str> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "-c" && pair[1].starts_with("mcp_servers."))
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(
+            overrides,
+            [
+                r#"mcp_servers.probe.command="python3""#,
+                r#"mcp_servers.probe.args=["probe.py"]"#,
+                r#"mcp_servers.probe.env={"MODE" = "test"}"#,
+                r#"mcp_servers.probe.env_vars=["TOKEN"]"#,
+                r#"mcp_servers.probe.disabled_tools=["delete_thing"]"#,
+                r#"mcp_servers.web.url="https://x/mcp""#,
+                r#"mcp_servers.web.bearer_token_env_var="WEB_TOKEN""#,
+                r#"mcp_servers.web.http_headers={"X-Team" = "tx"}"#,
+                r#"mcp_servers.web.env_http_headers={"X-Key" = "KEY"}"#,
+                "mcp_servers.other.enabled=false",
+            ]
+        );
+        let joined = args.join(" ");
+        assert!(joined.contains("--disable apps"));
+        assert!(!joined.contains("shell_tool"), "Bash is listed");
+        assert!(!joined.contains("web_search"), "WebFetch is listed");
+        for switch in [
+            "-c features.multi_agent_v2.disable_native_tools=true",
+            "-c tools.experimental_request_user_input.enabled=false",
+            "--disable sleep_tool",
+            "--disable goals",
+            "--disable tool_suggest",
+        ] {
+            assert!(joined.contains(switch), "{switch}");
+        }
     }
 
     #[test]
@@ -744,6 +1027,8 @@ mod tests {
                 "model_reasoning_effort=low",
                 "-c",
                 "developer_instructions=be good",
+                "--disable",
+                "apps",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
                 "go",
@@ -786,6 +1071,8 @@ mod tests {
                 "o3",
                 "-c",
                 "model_reasoning_effort=high",
+                "--disable",
+                "apps",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
             ])
@@ -810,6 +1097,8 @@ mod tests {
                 "tui.resume_cwd=current",
                 "-c",
                 "model_reasoning_effort=high",
+                "--disable",
+                "apps",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
                 "go",
@@ -908,7 +1197,7 @@ mod tests {
         let plan = adapter()
             .start(&LaunchRequest::new(&session, &profile), "")
             .unwrap();
-        assert_eq!(plan.args.len(), 4);
+        assert_eq!(plan.args.len(), 6);
         assert!(!plan.args.contains(&"-m".to_owned()));
     }
 
