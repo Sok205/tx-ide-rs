@@ -43,9 +43,9 @@ Templates are next to this file: `templates/agent.md`, `templates/SKILL.md`, `te
 - **Reference skills**: Claude's bundled skills (`loop`, `simplify`, …) and the operator's
   claude.ai-synced skills (`pdf`, `docx`, …) ship as `SKILL.md` files holding only frontmatter,
   with `metadata.provided-by: claude-bundled` or `claude-synced`. List them in `skills` like any
-  skill. A synced skill arrives alone. A bundled one turns on Claude's whole bundle, since Claude cannot
-  enable them one by one, and `tx check` and `tx create` warn about it. Codex
-  has none of them, so a launch there is refused. Never copy their text into a skill.
+  skill. A synced skill arrives alone. A bundled one turns on Claude's whole bundle, since Claude
+  cannot enable them one by one, and `tx check` and `tx create` warn about it. Codex has none of
+  them, so a launch there is refused. Never copy their text into a skill.
 - **MCP servers**, `mcp.json`: Claude's `.mcp.json` format.
   - `{"mcpServers": {"<name>": {...}}}`, with `"type": "stdio"` (`command`, `args`, `env`) or
     `"type": "http"` (`url`, `headers`).
