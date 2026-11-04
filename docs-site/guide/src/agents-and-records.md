@@ -77,14 +77,18 @@ The shipped roles are **COMMON** (be concise, introduce yourself, change agents 
 through `tx`, read the message envelopes, use artifacts for deliverables), **DEVELOPER** (short
 chat with reasoning in artifacts, full variable names, branch in your worktree, no PR or merge
 unasked), **ORCHESTRATOR**, **QA** and **TX-ASSISTANT**. The new-agent form and the assistant add
-COMMON; `tx create` uses exactly the `--role`s given.
+COMMON. `tx create` runs the `--role`s given; without any, it runs `config.yaml`'s `agent.roles`,
+or with `--agent` the definition's `roles`.
 
 ## Agent definitions
 
 An **agent definition** is `agents/<name>.md` under `<data>/definitions` (shipped) or
 `<config>/definitions` (yours, which win by name): Claude's agent format, reduced to `name`,
 `description`, `tools` (required: the built-in tools, in Claude's names), `mcpServers`,
-`disallowedTools` and `skills`, with the prompt as the body.
+`disallowedTools`, `skills` and `roles`, with the prompt as the body. `roles` names the shared
+prompt layers (such as COMMON) the agent runs on when the launch names none; their text comes
+before the body, and their skill grants join `skills`, each skill once. Tools and MCP servers come
+only from the definition.
 `mcp.json` beside it holds the MCP servers in Claude's `.mcp.json` format, and `skills/` the
 skills. `tx definitions [agents|skills|mcp]` lists them, and `tx definitions tools` the names `tools`
 can use: Claude's built-ins (read once per Claude version from a headless launch's `system/init`
@@ -97,7 +101,8 @@ prompt after any `--role` text, its skills plus the `--skill` extras, its tools 
 extras, and exactly its MCP servers plus the `--mcp` extras — nothing from the engine's own
 config. The record keeps `definition: {agent, skills, mcp_servers, tools}`, and every launch
 resolves it again, so a respawn keeps the extras and picks up an edited definition. With `--agent`
-the default roles of `config.yaml` do not apply. Without it, the launch runs `config.yaml`'s
+the default roles of `config.yaml` do not apply: a launch without `--role` runs the definition's
+`roles` (resolved again at every launch, like the rest of it), and `--role` replaces them. Without it, the launch runs `config.yaml`'s
 `agent.definition` (default `developer`: today's worker tools and the tx skills) on top of the
 roles, which give the prompt; `definition: null` leaves roles alone with the engine's base tools.
 A record from before definitions adopts the default at its next respawn. A secret an MCP server names (`${NAME}`) is taken

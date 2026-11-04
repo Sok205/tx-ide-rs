@@ -9,8 +9,8 @@ use common::{
 };
 use tx_core::worktree::repository_key;
 use tx_core::{
-    Agent, AgentId, CoreError, CreateOptions, EngineKind, LaunchOptions, ListFilter,
-    LlmEngineState, WorktreeError,
+    Agent, AgentId, CoreError, CreateOptions, DefinitionChoice, EngineKind, LaunchOptions,
+    ListFilter, LlmEngineState, WorktreeError,
 };
 
 fn env_of(cwd: &std::path::Path) -> Vec<(String, String)> {
@@ -173,6 +173,64 @@ fn agent_session_gets_profile_plan_and_workspace() {
         Some(&serde_json::json!({"model": "m", "effort": "max"}))
     );
     assert_eq!(session.tags, ["t1"]);
+}
+
+/// A launch that names no roles runs its definition's `roles`, ahead of the definition's own
+/// prompt; named roles replace them; and a respawn reads `roles` again.
+#[test]
+fn a_launch_without_roles_runs_its_definitions_roles() {
+    require_tmux!();
+    let h = Harness::new();
+    let roles = h.dir.path().join("roles");
+    std::fs::create_dir_all(&roles).unwrap();
+    std::fs::write(roles.join("COMMON.md"), "Shared.\n").unwrap();
+    std::fs::write(roles.join("dev.md"), "Dev.\n").unwrap();
+    let definition = h.data_dir().join("definitions/agents/pm.md");
+    std::fs::create_dir_all(definition.parent().unwrap()).unwrap();
+    std::fs::write(
+        &definition,
+        "---\nname: pm\ndescription: d\ntools: []\nroles: [COMMON]\n---\nPM.\n",
+    )
+    .unwrap();
+    let mut config = h.config();
+    config.profile_dirs = vec![roles];
+    let mut core = tx_core::TxCore::open(config).unwrap();
+    core.register_engine(Box::new(common::ShellStub)).unwrap();
+    let repository = h.repository("a");
+    let profile_of = |id: &AgentId| {
+        std::fs::read_to_string(h.state_dir().join(format!("profiles/{id}.md"))).unwrap()
+    };
+    let launch = || {
+        LaunchOptions::agent(STUB_KIND)
+            .definition(DefinitionChoice::new("pm"))
+            // Model `data`: the stub names its conversation, which a respawn resumes.
+            .option("model", "data")
+            .initial_prompt("start")
+    };
+
+    let id = core
+        .create_agent(CreateOptions::new("bare", repository.clone(), launch()))
+        .unwrap();
+    assert_eq!(profile_of(&id), "Shared.\n\nPM.");
+    assert!(core.get_agent(&id).unwrap().roles.is_empty());
+
+    let named = core
+        .create_agent(CreateOptions::new(
+            "named",
+            repository.clone(),
+            launch().profile(["dev"]),
+        ))
+        .unwrap();
+    assert_eq!(profile_of(&named), "Dev.\n\nPM.");
+
+    std::fs::write(
+        &definition,
+        "---\nname: pm\ndescription: d\ntools: []\nroles: [COMMON, dev]\n---\nPM.\n",
+    )
+    .unwrap();
+    core.stop_agent(&id).unwrap();
+    core.respawn_agent(&id).unwrap();
+    assert_eq!(profile_of(&id), "Shared.\n\nDev.\n\nPM.");
 }
 
 /// The engine is handed the record being created (its id), and the engine data its plan carries

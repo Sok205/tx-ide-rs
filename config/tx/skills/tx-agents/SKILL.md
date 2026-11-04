@@ -35,6 +35,10 @@ Templates are next to this file: `templates/agent.md`, `templates/SKILL.md`, `te
     - `disallowedTools`: cuts, such as `mcp__<server>__<tool>`, or `mcp__<server>` for the whole
       server.
     - `skills`: skill names.
+    - `roles`: role names, the shared prompt layers (such as `COMMON`) put before the prompt.
+      Their skill grants join `skills`, and each skill comes once. A launch with `--role` runs
+      those roles instead.
+  - Tools and MCP servers come only from the definition, never from its roles.
   - A list key takes a YAML list or a comma string.
   - Model and effort are not part of it; they are `tx create` flags.
 - **Skill**, `skills/<name>/SKILL.md`: the Agent Skills standard. The frontmatter has `name`
@@ -70,7 +74,8 @@ Templates are next to this file: `templates/agent.md`, `templates/SKILL.md`, `te
 
 - **Start an agent from a definition:**
   `tx create <name> --agent <definition> [--skill S]... [--mcp M]... [--tool T]... --cwd <dir> --prompt <text>`.
-  The default roles do not apply with `--agent`; only `--role` adds roles.
+  With `--agent`, the roles are the `--role`s given, else the definition's `roles`; the config's
+  default roles do not apply.
 - **The definition is read again at every launch.** To apply an edit to a running agent, run
   `tx stop <agent>`, then `tx respawn <agent>`. The conversation and its cache survive, and the
   extras given at create are kept.
