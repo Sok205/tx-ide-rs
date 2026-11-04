@@ -30,6 +30,26 @@ pub const SHIPPED: &[(&str, &[u8])] = &[
         include_bytes!("../agents/TX-ASSISTANT.md"),
     ),
     (
+        "definitions/agents/claude.md",
+        include_bytes!("../../config/tx/agents/claude.md"),
+    ),
+    (
+        "definitions/skills/tx-agents/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-agents/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-agents/templates/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-agents/templates/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-agents/templates/agent.md",
+        include_bytes!("../../config/tx/skills/tx-agents/templates/agent.md"),
+    ),
+    (
+        "definitions/skills/tx-agents/templates/mcp.json",
+        include_bytes!("../../config/tx/skills/tx-agents/templates/mcp.json"),
+    ),
+    (
         "definitions/skills/tx-artifacts/SKILL.md",
         include_bytes!("../../config/tx/skills/tx-artifacts/SKILL.md"),
     ),
