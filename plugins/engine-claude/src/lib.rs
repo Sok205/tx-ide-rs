@@ -215,13 +215,41 @@ pub struct ClaudeOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaudeAdapter {
     pub claude_home: PathBuf,
+    /// The operator's Claude settings, from this plugin's own `claude_settings`: merged into every
+    /// launch's `--settings`, under tx's own keys.
+    pub claude_settings: serde_json::Map<String, Value>,
+    /// Claude's JSON config file, where `prepare` marks each worktree trusted; `None` trusts
+    /// nothing (tests).
+    pub trust_file: Option<PathBuf>,
+}
+
+/// This plugin's settings in `config.yaml` (`plugins.engine-claude.settings`); an unknown key is
+/// refused.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// Claude settings (`settings.json` keys) every launch passes on.
+    #[serde(default)]
+    pub claude_settings: serde_json::Map<String, Value>,
 }
 
 impl ClaudeAdapter {
     pub fn new(claude_home: impl Into<PathBuf>) -> Self {
         Self {
             claude_home: claude_home.into(),
+            claude_settings: serde_json::Map::new(),
+            trust_file: None,
         }
+    }
+
+    pub fn claude_settings(mut self, settings: serde_json::Map<String, Value>) -> Self {
+        self.claude_settings = settings;
+        self
+    }
+
+    pub fn trust_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.trust_file = Some(file.into());
+        self
     }
 
     /// The command line every launch shares after the `args` that name the conversation:
@@ -282,7 +310,7 @@ impl ClaudeAdapter {
         }
         args.extend([
             SETTINGS_FLAG.to_owned(),
-            launch_settings(request.hook_command),
+            launch_settings(&self.claude_settings, request.hook_command),
             SKIP_PERMISSIONS_FLAG.to_owned(),
         ]);
         if !prompt.is_empty() {
@@ -370,6 +398,16 @@ impl LlmEngine for ClaudeAdapter {
 
     fn ext_key(&self) -> &'static str {
         EXT_KEY
+    }
+
+    /// Marks the worktree trusted in Claude's config file, so the session does not stop on the
+    /// folder-trust dialog. A config file that does not exist yet is left to Claude.
+    fn prepare(&self, session: &Agent) -> Result<(), EngineError> {
+        if let Some(file) = &self.trust_file {
+            trust::trust_project(file, &session.working_directory)
+                .map_err(|error| EngineError::Refused(format!("claude trust: {error}")))?;
+        }
+        Ok(())
     }
 
     fn configure(&self, session: &Agent, options: &Value) -> Result<Value, EngineError> {
@@ -558,12 +596,19 @@ pub fn tools(profile: &Profile) -> String {
 /// auto-memory off, and `skipDangerousModePermissionPrompt` keeps
 /// `--dangerously-skip-permissions` from asking for confirmation (default answer: exit). Every
 /// [`HOOK_EVENTS`] entry is wired to `hook_command` (no hooks when it is empty).
-pub fn launch_settings(hook_command: &[String]) -> String {
-    let mut settings = serde_json::json!({
-        "autoMemoryEnabled": false,
-        "disableBundledSkills": true,
-        "skipDangerousModePermissionPrompt": true,
-    });
+/// The operator's `claude_settings` come first, so tx's own keys win.
+pub fn launch_settings(
+    claude_settings: &serde_json::Map<String, Value>,
+    hook_command: &[String],
+) -> String {
+    let mut settings = Value::Object(claude_settings.clone());
+    for (key, value) in [
+        ("autoMemoryEnabled", false),
+        ("disableBundledSkills", true),
+        ("skipDangerousModePermissionPrompt", true),
+    ] {
+        settings[key] = Value::Bool(value);
+    }
     if !hook_command.is_empty() {
         settings["hooks"] = hook_settings(hook_command);
     }
@@ -660,7 +705,20 @@ impl tx_core::Plugin for ClaudePlugin {
     }
 
     fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
-        r.engine(Box::new(ClaudeAdapter::new(claude_home_from_env())));
+        let settings: Settings = match r.settings() {
+            Value::Null => Settings::default(),
+            value => serde_json::from_value(value.clone()).map_err(|error| {
+                tx_core::PluginError::Register {
+                    plugin: "engine-claude".to_owned(),
+                    reason: format!("settings: {error}"),
+                }
+            })?,
+        };
+        r.engine(Box::new(
+            ClaudeAdapter::new(claude_home_from_env())
+                .claude_settings(settings.claude_settings)
+                .trust_file(claude_config_file_from_env()),
+        ));
         Ok(())
     }
 }
@@ -1183,6 +1241,40 @@ mod tests {
             Some("ToolSearch,Bash,Skill")
         );
         assert_eq!(value_of(&args, "--mcp-config"), None);
+    }
+
+    #[test]
+    fn the_operators_settings_merge_under_txs_own_keys() {
+        let operator = serde_json::json!({"theme": "dark", "autoMemoryEnabled": true})
+            .as_object()
+            .unwrap()
+            .clone();
+        let settings: Value = serde_json::from_str(&launch_settings(&operator, &[])).unwrap();
+        assert_eq!(
+            settings,
+            serde_json::json!({
+                "theme": "dark",
+                "autoMemoryEnabled": false,
+                "disableBundledSkills": true,
+                "skipDangerousModePermissionPrompt": true,
+            })
+        );
+    }
+
+    #[test]
+    fn prepare_marks_the_worktree_trusted() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(".claude.json");
+        std::fs::write(&file, r#"{"projects": {}}"#).unwrap();
+        let session = record(dir.path(), serde_json::Value::Null);
+        adapter().trust_file(&file).prepare(&session).unwrap();
+        let config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            config["projects"][dir.path().to_string_lossy().as_ref()]["hasTrustDialogAccepted"],
+            true
+        );
+        // Without a trust file nothing is touched.
+        adapter().prepare(&session).unwrap();
     }
 
     #[test]

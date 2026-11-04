@@ -199,7 +199,7 @@ fn default_skill_dirs(directories: &Directories) -> Vec<PathBuf> {
 
 /// The core config from the globals and the process environment; touches no disk.
 pub fn core_config(global: &Global) -> Result<CoreConfig, Failure> {
-    core_config_in(global, &process_environment)
+    Ok(core_config_in(global, &process_environment)?.caller_env(std::env::vars()))
 }
 
 pub fn core_config_in(

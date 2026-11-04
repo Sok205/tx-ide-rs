@@ -336,6 +336,8 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
             .args(cli.role_flags())
             .args(args)
             .env("PATH", &path)
+            // The engine seeds folder trust in Claude's config file: keep it off the real HOME.
+            .env("CLAUDE_CONFIG_DIR", cli.claude_config_dir())
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID")
             .env_remove("TX_APPNAME")

@@ -18,7 +18,11 @@ definition's `tools` instead of Bash, Read, Edit and Write. Every agent also get
 `BASELINE_TOOLS`: `Skill` (so granted skills are listed) and `ToolSearch` (so MCP schemas stay
 deferred); `tx definitions` and `tx check` show it, and nothing else is ever added. The definition's
 `disallowedTools` go as `--disallowedTools`, and its MCP servers as inline `--mcp-config` JSON.
-`tx check --engine claude` lists what every launch carries that no flag removes. It wires Claude's hooks to `txi hook <Event>`. It keeps
+`tx check --engine claude` lists what every launch carries that no flag removes. The plugin's
+own settings (`plugins.engine-claude.settings.claude_settings` in `config.yaml`) are Claude
+settings merged into every launch's `--settings`, under tx's own keys; `~/.claude/settings.json`
+is never read. Before each launch the plugin marks the worktree trusted in Claude's config file
+(`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`), so it never stops on the trust dialog. It wires Claude's hooks to `txi hook <Event>`. It keeps
 `conversation_id`, `transcript_path`, `model` and `effort` under `ext.claude`, archives each
 transcript with its sidecar directory, and restores it for a resume when Claude has cleaned it up.
 

@@ -162,6 +162,20 @@ pub enum McpServer {
     },
 }
 
+impl McpServer {
+    /// The variables its secrets name: `${NAME}` in `env` or `headers`, `Bearer ${NAME}` in
+    /// `Authorization`.
+    pub fn variables(&self) -> Vec<&str> {
+        let values = match self {
+            McpServer::Stdio { env, .. } => env.values(),
+            McpServer::Http { headers, .. } => headers.values(),
+        };
+        values
+            .filter_map(|value| variable_name(value).or_else(|| bearer_variable(value)))
+            .collect()
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct McpServerFields {

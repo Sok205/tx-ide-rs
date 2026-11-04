@@ -94,6 +94,9 @@ pub struct CoreConfig {
     pub tmux_socket: Option<PathBuf>,
     /// Base environment for every session, applied before the per-session env.
     pub env: Vec<(String, String)>,
+    /// The caller's environment. Never passed into a session whole: a launch takes from it only
+    /// the variables its MCP servers name (`${NAME}`), and refuses when one is unset.
+    pub caller_env: Vec<(String, String)>,
     /// Role search dirs, in order; a later dir overrides an earlier one.
     pub profile_dirs: Vec<PathBuf>,
     /// Skill search dirs, in order; a later dir overrides an earlier one.
@@ -108,6 +111,7 @@ impl CoreConfig {
             directories,
             tmux_socket: None,
             env: Vec::new(),
+            caller_env: Vec::new(),
             profile_dirs: Vec::new(),
             skill_dirs: Vec::new(),
             hook_command: Vec::new(),
@@ -121,6 +125,17 @@ impl CoreConfig {
 
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn caller_env<I, K, V>(mut self, variables: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.caller_env
+            .extend(variables.into_iter().map(|(key, value)| (key.into(), value.into())));
         self
     }
 

@@ -94,7 +94,9 @@ prompt after any `--role` text, its skills plus the `--skill` extras, its tools 
 extras, and exactly its MCP servers plus the `--mcp` extras — nothing from the engine's own
 config. The record keeps `definition: {agent, skills, mcp_servers, tools}`, and every launch
 resolves it again, so a respawn keeps the extras and picks up an edited definition. With `--agent`
-the default roles of `config.yaml` do not apply.
+the default roles of `config.yaml` do not apply. A secret an MCP server names (`${NAME}`) is taken
+from the environment of the `tx` that launches the agent (create or respawn) and set in the
+session; when it is unset the launch is refused, on both engines.
 
 ## Engines
 

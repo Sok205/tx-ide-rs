@@ -875,6 +875,26 @@ impl TxCore {
         merge_env(&mut env, &self.config.env);
         merge_env(&mut env, extra_env);
 
+        // The secrets the MCP servers name come from the caller, explicitly: the session would
+        // otherwise see only the tmux server's environment from whenever it started.
+        for (server, definition) in &engine.resolved.mcp_servers {
+            for variable in definition.variables() {
+                if env.iter().any(|(key, _)| key == variable) {
+                    continue;
+                }
+                let value = self
+                    .config
+                    .caller_env
+                    .iter()
+                    .find(|(key, _)| key == variable)
+                    .ok_or_else(|| CoreError::MissingVariable {
+                        server: server.clone(),
+                        variable: variable.to_owned(),
+                    })?;
+                env.push(value.clone());
+            }
+        }
+        engine.adapter.prepare(session)?;
         let profile =
             Profile::write(engine.resolved, &profile_file).map_err(store_io(&profile_file))?;
         let request = LaunchRequest {
