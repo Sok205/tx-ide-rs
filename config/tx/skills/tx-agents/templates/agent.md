@@ -5,5 +5,6 @@ tools: Bash, Read, Edit, Write     # required: the built-in tools it gets (`tx d
 mcpServers: [example-server]       # keys of mcp.json; none listed = no MCP at all
 disallowedTools: mcp__example-server__delete_item   # optional cuts inside a server
 skills: [tx-artifacts]             # skill names (`tx definitions skills`)
+roles: [COMMON]                    # shared prompt layers put before the prompt below; --role replaces them
 ---
 The agent's prompt: who it is, what it does, how it reports.

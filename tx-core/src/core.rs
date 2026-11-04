@@ -1026,14 +1026,19 @@ impl TxCore {
     }
 
     /// The profile a launch runs: the roles' text and skills, with the agent definition and its
-    /// extras on top when there is one. Resolved again at every launch, so a respawn picks up
-    /// edited definitions.
+    /// extras on top when there is one. A launch that names no roles runs the definition's
+    /// `roles`. Resolved again at every launch, so a respawn picks up edited definitions.
     fn resolve_profile(
         &self,
         roles: &[String],
         definition: Option<&DefinitionChoice>,
     ) -> Result<ResolvedProfile, CoreError> {
-        let resolved = self.profiles.resolve(roles)?;
+        let resolved = match definition {
+            Some(choice) if roles.is_empty() => self
+                .profiles
+                .resolve(&self.definitions.agent(&choice.agent)?.roles)?,
+            _ => self.profiles.resolve(roles)?,
+        };
         Ok(match definition {
             Some(choice) => self.definitions.apply(resolved, choice)?,
             None => resolved,

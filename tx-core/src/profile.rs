@@ -219,6 +219,11 @@ impl Profiles {
         })
     }
 
+    /// Whether a role of that name resolves: a bare name with a `<role>.md` in some dir.
+    pub fn has_role(&self, role: &str) -> bool {
+        is_bare_name(role) && self.role_files(role).is_ok()
+    }
+
     /// The base file from the last dir holding `<role>.md`, then every dir's `<role>.local.md`.
     fn role_files(&self, role: &str) -> Result<Vec<PathBuf>, RoleError> {
         let base_name = format!("{role}{ROLE_SUFFIX}");

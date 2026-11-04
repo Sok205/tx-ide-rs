@@ -13,7 +13,7 @@ use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::DefinitionChoice;
-use crate::profile::{ResolvedProfile, SkillProvider};
+use crate::profile::{Profiles, ResolvedProfile, SkillProvider};
 
 pub const AGENTS_DIR: &str = "agents";
 pub const AGENT_SUFFIX: &str = ".md";
@@ -56,6 +56,9 @@ pub struct AgentDefinition {
     pub mcp_servers: Vec<String>,
     pub disallowed_tools: Vec<String>,
     pub skills: Vec<String>,
+    /// The roles it runs on when the launch names none (`--role` replaces them): the shared
+    /// prompt layers, such as COMMON, put before its own prompt.
+    pub roles: Vec<String>,
     pub prompt: String,
     pub path: PathBuf,
     /// The frontmatter text, for `line_of`; its line 1 is the file's line 2.
@@ -74,6 +77,8 @@ struct AgentFrontmatter {
     disallowed_tools: NameList,
     #[serde(default)]
     skills: NameList,
+    #[serde(default)]
+    roles: NameList,
 }
 
 /// A list of names, written as a YAML list or as one comma-separated string (`Bash, Read`), as
@@ -341,6 +346,7 @@ pub fn read_agent(path: &Path) -> Result<AgentDefinition, DefinitionError> {
         mcp_servers: parsed.mcp_servers.0,
         disallowed_tools: parsed.disallowed_tools.0,
         skills: parsed.skills.0,
+        roles: parsed.roles.0,
         prompt: body.trim().to_owned(),
         path: path.to_owned(),
         frontmatter: frontmatter.to_owned(),
@@ -601,9 +607,13 @@ impl Definitions {
     }
 
     /// Validates the winning definitions: every agent, skill and `mcp.json` when `names` is
-    /// empty, else the agents, skills and servers of those names. Returns what was checked and
-    /// every problem found, not just the first.
-    pub fn check(&self, names: &[String]) -> Result<CheckReport, DefinitionError> {
+    /// empty, else the agents, skills and servers of those names. An agent's `roles` must be
+    /// roles of `profiles`. Returns what was checked and every problem found, not just the first.
+    pub fn check(
+        &self,
+        names: &[String],
+        profiles: &Profiles,
+    ) -> Result<CheckReport, DefinitionError> {
         let mut report = CheckReport::default();
         let agent_files = self.agent_files()?;
         let skill_directories = self.skill_directories()?;
@@ -647,7 +657,7 @@ impl Definitions {
             }
             match read_agent(path) {
                 Ok(agent) => {
-                    check_agent(&agent, &skill_directories, &servers, &mut report);
+                    check_agent(&agent, &skill_directories, &servers, profiles, &mut report);
                     report.agent_definitions.push(agent);
                 }
                 Err(error) => report.problems.push(error),
@@ -703,12 +713,13 @@ fn is_bare_name(name: &str) -> bool {
 
 const MCP_TOOL_PREFIX: &str = "mcp__";
 
-/// The references of one agent: its skills and servers exist, `tools` names no MCP tool (Claude
-/// ignores those there), and an `mcp__<server>` cut names one of its servers.
+/// The references of one agent: its skills, roles and servers exist, `tools` names no MCP tool
+/// (Claude ignores those there), and an `mcp__<server>` cut names one of its servers.
 fn check_agent(
     agent: &AgentDefinition,
     skill_directories: &BTreeMap<String, PathBuf>,
     servers: &BTreeMap<String, PathBuf>,
+    profiles: &Profiles,
     report: &mut CheckReport,
 ) {
     let problem =
@@ -717,6 +728,11 @@ fn check_agent(
     for skill in &agent.skills {
         if !skill_directories.contains_key(skill) {
             problems.push(problem("skills", format!("unknown skill {skill:?}")));
+        }
+    }
+    for role in &agent.roles {
+        if !profiles.has_role(role) {
+            problems.push(problem("roles", format!("unknown role {role:?}")));
         }
     }
     for server in &agent.mcp_servers {
@@ -836,13 +852,14 @@ mod tests {
         write(
             &path,
             "---\nname: pm\ndescription: Triages.\ntools: Bash, Read\nmcpServers: [linear]\n\
-             disallowedTools: mcp__linear__delete_comment\nskills:\n  - tx-artifacts\n---\n\nThe prompt.\n",
+             disallowedTools: mcp__linear__delete_comment\nskills:\n  - tx-artifacts\nroles: COMMON, QA\n---\n\nThe prompt.\n",
         );
         let agent = read_agent(&path).unwrap();
         assert_eq!(agent.tools, ["Bash", "Read"]);
         assert_eq!(agent.mcp_servers, ["linear"]);
         assert_eq!(agent.disallowed_tools, ["mcp__linear__delete_comment"]);
         assert_eq!(agent.skills, ["tx-artifacts"]);
+        assert_eq!(agent.roles, ["COMMON", "QA"]);
         assert_eq!(agent.prompt, "The prompt.");
         assert_eq!(agent.line_of("skills"), Some(7));
     }
@@ -992,20 +1009,55 @@ mod tests {
     }
 
     #[test]
+    fn a_skill_both_its_roles_and_the_definition_grant_comes_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        write(
+            &root.join("agents/dev.md"),
+            "---\nname: dev\ndescription: d\ntools: []\nroles: [COMMON]\nskills: [a, b]\n---\n",
+        );
+        write(
+            &root.join("roles/COMMON.md"),
+            "---\ntx:\n  skills: [a]\n---\nShared.\n",
+        );
+        for skill in ["a", "b"] {
+            write(
+                &root.join(format!("skills/{skill}/SKILL.md")),
+                &format!("---\nname: {skill}\ndescription: d\n---\n"),
+            );
+        }
+        let definitions = Definitions::new([root.clone()]);
+        let profiles = Profiles::new(vec![root.join("roles")], vec![root.join("skills")]);
+        let agent = definitions.agent("dev").unwrap();
+        let roles = profiles.resolve(&agent.roles).unwrap();
+        let resolved = definitions
+            .apply(roles, &DefinitionChoice::new("dev"))
+            .unwrap();
+        assert_eq!(
+            resolved.skill_dirs,
+            [root.join("skills/a"), root.join("skills/b")]
+        );
+    }
+
+    #[test]
     fn check_reports_every_problem_with_its_line() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_owned();
         write(
             &root.join("agents/pm.md"),
             "---\nname: pm\ndescription: d\ntools: Bash, mcp__probe__get\nmcpServers: [probe, nope]\n\
-             disallowedTools: mcp__other__x\nskills: [missing]\n---\n",
+             disallowedTools: mcp__other__x\nskills: [missing]\nroles: [COMMON, ghost]\n---\n",
         );
         write(&root.join("agents/bad.md"), "---\nname: bad\n---\n");
+        write(&root.join("roles/COMMON.md"), "Shared.\n");
+        let profiles = Profiles::new(vec![root.join("roles")], vec![root.join("skills")]);
         write(
             &root.join("mcp.json"),
             "{\"mcpServers\": {\n  \"probe\": {\"command\": \"${BIN}\", \"env\": {\"A\": \"x${B}\", \"C\": \"${C}\"}},\n  \"web\": {\"type\": \"http\", \"url\": \"u\", \"headers\": {\"Authorization\": \"Bearer ${T}\", \"X\": \"Bearer ${T}\"}}\n}}",
         );
-        let report = Definitions::new([root.clone()]).check(&[]).unwrap();
+        let report = Definitions::new([root.clone()])
+            .check(&[], &profiles)
+            .unwrap();
         let lines: Vec<String> = report
             .problems
             .iter()
@@ -1024,6 +1076,7 @@ mod tests {
             [
                 "agents/bad.md:2: missing field `description`",
                 "agents/pm.md:7: unknown skill \"missing\"",
+                "agents/pm.md:8: unknown role \"ghost\"",
                 "agents/pm.md:5: unknown MCP server \"nope\" (not in any mcp.json)",
                 "agents/pm.md:4: \"mcp__probe__get\": `tools` lists built-in tools only; list the \
                  server in `mcpServers` and cut its tools with `disallowedTools`",
@@ -1035,7 +1088,7 @@ mod tests {
         );
         assert_eq!((report.agents, report.skills, report.servers), (2, 0, 2));
         let named = Definitions::new([root])
-            .check(&["probe".to_owned(), "x".to_owned()])
+            .check(&["probe".to_owned(), "x".to_owned()], &profiles)
             .unwrap();
         assert_eq!((named.agents, named.servers), (0, 1));
         assert_eq!(

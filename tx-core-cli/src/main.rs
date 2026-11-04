@@ -105,9 +105,14 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             return Ok(ExitCode::SUCCESS);
         }
         Verb::Check { engine, names } => {
-            let directories = core_config(&invocation.global)?.directories;
+            let config = core_config(&invocation.global)?;
+            let profiles = tx_core::profile::Profiles::new(
+                config.profile_dirs.clone(),
+                config.skill_dirs.clone(),
+            );
             let clean = tx_core_cli::definitions::check(
-                &directories,
+                &config.directories,
+                &profiles,
                 *engine,
                 names,
                 &mut std::io::stdout().lock(),

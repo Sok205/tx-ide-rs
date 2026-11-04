@@ -23,7 +23,8 @@ verbs:
                                                                     `definitions`): its prompt, tools, MCP servers and
                                                                     skills, plus the --skill/--mcp/--tool extras, all kept
                                                                     on the record and resolved again at every respawn;
-                                                                    with --agent, only --role adds roles
+                                                                    with --agent, the roles are the --roles given, else
+                                                                    the definition's `roles:`
   fork SOURCE --prompt T [--name NAME] [--tag T]... [--option KEY=VALUE]... [--model M] [--effort E]
                                                                     a new agent continuing SOURCE's conversation in a branch,
                                                                     in its own worktree at SOURCE's committed HEAD (uncommitted
@@ -116,7 +117,7 @@ pub enum Verb {
         env: Vec<(String, String)>,
         /// `None`: the config file's `agent.engine`.
         engine: Option<EngineKind>,
-        /// Empty: the config file's `agent.roles`, or none with `--agent`.
+        /// Empty: the config file's `agent.roles`, or with `--agent` the definition's `roles:`.
         roles: Vec<String>,
         /// `--agent A` and its `--skill`/`--mcp`/`--tool` extras.
         definition: Option<tx_core::DefinitionChoice>,

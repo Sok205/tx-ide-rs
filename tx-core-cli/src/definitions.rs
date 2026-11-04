@@ -4,6 +4,7 @@
 use std::io::Write;
 
 use tx_core::definitions::{DefinitionError, Definitions, McpServer, read_agent, read_skill};
+use tx_core::profile::Profiles;
 use tx_core::{Directories, EngineKind, SkillProvider};
 
 use crate::args::DefinitionKind;
@@ -151,11 +152,12 @@ pub fn bundle_warning(
 /// The Claude baseline is shown unless the engine is Codex, which has none.
 pub fn check(
     directories: &Directories,
+    profiles: &Profiles,
     engine: Option<EngineKind>,
     names: &[String],
     out: &mut dyn Write,
 ) -> Result<bool, DefinitionError> {
-    let report = Definitions::new(directories.definition_roots()).check(names)?;
+    let report = Definitions::new(directories.definition_roots()).check(names, profiles)?;
     let mut engine_problems = 0;
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
