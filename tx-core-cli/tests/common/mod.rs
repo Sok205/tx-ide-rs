@@ -21,6 +21,17 @@ pub fn tmux_available() -> bool {
 
 /// Every directory flag naming `dir`: the suites keep the five directories in one place, so
 /// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
+/// A stand-in for the shipped default agent definition, `developer`, under `config_dir`.
+pub fn stand_in_definition(config_dir: &std::path::Path) {
+    let agents = config_dir.join("definitions/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("developer.md"),
+        "---\nname: developer\ndescription: stand-in\ntools: Bash, Read, Edit, Write\n---\n",
+    )
+    .unwrap();
+}
+
 pub fn directory_flags(dir: &std::path::Path) -> Vec<std::ffi::OsString> {
     [
         "--config-dir",
@@ -68,6 +79,9 @@ impl Cli {
         for role in DEFAULT_ROLES {
             std::fs::write(roles.join(format!("{role}.md")), "stand-in role\n").unwrap();
         }
+        // Likewise the default agent definition (`agent.definition: developer`), which a real
+        // install ships under `<data>/definitions`; `ui install` replaces this stand-in.
+        stand_in_definition(&dir.path().join("state"));
         Self { dir }
     }
     /// `--profile-dir` for the stand-in default roles, then the state dir's own roles, which win.

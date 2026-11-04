@@ -96,10 +96,35 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             "unknown verb {name:?}"
         ))));
     }
+    // The definitions are files under two roots: no core to open, nothing created.
+    match &invocation.verb {
+        Verb::Definitions { kind } => {
+            let directories = core_config(&invocation.global)?.directories;
+            tx_core_cli::definitions::list(&directories, *kind, &mut std::io::stdout().lock())
+                .map_err(Failure::Definition)?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Verb::Check { engine, names } => {
+            let directories = core_config(&invocation.global)?.directories;
+            let clean = tx_core_cli::definitions::check(
+                &directories,
+                *engine,
+                names,
+                &mut std::io::stdout().lock(),
+            )
+            .map_err(Failure::Definition)?;
+            return Ok(if clean {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            });
+        }
+        _ => {}
+    }
     let core = open(&invocation.global)?;
     let mut out = std::io::stdout().lock();
     match invocation.verb {
-        Verb::Help => unreachable!(),
+        Verb::Help | Verb::Definitions { .. } | Verb::Check { .. } => unreachable!(),
         Verb::Engines => {
             for kind in core.engine_kinds() {
                 writeln!(out, "{kind}").ok();
@@ -134,6 +159,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             env,
             engine,
             roles,
+            definition,
             options,
             prompt,
         } => {
@@ -142,13 +168,16 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             core.refresh_all()?;
             let defaults = load_config(&invocation.global, core.config())?.agent;
             let engine = engine.unwrap_or(defaults.engine);
-            let roles = if roles.is_empty() {
+            // An agent definition carries its own prompt: the default roles apply without one.
+            let roles = if roles.is_empty() && definition.is_none() {
                 defaults.roles
             } else {
                 roles
             };
-            // The file's model and effort go first, so a flag for the same key wins.
-            let file_options = [("model", defaults.model), ("effort", defaults.effort)]
+            // The file's model and effort go first, so a flag for the same key wins. Its model
+            // names a model of its own engine: another engine gets its own default.
+            let model = defaults.model.filter(|_| engine == defaults.engine);
+            let file_options = [("model", model), ("effort", defaults.effort)]
                 .into_iter()
                 .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value)));
             let options: Vec<(String, String)> = file_options.chain(options).collect();
@@ -159,6 +188,30 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             let mut launch = LaunchOptions::agent(engine)
                 .profile(roles)
                 .initial_prompt(prompt);
+            if let Some(choice) = definition {
+                // Claude turns its bundled skills on all at once: say so before the launch.
+                if engine == tx_core::EngineKind::Claude
+                    && let Ok(agent) = tx_core::definitions::Definitions::new(
+                        core.config().directories.definition_roots(),
+                    )
+                    .agent(&choice.agent)
+                {
+                    let skills: Vec<String> = agent
+                        .skills
+                        .into_iter()
+                        .chain(choice.skills.clone())
+                        .collect();
+                    if let Some(warning) = tx_core_cli::definitions::bundle_warning(
+                        &core.config().directories,
+                        &skills,
+                    )
+                    .map_err(Failure::Definition)?
+                    {
+                        eprintln!("tx: warning: {warning}");
+                    }
+                }
+                launch = launch.definition(choice);
+            }
             for (key, value) in options {
                 launch = launch.option(key, value);
             }

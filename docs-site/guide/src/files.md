@@ -31,7 +31,8 @@ same core as the `tx` that launched it.
 ## What lives where
 
 **config** holds what you write by hand: `plugins.yaml` (which plugins are on, and their
-settings) and `roles/` (your own roles, never pruned, overriding a shipped role of the same name).
+settings), `roles/` (your own roles, never pruned, overriding a shipped role of the same name)
+and `definitions/` (your own `skills/`, overriding a shipped skill of the same name).
 
 **data** holds everything durable tx writes:
 

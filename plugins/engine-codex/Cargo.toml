@@ -10,6 +10,7 @@ tx-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 
 [dev-dependencies]
 tempfile.workspace = true

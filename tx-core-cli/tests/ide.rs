@@ -147,7 +147,8 @@ fn ui_install_materialises_resources() {
         "roles/COMMON.md",
         "roles/DEVELOPER.md",
         "roles/TX-ASSISTANT.md",
-        "roles/skills/tx-sessions/SKILL.md",
+        "definitions/skills/tx-sessions/SKILL.md",
+        "definitions/mcp.json",
     ] {
         let path = state.join(role);
         assert!(path.is_file(), "{path:?}");

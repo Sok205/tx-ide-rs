@@ -69,14 +69,40 @@ A **profile** is the list of roles an agent was launched with, resolved into one
 to `<state>/profiles/<id>.md`. Roles resolve from `<data>/roles` (the ones tx ships, written by
 `tx ui install`) and then `<config>/roles` (yours, overriding a shipped role of the same name);
 every directory's `<NAME>.local.md` extends the base. A role may open with frontmatter granting
-**skills** (`skills: [tx-sessions, tx-artifacts]`); each resolves to a `skills/<name>/` directory,
-which the engine links into the worktree (`.claude/skills/` or `.agents/skills/`).
+**skills** (`skills: [tx-sessions, tx-artifacts]`); each resolves to a `skills/<name>/` directory
+under `<data>/definitions` (the shipped ones) or `<config>/definitions` (yours, which win), which
+the engine links into the worktree (`.claude/skills/` or `.agents/skills/`).
 
 The shipped roles are **COMMON** (be concise, introduce yourself, change agents and views only
 through `tx`, read the message envelopes, use artifacts for deliverables), **DEVELOPER** (short
 chat with reasoning in artifacts, full variable names, branch in your worktree, no PR or merge
 unasked), **ORCHESTRATOR**, **QA** and **TX-ASSISTANT**. The new-agent form and the assistant add
 COMMON; `tx create` uses exactly the `--role`s given.
+
+## Agent definitions
+
+An **agent definition** is `agents/<name>.md` under `<data>/definitions` (shipped) or
+`<config>/definitions` (yours, which win by name): Claude's agent format, reduced to `name`,
+`description`, `tools` (required: the built-in tools, in Claude's names), `mcpServers`,
+`disallowedTools` and `skills`, with the prompt as the body.
+`mcp.json` beside it holds the MCP servers in Claude's `.mcp.json` format, and `skills/` the
+skills. `tx definitions [agents|skills|mcp]` lists them, and `tx definitions tools` the names `tools`
+can use: Claude's built-ins (read once per Claude version from a headless launch's `system/init`
+against a dead API address, so no model call; cached under `<cache>/tools/`), the Claude names
+Codex switches off, and each MCP server's tools (asked through `codex app-server`); `tx check` validates them, and
+`tx check --engine claude|codex` adds what that engine adds to each agent or cannot remove.
+
+`tx create NAME --agent A [--skill S]... [--mcp M]... [--tool T]...` runs definition `A`: its
+prompt after any `--role` text, its skills plus the `--skill` extras, its tools plus the `--tool`
+extras, and exactly its MCP servers plus the `--mcp` extras — nothing from the engine's own
+config. The record keeps `definition: {agent, skills, mcp_servers, tools}`, and every launch
+resolves it again, so a respawn keeps the extras and picks up an edited definition. With `--agent`
+the default roles of `config.yaml` do not apply. Without it, the launch runs `config.yaml`'s
+`agent.definition` (default `developer`: today's worker tools and the tx skills) on top of the
+roles, which give the prompt; `definition: null` leaves roles alone with the engine's base tools.
+A record from before definitions adopts the default at its next respawn. A secret an MCP server names (`${NAME}`) is taken
+from the environment of the `tx` that launches the agent (create or respawn) and set in the
+session; when it is unset the launch is refused, on both engines.
 
 ## Engines
 

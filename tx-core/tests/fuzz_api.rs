@@ -117,6 +117,7 @@ fn session_with(parent: Option<AgentId>, tags: Vec<String>, state: LlmEngineStat
         engine: EngineKind::Claude,
         working_directory: "/w".into(),
         roles: vec![],
+        definition: None,
         state,
         created_at: 1.0,
         last_modified_at: 1.0,
@@ -181,7 +182,7 @@ proptest! {
     fn launch_request_builder_sets_named_field_only(w1 in text(), w in text()) {
         let dir = short_tempdir();
         let profile = Profile::write(
-            ResolvedProfile { text: "t".into(), skill_dirs: vec![] },
+            ResolvedProfile { text: "t".into(), skill_dirs: vec![], ..ResolvedProfile::default() },
             &dir.path().join("p.md"),
         ).unwrap();
         let session = session_with(None, vec![], LlmEngineState::Idle);

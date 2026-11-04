@@ -81,6 +81,29 @@ fn is_safe_fragment(text: &str, max: usize) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
+/// The agent definition an agent runs (`<root>/agents/<agent>.md`) and the extras given at
+/// create, all names. Kept on the record so every launch, a respawn included, resolves them again
+/// against the definitions as they are then.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefinitionChoice {
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+}
+
+impl DefinitionChoice {
+    pub fn new(agent: impl Into<String>) -> Self {
+        Self {
+            agent: agent.into(),
+            ..Self::default()
+        }
+    }
+}
+
 /// The snapshot every read returns: `<data>/agents/<id>/agent.json`, written atomically under
 /// the agent's lock. Disk is the record; tmux holds only the `@tx-id` link.
 ///
@@ -96,6 +119,9 @@ pub struct Agent {
     pub working_directory: PathBuf,
     /// The role names its profile was built from.
     pub roles: Vec<String>,
+    /// The agent definition and extras it was created with; `None` for a roles-only agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<DefinitionChoice>,
     /// The agent's state as its engine adapter reported it. Core-owned.
     pub state: LlmEngineState,
     pub created_at: f64,
@@ -227,6 +253,7 @@ mod tests {
             engine: EngineKind::Claude,
             working_directory: PathBuf::from("/tmp/w"),
             roles: vec!["COMMON".into(), "dev".into()],
+            definition: None,
             state: LlmEngineState::Working,
             created_at: 1727000000.5,
             last_modified_at: 1727000000.5,
@@ -246,6 +273,7 @@ mod tests {
             engine: EngineKind::Codex,
             working_directory: PathBuf::from("/"),
             roles: vec![],
+            definition: None,
             state: LlmEngineState::Ended,
             created_at: 1.0,
             last_modified_at: 2.0,

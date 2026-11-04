@@ -190,6 +190,7 @@ fn defaults_are_the_xdg_directories_under_tx_ide() {
         return;
     }
     let sandbox = Sandbox::new();
+    common::stand_in_definition(&sandbox.home().join(".config/tx-ide"));
     let id = sandbox.create("a", &[]);
     let home = sandbox.home();
     let socket = sandbox.path().join("tmp/tx-ide.u/tmux.sock");
@@ -213,6 +214,7 @@ fn a_session_carries_every_directory_and_the_application_name() {
         return;
     }
     let sandbox = Sandbox::new();
+    common::stand_in_definition(&sandbox.home().join(".config/tx-qa-13"));
     let environment = sandbox.session_environment(&[("TX_APPNAME", "tx-qa-13")]);
     let socket = sandbox.path().join("tmp/tx-qa-13.u/tmux.sock");
     kill_server(&socket);

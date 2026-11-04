@@ -17,6 +17,7 @@ pub const DEFAULT_APPNAME: &str = "tx-ide";
 /// Under the data dir the roles plugins ship (written by `ui install`); under the config dir
 /// the user's own.
 pub const ROLES_DIR: &str = "roles";
+/// Under each definition root: the skills, the shipped ones and then the user's.
 pub const SKILLS_DIR: &str = "skills";
 /// The internal binary the wired hooks run; installed next to `tx`.
 pub const TXI: &str = "txi";
@@ -30,6 +31,8 @@ pub enum Failure {
     Verb(tx_core::VerbError),
     /// The environment names an invalid application or leaves a directory unresolvable.
     Environment(String),
+    /// A definition file that cannot be read where a listing needs it.
+    Definition(tx_core::definitions::DefinitionError),
 }
 
 impl From<CoreError> for Failure {
@@ -46,6 +49,7 @@ impl std::fmt::Display for Failure {
             Failure::Plugin(error) => error.fmt(f),
             Failure::Verb(error) => error.fmt(f),
             Failure::Environment(text) => f.write_str(text),
+            Failure::Definition(error) => error.fmt(f),
         }
     }
 }
@@ -183,9 +187,11 @@ fn default_profile_dirs(directories: &Directories) -> Vec<PathBuf> {
     ]
 }
 
-/// Without `--skill-dir`: `skills/` under each default profile dir.
+/// Without `--skill-dir`: `skills/` under each definition root, the shipped ones and then the
+/// user's.
 fn default_skill_dirs(directories: &Directories) -> Vec<PathBuf> {
-    default_profile_dirs(directories)
+    directories
+        .definition_roots()
         .into_iter()
         .map(|dir| dir.join(SKILLS_DIR))
         .collect()
@@ -193,7 +199,7 @@ fn default_skill_dirs(directories: &Directories) -> Vec<PathBuf> {
 
 /// The core config from the globals and the process environment; touches no disk.
 pub fn core_config(global: &Global) -> Result<CoreConfig, Failure> {
-    core_config_in(global, &process_environment)
+    Ok(core_config_in(global, &process_environment)?.caller_env(std::env::vars()))
 }
 
 pub fn core_config_in(
@@ -286,6 +292,10 @@ pub fn open(global: &Global) -> Result<TxCore, Failure> {
 /// stderr, once per invocation.
 pub fn open_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
     let cfg = plugin_config(global, &config)?;
+    let config = match load_config(global, &config)?.agent.definition {
+        Some(name) => config.default_definition(name),
+        None => config,
+    };
     let mut core = TxCore::open(config)?;
     core.plug(plugins::manifest(), &cfg)
         .map_err(Failure::Plugin)?;

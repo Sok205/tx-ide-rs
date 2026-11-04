@@ -48,6 +48,8 @@ impl Cli {
             .arg("--profile-dir")
             .arg(self.state().join("roles"))
             .env("PATH", &self.path)
+            // The engine seeds folder trust in Claude's config file: keep it off the real HOME.
+            .env("CLAUDE_CONFIG_DIR", self.dir.path().join("claude-config"))
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID");
         command

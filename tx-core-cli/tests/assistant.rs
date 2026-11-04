@@ -29,7 +29,7 @@ fn warm_creates_once_and_reuses() {
     assert!(cwd.starts_with(cli.worktrees_dir()), "{cwd:?}");
     assert!(cwd.ends_with("home--tx-assistant"), "{cwd:?}");
     assert!(
-        cwd.join(".claude/skills/tx-sessions").exists(),
+        cwd.join(".claude/tx-plugin/skills/tx-sessions").exists(),
         "skills link in the assistant's worktree"
     );
     let home = cli.state().join("plugins/assistant/home");

@@ -20,11 +20,16 @@ pub const PLUGINS_DIR: &str = "plugins";
 pub const WORKTREES_DIR: &str = "worktrees";
 /// Under an agent's directory: the engine's archive of its conversations (`LlmEngine::archive`).
 pub const ARCHIVE_DIR: &str = "archive";
+/// Under the data directory: the definitions tx ships (`agents/`, `skills/`, `mcp.json`), written
+/// by `ui install`. Not `<data>/agents/`, which holds the agent records.
+pub const SHIPPED_DEFINITIONS_DIR: &str = "definitions";
+/// Under the config directory: the user's own definitions, in the same layout; they win by name.
+pub const USER_DEFINITIONS_DIR: &str = "definitions";
 
 /// The five directories tx keeps its files in, resolved by the front end (XDG, `TX_APPNAME`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Directories {
-    /// Written by the user: `config.yaml`, `roles/` and the skills under it.
+    /// Written by the user: `config.yaml`, `roles/`, `definitions/`.
     pub config: PathBuf,
     /// Must survive: records, the log, plugin data, the files `ui install` generates.
     pub data: PathBuf,
@@ -60,6 +65,15 @@ impl Directories {
         ]
     }
 
+    /// The definition layers, lowest first: the shipped `<data>/definitions/`, then the user's
+    /// `<config>/definitions/`, which wins by name.
+    pub fn definition_roots(&self) -> [PathBuf; 2] {
+        [
+            self.data.join(SHIPPED_DEFINITIONS_DIR),
+            self.config.join(USER_DEFINITIONS_DIR),
+        ]
+    }
+
     /// Each directory with the variable core exports it as into every session.
     pub fn environment(&self) -> [(&'static str, &Path); 5] {
         [
@@ -80,6 +94,13 @@ pub struct CoreConfig {
     pub tmux_socket: Option<PathBuf>,
     /// Base environment for every session, applied before the per-session env.
     pub env: Vec<(String, String)>,
+    /// The agent definition a launch without one of its own runs (create, fork, and the respawn
+    /// of a record from before definitions): `config.yaml`'s `agent.definition`. `None`: roles
+    /// alone, with the engine's base tools.
+    pub default_definition: Option<String>,
+    /// The caller's environment. Never passed into a session whole: a launch takes from it only
+    /// the variables its MCP servers name (`${NAME}`), and refuses when one is unset.
+    pub caller_env: Vec<(String, String)>,
     /// Role search dirs, in order; a later dir overrides an earlier one.
     pub profile_dirs: Vec<PathBuf>,
     /// Skill search dirs, in order; a later dir overrides an earlier one.
@@ -94,6 +115,8 @@ impl CoreConfig {
             directories,
             tmux_socket: None,
             env: Vec::new(),
+            default_definition: None,
+            caller_env: Vec::new(),
             profile_dirs: Vec::new(),
             skill_dirs: Vec::new(),
             hook_command: Vec::new(),
@@ -107,6 +130,22 @@ impl CoreConfig {
 
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn default_definition(mut self, name: impl Into<String>) -> Self {
+        self.default_definition = Some(name.into());
+        self
+    }
+
+    pub fn caller_env<I, K, V>(mut self, variables: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.caller_env
+            .extend(variables.into_iter().map(|(key, value)| (key.into(), value.into())));
         self
     }
 

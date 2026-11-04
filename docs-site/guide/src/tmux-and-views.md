@@ -28,7 +28,7 @@ that creates, ends or changes an agent or a view goes through `tx`, or the recor
 
 The `ide` plugin (in `tx-client`) owns `tx ui install`. It materializes the core's roles and
 every active plugin's resources under the data directory (`bin/` and `keys/` executable, `conf/`,
-`roles/` and the nvim runtime plain) and writes `<data>/tmux.conf`. That file sets three server
+`roles/`, `definitions/` and the nvim runtime plain) and writes `<data>/tmux.conf`. That file sets three server
 options, `@tx-bin` (the `tx` binary), `@tx-data` and `@tx-arguments` (the flags every `tx` a key
 runs must carry), sources `conf/tmux.conf` (theme and status line), runs `keys/ide.tmux` (pane
 navigation, paging, pane-border look) and then every other active plugin's `keys/<id>.tmux`.

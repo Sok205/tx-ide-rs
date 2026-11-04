@@ -1,7 +1,16 @@
 //! The Claude Code engine for tx-core: `claude <conversation> [--model M] --effort E --no-chrome
-//! --append-system-prompt <profile text> --dangerously-skip-permissions [prompt]`, with every
-//! granted skill linked under `.claude/skills/<name>` in the working directory. The conversation
-//! flags depend on the launch mode:
+//! --strict-mcp-config --setting-sources "" --tools <tools> [--disallowedTools <tools>]
+//! [--mcp-config <servers>] [--plugin-dir <cwd>/.claude/tx-plugin] [--append-system-prompt
+//! <profile text>] --settings <launch settings> --dangerously-skip-permissions [prompt]`.
+//!
+//! The launch is a clean slate: Claude Code's own system prompt with the profile text appended,
+//! only the built-in tools of [`tools`] offered (the agent definition's, else [`BASE_TOOLS`], plus
+//! the [`BASELINE_TOOLS`]), only the agent definition's MCP servers, and no setting source is read — no user,
+//! project or local settings, hooks, CLAUDE.md, auto-memory, skills or commands, and with
+//! `--strict-mcp-config` no other MCP servers or claude.ai connectors. What the
+//! session still needs is restated in [`launch_settings`]. Granted skills reach it as the skills
+//! of a plugin named [`PLUGIN_NAME`] (so `tx:<skill>`): a manifest and one link per skill under
+//! [`PLUGIN_DIR`] in the working directory. The conversation flags depend on the launch mode:
 //!
 //! | mode   | flags                                                                   |
 //! |--------|-------------------------------------------------------------------------|
@@ -30,6 +39,7 @@
 //! `restore` puts them back where Claude looks when the live transcript is gone (Claude deletes
 //! transcripts older than `cleanupPeriodDays`), so a `--resume` finds its conversation.
 
+pub mod probe;
 pub mod trust;
 
 use std::path::{Path, PathBuf};
@@ -40,12 +50,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
     Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, WorkspaceAction, engine_data,
-    hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
+    LlmEngineChange, LlmEngineHook, LlmEngineState, Profile, SkillProvider, WorkspaceAction,
+    engine_data, hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
-pub const SKILLS_DIR: &str = ".claude/skills";
+/// The per-agent plugin carrying the granted skills, relative to the working directory.
+pub const PLUGIN_DIR: &str = ".claude/tx-plugin";
+pub const PLUGIN_MANIFEST: &str = ".claude/tx-plugin/.claude-plugin/plugin.json";
+pub const PLUGIN_SKILLS_DIR: &str = ".claude/tx-plugin/skills";
+pub const PLUGIN_NAME: &str = "tx";
+pub const PLUGIN_DIR_FLAG: &str = "--plugin-dir";
 pub const MODEL_FLAG: &str = "--model";
 pub const RESUME_FLAG: &str = "--resume";
 pub const SESSION_ID_FLAG: &str = "--session-id";
@@ -53,6 +68,57 @@ pub const FORK_SESSION_FLAG: &str = "--fork-session";
 pub const EFFORT_FLAG: &str = "--effort";
 pub const NO_CHROME_FLAG: &str = "--no-chrome";
 pub const APPEND_SYSTEM_PROMPT_FLAG: &str = "--append-system-prompt";
+pub const TOOLS_FLAG: &str = "--tools";
+/// Drops every MCP server not passed with `--mcp-config`, the claude.ai connectors included.
+pub const STRICT_MCP_CONFIG_FLAG: &str = "--strict-mcp-config";
+pub const SETTING_SOURCES_FLAG: &str = "--setting-sources";
+/// No setting source at all: neither the operator's `~/.claude` (settings, CLAUDE.md, skills,
+/// claude.ai skill sync) nor the project's `.claude` and CLAUDE.md.
+pub const SETTING_SOURCES: &str = "";
+/// What every launch carries that no flag removes (Claude Code 2.1.317, measured in the request
+/// bodies): reported by `tx check --engine claude`, never silently accepted.
+pub const FORCED: [&str; 6] = [
+    "the tools EndConversation, advisor and DeferredToolPlaceholder",
+    "Claude Code's built-in plugins (cc-plugin-agents-md, telemetry, privacy)",
+    "a userEmail system reminder from the subscription's OAuth profile",
+    "Claude Code's own system prompt: the profile text is appended to it",
+    "for an agent that lists a bundled skill: every bundled skill of this Claude version, the \
+     account-gated ones included (Claude turns the bundle on whole)",
+    "unverified: whether a logged-in session also loads the claude.ai-synced skills on its own \
+     (anthropic-skills:*) under --setting-sources \"\"",
+];
+
+/// What one agent definition gets on Claude that its file does not say: the baseline it does not
+/// list, and writes through `Bash` when `Edit`/`Write` are left out.
+pub fn definition_notes(agent: &tx_core::definitions::AgentDefinition) -> Vec<String> {
+    let lists = |tool: &str| agent.tools.iter().any(|listed| listed == tool);
+    let mut notes = Vec::new();
+    let added: Vec<&str> = BASELINE_TOOLS
+        .into_iter()
+        .filter(|tool| !lists(tool))
+        .collect();
+    if !added.is_empty() {
+        notes.push(format!("gets the baseline tools {}", added.join(", ")));
+    }
+    if lists("Bash") && !(lists("Edit") && lists("Write")) {
+        notes.push("`Bash` is listed: files stay writable through it without Edit/Write".into());
+    }
+    notes
+}
+
+/// The built-in tools only the interactive session has, which a headless probe does not list
+/// (Claude Code 2.1.317, measured).
+pub const INTERACTIVE_TOOLS: [&str; 3] = ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"];
+
+/// The built-in tools of an agent without an agent definition (roles only).
+pub const BASE_TOOLS: [&str; 4] = ["Bash", "Read", "Edit", "Write"];
+/// The one implicit part of every launch's `--tools`: `Skill`, without which the granted skills
+/// are not listed to the model, and `ToolSearch`, which keeps MCP tool schemas deferred instead of
+/// loaded up front. `tx definitions` and `tx check` show it; nothing else is ever added.
+pub const BASELINE_TOOLS: [&str; 2] = ["Skill", "ToolSearch"];
+pub const DISALLOWED_TOOLS_FLAG: &str = "--disallowedTools";
+/// Takes the agent's MCP servers as inline JSON, in Claude's `.mcp.json` format.
+pub const MCP_CONFIG_FLAG: &str = "--mcp-config";
 pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
 pub const SETTINGS_FLAG: &str = "--settings";
 /// The slash command that exits the CLI cleanly: its `SessionEnd` hook fires and the
@@ -157,13 +223,47 @@ pub struct ClaudeOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaudeAdapter {
     pub claude_home: PathBuf,
+    /// The operator's Claude settings, from this plugin's own `claude_settings`: merged into every
+    /// launch's `--settings`, under tx's own keys.
+    pub claude_settings: serde_json::Map<String, Value>,
+    /// Claude's JSON config file, where `prepare` marks each worktree trusted; `None` trusts
+    /// nothing (tests).
+    pub trust_file: Option<PathBuf>,
+}
+
+/// Under Claude's home: one directory per claude.ai account, each holding its synced skills.
+pub const SYNCED_SKILLS_DIR: &str = "skills/synced";
+/// The built-in plugin carrying the `plugin-authoring` skill; off unless an agent lists it.
+pub const PLUGIN_AUTHORING_PLUGIN: &str = "cc-plugin-plugin-authoring@builtin";
+pub const PLUGIN_AUTHORING_SKILL: &str = "plugin-authoring";
+
+/// This plugin's settings in `config.yaml` (`plugins.engine-claude.settings`); an unknown key is
+/// refused.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// Claude settings (`settings.json` keys) every launch passes on.
+    #[serde(default)]
+    pub claude_settings: serde_json::Map<String, Value>,
 }
 
 impl ClaudeAdapter {
     pub fn new(claude_home: impl Into<PathBuf>) -> Self {
         Self {
             claude_home: claude_home.into(),
+            claude_settings: serde_json::Map::new(),
+            trust_file: None,
         }
+    }
+
+    pub fn claude_settings(mut self, settings: serde_json::Map<String, Value>) -> Self {
+        self.claude_settings = settings;
+        self
+    }
+
+    pub fn trust_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.trust_file = Some(file.into());
+        self
     }
 
     /// The command line every launch shares after the `args` that name the conversation:
@@ -175,7 +275,7 @@ impl ClaudeAdapter {
         mut args: Vec<String>,
         stored_data: Option<Value>,
         prompt: &str,
-    ) -> LaunchPlan {
+    ) -> Result<LaunchPlan, EngineError> {
         let data = engine_data(self, request.session);
         let option = |key: &str| data.get(key).and_then(Value::as_str);
         if let Some(model) = option(MODEL_KEY) {
@@ -187,29 +287,94 @@ impl ClaudeAdapter {
                 .unwrap_or(DEFAULT_EFFORT.as_str())
                 .to_owned(),
             NO_CHROME_FLAG.to_owned(),
+            STRICT_MCP_CONFIG_FLAG.to_owned(),
+            SETTING_SOURCES_FLAG.to_owned(),
+            SETTING_SOURCES.to_owned(),
+            TOOLS_FLAG.to_owned(),
+            tools(request.profile),
         ]);
+        if !request.profile.disallowed_tools().is_empty() {
+            args.extend([
+                DISALLOWED_TOOLS_FLAG.to_owned(),
+                request.profile.disallowed_tools().join(","),
+            ]);
+        }
+        if !request.profile.mcp_servers().is_empty() {
+            args.extend([
+                MCP_CONFIG_FLAG.to_owned(),
+                serde_json::json!({ "mcpServers": request.profile.mcp_servers() }).to_string(),
+            ]);
+        }
+        let synced = self.synced_skills(request.profile)?;
+        let plugin_skills = !request.profile.skill_dirs().is_empty() || !synced.is_empty();
+        if plugin_skills {
+            args.extend([
+                PLUGIN_DIR_FLAG.to_owned(),
+                request
+                    .session
+                    .working_directory
+                    .join(PLUGIN_DIR)
+                    .to_string_lossy()
+                    .into_owned(),
+            ]);
+        }
         if !request.profile.text().is_empty() {
             args.extend([
                 APPEND_SYSTEM_PROMPT_FLAG.to_owned(),
                 request.profile.text().to_owned(),
             ]);
         }
-        if !request.hook_command.is_empty() {
-            args.extend([
-                SETTINGS_FLAG.to_owned(),
-                hook_settings(request.hook_command),
-            ]);
-        }
-        args.push(SKIP_PERMISSIONS_FLAG.to_owned());
+        args.extend([
+            SETTINGS_FLAG.to_owned(),
+            launch_settings(
+                &self.claude_settings,
+                request.hook_command,
+                &request.profile.provided_by(SkillProvider::ClaudeBundled),
+            ),
+            SKIP_PERMISSIONS_FLAG.to_owned(),
+        ]);
         if !prompt.is_empty() {
             args.push(prompt.to_owned());
         }
         let mut plan = LaunchPlan::new(CLAUDE_BIN).args(args);
         plan.engine_data = stored_data;
-        for link in skill_links(SKILLS_DIR, request.profile.skill_dirs()) {
+        if plugin_skills {
+            plan = plan.workspace(WorkspaceAction::Write {
+                path: PLUGIN_MANIFEST.into(),
+                content: serde_json::json!({ "name": PLUGIN_NAME }).to_string(),
+            });
+        }
+        for link in skill_links(PLUGIN_SKILLS_DIR, request.profile.skill_dirs())
+            .into_iter()
+            .chain(skill_links(PLUGIN_SKILLS_DIR, &synced))
+        {
             plan = plan.workspace(link);
         }
-        plan
+        Ok(plan)
+    }
+
+    /// The operator's claude.ai-synced copy of each listed `claude-synced` skill:
+    /// `<claude home>/skills/synced/<account>/<name>/`. A missing one refuses the launch.
+    fn synced_skills(&self, profile: &Profile) -> Result<Vec<PathBuf>, EngineError> {
+        let root = self.claude_home.join(SYNCED_SKILLS_DIR);
+        profile
+            .provided_by(SkillProvider::ClaudeSynced)
+            .into_iter()
+            .map(|name| {
+                std::fs::read_dir(&root)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Result::ok)
+                    .map(|account| account.path().join(name))
+                    .find(|skill| skill.join("SKILL.md").is_file())
+                    .ok_or_else(|| {
+                        EngineError::Refused(format!(
+                            "claude: no synced skill {name:?} under {}",
+                            root.display()
+                        ))
+                    })
+            })
+            .collect()
     }
 
     /// Where Claude writes conversation `id` of a process started in `cwd`.
@@ -282,6 +447,16 @@ impl LlmEngine for ClaudeAdapter {
         EXT_KEY
     }
 
+    /// Marks the worktree trusted in Claude's config file, so the session does not stop on the
+    /// folder-trust dialog. A config file that does not exist yet is left to Claude.
+    fn prepare(&self, session: &Agent) -> Result<(), EngineError> {
+        if let Some(file) = &self.trust_file {
+            trust::trust_project(file, &session.working_directory)
+                .map_err(|error| EngineError::Refused(format!("claude trust: {error}")))?;
+        }
+        Ok(())
+    }
+
     fn configure(&self, session: &Agent, options: &Value) -> Result<Value, EngineError> {
         if !options.is_object() {
             return Err(EngineError::Refused(format!(
@@ -310,12 +485,12 @@ impl LlmEngine for ClaudeAdapter {
 
     fn start(&self, request: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {
         let args = vec![SESSION_ID_FLAG.to_owned(), request.session.id.to_string()];
-        Ok(self.plan(
+        self.plan(
             request,
             args,
             Some(self.named_after(request.session)),
             prompt,
-        ))
+        )
     }
 
     fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
@@ -323,7 +498,7 @@ impl LlmEngine for ClaudeAdapter {
             RESUME_FLAG.to_owned(),
             self.conversation_of(request.session).to_owned(),
         ];
-        Ok(self.plan(request, args, None, ""))
+        self.plan(request, args, None, "")
     }
 
     fn fork(
@@ -339,12 +514,12 @@ impl LlmEngine for ClaudeAdapter {
             SESSION_ID_FLAG.to_owned(),
             request.session.id.to_string(),
         ];
-        Ok(self.plan(
+        self.plan(
             request,
             args,
             Some(self.named_after(request.session)),
             prompt,
-        ))
+        )
     }
 
     fn stop(&self, _: &Agent) -> Option<Input> {
@@ -448,9 +623,54 @@ pub fn conversation_started(current: &Value, payload: &Value) -> Option<Value> {
     Some(Value::Object(data))
 }
 
-/// `--settings` JSON wiring every [`HOOK_EVENTS`] entry to `hook_command`. Inline settings
-/// add to the user's own hooks rather than replacing them.
-pub fn hook_settings(hook_command: &[String]) -> String {
+/// The `--tools` list: the agent definition's tools ([`BASE_TOOLS`] without one), then the
+/// [`BASELINE_TOOLS`] it does not list already.
+pub fn tools(profile: &Profile) -> String {
+    let mut tools: Vec<String> = match profile.tools() {
+        Some(tools) => tools.to_vec(),
+        None => BASE_TOOLS.iter().map(|tool| (*tool).to_owned()).collect(),
+    };
+    for tool in BASELINE_TOOLS {
+        if !tools.iter().any(|listed| listed == tool) {
+            tools.push(tool.to_owned());
+        }
+    }
+    tools.join(",")
+}
+
+/// `--settings` JSON for every launch, restating what the left-out user settings would carry:
+/// `disableBundledSkills` drops Claude's bundled skills, `autoMemoryEnabled: false` keeps
+/// auto-memory off, and `skipDangerousModePermissionPrompt` keeps
+/// `--dangerously-skip-permissions` from asking for confirmation (default answer: exit). Every
+/// [`HOOK_EVENTS`] entry is wired to `hook_command` (no hooks when it is empty).
+/// The operator's `claude_settings` come first, so tx's own keys win. Claude's bundled skills
+/// are all off (`disableBundledSkills`) unless the agent lists one, which turns the whole bundle
+/// on: Claude cannot turn them on one by one, and `tx check` / `tx create` say so. The built-in
+/// `plugin-authoring` plugin is off unless listed.
+pub fn launch_settings(
+    claude_settings: &serde_json::Map<String, Value>,
+    hook_command: &[String],
+    bundled: &[&str],
+) -> String {
+    let mut settings = Value::Object(claude_settings.clone());
+    for (key, value) in [
+        ("autoMemoryEnabled", false),
+        ("disableBundledSkills", bundled.is_empty()),
+        ("skipDangerousModePermissionPrompt", true),
+    ] {
+        settings[key] = Value::Bool(value);
+    }
+    if !bundled.contains(&PLUGIN_AUTHORING_SKILL) {
+        settings["enabledPlugins"] = serde_json::json!({ PLUGIN_AUTHORING_PLUGIN: false });
+    }
+    if !hook_command.is_empty() {
+        settings["hooks"] = hook_settings(hook_command);
+    }
+    settings.to_string()
+}
+
+/// The `hooks` settings object wiring every [`HOOK_EVENTS`] entry to `hook_command`.
+fn hook_settings(hook_command: &[String]) -> Value {
     let hooks: serde_json::Map<String, Value> = HOOK_EVENTS
         .iter()
         .map(|event| {
@@ -465,7 +685,7 @@ pub fn hook_settings(hook_command: &[String]) -> String {
             ((*event).to_owned(), entry)
         })
         .collect();
-    serde_json::json!({ "hooks": hooks }).to_string()
+    Value::Object(hooks)
 }
 
 /// Claude's project-dir name for an absolute path: every `/` and `.` becomes `-`.
@@ -521,6 +741,15 @@ pub fn claude_home_from_env() -> PathBuf {
     }
 }
 
+/// Whether the operator has a claude.ai-synced skill `name` (`<claude home>/skills/synced/*/<name>/`).
+pub fn synced_skill_exists(name: &str) -> bool {
+    std::fs::read_dir(claude_home_from_env().join(SYNCED_SKILLS_DIR))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|account| account.path().join(name).join("SKILL.md").is_file())
+}
+
 /// Claude's JSON config file, which holds the per-project state: `$CLAUDE_CONFIG_DIR/.claude.json`
 /// when that is set, else `$HOME/.claude.json` (beside `~/.claude`, not inside it).
 pub fn claude_config_file_from_env() -> PathBuf {
@@ -539,7 +768,20 @@ impl tx_core::Plugin for ClaudePlugin {
     }
 
     fn register(&self, r: &mut tx_core::Registry) -> Result<(), tx_core::PluginError> {
-        r.engine(Box::new(ClaudeAdapter::new(claude_home_from_env())));
+        let settings: Settings = match r.settings() {
+            Value::Null => Settings::default(),
+            value => serde_json::from_value(value.clone()).map_err(|error| {
+                tx_core::PluginError::Register {
+                    plugin: "engine-claude".to_owned(),
+                    reason: format!("settings: {error}"),
+                }
+            })?,
+        };
+        r.engine(Box::new(
+            ClaudeAdapter::new(claude_home_from_env())
+                .claude_settings(settings.claude_settings)
+                .trust_file(claude_config_file_from_env()),
+        ));
         Ok(())
     }
 }
@@ -556,6 +798,7 @@ mod tests {
             ResolvedProfile {
                 text: text.into(),
                 skill_dirs: skills.iter().map(PathBuf::from).collect(),
+                ..ResolvedProfile::default()
             },
             &dir.path().join("p.md"),
         )
@@ -588,6 +831,7 @@ mod tests {
             engine: adapter().kind(),
             working_directory: "/tmp".into(),
             roles: Vec::new(),
+            definition: None,
             state,
             created_at: 1.0,
             last_modified_at: 1.0,
@@ -861,16 +1105,31 @@ mod tests {
         }
     }
 
-    /// What every launch ends with when no option is set.
-    const TAIL: [&str; 4] = [
-        "--effort",
-        "high",
+    /// The settings of a launch without hooks.
+    const SETTINGS: &str = r#"{"autoMemoryEnabled":false,"disableBundledSkills":true,"skipDangerousModePermissionPrompt":true,"enabledPlugins":{"cc-plugin-plugin-authoring@builtin":false}}"#;
+
+    /// The minimal-launch flags after the effort, for a profile without skills.
+    const MINIMAL: [&str; 6] = [
         "--no-chrome",
-        "--dangerously-skip-permissions",
+        "--strict-mcp-config",
+        "--setting-sources",
+        "",
+        "--tools",
+        "Bash,Read,Edit,Write,Skill,ToolSearch",
     ];
 
+    /// What every launch ends with when no option is set and the profile is empty.
+    fn tail() -> Vec<&'static str> {
+        [
+            &["--effort", "high"][..],
+            &MINIMAL[..],
+            &["--settings", SETTINGS, "--dangerously-skip-permissions"][..],
+        ]
+        .concat()
+    }
+
     fn with_tail(head: &[&str]) -> Vec<String> {
-        argv(&[head, &TAIL[..]].concat())
+        argv(&[head, &tail()[..]].concat())
     }
 
     #[test]
@@ -924,16 +1183,20 @@ mod tests {
             .unwrap();
         assert_eq!(
             plan.args,
-            argv(&[
-                "--resume",
-                "chat-42",
-                "--effort",
-                "high",
-                "--no-chrome",
-                "--append-system-prompt",
-                "role",
-                "--dangerously-skip-permissions",
-            ])
+            argv(
+                &[
+                    &["--resume", "chat-42", "--effort", "high"][..],
+                    &MINIMAL[..],
+                    &[
+                        "--append-system-prompt",
+                        "role",
+                        "--settings",
+                        SETTINGS,
+                        "--dangerously-skip-permissions",
+                    ][..],
+                ]
+                .concat()
+            )
         );
         assert_eq!(plan.engine_data, None, "a resume keeps the data as it is");
         // No data yet (or hand-edited junk): the conversation is the one named after the session.
@@ -982,6 +1245,156 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_definition_sets_tools_cuts_and_mcp_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let servers = std::collections::BTreeMap::from([(
+            "probe".to_owned(),
+            tx_core::definitions::McpServer::Stdio {
+                command: "python3".into(),
+                args: vec!["probe.py".into()],
+                env: std::collections::BTreeMap::new(),
+            },
+        )]);
+        let resolved = |tools: Vec<String>, mcp_servers| ResolvedProfile {
+            skill_dirs: vec![PathBuf::from("/skills/one")],
+            tools: Some(tools),
+            disallowed_tools: vec!["mcp__probe__delete".into(), "Agent".into()],
+            mcp_servers,
+            ..ResolvedProfile::default()
+        };
+        let launch = |resolved: ResolvedProfile| {
+            let profile = Profile::write(resolved, &dir.path().join("p.md")).unwrap();
+            let session = record(dir.path(), serde_json::Value::Null);
+            adapter()
+                .start(&LaunchRequest::new(&session, &profile), "go")
+                .unwrap()
+                .args
+        };
+        let value_of = |args: &[String], flag: &str| {
+            let at = args.iter().position(|arg| arg == flag)?;
+            Some(args[at + 1].clone())
+        };
+        let args = launch(resolved(
+            vec!["Bash".into(), "Read".into()],
+            servers.clone(),
+        ));
+        assert_eq!(
+            value_of(&args, "--tools").as_deref(),
+            Some("Bash,Read,Skill,ToolSearch"),
+            "the listed tools, then the baseline"
+        );
+        assert_eq!(
+            value_of(&args, "--disallowedTools").as_deref(),
+            Some("mcp__probe__delete,Agent")
+        );
+        let config: Value =
+            serde_json::from_str(&value_of(&args, "--mcp-config").unwrap()).unwrap();
+        assert_eq!(
+            config,
+            serde_json::json!({"mcpServers": {"probe": {"type": "stdio", "command": "python3", "args": ["probe.py"]}}})
+        );
+        assert!(args.contains(&"--strict-mcp-config".to_owned()));
+        // A baseline tool listed already is not repeated; no MCP server: no --mcp-config.
+        let args = launch(resolved(
+            vec!["ToolSearch".into(), "Bash".into()],
+            std::collections::BTreeMap::new(),
+        ));
+        assert_eq!(
+            value_of(&args, "--tools").as_deref(),
+            Some("ToolSearch,Bash,Skill")
+        );
+        assert_eq!(value_of(&args, "--mcp-config"), None);
+    }
+
+    #[test]
+    fn the_operators_settings_merge_under_txs_own_keys() {
+        let operator = serde_json::json!({"theme": "dark", "autoMemoryEnabled": true})
+            .as_object()
+            .unwrap()
+            .clone();
+        let settings: Value = serde_json::from_str(&launch_settings(&operator, &[], &[])).unwrap();
+        assert_eq!(
+            settings,
+            serde_json::json!({
+                "theme": "dark",
+                "autoMemoryEnabled": false,
+                "disableBundledSkills": true,
+                "skipDangerousModePermissionPrompt": true,
+                "enabledPlugins": {"cc-plugin-plugin-authoring@builtin": false},
+            })
+        );
+    }
+
+    #[test]
+    fn a_listed_bundled_skill_turns_the_whole_bundle_on() {
+        let settings: Value =
+            serde_json::from_str(&launch_settings(&serde_json::Map::new(), &[], &["loop"]))
+                .unwrap();
+        assert_eq!(settings["disableBundledSkills"], false);
+        assert_eq!(settings.get("skillOverrides"), None);
+        assert_eq!(
+            settings["enabledPlugins"],
+            serde_json::json!({"cc-plugin-plugin-authoring@builtin": false})
+        );
+        let settings: Value = serde_json::from_str(&launch_settings(
+            &serde_json::Map::new(),
+            &[],
+            &["plugin-authoring"],
+        ))
+        .unwrap();
+        assert_eq!(
+            settings.get("enabledPlugins"),
+            None,
+            "plugin-authoring is listed"
+        );
+    }
+
+    #[test]
+    fn a_synced_skill_is_linked_from_the_operators_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("home/skills/synced/account-1/pdf");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "---\nname: pdf\n---\n").unwrap();
+        let resolved = |name: &str| ResolvedProfile {
+            provided_skills: vec![(name.to_owned(), SkillProvider::ClaudeSynced)],
+            ..ResolvedProfile::default()
+        };
+        let adapter = ClaudeAdapter::new(dir.path().join("home"));
+        let session = record(dir.path(), serde_json::Value::Null);
+        let profile = Profile::write(resolved("pdf"), &dir.path().join("p.md")).unwrap();
+        let plan = adapter
+            .start(&LaunchRequest::new(&session, &profile), "go")
+            .unwrap();
+        assert!(plan.workspace.contains(&WorkspaceAction::Symlink {
+            src: skill,
+            dst: ".claude/tx-plugin/skills/pdf".into(),
+        }));
+        assert!(plan.args.contains(&"--plugin-dir".to_owned()));
+        let profile = Profile::write(resolved("nope"), &dir.path().join("p.md")).unwrap();
+        assert!(
+            adapter
+                .start(&LaunchRequest::new(&session, &profile), "go")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn prepare_marks_the_worktree_trusted() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(".claude.json");
+        std::fs::write(&file, r#"{"projects": {}}"#).unwrap();
+        let session = record(dir.path(), serde_json::Value::Null);
+        adapter().trust_file(&file).prepare(&session).unwrap();
+        let config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            config["projects"][dir.path().to_string_lossy().as_ref()]["hasTrustDialogAccepted"],
+            true
+        );
+        // Without a trust file nothing is touched.
+        adapter().prepare(&session).unwrap();
+    }
+
+    #[test]
     fn every_option() {
         let (dir, profile) = profile("# Role\nbe good", &["/skills/one", "/other/two"]);
         let session = record(
@@ -991,6 +1404,7 @@ mod tests {
         let plan = adapter()
             .start(&LaunchRequest::new(&session, &profile), "go")
             .unwrap();
+        let plugin_dir = dir.path().join(".claude/tx-plugin");
         assert_eq!(
             plan.args,
             argv(&[
@@ -1001,8 +1415,17 @@ mod tests {
                 "--effort",
                 "medium",
                 "--no-chrome",
+                "--strict-mcp-config",
+                "--setting-sources",
+                "",
+                "--tools",
+                "Bash,Read,Edit,Write,Skill,ToolSearch",
+                "--plugin-dir",
+                &plugin_dir.to_string_lossy(),
                 "--append-system-prompt",
                 "# Role\nbe good",
+                "--settings",
+                SETTINGS,
                 "--dangerously-skip-permissions",
                 "go",
             ])
@@ -1021,13 +1444,17 @@ mod tests {
         assert_eq!(
             plan.workspace,
             vec![
+                WorkspaceAction::Write {
+                    path: ".claude/tx-plugin/.claude-plugin/plugin.json".into(),
+                    content: r#"{"name":"tx"}"#.into(),
+                },
                 WorkspaceAction::Symlink {
                     src: "/skills/one".into(),
-                    dst: ".claude/skills/one".into()
+                    dst: ".claude/tx-plugin/skills/one".into()
                 },
                 WorkspaceAction::Symlink {
                     src: "/other/two".into(),
-                    dst: ".claude/skills/two".into()
+                    dst: ".claude/tx-plugin/skills/two".into()
                 },
             ]
         );
@@ -1042,14 +1469,14 @@ mod tests {
             .unwrap();
         assert_eq!(
             plan.args,
-            argv(&[
-                "--session-id",
-                session.id.as_str(),
-                "--effort",
-                "max",
-                "--no-chrome",
-                "--dangerously-skip-permissions"
-            ])
+            argv(
+                &[
+                    &["--session-id", session.id.as_str(), "--effort", "max"][..],
+                    &MINIMAL[..],
+                    &["--settings", SETTINGS, "--dangerously-skip-permissions"][..],
+                ]
+                .concat()
+            )
         );
     }
 
@@ -1184,6 +1611,8 @@ mod tests {
             .unwrap();
         assert_eq!(plan.args[at + 2], "--dangerously-skip-permissions");
         let settings: Value = serde_json::from_str(&plan.args[at + 1]).unwrap();
+        assert_eq!(settings["disableBundledSkills"], true);
+        assert_eq!(settings["skipDangerousModePermissionPrompt"], true);
         let hooks = settings["hooks"].as_object().unwrap();
         assert_eq!(
             hooks.keys().map(String::as_str).collect::<Vec<_>>(),

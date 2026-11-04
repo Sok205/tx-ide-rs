@@ -12,12 +12,18 @@ usage: tx [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR
 verbs:
   create NAME --cwd DIR --prompt T [--engine ENGINE] [--role R]... [--option KEY=VALUE]... [--model M]
                 [--effort E] [--parent ID] [--tag T]... [--env KEY=VALUE]...
+                [--agent A [--skill S]... [--mcp M]... [--tool T]...]
                                                                     start an agent; prints its id. It runs in its own
                                                                     worktree of the checkout DIR (name NAME, else NAME-2 …).
                                                                     --model M and --effort E are --option model=M / effort=E;
                                                                     effort is 1-5 (or the engine's own word);
                                                                     the engine validates every option. A flag not given
-                                                                    comes from `agent:` in the config file
+                                                                    comes from `agent:` in the config file.
+                                                                    --agent A runs the agent definition A (see
+                                                                    `definitions`): its prompt, tools, MCP servers and
+                                                                    skills, plus the --skill/--mcp/--tool extras, all kept
+                                                                    on the record and resolved again at every respawn;
+                                                                    with --agent, only --role adds roles
   fork SOURCE --prompt T [--name NAME] [--tag T]... [--option KEY=VALUE]... [--model M] [--effort E]
                                                                     a new agent continuing SOURCE's conversation in a branch,
                                                                     in its own worktree at SOURCE's committed HEAD (uncommitted
@@ -44,22 +50,33 @@ verbs:
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
   engines                                                           the engines whose plugin is enabled (claude, codex)
+  definitions [agents|skills|mcp|tools]                             name and description of each definition, every kind
+                                                                    or one; yours (<config>/definitions) win by name over
+                                                                    the shipped ones (<data>/definitions). tools (only
+                                                                    when asked): the names `tools` can use, from the
+                                                                    engines, and each MCP server's tools
+  check [--engine ENGINE] [NAME]...                                 validate the definitions, all or those named (agents,
+                                                                    skills, MCP servers); path:line per problem, exit 1;
+                                                                    --engine: also what ENGINE adds to each agent and what
+                                                                    it carries that no flag removes
   plugins                                                           id and active|disabled per plugin
 
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
 else the XDG variable, else the XDG default:
-  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           config.yaml, roles/ (your own)
-  data    $XDG_DATA_HOME/<app>, ~/.local/share/<app>        records, log, plugin data, roles/ (shipped)
+  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           config.yaml, roles/, definitions/ (your own)
+  data    $XDG_DATA_HOME/<app>, ~/.local/share/<app>        records, log, plugin data, roles/, definitions/ (shipped)
   state   $XDG_STATE_HOME/<app>, ~/.local/state/<app>       locks, profiles
   cache   $XDG_CACHE_HOME/<app>, ~/.cache/<app>
   run     $XDG_RUNTIME_DIR/<app>, $TMPDIR/<app>.<user>      tmux.sock
 Roles resolve from --profile-dir, else <data>/roles (written by `ui install`), then <config>/roles;
-skills from --skill-dir, else skills/ under those two.
+skills from --skill-dir, else <data>/definitions/skills (written by `ui install`), then
+<config>/definitions/skills.
 The config file is <config>/config.yaml (--config FILE overrides); every key is optional:
   agent:                        defaults for create; a flag given replaces its key
     engine: claude              claude | codex
     roles: [COMMON, DEVELOPER]  any --role replaces the whole list
+    definition: developer       the agent definition without --agent (null: roles alone)
     model: claude-opus-5-5      null: the engine's own default
     effort: 3                   1-5 (or the engine's own word); null: the engine's own default
   plugins:                      one entry per plugin id (see `plugins`)
@@ -99,8 +116,10 @@ pub enum Verb {
         env: Vec<(String, String)>,
         /// `None`: the config file's `agent.engine`.
         engine: Option<EngineKind>,
-        /// Empty: the config file's `agent.roles`.
+        /// Empty: the config file's `agent.roles`, or none with `--agent`.
         roles: Vec<String>,
+        /// `--agent A` and its `--skill`/`--mcp`/`--tool` extras.
+        definition: Option<tx_core::DefinitionChoice>,
         /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
         /// a repeated key is settled by the engine's options object, last one wins.
         options: Vec<(String, String)>,
@@ -155,12 +174,49 @@ pub enum Verb {
     },
     Engines,
     Plugins,
+    /// `check [--engine E] [NAME]...`: validate the definitions, all of them or those named;
+    /// with an engine, also what it adds or cannot remove.
+    Check {
+        engine: Option<EngineKind>,
+        names: Vec<String>,
+    },
+    /// `definitions [agents|skills|mcp]`: list them, every kind or one.
+    Definitions {
+        kind: Option<DefinitionKind>,
+    },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
     Plugin {
         name: String,
         argv: Vec<String>,
     },
     Help,
+}
+
+/// What `tx definitions` lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefinitionKind {
+    Agents,
+    Skills,
+    Mcp,
+    /// Only when asked for: it starts the engines and the MCP servers to ask them.
+    Tools,
+}
+
+impl DefinitionKind {
+    pub const ALL: [DefinitionKind; 3] = [
+        DefinitionKind::Agents,
+        DefinitionKind::Skills,
+        DefinitionKind::Mcp,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DefinitionKind::Agents => "agents",
+            DefinitionKind::Skills => "skills",
+            DefinitionKind::Mcp => "mcp",
+            DefinitionKind::Tools => "tools",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,6 +429,35 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("respawn") => Verb::Respawn {
             target: target(&mut cursor, "respawn")?,
         },
+        Some("check") => {
+            let engine = match cursor.peek() {
+                Some("--engine") => {
+                    cursor.next();
+                    Some(engine_kind(cursor.value("--engine")?)?)
+                }
+                _ => None,
+            };
+            Verb::Check {
+                engine,
+                names: cursor.rest(),
+            }
+        }
+        Some("definitions") => Verb::Definitions {
+            kind: match cursor.next() {
+                None => None,
+                Some(text) => Some(
+                    DefinitionKind::ALL
+                        .into_iter()
+                        .chain([DefinitionKind::Tools])
+                        .find(|kind| kind.as_str() == text)
+                        .ok_or_else(|| {
+                            usage(format!(
+                                "definitions lists agents, skills, mcp or tools, got {text:?}"
+                            ))
+                        })?,
+                ),
+            },
+        },
         Some(other) => Verb::Plugin {
             name: other.to_owned(),
             argv: cursor.rest(),
@@ -405,9 +490,15 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut roles = Vec::new();
     let mut options = Vec::new();
     let mut prompt = None;
+    let mut agent = None;
+    let mut extras = tx_core::DefinitionChoice::default();
     while let Some(flag) = cursor.next() {
         match flag {
             "--cwd" => cwd = Some(cursor.value(flag)?.into()),
+            "--agent" => agent = Some(cursor.value(flag)?.to_owned()),
+            "--skill" => extras.skills.push(cursor.value(flag)?.to_owned()),
+            "--mcp" => extras.mcp_servers.push(cursor.value(flag)?.to_owned()),
+            "--tool" => extras.tools.push(cursor.value(flag)?.to_owned()),
             "--parent" => parent = Some(cursor.value(flag)?.to_owned()),
             "--tag" => tags.push(cursor.value(flag)?.to_owned()),
             "--env" => env.push(env_pair(cursor.value(flag)?)?),
@@ -422,6 +513,11 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     }
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
     let prompt = prompt.ok_or_else(|| usage("create needs --prompt T"))?;
+    let definition = match agent {
+        Some(agent) => Some(tx_core::DefinitionChoice { agent, ..extras }),
+        None if extras == tx_core::DefinitionChoice::default() => None,
+        None => return Err(usage("--skill, --mcp and --tool extend an --agent")),
+    };
     Ok(Verb::Create {
         name,
         cwd,
@@ -430,6 +526,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         env,
         engine,
         roles,
+        definition,
         options,
         prompt,
     })
@@ -567,12 +664,14 @@ mod tests {
             env,
             engine,
             roles,
+            definition,
             options,
             prompt,
         } = inv.verb
         else {
             panic!()
         };
+        assert_eq!(definition, None);
         assert_eq!(name, "w1");
         assert_eq!(cwd, Path::new("/w"));
         assert_eq!(parent.as_deref(), Some("p-1"));
@@ -590,6 +689,31 @@ mod tests {
             ]
         );
         assert_eq!(prompt, "go");
+    }
+
+    #[test]
+    fn create_with_an_agent_definition_and_extras() {
+        let Verb::Create { definition, .. } = parse_str(
+            "create w --cwd /w --prompt go --agent pm --skill s1 --mcp probe --tool WebFetch --skill s2",
+        )
+        .unwrap()
+        .verb
+        else {
+            panic!()
+        };
+        assert_eq!(
+            definition,
+            Some(tx_core::DefinitionChoice {
+                agent: "pm".into(),
+                skills: vec!["s1".into(), "s2".into()],
+                mcp_servers: vec!["probe".into()],
+                tools: vec!["WebFetch".into()],
+            })
+        );
+        assert_eq!(
+            parse_str("create w --cwd /w --prompt go --skill s").unwrap_err().0,
+            "--skill, --mcp and --tool extend an --agent"
+        );
     }
 
     #[test]
@@ -833,6 +957,31 @@ mod tests {
             Verb::Respawn { target: "x".into() }
         );
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
+        assert_eq!(
+            parse_str("check pm linear").unwrap().verb,
+            Verb::Check {
+                engine: None,
+                names: vec!["pm".into(), "linear".into()]
+            }
+        );
+        assert_eq!(
+            parse_str("check --engine codex pm").unwrap().verb,
+            Verb::Check {
+                engine: Some(EngineKind::Codex),
+                names: vec!["pm".into()]
+            }
+        );
+        assert_eq!(
+            parse_str("definitions mcp").unwrap().verb,
+            Verb::Definitions {
+                kind: Some(DefinitionKind::Mcp)
+            }
+        );
+        assert_eq!(
+            parse_str("definitions").unwrap().verb,
+            Verb::Definitions { kind: None }
+        );
+        assert!(parse_str("definitions roles").is_err());
         assert_eq!(parse_str("help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("--help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("").unwrap_err().0, "missing verb");

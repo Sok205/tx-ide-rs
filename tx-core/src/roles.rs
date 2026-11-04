@@ -1,12 +1,15 @@
-//! The roles and skills the core ships: `agents/…` resources (plugin id [`PLUGIN_ID`]) listed by
-//! `TxCore::resources` ahead of every plugin's, which `tx ui install` writes under
-//! `<data>/roles/`. One tree, `tx-core/agents/`, so a role is not tied to the plugin that first
-//! needed it; a plugin that registers a resource of the same name is refused as a duplicate.
+//! What the core ships, listed by `TxCore::resources` (plugin id [`PLUGIN_ID`]) ahead of every
+//! plugin's; a plugin that registers a resource of the same name is refused as a duplicate.
+//! - The roles: `agents/…` resources from `tx-core/agents/`, which `tx ui install` writes under
+//!   `<data>/roles/`, so a role is not tied to the plugin that first needed it.
+//! - The definitions: `definitions/…` resources from the repo's `config/tx/` (`skills/`,
+//!   `mcp.json`, later `agents/`), which `tx ui install` writes under `<data>/definitions/`.
 
 /// The `plugin` field of every shipped role resource.
 pub const PLUGIN_ID: &str = "tx-core";
 
-/// Every file of `tx-core/agents/`, named `agents/<path>`.
+/// Every file of `tx-core/agents/`, named `agents/<path>`, then every file of `config/tx/`, named
+/// `definitions/<path>`.
 pub const SHIPPED: &[(&str, &[u8])] = &[
     ("agents/COMMON.md", include_bytes!("../agents/COMMON.md")),
     (
@@ -27,27 +30,179 @@ pub const SHIPPED: &[(&str, &[u8])] = &[
         include_bytes!("../agents/TX-ASSISTANT.md"),
     ),
     (
-        "agents/skills/tx-artifacts/SKILL.md",
-        include_bytes!("../agents/skills/tx-artifacts/SKILL.md"),
+        "definitions/agents/claude.md",
+        include_bytes!("../../config/tx/agents/claude.md"),
     ),
     (
-        "agents/skills/tx-code-tours/SKILL.md",
-        include_bytes!("../agents/skills/tx-code-tours/SKILL.md"),
+        "definitions/agents/developer.md",
+        include_bytes!("../../config/tx/agents/developer.md"),
     ),
     (
-        "agents/skills/tx-code-tours/scripts/apply_tour.py",
-        include_bytes!("../agents/skills/tx-code-tours/scripts/apply_tour.py"),
+        "definitions/mcp.json",
+        include_bytes!("../../config/tx/mcp.json"),
     ),
     (
-        "agents/skills/tx-diff-review/SKILL.md",
-        include_bytes!("../agents/skills/tx-diff-review/SKILL.md"),
+        "definitions/skills/batch/SKILL.md",
+        include_bytes!("../../config/tx/skills/batch/SKILL.md"),
     ),
     (
-        "agents/skills/tx-mockup/SKILL.md",
-        include_bytes!("../agents/skills/tx-mockup/SKILL.md"),
+        "definitions/skills/built-in-browser/SKILL.md",
+        include_bytes!("../../config/tx/skills/built-in-browser/SKILL.md"),
     ),
     (
-        "agents/skills/tx-sessions/SKILL.md",
-        include_bytes!("../agents/skills/tx-sessions/SKILL.md"),
+        "definitions/skills/chrome-browser/SKILL.md",
+        include_bytes!("../../config/tx/skills/chrome-browser/SKILL.md"),
+    ),
+    (
+        "definitions/skills/claude-api/SKILL.md",
+        include_bytes!("../../config/tx/skills/claude-api/SKILL.md"),
+    ),
+    (
+        "definitions/skills/code-review/SKILL.md",
+        include_bytes!("../../config/tx/skills/code-review/SKILL.md"),
+    ),
+    (
+        "definitions/skills/computer-use/SKILL.md",
+        include_bytes!("../../config/tx/skills/computer-use/SKILL.md"),
+    ),
+    (
+        "definitions/skills/dataviz/SKILL.md",
+        include_bytes!("../../config/tx/skills/dataviz/SKILL.md"),
+    ),
+    (
+        "definitions/skills/debug/SKILL.md",
+        include_bytes!("../../config/tx/skills/debug/SKILL.md"),
+    ),
+    (
+        "definitions/skills/deep-research/SKILL.md",
+        include_bytes!("../../config/tx/skills/deep-research/SKILL.md"),
+    ),
+    (
+        "definitions/skills/docs/SKILL.md",
+        include_bytes!("../../config/tx/skills/docs/SKILL.md"),
+    ),
+    (
+        "definitions/skills/doctor/SKILL.md",
+        include_bytes!("../../config/tx/skills/doctor/SKILL.md"),
+    ),
+    (
+        "definitions/skills/docx/SKILL.md",
+        include_bytes!("../../config/tx/skills/docx/SKILL.md"),
+    ),
+    (
+        "definitions/skills/fewer-permission-prompts/SKILL.md",
+        include_bytes!("../../config/tx/skills/fewer-permission-prompts/SKILL.md"),
+    ),
+    (
+        "definitions/skills/google-workspace/SKILL.md",
+        include_bytes!("../../config/tx/skills/google-workspace/SKILL.md"),
+    ),
+    (
+        "definitions/skills/import-memory/SKILL.md",
+        include_bytes!("../../config/tx/skills/import-memory/SKILL.md"),
+    ),
+    (
+        "definitions/skills/init/SKILL.md",
+        include_bytes!("../../config/tx/skills/init/SKILL.md"),
+    ),
+    (
+        "definitions/skills/keybindings-help/SKILL.md",
+        include_bytes!("../../config/tx/skills/keybindings-help/SKILL.md"),
+    ),
+    (
+        "definitions/skills/loop/SKILL.md",
+        include_bytes!("../../config/tx/skills/loop/SKILL.md"),
+    ),
+    (
+        "definitions/skills/morning/SKILL.md",
+        include_bytes!("../../config/tx/skills/morning/SKILL.md"),
+    ),
+    (
+        "definitions/skills/pdf/SKILL.md",
+        include_bytes!("../../config/tx/skills/pdf/SKILL.md"),
+    ),
+    (
+        "definitions/skills/plugin-authoring/SKILL.md",
+        include_bytes!("../../config/tx/skills/plugin-authoring/SKILL.md"),
+    ),
+    (
+        "definitions/skills/pptx/SKILL.md",
+        include_bytes!("../../config/tx/skills/pptx/SKILL.md"),
+    ),
+    (
+        "definitions/skills/run-skill-generator/SKILL.md",
+        include_bytes!("../../config/tx/skills/run-skill-generator/SKILL.md"),
+    ),
+    (
+        "definitions/skills/run/SKILL.md",
+        include_bytes!("../../config/tx/skills/run/SKILL.md"),
+    ),
+    (
+        "definitions/skills/security-review/SKILL.md",
+        include_bytes!("../../config/tx/skills/security-review/SKILL.md"),
+    ),
+    (
+        "definitions/skills/simplify/SKILL.md",
+        include_bytes!("../../config/tx/skills/simplify/SKILL.md"),
+    ),
+    (
+        "definitions/skills/skill-creator/SKILL.md",
+        include_bytes!("../../config/tx/skills/skill-creator/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-agents/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-agents/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-agents/templates/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-agents/templates/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-agents/templates/agent.md",
+        include_bytes!("../../config/tx/skills/tx-agents/templates/agent.md"),
+    ),
+    (
+        "definitions/skills/tx-agents/templates/mcp.json",
+        include_bytes!("../../config/tx/skills/tx-agents/templates/mcp.json"),
+    ),
+    (
+        "definitions/skills/tx-artifacts/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-artifacts/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-code-tours/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-code-tours/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-code-tours/scripts/apply_tour.py",
+        include_bytes!("../../config/tx/skills/tx-code-tours/scripts/apply_tour.py"),
+    ),
+    (
+        "definitions/skills/tx-diff-review/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-diff-review/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-mockup/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-mockup/SKILL.md"),
+    ),
+    (
+        "definitions/skills/tx-sessions/SKILL.md",
+        include_bytes!("../../config/tx/skills/tx-sessions/SKILL.md"),
+    ),
+    (
+        "definitions/skills/update-config/SKILL.md",
+        include_bytes!("../../config/tx/skills/update-config/SKILL.md"),
+    ),
+    (
+        "definitions/skills/verify/SKILL.md",
+        include_bytes!("../../config/tx/skills/verify/SKILL.md"),
+    ),
+    (
+        "definitions/skills/workflow-authoring/SKILL.md",
+        include_bytes!("../../config/tx/skills/workflow-authoring/SKILL.md"),
+    ),
+    (
+        "definitions/skills/xlsx/SKILL.md",
+        include_bytes!("../../config/tx/skills/xlsx/SKILL.md"),
     ),
 ];

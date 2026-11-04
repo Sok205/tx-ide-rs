@@ -35,7 +35,7 @@ scrolling, copy-mode. The agents run on tx's own tmux server, so raw tmux needs 
 `tx where <agent>` prints the socket, the session target and the pane target.
 
 Before starting anything — a worker agent, an nvim view, a shell view — follow the `tx-sessions`
-skill (shipped at `$TX_DATA_DIR/roles/skills/tx-sessions/SKILL.md`); flag syntax is in `tx help`.
+skill (shipped at `$TX_DATA_DIR/definitions/skills/tx-sessions/SKILL.md`); flag syntax is in `tx help`.
 
 ## Inter-agent communication
 
@@ -63,6 +63,6 @@ name with `tx whoami`. The message is framed as coming from you automatically.
 Durable deliverables — plans, docs, reports, question sets — are **artifacts**: versioned records
 managed by `tx artifact`, never an engine's own built-in artifact or publish tool. Before creating
 or updating one, follow the `tx-artifacts` skill (shipped at
-`$TX_DATA_DIR/roles/skills/tx-artifacts/SKILL.md`). Never write under
+`$TX_DATA_DIR/definitions/skills/tx-artifacts/SKILL.md`). Never write under
 `$TX_DATA_DIR/plugins/artifacts/` by hand — revisions are immutable, and a direct edit desyncs the
 history from disk.

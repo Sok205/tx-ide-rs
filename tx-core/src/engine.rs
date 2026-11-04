@@ -336,6 +336,14 @@ pub trait LlmEngine: Send + Sync {
         Ok(())
     }
 
+    /// Before every launch (start, resume, fork), with the record's worktree in place: whatever
+    /// the CLI needs outside the worktree to start there without asking (Claude's folder trust,
+    /// say). Idempotent. The default prepares nothing.
+    fn prepare(&self, session: &Agent) -> Result<(), EngineError> {
+        let _ = session;
+        Ok(())
+    }
+
     /// Before a resume: if the CLI's own copy of the conversation is missing, put the archived
     /// one back where the CLI expects it. Never overwrites a live transcript. Returns whether
     /// anything was restored. The default restores nothing.
@@ -688,6 +696,7 @@ mod tests {
             engine: EngineKind::Claude,
             working_directory: cwd.to_owned(),
             roles: Vec::new(),
+            definition: None,
             state: LlmEngineState::Starting,
             created_at: 0.0,
             last_modified_at: 0.0,
@@ -733,6 +742,7 @@ mod tests {
             ResolvedProfile {
                 text: "t".into(),
                 skill_dirs: vec![],
+                ..ResolvedProfile::default()
             },
             &dir.path().join("p.md"),
         )

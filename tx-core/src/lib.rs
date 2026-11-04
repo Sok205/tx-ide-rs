@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod config;
 pub mod core;
+pub mod definitions;
 pub mod effort;
 pub mod engine;
 pub mod error;
@@ -27,7 +28,7 @@ pub mod store;
 pub mod tmux;
 pub mod worktree;
 
-pub use agent::{Agent, AgentId, RecordError, validate_name};
+pub use agent::{Agent, AgentId, DefinitionChoice, RecordError, validate_name};
 pub use config::{CoreConfig, Directories, MAX_SOCKET_PATH_BYTES};
 pub use core::{
     CreateOptions, DeliveryReceipt, ExecutionLocation, ForkOptions, LaunchOptions, ListFilter,
@@ -54,7 +55,7 @@ pub use mirror::{mirror_file, mirror_file_exact, mirror_tree};
 pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };
-pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
+pub use profile::{Profile, Profiles, ResolvedProfile, RoleError, SkillProvider};
 pub use state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 #[doc(hidden)]
 pub use store::AgentStore;

@@ -4,6 +4,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::agent::AgentId;
+use crate::definitions::DefinitionError;
 use crate::engine::{EngineError, EngineKind};
 use crate::profile::RoleError;
 use crate::store::StoreError;
@@ -53,6 +54,12 @@ pub enum CoreError {
     SocketPathNotAbsolute(PathBuf),
     #[error(transparent)]
     Profile(#[from] RoleError),
+    #[error(transparent)]
+    Definition(#[from] DefinitionError),
+    /// An MCP server names a secret the caller's environment does not hold; launching anyway
+    /// would drop the server without a word (Codex) or send an empty secret.
+    #[error("MCP server {server:?} needs ${variable}, which is not set")]
+    MissingVariable { server: String, variable: String },
     #[error(transparent)]
     Engine(#[from] EngineError),
     #[error(transparent)]

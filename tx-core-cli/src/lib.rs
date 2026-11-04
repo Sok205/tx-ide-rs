@@ -3,5 +3,7 @@
 
 pub mod args;
 pub mod config;
+pub mod definitions;
 pub mod plugins;
 pub mod setup;
+pub mod tools;

@@ -4,7 +4,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::agent::{Agent, AgentId, validate_name};
+use crate::agent::{Agent, AgentId, DefinitionChoice, validate_name};
+use crate::definitions::Definitions;
 use crate::config::{AGENTS_DIR, CoreConfig};
 use crate::engine::{
     Conversation, EngineError, EngineKind, EngineRegistry, Input, LaunchRequest, LlmEngine,
@@ -153,6 +154,8 @@ pub enum LaunchOptions {
         options: serde_json::Value,
         /// The agent's first message. Required: an engine never starts silently.
         initial_prompt: String,
+        /// The agent definition and its extras; `None`: the roles alone.
+        definition: Option<DefinitionChoice>,
     },
 }
 
@@ -163,6 +166,7 @@ impl LaunchOptions {
             profile: Vec::new(),
             options: serde_json::Value::Object(serde_json::Map::new()),
             initial_prompt: String::new(),
+            definition: None,
         }
     }
 
@@ -199,6 +203,13 @@ impl LaunchOptions {
     pub fn initial_prompt(mut self, prompt: impl Into<String>) -> Self {
         let Self::Agent { initial_prompt, .. } = &mut self;
         *initial_prompt = prompt.into();
+        self
+    }
+
+    /// Runs the agent definition `choice` (with its extras) on top of the roles.
+    pub fn definition(mut self, choice: DefinitionChoice) -> Self {
+        let Self::Agent { definition, .. } = &mut self;
+        *definition = Some(choice);
         self
     }
 }
@@ -331,6 +342,7 @@ pub struct TxCore {
     events: EventLog,
     engines: EngineRegistry,
     profiles: Profiles,
+    definitions: Definitions,
     worktrees: WorktreeManager,
     locks: Locks,
     sinks: Vec<Box<dyn EventSink>>,
@@ -525,6 +537,7 @@ impl TxCore {
             events: EventLog::new(directories.data.join(LOG_FILE)),
             engines: EngineRegistry::new(),
             profiles: Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone()),
+            definitions: Definitions::new(config.directories.definition_roots()),
             worktrees: WorktreeManager::new(config.worktrees_dir()),
             locks: Locks::new(directories.state.join(LOCKS_DIR)),
             sinks: Vec::new(),
@@ -685,6 +698,7 @@ impl TxCore {
             profile: source.roles.clone(),
             options: options.options,
             initial_prompt: options.prompt,
+            definition: source.definition.clone(),
         };
         let opts = CreateOptions {
             name,
@@ -712,13 +726,19 @@ impl TxCore {
         // The real directory: git is asked about the real checkout, and the record and every
         // workspace path say so.
         let cwd = std::fs::canonicalize(&opts.cwd).map_err(store_io(&opts.cwd))?;
-        let opts = CreateOptions { cwd, ..opts };
+        let mut opts = CreateOptions { cwd, ..opts };
+        // A launch without its own agent definition runs the configured default.
+        let LaunchOptions::Agent { definition, .. } = &mut opts.launch;
+        if definition.is_none() {
+            *definition = self.default_definition();
+        }
         // Pure checks before the lock: an unknown engine, a missing prompt or an unknown role never
         // touches state.
         let LaunchOptions::Agent {
             engine,
             profile,
             initial_prompt,
+            definition,
             ..
         } = &opts.launch;
         let adapter = self
@@ -728,7 +748,7 @@ impl TxCore {
         if initial_prompt.trim().is_empty() {
             return Err(CoreError::PromptRequired);
         }
-        let engine = (adapter, self.profiles.resolve(profile)?);
+        let engine = (adapter, self.resolve_profile(profile, definition.as_ref())?);
         let roles = profile.clone();
 
         let _create = self.locks.create().map_err(CoreError::Lock)?;
@@ -772,6 +792,7 @@ impl TxCore {
             engine,
             options,
             initial_prompt,
+            definition,
             ..
         } = opts.launch;
         if let Some(data) = fork_of.and_then(|source| source.ext.get(adapter.ext_key())) {
@@ -784,6 +805,7 @@ impl TxCore {
             engine,
             working_directory: opts.cwd,
             roles,
+            definition,
             // `Starting` until the adapter's first change.
             state: LlmEngineState::Starting,
             created_at,
@@ -858,6 +880,26 @@ impl TxCore {
         merge_env(&mut env, &self.config.env);
         merge_env(&mut env, extra_env);
 
+        // The secrets the MCP servers name come from the caller, explicitly: the session would
+        // otherwise see only the tmux server's environment from whenever it started.
+        for (server, definition) in &engine.resolved.mcp_servers {
+            for variable in definition.variables() {
+                if env.iter().any(|(key, _)| key == variable) {
+                    continue;
+                }
+                let value = self
+                    .config
+                    .caller_env
+                    .iter()
+                    .find(|(key, _)| key == variable)
+                    .ok_or_else(|| CoreError::MissingVariable {
+                        server: server.clone(),
+                        variable: variable.to_owned(),
+                    })?;
+                env.push(value.clone());
+            }
+        }
+        engine.adapter.prepare(session)?;
         let profile =
             Profile::write(engine.resolved, &profile_file).map_err(store_io(&profile_file))?;
         let request = LaunchRequest {
@@ -941,7 +983,11 @@ impl TxCore {
             .engines
             .get(session.engine)
             .ok_or(CoreError::EngineDisabled(session.engine))?;
-        let resolved = self.profiles.resolve(&session.roles)?;
+        // A record from before agent definitions adopts the configured default, on the record.
+        if session.definition.is_none() {
+            session.definition = self.default_definition();
+        }
+        let resolved = self.resolve_profile(&session.roles, session.definition.as_ref())?;
         if session.state != LlmEngineState::Ended || self.tmux.is_live(id)?.is_some() {
             return Err(CoreError::StillRunning(id.clone()));
         }
@@ -969,6 +1015,29 @@ impl TxCore {
             events.push(exited_before_registration(&session));
         }
         Ok((session, events))
+    }
+
+    /// `config.yaml`'s `agent.definition`, as a choice with no extras.
+    fn default_definition(&self) -> Option<DefinitionChoice> {
+        self.config
+            .default_definition
+            .as_ref()
+            .map(DefinitionChoice::new)
+    }
+
+    /// The profile a launch runs: the roles' text and skills, with the agent definition and its
+    /// extras on top when there is one. Resolved again at every launch, so a respawn picks up
+    /// edited definitions.
+    fn resolve_profile(
+        &self,
+        roles: &[String],
+        definition: Option<&DefinitionChoice>,
+    ) -> Result<ResolvedProfile, CoreError> {
+        let resolved = self.profiles.resolve(roles)?;
+        Ok(match definition {
+            Some(choice) => self.definitions.apply(resolved, choice)?,
+            None => resolved,
+        })
     }
 
     /// Every record write goes through here: stamps `last_modified_at`, then saves.
@@ -1657,6 +1726,7 @@ mod tests {
             engine: EngineKind::Claude,
             working_directory: "/".into(),
             roles: vec![],
+            definition: None,
             state,
             created_at: 1.0,
             last_modified_at: 1.0,

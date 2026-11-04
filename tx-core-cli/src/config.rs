@@ -4,6 +4,7 @@
 //! agent:                         # defaults for `tx create`; flags override
 //!   engine: claude
 //!   roles: [COMMON, DEVELOPER]   # any --role replaces the whole list
+//!   definition: developer        # the agent definition without --agent; null: roles alone
 //!   model: claude-opus-5-5       # null: the engine's own default
 //!   effort: 3                    # 1-5 (or the engine's word); null: the engine's own default
 //! plugins:
@@ -40,6 +41,9 @@ pub struct Config {
 pub struct AgentDefaults {
     pub engine: EngineKind,
     pub roles: Vec<String>,
+    /// The agent definition every launch without `--agent` runs (its tools and skills; the
+    /// roles still give the prompt). `null`: roles alone, with the engine's base tools.
+    pub definition: Option<String>,
     pub model: Option<String>,
     /// A number on the tx scale or an engine's word, as text; the engine checks it.
     #[serde(deserialize_with = "tx_core::deserialize_optional_effort")]
@@ -51,6 +55,7 @@ impl Default for AgentDefaults {
         Self {
             engine: EngineKind::Claude,
             roles: vec!["COMMON".to_owned(), "DEVELOPER".to_owned()],
+            definition: Some("developer".to_owned()),
             model: Some("claude-opus-5-5".to_owned()),
             effort: Some("3".to_owned()),
         }
@@ -156,13 +161,14 @@ mod tests {
     #[test]
     fn every_agent_key_is_read() {
         let config =
-            parse_text("agent:\n  engine: codex\n  roles: [QA]\n  model: gpt-5\n  effort: low\n")
+            parse_text("agent:\n  engine: codex\n  roles: [QA]\n  definition: null\n  model: gpt-5\n  effort: low\n")
                 .unwrap();
         assert_eq!(
             config.agent,
             AgentDefaults {
                 engine: EngineKind::Codex,
                 roles: vec!["QA".to_owned()],
+                definition: None,
                 model: Some("gpt-5".to_owned()),
                 effort: Some("low".to_owned()),
             }

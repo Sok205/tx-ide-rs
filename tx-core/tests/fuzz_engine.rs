@@ -826,6 +826,7 @@ fn core_accepts_a_plan_with_empty_program() {
         ResolvedProfile {
             text: "t".into(),
             skill_dirs: vec![],
+            ..ResolvedProfile::default()
         },
         &dir.path().join("p.md"),
     )
@@ -836,6 +837,7 @@ fn core_accepts_a_plan_with_empty_program() {
         engine: EngineKind::Claude,
         working_directory: dir.path().to_owned(),
         roles: Vec::new(),
+        definition: None,
         state: LlmEngineState::Starting,
         created_at: 0.0,
         last_modified_at: 0.0,

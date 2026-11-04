@@ -4,8 +4,11 @@
 //! frontmatter block whose `skills: [a, b]` line (at any indent, so `tx:` nesting works) grants
 //! skills; each resolves to `<skill_dir>/<name>/` from the last skill dir that has it.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use crate::definitions::McpServer;
 
 pub const ROLE_SUFFIX: &str = ".md";
 pub const LOCAL_SUFFIX: &str = ".local.md";
@@ -61,19 +64,55 @@ pub struct Profiles {
     skill_dirs: Vec<PathBuf>,
 }
 
-/// A resolved profile: the combined text and the granted skill directories.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Where an engine-provided skill comes from: a reference skill (`SKILL.md` with frontmatter
+/// only and `metadata.provided-by`) names it, and the engine delivers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillProvider {
+    /// Built into the Claude binary.
+    ClaudeBundled,
+    /// The operator's claude.ai-synced copy under `~/.claude/skills/synced/`.
+    ClaudeSynced,
+}
+
+impl SkillProvider {
+    pub const ALL: [SkillProvider; 2] = [SkillProvider::ClaudeBundled, SkillProvider::ClaudeSynced];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SkillProvider::ClaudeBundled => "claude-bundled",
+            SkillProvider::ClaudeSynced => "claude-synced",
+        }
+    }
+}
+
+/// A resolved profile: the combined text, the granted skill directories, and what an agent
+/// definition adds (roles alone leave those at their defaults).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedProfile {
     pub text: String,
     pub skill_dirs: Vec<PathBuf>,
+    /// The built-in tools, in Claude's names, each engine mapping them: an agent definition's
+    /// `tools` and the `--tool` extras, exactly. `None` without a definition: the engine's own
+    /// base set.
+    pub tools: Option<Vec<String>>,
+    pub disallowed_tools: Vec<String>,
+    /// The MCP servers the agent gets, by name; none means none at all.
+    pub mcp_servers: BTreeMap<String, McpServer>,
+    /// The engine-provided skills it lists, by name; the engine delivers them, and every other
+    /// skill of that provider stays off.
+    pub provided_skills: Vec<(String, SkillProvider)>,
 }
 
-/// What an engine adapter receives: the text, a file holding it, and the skill dirs.
+/// What an engine adapter receives: the resolved profile, and a file holding its text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Profile {
     text: String,
     file: PathBuf,
     skill_dirs: Vec<PathBuf>,
+    tools: Option<Vec<String>>,
+    disallowed_tools: Vec<String>,
+    mcp_servers: BTreeMap<String, McpServer>,
+    provided_skills: Vec<(String, SkillProvider)>,
 }
 
 impl Profile {
@@ -87,6 +126,10 @@ impl Profile {
             text: resolved.text,
             file: path.to_owned(),
             skill_dirs: resolved.skill_dirs,
+            tools: resolved.tools,
+            disallowed_tools: resolved.disallowed_tools,
+            mcp_servers: resolved.mcp_servers,
+            provided_skills: resolved.provided_skills,
         })
     }
 
@@ -100,6 +143,31 @@ impl Profile {
 
     pub fn skill_dirs(&self) -> &[PathBuf] {
         &self.skill_dirs
+    }
+
+    pub fn tools(&self) -> Option<&[String]> {
+        self.tools.as_deref()
+    }
+
+    pub fn disallowed_tools(&self) -> &[String] {
+        &self.disallowed_tools
+    }
+
+    pub fn mcp_servers(&self) -> &BTreeMap<String, McpServer> {
+        &self.mcp_servers
+    }
+
+    pub fn provided_skills(&self) -> &[(String, SkillProvider)] {
+        &self.provided_skills
+    }
+
+    /// The names of the provided skills from `provider`.
+    pub fn provided_by(&self, provider: SkillProvider) -> Vec<&str> {
+        self.provided_skills
+            .iter()
+            .filter(|(_, from)| *from == provider)
+            .map(|(name, _)| name.as_str())
+            .collect()
     }
 }
 
@@ -147,6 +215,7 @@ impl Profiles {
         Ok(ResolvedProfile {
             text: bodies.join("\n\n"),
             skill_dirs,
+            ..ResolvedProfile::default()
         })
     }
 
@@ -485,6 +554,7 @@ mod tests {
         let resolved = ResolvedProfile {
             text: "hello".into(),
             skill_dirs: vec![tree.path("s/one")],
+            ..ResolvedProfile::default()
         };
         let path = tree.path("profiles/abc.md");
         let profile = Profile::write(resolved, &path).unwrap();
