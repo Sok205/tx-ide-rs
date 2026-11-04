@@ -4,7 +4,7 @@
 use std::io::Write;
 
 use tx_core::definitions::{DefinitionError, Definitions, McpServer, read_agent, read_skill};
-use tx_core::{Directories, EngineKind};
+use tx_core::{Directories, EngineKind, SkillProvider};
 
 use crate::args::DefinitionKind;
 
@@ -110,7 +110,7 @@ pub fn check(
     out: &mut dyn Write,
 ) -> Result<bool, DefinitionError> {
     let report = Definitions::new(directories.definition_roots()).check(names)?;
-    let mut unknown_tools = 0;
+    let mut engine_problems = 0;
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
     }
@@ -146,7 +146,7 @@ pub fn check(
                     })
                     .collect();
                 if !unknown.is_empty() {
-                    unknown_tools += 1;
+                    engine_problems += 1;
                     writeln!(
                         out,
                         "{}:{}: not a Claude Code {} tool, which it would drop silently: {}",
@@ -159,13 +159,63 @@ pub fn check(
                 }
             }
         }
+        // Reference skills: Claude must have each one; Codex has none of them.
+        let skills = Definitions::new(directories.definition_roots()).skill_directories()?;
+        let bundled = match engine {
+            EngineKind::Claude => Some(
+                crate::tools::claude_built_ins(directories)
+                    .map_err(|message| DefinitionError::new(&directories.cache, None, message))?,
+            ),
+            EngineKind::Codex => None,
+        };
+        for agent in &report.agent_definitions {
+            for name in &agent.skills {
+                let Some(provider) = skills
+                    .get(name)
+                    .and_then(|directory| tx_core::definitions::read_skill(directory).ok())
+                    .and_then(|skill| skill.provided_by)
+                else {
+                    continue;
+                };
+                let problem = match (engine, provider, &bundled) {
+                    (EngineKind::Codex, provider, _) => Some(format!(
+                        "skill {name:?} is provided by {}: not on codex",
+                        provider.as_str()
+                    )),
+                    (EngineKind::Claude, SkillProvider::ClaudeBundled, Some(built_ins))
+                        if !built_ins.bundled_skills.contains(name) =>
+                    {
+                        Some(format!(
+                            "Claude Code {} has no bundled skill {name:?}",
+                            built_ins.version
+                        ))
+                    }
+                    (EngineKind::Claude, SkillProvider::ClaudeSynced, _)
+                        if !tx_engine_claude::synced_skill_exists(name) =>
+                    {
+                        Some(format!("no claude.ai-synced skill {name:?} on this machine"))
+                    }
+                    _ => None,
+                };
+                if let Some(problem) = problem {
+                    engine_problems += 1;
+                    writeln!(
+                        out,
+                        "{}:{}: {problem}",
+                        agent.path.display(),
+                        agent.line_of("skills").unwrap_or(1)
+                    )
+                    .ok();
+                }
+            }
+        }
         for agent in &report.agent_definitions {
             for note in notes(agent) {
                 writeln!(out, "{}: {engine}: {note}", agent.path.display()).ok();
             }
         }
     }
-    let clean = report.problems.is_empty() && unknown_tools == 0;
+    let clean = report.problems.is_empty() && engine_problems == 0;
     if clean {
         writeln!(
             out,

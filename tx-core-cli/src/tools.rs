@@ -1,166 +1,30 @@
 //! `tx definitions tools`: the names an agent definition's `tools` and `disallowedTools` can use.
 //! Read from the engines, never hard-coded where an engine can tell:
-//! - Claude's built-in tools (and bundled skills) from the `system/init` event of a headless
-//!   launch against a dead API address (no model call, no login), cached per Claude version
-//!   under `<cache>/tools/`;
+//! - Claude's built-in tools from `tx_engine_claude::probe` (no model call, no login), cached per
+//!   Claude version under `<cache>/tools/`;
 //! - the Claude names Codex maps to a switch, from engine-codex;
 //! - each MCP server's tools from `codex app-server`'s `mcpServerStatus/list`, which starts the
 //!   server and asks it (the list comes from the server, so it is the same on every engine).
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::Directories;
 use tx_core::definitions::{Definitions, McpServer};
 
-const CLAUDE_BIN: &str = "claude";
 const CODEX_BIN: &str = "codex";
-const CACHE_DIR: &str = "tools";
-/// Nothing listens here: Claude emits `system/init` before its first request, which then fails.
-const DEAD_API_URL: &str = "http://127.0.0.1:9";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const MCP_PREFIX: &str = "mcp__";
 
-/// What one Claude version offers, as its `system/init` names it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaudeBuiltIns {
-    pub version: String,
-    pub tools: Vec<String>,
-    pub bundled_skills: Vec<String>,
-}
-
-/// Claude's version, from `claude --version` (`2.1.318 (Claude Code)`).
-fn claude_version() -> Result<String, String> {
-    let output = Command::new(CLAUDE_BIN)
-        .arg("--version")
-        .output()
-        .map_err(|error| format!("{CLAUDE_BIN} --version: {error}"))?;
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .map(str::to_owned)
-        .ok_or_else(|| format!("{CLAUDE_BIN} --version printed nothing"))
-}
-
-/// The built-ins of the installed Claude: from the cache when this version was probed before.
-pub fn claude_built_ins(directories: &Directories) -> Result<ClaudeBuiltIns, String> {
-    let version = claude_version()?;
-    let cache = directories
-        .cache
-        .join(CACHE_DIR)
-        .join(format!("claude-{version}.json"));
-    if let Ok(text) = std::fs::read_to_string(&cache) {
-        return serde_json::from_str(&text)
-            .map_err(|error| format!("{}: {error}", cache.display()));
-    }
-    let built_ins = probe_claude(&version)?;
-    std::fs::create_dir_all(cache.parent().unwrap_or(Path::new(".")))
-        .and_then(|()| {
-            std::fs::write(
-                &cache,
-                serde_json::to_string(&built_ins).unwrap_or_default(),
-            )
-        })
-        .map_err(|error| format!("{}: {error}", cache.display()))?;
-    Ok(built_ins)
-}
-
-/// One headless launch in a scratch directory with a scratch config dir and a dummy token, every
-/// tool on, read up to its `system/init` line, then killed. `Task` is reported as `Agent`, the
-/// name the interactive session and `--tools` use; the interactive-only tools are added.
-fn probe_claude(version: &str) -> Result<ClaudeBuiltIns, String> {
-    let scratch = tempfile::Builder::new()
-        .prefix("tx-tools-probe")
-        .tempdir()
-        .map_err(|error| format!("probe directory: {error}"))?;
-    let mut command = Command::new(CLAUDE_BIN);
-    command
-        .args([
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--setting-sources",
-            "",
-            "--strict-mcp-config",
-            "--tools",
-            "default",
-            "--no-session-persistence",
-            "probe",
-        ])
-        .current_dir(scratch.path())
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", scratch.path())
-        .env("CLAUDE_CONFIG_DIR", scratch.path().join("config"))
-        .env("ANTHROPIC_BASE_URL", DEAD_API_URL)
-        .env("ANTHROPIC_AUTH_TOKEN", "tx-tools-probe")
-        .env("DISABLE_AUTOUPDATER", "1")
-        .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null());
-    let init = first_line_matching(command, |line| {
-        line["type"] == "system" && line["subtype"] == "init"
-    })?;
-    let names = |key: &str| -> Vec<String> {
-        init[key]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(|name| if name == "Task" { "Agent" } else { name }.to_owned())
-            .collect()
-    };
-    let mut tools = names("tools");
-    for tool in tx_engine_claude::INTERACTIVE_TOOLS {
-        if !tools.iter().any(|listed| listed == tool) {
-            tools.push(tool.to_owned());
-        }
-    }
-    tools.sort();
-    let mut bundled_skills = names("skills");
-    bundled_skills.sort();
-    Ok(ClaudeBuiltIns {
-        version: version.to_owned(),
-        tools,
-        bundled_skills,
-    })
-}
-
-/// Spawns `command` with piped stdout and returns its first JSON line `wanted` accepts, then kills
-/// it; gives up after [`PROBE_TIMEOUT`].
-fn first_line_matching(
-    mut command: Command,
-    wanted: impl Fn(&Value) -> bool + Send + 'static,
-) -> Result<Value, String> {
-    let program = format!("{:?}", command.get_program());
-    let mut child = command
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("{program}: {error}"))?;
-    let stdout = child.stdout.take().ok_or("no stdout")?;
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if let Ok(value) = serde_json::from_str::<Value>(&line)
-                && wanted(&value)
-            {
-                let _ = sender.send(value);
-                return;
-            }
-        }
-    });
-    let result = receiver
-        .recv_timeout(PROBE_TIMEOUT)
-        .map_err(|_| format!("{program}: no answer within {}s", PROBE_TIMEOUT.as_secs()));
-    end(&mut child);
-    result
+/// The installed Claude's built-ins, probed once per version (`tx_engine_claude::probe`).
+pub fn claude_built_ins(
+    directories: &Directories,
+) -> Result<tx_engine_claude::probe::BuiltIns, String> {
+    tx_engine_claude::probe::built_ins(&directories.cache)
 }
 
 fn end(child: &mut Child) {

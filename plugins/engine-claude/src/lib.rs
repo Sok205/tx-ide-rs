@@ -39,6 +39,7 @@
 //! `restore` puts them back where Claude looks when the live transcript is gone (Claude deletes
 //! transcripts older than `cleanupPeriodDays`), so a `--resume` finds its conversation.
 
+pub mod probe;
 pub mod trust;
 
 use std::path::{Path, PathBuf};
@@ -49,8 +50,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
     Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, Profile, WorkspaceAction, engine_data,
-    hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
+    LlmEngineChange, LlmEngineHook, LlmEngineState, Profile, SkillProvider, WorkspaceAction,
+    engine_data, hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -76,12 +77,15 @@ pub const SETTING_SOURCES_FLAG: &str = "--setting-sources";
 pub const SETTING_SOURCES: &str = "";
 /// What every launch carries that no flag removes (Claude Code 2.1.317, measured in the request
 /// bodies): reported by `tx check --engine claude`, never silently accepted.
-pub const FORCED: [&str; 5] = [
+pub const FORCED: [&str; 6] = [
     "the tools EndConversation, advisor and DeferredToolPlaceholder",
-    "the built-in plugin-authoring skill (disableBundledSkills leaves it)",
     "Claude Code's built-in plugins (cc-plugin-agents-md, telemetry, privacy)",
     "a userEmail system reminder from the subscription's OAuth profile",
     "Claude Code's own system prompt: the profile text is appended to it",
+    "for an agent that lists a bundled skill: any bundled skill the Claude account gates in, \
+     which the probe (dummy token) cannot see, so it is not on the off-list",
+    "unverified: whether a logged-in session also loads the claude.ai-synced skills on its own \
+     (anthropic-skills:*) under --setting-sources \"\"",
 ];
 
 /// What one agent definition gets on Claude that its file does not say: the baseline it does not
@@ -225,7 +229,24 @@ pub struct ClaudeAdapter {
     /// Claude's JSON config file, where `prepare` marks each worktree trusted; `None` trusts
     /// nothing (tests).
     pub trust_file: Option<PathBuf>,
+    /// tx's cache directory, where the installed Claude's bundled skills are probed into once per
+    /// version; `None` refuses an agent that lists a bundled skill.
+    pub cache_dir: Option<PathBuf>,
 }
+
+/// A launch's bundled skills: the ones the agent lists, and every other one the installed Claude
+/// has, which `skillOverrides` turns off.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BundledSkills {
+    pub listed: Vec<String>,
+    pub off: Vec<String>,
+}
+
+/// Under Claude's home: one directory per claude.ai account, each holding its synced skills.
+pub const SYNCED_SKILLS_DIR: &str = "skills/synced";
+/// The built-in plugin carrying the `plugin-authoring` skill; off unless an agent lists it.
+pub const PLUGIN_AUTHORING_PLUGIN: &str = "cc-plugin-plugin-authoring@builtin";
+pub const PLUGIN_AUTHORING_SKILL: &str = "plugin-authoring";
 
 /// This plugin's settings in `config.yaml` (`plugins.engine-claude.settings`); an unknown key is
 /// refused.
@@ -243,7 +264,13 @@ impl ClaudeAdapter {
             claude_home: claude_home.into(),
             claude_settings: serde_json::Map::new(),
             trust_file: None,
+            cache_dir: None,
         }
+    }
+
+    pub fn cache_dir(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.cache_dir = Some(directory.into());
+        self
     }
 
     pub fn claude_settings(mut self, settings: serde_json::Map<String, Value>) -> Self {
@@ -265,7 +292,7 @@ impl ClaudeAdapter {
         mut args: Vec<String>,
         stored_data: Option<Value>,
         prompt: &str,
-    ) -> LaunchPlan {
+    ) -> Result<LaunchPlan, EngineError> {
         let data = engine_data(self, request.session);
         let option = |key: &str| data.get(key).and_then(Value::as_str);
         if let Some(model) = option(MODEL_KEY) {
@@ -295,7 +322,9 @@ impl ClaudeAdapter {
                 serde_json::json!({ "mcpServers": request.profile.mcp_servers() }).to_string(),
             ]);
         }
-        if !request.profile.skill_dirs().is_empty() {
+        let synced = self.synced_skills(request.profile)?;
+        let plugin_skills = !request.profile.skill_dirs().is_empty() || !synced.is_empty();
+        if plugin_skills {
             args.extend([
                 PLUGIN_DIR_FLAG.to_owned(),
                 request
@@ -314,7 +343,11 @@ impl ClaudeAdapter {
         }
         args.extend([
             SETTINGS_FLAG.to_owned(),
-            launch_settings(&self.claude_settings, request.hook_command),
+            launch_settings(
+                &self.claude_settings,
+                request.hook_command,
+                &self.bundled_skills(request.profile)?,
+            ),
             SKIP_PERMISSIONS_FLAG.to_owned(),
         ]);
         if !prompt.is_empty() {
@@ -322,16 +355,79 @@ impl ClaudeAdapter {
         }
         let mut plan = LaunchPlan::new(CLAUDE_BIN).args(args);
         plan.engine_data = stored_data;
-        if !request.profile.skill_dirs().is_empty() {
+        if plugin_skills {
             plan = plan.workspace(WorkspaceAction::Write {
                 path: PLUGIN_MANIFEST.into(),
                 content: serde_json::json!({ "name": PLUGIN_NAME }).to_string(),
             });
         }
-        for link in skill_links(PLUGIN_SKILLS_DIR, request.profile.skill_dirs()) {
+        for link in skill_links(PLUGIN_SKILLS_DIR, request.profile.skill_dirs())
+            .into_iter()
+            .chain(skill_links(PLUGIN_SKILLS_DIR, &synced))
+        {
             plan = plan.workspace(link);
         }
-        plan
+        Ok(plan)
+    }
+
+    /// The listed `claude-bundled` skills, and the off-list: every other bundled skill of the
+    /// installed Claude, probed once per version (`probe`). `None` when none is listed: then
+    /// every bundled skill stays off with `disableBundledSkills`, whatever the version has. A
+    /// launch that lists one is refused when the version cannot be probed or lacks the skill.
+    fn bundled_skills(&self, profile: &Profile) -> Result<Option<BundledSkills>, EngineError> {
+        let listed: Vec<String> = profile
+            .provided_by(SkillProvider::ClaudeBundled)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        if listed.is_empty() {
+            return Ok(None);
+        }
+        let cache = self.cache_dir.as_deref().ok_or_else(|| {
+            EngineError::Refused("claude: no cache directory to probe the bundled skills in".into())
+        })?;
+        let built_ins = probe::built_ins(cache).map_err(|error| {
+            EngineError::Refused(format!("claude: cannot list the bundled skills: {error}"))
+        })?;
+        if let Some(missing) = listed
+            .iter()
+            .find(|name| !built_ins.bundled_skills.contains(name))
+        {
+            return Err(EngineError::Refused(format!(
+                "claude: Claude Code {} has no bundled skill {missing:?}",
+                built_ins.version
+            )));
+        }
+        let off = built_ins
+            .bundled_skills
+            .into_iter()
+            .filter(|name| !listed.contains(name))
+            .collect();
+        Ok(Some(BundledSkills { listed, off }))
+    }
+
+    /// The operator's claude.ai-synced copy of each listed `claude-synced` skill:
+    /// `<claude home>/skills/synced/<account>/<name>/`. A missing one refuses the launch.
+    fn synced_skills(&self, profile: &Profile) -> Result<Vec<PathBuf>, EngineError> {
+        let root = self.claude_home.join(SYNCED_SKILLS_DIR);
+        profile
+            .provided_by(SkillProvider::ClaudeSynced)
+            .into_iter()
+            .map(|name| {
+                std::fs::read_dir(&root)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Result::ok)
+                    .map(|account| account.path().join(name))
+                    .find(|skill| skill.join("SKILL.md").is_file())
+                    .ok_or_else(|| {
+                        EngineError::Refused(format!(
+                            "claude: no synced skill {name:?} under {}",
+                            root.display()
+                        ))
+                    })
+            })
+            .collect()
     }
 
     /// Where Claude writes conversation `id` of a process started in `cwd`.
@@ -442,12 +538,12 @@ impl LlmEngine for ClaudeAdapter {
 
     fn start(&self, request: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {
         let args = vec![SESSION_ID_FLAG.to_owned(), request.session.id.to_string()];
-        Ok(self.plan(
+        self.plan(
             request,
             args,
             Some(self.named_after(request.session)),
             prompt,
-        ))
+        )
     }
 
     fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {
@@ -455,7 +551,7 @@ impl LlmEngine for ClaudeAdapter {
             RESUME_FLAG.to_owned(),
             self.conversation_of(request.session).to_owned(),
         ];
-        Ok(self.plan(request, args, None, ""))
+        self.plan(request, args, None, "")
     }
 
     fn fork(
@@ -471,12 +567,12 @@ impl LlmEngine for ClaudeAdapter {
             SESSION_ID_FLAG.to_owned(),
             request.session.id.to_string(),
         ];
-        Ok(self.plan(
+        self.plan(
             request,
             args,
             Some(self.named_after(request.session)),
             prompt,
-        ))
+        )
     }
 
     fn stop(&self, _: &Agent) -> Option<Input> {
@@ -600,18 +696,39 @@ pub fn tools(profile: &Profile) -> String {
 /// auto-memory off, and `skipDangerousModePermissionPrompt` keeps
 /// `--dangerously-skip-permissions` from asking for confirmation (default answer: exit). Every
 /// [`HOOK_EVENTS`] entry is wired to `hook_command` (no hooks when it is empty).
-/// The operator's `claude_settings` come first, so tx's own keys win.
+/// The operator's `claude_settings` come first, so tx's own keys win. Without listed bundled
+/// skills (`None`) every bundled skill is off (`disableBundledSkills`); with some, the others are
+/// turned off one by one (`skillOverrides`), since `disableBundledSkills` cannot be lifted per
+/// skill. The built-in `plugin-authoring` plugin is off unless listed.
 pub fn launch_settings(
     claude_settings: &serde_json::Map<String, Value>,
     hook_command: &[String],
+    bundled: &Option<BundledSkills>,
 ) -> String {
     let mut settings = Value::Object(claude_settings.clone());
     for (key, value) in [
         ("autoMemoryEnabled", false),
-        ("disableBundledSkills", true),
+        ("disableBundledSkills", bundled.is_none()),
         ("skipDangerousModePermissionPrompt", true),
     ] {
         settings[key] = Value::Bool(value);
+    }
+    let lists = |name: &str| {
+        bundled
+            .as_ref()
+            .is_some_and(|bundled| bundled.listed.iter().any(|listed| listed == name))
+    };
+    if !lists(PLUGIN_AUTHORING_SKILL) {
+        settings["enabledPlugins"] = serde_json::json!({ PLUGIN_AUTHORING_PLUGIN: false });
+    }
+    if let Some(bundled) = bundled {
+        settings["skillOverrides"] = Value::Object(
+            bundled
+                .off
+                .iter()
+                .map(|name| (name.clone(), Value::from("off")))
+                .collect(),
+        );
     }
     if !hook_command.is_empty() {
         settings["hooks"] = hook_settings(hook_command);
@@ -691,6 +808,15 @@ pub fn claude_home_from_env() -> PathBuf {
     }
 }
 
+/// Whether the operator has a claude.ai-synced skill `name` (`<claude home>/skills/synced/*/<name>/`).
+pub fn synced_skill_exists(name: &str) -> bool {
+    std::fs::read_dir(claude_home_from_env().join(SYNCED_SKILLS_DIR))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|account| account.path().join(name).join("SKILL.md").is_file())
+}
+
 /// Claude's JSON config file, which holds the per-project state: `$CLAUDE_CONFIG_DIR/.claude.json`
 /// when that is set, else `$HOME/.claude.json` (beside `~/.claude`, not inside it).
 pub fn claude_config_file_from_env() -> PathBuf {
@@ -721,7 +847,8 @@ impl tx_core::Plugin for ClaudePlugin {
         r.engine(Box::new(
             ClaudeAdapter::new(claude_home_from_env())
                 .claude_settings(settings.claude_settings)
-                .trust_file(claude_config_file_from_env()),
+                .trust_file(claude_config_file_from_env())
+                .cache_dir(r.config().directories.cache.clone()),
         ));
         Ok(())
     }
@@ -1047,7 +1174,7 @@ mod tests {
     }
 
     /// The settings of a launch without hooks.
-    const SETTINGS: &str = r#"{"autoMemoryEnabled":false,"disableBundledSkills":true,"skipDangerousModePermissionPrompt":true}"#;
+    const SETTINGS: &str = r#"{"autoMemoryEnabled":false,"disableBundledSkills":true,"skipDangerousModePermissionPrompt":true,"enabledPlugins":{"cc-plugin-plugin-authoring@builtin":false}}"#;
 
     /// The minimal-launch flags after the effort, for a profile without skills.
     const MINIMAL: [&str; 6] = [
@@ -1253,7 +1380,8 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        let settings: Value = serde_json::from_str(&launch_settings(&operator, &[])).unwrap();
+        let settings: Value =
+            serde_json::from_str(&launch_settings(&operator, &[], &None)).unwrap();
         assert_eq!(
             settings,
             serde_json::json!({
@@ -1261,7 +1389,57 @@ mod tests {
                 "autoMemoryEnabled": false,
                 "disableBundledSkills": true,
                 "skipDangerousModePermissionPrompt": true,
+                "enabledPlugins": {"cc-plugin-plugin-authoring@builtin": false},
             })
+        );
+    }
+
+    #[test]
+    fn listed_bundled_skills_leave_every_other_one_off() {
+        let bundled = Some(BundledSkills {
+            listed: vec!["loop".into(), "plugin-authoring".into()],
+            off: vec!["simplify".into(), "debug".into()],
+        });
+        let settings: Value =
+            serde_json::from_str(&launch_settings(&serde_json::Map::new(), &[], &bundled)).unwrap();
+        assert_eq!(settings["disableBundledSkills"], false);
+        assert_eq!(
+            settings["skillOverrides"],
+            serde_json::json!({"simplify": "off", "debug": "off"})
+        );
+        assert_eq!(
+            settings.get("enabledPlugins"),
+            None,
+            "plugin-authoring is listed"
+        );
+    }
+
+    #[test]
+    fn a_synced_skill_is_linked_from_the_operators_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("home/skills/synced/account-1/pdf");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "---\nname: pdf\n---\n").unwrap();
+        let resolved = |name: &str| ResolvedProfile {
+            provided_skills: vec![(name.to_owned(), SkillProvider::ClaudeSynced)],
+            ..ResolvedProfile::default()
+        };
+        let adapter = ClaudeAdapter::new(dir.path().join("home"));
+        let session = record(dir.path(), serde_json::Value::Null);
+        let profile = Profile::write(resolved("pdf"), &dir.path().join("p.md")).unwrap();
+        let plan = adapter
+            .start(&LaunchRequest::new(&session, &profile), "go")
+            .unwrap();
+        assert!(plan.workspace.contains(&WorkspaceAction::Symlink {
+            src: skill,
+            dst: ".claude/tx-plugin/skills/pdf".into(),
+        }));
+        assert!(plan.args.contains(&"--plugin-dir".to_owned()));
+        let profile = Profile::write(resolved("nope"), &dir.path().join("p.md")).unwrap();
+        assert!(
+            adapter
+                .start(&LaunchRequest::new(&session, &profile), "go")
+                .is_err()
         );
     }
 

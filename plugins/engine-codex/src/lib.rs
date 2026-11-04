@@ -270,6 +270,12 @@ impl CodexAdapter {
         stored_data: Option<Value>,
         prompt: &str,
     ) -> Result<LaunchPlan, EngineError> {
+        if let Some((name, provider)) = request.profile.provided_skills().first() {
+            return Err(EngineError::Refused(format!(
+                "codex: skill {name:?} is provided by {} and does not exist on codex",
+                provider.as_str()
+            )));
+        }
         let data = engine_data(self, request.session);
         let option = |key: &str| data.get(key).and_then(Value::as_str);
         let effort = option(EFFORT_KEY).unwrap_or(DEFAULT_EFFORT.as_str());

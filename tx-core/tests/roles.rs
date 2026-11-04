@@ -31,6 +31,34 @@ fn the_shipped_roles_and_definitions_are_resources_of_the_core() {
             "agents/QA.md",
             "agents/TX-ASSISTANT.md",
             "definitions/agents/claude.md",
+            "definitions/mcp.json",
+            "definitions/skills/batch/SKILL.md",
+            "definitions/skills/built-in-browser/SKILL.md",
+            "definitions/skills/chrome-browser/SKILL.md",
+            "definitions/skills/claude-api/SKILL.md",
+            "definitions/skills/code-review/SKILL.md",
+            "definitions/skills/computer-use/SKILL.md",
+            "definitions/skills/dataviz/SKILL.md",
+            "definitions/skills/debug/SKILL.md",
+            "definitions/skills/deep-research/SKILL.md",
+            "definitions/skills/docs/SKILL.md",
+            "definitions/skills/doctor/SKILL.md",
+            "definitions/skills/docx/SKILL.md",
+            "definitions/skills/fewer-permission-prompts/SKILL.md",
+            "definitions/skills/google-workspace/SKILL.md",
+            "definitions/skills/import-memory/SKILL.md",
+            "definitions/skills/init/SKILL.md",
+            "definitions/skills/keybindings-help/SKILL.md",
+            "definitions/skills/loop/SKILL.md",
+            "definitions/skills/morning/SKILL.md",
+            "definitions/skills/pdf/SKILL.md",
+            "definitions/skills/plugin-authoring/SKILL.md",
+            "definitions/skills/pptx/SKILL.md",
+            "definitions/skills/run-skill-generator/SKILL.md",
+            "definitions/skills/run/SKILL.md",
+            "definitions/skills/security-review/SKILL.md",
+            "definitions/skills/simplify/SKILL.md",
+            "definitions/skills/skill-creator/SKILL.md",
             "definitions/skills/tx-agents/SKILL.md",
             "definitions/skills/tx-agents/templates/SKILL.md",
             "definitions/skills/tx-agents/templates/agent.md",
@@ -41,7 +69,10 @@ fn the_shipped_roles_and_definitions_are_resources_of_the_core() {
             "definitions/skills/tx-diff-review/SKILL.md",
             "definitions/skills/tx-mockup/SKILL.md",
             "definitions/skills/tx-sessions/SKILL.md",
-            "definitions/mcp.json",
+            "definitions/skills/update-config/SKILL.md",
+            "definitions/skills/verify/SKILL.md",
+            "definitions/skills/workflow-authoring/SKILL.md",
+            "definitions/skills/xlsx/SKILL.md",
         ]
     );
     assert!(resources.iter().all(|r| r.plugin == roles::PLUGIN_ID));
@@ -70,7 +101,10 @@ fn every_file_of_the_roles_and_definitions_trees_is_shipped() {
     let definitions = manifest.join("../config/tx");
     files(&definitions, &definitions, "definitions", &mut expected);
     expected.sort();
-    let mut shipped: Vec<String> = roles::SHIPPED.iter().map(|(n, _)| (*n).to_owned()).collect();
+    let mut shipped: Vec<String> = roles::SHIPPED
+        .iter()
+        .map(|(n, _)| (*n).to_owned())
+        .collect();
     shipped.sort();
     assert_eq!(shipped, expected);
 }

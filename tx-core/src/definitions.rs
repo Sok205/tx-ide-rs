@@ -13,7 +13,7 @@ use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::DefinitionChoice;
-use crate::profile::ResolvedProfile;
+use crate::profile::{ResolvedProfile, SkillProvider};
 
 pub const AGENTS_DIR: &str = "agents";
 pub const AGENT_SUFFIX: &str = ".md";
@@ -134,14 +134,25 @@ pub struct SkillDefinition {
     pub name: String,
     pub description: String,
     pub directory: PathBuf,
+    /// A reference skill's provider: its `SKILL.md` is frontmatter only, and the engine
+    /// supplies the skill itself.
+    pub provided_by: Option<SkillProvider>,
 }
 
-/// The Agent Skills standard allows further keys (`license`, `metadata`, …); only these two are
-/// read.
+/// The Agent Skills standard allows further keys (`license`, `metadata`, …); only these and
+/// `metadata.provided-by` are read.
 #[derive(Deserialize)]
 struct SkillFrontmatter {
     name: String,
     description: String,
+    #[serde(default)]
+    metadata: SkillMetadata,
+}
+
+#[derive(Default, Deserialize)]
+struct SkillMetadata {
+    #[serde(rename = "provided-by")]
+    provided_by: Option<String>,
 }
 
 /// One server of `mcp.json`. `type` may be left out for a stdio server, as in Claude's format.
@@ -352,8 +363,36 @@ pub fn read_agent(path: &Path) -> Result<AgentDefinition, DefinitionError> {
 pub fn read_skill(directory: &Path) -> Result<SkillDefinition, DefinitionError> {
     let path = directory.join(SKILL_FILE);
     let text = std::fs::read_to_string(&path).map_err(|error| DefinitionError::io(&path, error))?;
-    let (frontmatter, _) = split_frontmatter(&path, &text)?;
+    let (frontmatter, body) = split_frontmatter(&path, &text)?;
     let parsed: SkillFrontmatter = parse_frontmatter(&path, frontmatter)?;
+    let line_of = |key: &str| {
+        frontmatter
+            .lines()
+            .position(|line| line.trim_start().starts_with(key))
+            .map(|index| index + 2)
+    };
+    let provided_by = match parsed.metadata.provided_by.as_deref() {
+        None => None,
+        Some(text) => Some(
+            SkillProvider::ALL
+                .into_iter()
+                .find(|provider| provider.as_str() == text)
+                .ok_or_else(|| {
+                    DefinitionError::new(
+                        &path,
+                        line_of("provided-by:"),
+                        format!("unknown provided-by {text:?} (claude-bundled or claude-synced)"),
+                    )
+                })?,
+        ),
+    };
+    if provided_by.is_some() && !body.trim().is_empty() {
+        return Err(DefinitionError::new(
+            &path,
+            None,
+            "a reference skill (provided-by) is frontmatter only: the engine supplies the text",
+        ));
+    }
     let directory_name = directory
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -375,6 +414,7 @@ pub fn read_skill(directory: &Path) -> Result<SkillDefinition, DefinitionError> 
         name: parsed.name,
         description: parsed.description,
         directory: directory.to_owned(),
+        provided_by,
     })
 }
 
@@ -528,6 +568,12 @@ impl Definitions {
             let directory = skill_directories
                 .get(name)
                 .ok_or_else(|| self.unknown("skill", name, SKILLS_DIR))?;
+            if let Some(provider) = read_skill(directory)?.provided_by {
+                if !resolved.provided_skills.iter().any(|(listed, _)| listed == name) {
+                    resolved.provided_skills.push((name.clone(), provider));
+                }
+                continue;
+            }
             if !resolved
                 .skill_dirs
                 .iter()

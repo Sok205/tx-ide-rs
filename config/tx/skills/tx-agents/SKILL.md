@@ -40,6 +40,11 @@ Templates are next to this file: `templates/agent.md`, `templates/SKILL.md`, `te
 - **Skill**, `skills/<name>/SKILL.md`: the Agent Skills standard. The frontmatter has `name`
   (equal to the folder name) and `description`; the body is the instructions. The folder may hold
   scripts and templates.
+- **Reference skills**: Claude's bundled skills (`loop`, `simplify`, …) and the operator's
+  claude.ai-synced skills (`pdf`, `docx`, …) ship as `SKILL.md` files holding only frontmatter,
+  with `metadata.provided-by: claude-bundled` or `claude-synced`. List them in `skills` like any
+  skill. Claude delivers exactly the ones listed, and every other bundled skill stays off. Codex
+  has none of them, so a launch there is refused. Never copy their text into a skill.
 - **MCP servers**, `mcp.json`: Claude's `.mcp.json` format.
   - `{"mcpServers": {"<name>": {...}}}`, with `"type": "stdio"` (`command`, `args`, `env`) or
     `"type": "http"` (`url`, `headers`).

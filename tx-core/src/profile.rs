@@ -64,6 +64,27 @@ pub struct Profiles {
     skill_dirs: Vec<PathBuf>,
 }
 
+/// Where an engine-provided skill comes from: a reference skill (`SKILL.md` with frontmatter
+/// only and `metadata.provided-by`) names it, and the engine delivers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillProvider {
+    /// Built into the Claude binary.
+    ClaudeBundled,
+    /// The operator's claude.ai-synced copy under `~/.claude/skills/synced/`.
+    ClaudeSynced,
+}
+
+impl SkillProvider {
+    pub const ALL: [SkillProvider; 2] = [SkillProvider::ClaudeBundled, SkillProvider::ClaudeSynced];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SkillProvider::ClaudeBundled => "claude-bundled",
+            SkillProvider::ClaudeSynced => "claude-synced",
+        }
+    }
+}
+
 /// A resolved profile: the combined text, the granted skill directories, and what an agent
 /// definition adds (roles alone leave those at their defaults).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -77,6 +98,9 @@ pub struct ResolvedProfile {
     pub disallowed_tools: Vec<String>,
     /// The MCP servers the agent gets, by name; none means none at all.
     pub mcp_servers: BTreeMap<String, McpServer>,
+    /// The engine-provided skills it lists, by name; the engine delivers them, and every other
+    /// skill of that provider stays off.
+    pub provided_skills: Vec<(String, SkillProvider)>,
 }
 
 /// What an engine adapter receives: the resolved profile, and a file holding its text.
@@ -88,6 +112,7 @@ pub struct Profile {
     tools: Option<Vec<String>>,
     disallowed_tools: Vec<String>,
     mcp_servers: BTreeMap<String, McpServer>,
+    provided_skills: Vec<(String, SkillProvider)>,
 }
 
 impl Profile {
@@ -104,6 +129,7 @@ impl Profile {
             tools: resolved.tools,
             disallowed_tools: resolved.disallowed_tools,
             mcp_servers: resolved.mcp_servers,
+            provided_skills: resolved.provided_skills,
         })
     }
 
@@ -129,6 +155,19 @@ impl Profile {
 
     pub fn mcp_servers(&self) -> &BTreeMap<String, McpServer> {
         &self.mcp_servers
+    }
+
+    pub fn provided_skills(&self) -> &[(String, SkillProvider)] {
+        &self.provided_skills
+    }
+
+    /// The names of the provided skills from `provider`.
+    pub fn provided_by(&self, provider: SkillProvider) -> Vec<&str> {
+        self.provided_skills
+            .iter()
+            .filter(|(_, from)| *from == provider)
+            .map(|(name, _)| name.as_str())
+            .collect()
     }
 }
 

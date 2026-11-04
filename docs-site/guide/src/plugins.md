@@ -21,7 +21,12 @@ deferred); `tx definitions` and `tx check` show it, and nothing else is ever add
 `tx check --engine claude` lists what every launch carries that no flag removes. The plugin's
 own settings (`plugins.engine-claude.settings.claude_settings` in `config.yaml`) are Claude
 settings merged into every launch's `--settings`, under tx's own keys; `~/.claude/settings.json`
-is never read. Before each launch the plugin marks the worktree trusted in Claude's config file
+is never read. Reference skills (`metadata.provided-by: claude-bundled|claude-synced`, frontmatter only) are
+delivered without their text passing through tx. A synced skill is a link in the per-agent plugin
+to `~/.claude/skills/synced/<account>/<name>/`. Bundled skills stay off (`disableBundledSkills`)
+unless the agent lists one. Then every other bundled skill of the installed Claude is turned off
+(`skillOverrides`), from a list probed once per Claude version; the built-in `plugin-authoring`
+plugin is off unless listed. Before each launch the plugin marks the worktree trusted in Claude's config file
 (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`), so it never stops on the trust dialog. It wires Claude's hooks to `txi hook <Event>`. It keeps
 `conversation_id`, `transcript_path`, `model` and `effort` under `ext.claude`, archives each
 transcript with its sidecar directory, and restores it for a resume when Claude has cleaned it up.

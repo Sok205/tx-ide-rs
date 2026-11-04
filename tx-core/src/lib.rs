@@ -55,7 +55,7 @@ pub use mirror::{mirror_file, mirror_file_exact, mirror_tree};
 pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };
-pub use profile::{Profile, Profiles, ResolvedProfile, RoleError};
+pub use profile::{Profile, Profiles, ResolvedProfile, RoleError, SkillProvider};
 pub use state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 #[doc(hidden)]
 pub use store::AgentStore;
