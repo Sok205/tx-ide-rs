@@ -38,9 +38,9 @@ tx-home-themes = { path = "../plugins/home-themes" }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

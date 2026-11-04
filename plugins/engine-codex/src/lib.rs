@@ -568,6 +568,73 @@ fn toml_table(entries: &BTreeMap<String, String>) -> String {
     format!("{{{}}}", fields.join(", "))
 }
 
+/// The `-c` overrides that define one MCP server, `mcp_servers.<name>.*` (see [`mcp_overrides`]
+/// for how secrets pass).
+pub fn server_overrides(name: &str, server: &McpServer) -> Result<Vec<String>, EngineError> {
+    let mut overrides = Vec::new();
+    let key = |field: &str| format!("mcp_servers.{name}.{field}");
+    match server {
+        McpServer::Stdio { command, args, env } => {
+            overrides.push(format!("{}={}", key("command"), toml_string(command)));
+            if !args.is_empty() {
+                overrides.push(format!("{}={}", key("args"), toml_strings(args)));
+            }
+            let mut literal = BTreeMap::new();
+            let mut passed = Vec::new();
+            for (variable, value) in env {
+                match variable_name(value) {
+                    Some(source) if source == variable => passed.push(variable.clone()),
+                    Some(source) => {
+                        return Err(EngineError::Refused(format!(
+                            "codex: MCP server {name}: env {variable}=${{{source}}}: codex passes a variable only under its own name"
+                        )));
+                    }
+                    None => {
+                        literal.insert(variable.clone(), value.clone());
+                    }
+                }
+            }
+            if !literal.is_empty() {
+                overrides.push(format!("{}={}", key("env"), toml_table(&literal)));
+            }
+            if !passed.is_empty() {
+                overrides.push(format!("{}={}", key("env_vars"), toml_strings(&passed)));
+            }
+        }
+        McpServer::Http { url, headers } => {
+            overrides.push(format!("{}={}", key("url"), toml_string(url)));
+            let mut literal = BTreeMap::new();
+            let mut from_environment = BTreeMap::new();
+            for (header, value) in headers {
+                if header.eq_ignore_ascii_case(AUTHORIZATION_HEADER)
+                    && let Some(variable) = bearer_variable(value)
+                {
+                    overrides.push(format!(
+                        "{}={}",
+                        key("bearer_token_env_var"),
+                        toml_string(variable)
+                    ));
+                } else if let Some(variable) = variable_name(value) {
+                    from_environment.insert(header.clone(), variable.to_owned());
+                } else {
+                    literal.insert(header.clone(), value.clone());
+                }
+            }
+            if !literal.is_empty() {
+                overrides.push(format!("{}={}", key("http_headers"), toml_table(&literal)));
+            }
+            if !from_environment.is_empty() {
+                overrides.push(format!(
+                    "{}={}",
+                    key("env_http_headers"),
+                    toml_table(&from_environment)
+                ));
+            }
+        }
+    }
+    Ok(overrides)
+}
+
 /// The `-c` overrides that give the agent exactly its MCP servers: each declared server as
 /// `mcp_servers.<name>.*`, minus what `disallowedTools` cuts (`mcp__<server>` drops the server,
 /// `mcp__<server>__<tool>` one tool), and `enabled=false` for every server of the operator's
@@ -594,68 +661,12 @@ pub fn mcp_overrides(profile: &Profile, configured: &[String]) -> Result<Vec<Str
         if cut_servers.contains(&name.as_str()) {
             continue;
         }
-        let key = |field: &str| format!("mcp_servers.{name}.{field}");
-        match server {
-            McpServer::Stdio { command, args, env } => {
-                overrides.push(format!("{}={}", key("command"), toml_string(command)));
-                if !args.is_empty() {
-                    overrides.push(format!("{}={}", key("args"), toml_strings(args)));
-                }
-                let mut literal = BTreeMap::new();
-                let mut passed = Vec::new();
-                for (variable, value) in env {
-                    match variable_name(value) {
-                        Some(source) if source == variable => passed.push(variable.clone()),
-                        Some(source) => {
-                            return Err(EngineError::Refused(format!(
-                                "codex: MCP server {name}: env {variable}=${{{source}}}: codex passes a variable only under its own name"
-                            )));
-                        }
-                        None => {
-                            literal.insert(variable.clone(), value.clone());
-                        }
-                    }
-                }
-                if !literal.is_empty() {
-                    overrides.push(format!("{}={}", key("env"), toml_table(&literal)));
-                }
-                if !passed.is_empty() {
-                    overrides.push(format!("{}={}", key("env_vars"), toml_strings(&passed)));
-                }
-            }
-            McpServer::Http { url, headers } => {
-                overrides.push(format!("{}={}", key("url"), toml_string(url)));
-                let mut literal = BTreeMap::new();
-                let mut from_environment = BTreeMap::new();
-                for (header, value) in headers {
-                    if header.eq_ignore_ascii_case(AUTHORIZATION_HEADER)
-                        && let Some(variable) = bearer_variable(value)
-                    {
-                        overrides.push(format!(
-                            "{}={}",
-                            key("bearer_token_env_var"),
-                            toml_string(variable)
-                        ));
-                    } else if let Some(variable) = variable_name(value) {
-                        from_environment.insert(header.clone(), variable.to_owned());
-                    } else {
-                        literal.insert(header.clone(), value.clone());
-                    }
-                }
-                if !literal.is_empty() {
-                    overrides.push(format!("{}={}", key("http_headers"), toml_table(&literal)));
-                }
-                if !from_environment.is_empty() {
-                    overrides.push(format!(
-                        "{}={}",
-                        key("env_http_headers"),
-                        toml_table(&from_environment)
-                    ));
-                }
-            }
-        }
+        overrides.extend(server_overrides(name, server)?);
         if let Some(tools) = cut_tools.get(name.as_str()) {
-            overrides.push(format!("{}={}", key("disabled_tools"), toml_strings(tools)));
+            overrides.push(format!(
+                "mcp_servers.{name}.disabled_tools={}",
+                toml_strings(tools)
+            ));
         }
     }
     for name in configured {

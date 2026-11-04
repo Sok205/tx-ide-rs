@@ -86,7 +86,10 @@ An **agent definition** is `agents/<name>.md` under `<data>/definitions` (shippe
 `description`, `tools` (required: the built-in tools, in Claude's names), `mcpServers`,
 `disallowedTools` and `skills`, with the prompt as the body.
 `mcp.json` beside it holds the MCP servers in Claude's `.mcp.json` format, and `skills/` the
-skills. `tx definitions [agents|skills|mcp]` lists them; `tx check` validates them, and
+skills. `tx definitions [agents|skills|mcp]` lists them, and `tx definitions tools` the names `tools`
+can use: Claude's built-ins (read once per Claude version from a headless launch's `system/init`
+against a dead API address, so no model call; cached under `<cache>/tools/`), the Claude names
+Codex switches off, and each MCP server's tools (asked through `codex app-server`); `tx check` validates them, and
 `tx check --engine claude|codex` adds what that engine adds to each agent or cannot remove.
 
 `tx create NAME --agent A [--skill S]... [--mcp M]... [--tool T]...` runs definition `A`: its

@@ -3,8 +3,8 @@
 
 use std::io::Write;
 
-use tx_core::{Directories, EngineKind};
 use tx_core::definitions::{DefinitionError, Definitions, McpServer, read_agent, read_skill};
+use tx_core::{Directories, EngineKind};
 
 use crate::args::DefinitionKind;
 
@@ -29,6 +29,10 @@ pub fn list(
         Some(kind) => vec![kind],
         None => DefinitionKind::ALL.to_vec(),
     };
+    if kind == Some(DefinitionKind::Tools) {
+        return crate::tools::list(directories, out)
+            .map_err(|message| DefinitionError::new(&directories.cache, None, message));
+    }
     for (index, kind) in kinds.iter().enumerate() {
         let rows = rows(&definitions, *kind)?;
         if kinds.len() > 1 {
@@ -81,6 +85,7 @@ fn rows(
                 (name, description)
             })
             .collect(),
+        DefinitionKind::Tools => unreachable!("listed by crate::tools"),
     })
 }
 
@@ -105,6 +110,7 @@ pub fn check(
     out: &mut dyn Write,
 ) -> Result<bool, DefinitionError> {
     let report = Definitions::new(directories.definition_roots()).check(names)?;
+    let mut unknown_tools = 0;
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
     }
@@ -115,13 +121,43 @@ pub fn check(
                 &tx_engine_claude::FORCED,
                 tx_engine_claude::definition_notes,
             ),
-            EngineKind::Codex => (
-                &tx_engine_codex::FORCED,
-                tx_engine_codex::definition_notes,
-            ),
+            EngineKind::Codex => (&tx_engine_codex::FORCED, tx_engine_codex::definition_notes),
         };
         for item in forced {
             writeln!(out, "{engine}: always present: {item}").ok();
+        }
+        // Claude drops a `tools` name it does not know without a word: refuse it here.
+        if engine == EngineKind::Claude {
+            let built_ins = crate::tools::claude_built_ins(directories)
+                .map_err(|message| DefinitionError::new(&directories.cache, None, message))?;
+            for agent in &report.agent_definitions {
+                let unknown: Vec<&str> = agent
+                    .tools
+                    .iter()
+                    .chain(
+                        agent
+                            .disallowed_tools
+                            .iter()
+                            .filter(|tool| !tool.starts_with("mcp__")),
+                    )
+                    .map(String::as_str)
+                    .filter(|tool| {
+                        *tool != "Task" && !built_ins.tools.iter().any(|known| known == tool)
+                    })
+                    .collect();
+                if !unknown.is_empty() {
+                    unknown_tools += 1;
+                    writeln!(
+                        out,
+                        "{}:{}: not a Claude Code {} tool, which it would drop silently: {}",
+                        agent.path.display(),
+                        agent.line_of("tools").unwrap_or(1),
+                        built_ins.version,
+                        unknown.join(", ")
+                    )
+                    .ok();
+                }
+            }
         }
         for agent in &report.agent_definitions {
             for note in notes(agent) {
@@ -129,7 +165,8 @@ pub fn check(
             }
         }
     }
-    if report.problems.is_empty() {
+    let clean = report.problems.is_empty() && unknown_tools == 0;
+    if clean {
         writeln!(
             out,
             "ok: {} agents, {} skills, {} MCP servers",
@@ -137,5 +174,5 @@ pub fn check(
         )
         .ok();
     }
-    Ok(report.problems.is_empty())
+    Ok(clean)
 }

@@ -102,6 +102,10 @@ pub fn definition_notes(agent: &tx_core::definitions::AgentDefinition) -> Vec<St
     notes
 }
 
+/// The built-in tools only the interactive session has, which a headless probe does not list
+/// (Claude Code 2.1.317, measured).
+pub const INTERACTIVE_TOOLS: [&str; 3] = ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"];
+
 /// The built-in tools of an agent without an agent definition (roles only).
 pub const BASE_TOOLS: [&str; 4] = ["Bash", "Read", "Edit", "Write"];
 /// The one implicit part of every launch's `--tools`: `Skill`, without which the granted skills

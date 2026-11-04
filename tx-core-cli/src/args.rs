@@ -50,9 +50,11 @@ verbs:
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
   engines                                                           the engines whose plugin is enabled (claude, codex)
-  definitions [agents|skills|mcp]                                   name and description of each definition, every kind
+  definitions [agents|skills|mcp|tools]                             name and description of each definition, every kind
                                                                     or one; yours (<config>/definitions) win by name over
-                                                                    the shipped ones (<data>/definitions)
+                                                                    the shipped ones (<data>/definitions). tools (only
+                                                                    when asked): the names `tools` can use, from the
+                                                                    engines, and each MCP server's tools
   check [--engine ENGINE] [NAME]...                                 validate the definitions, all or those named (agents,
                                                                     skills, MCP servers); path:line per problem, exit 1;
                                                                     --engine: also what ENGINE adds to each agent and what
@@ -195,6 +197,8 @@ pub enum DefinitionKind {
     Agents,
     Skills,
     Mcp,
+    /// Only when asked for: it starts the engines and the MCP servers to ask them.
+    Tools,
 }
 
 impl DefinitionKind {
@@ -209,6 +213,7 @@ impl DefinitionKind {
             DefinitionKind::Agents => "agents",
             DefinitionKind::Skills => "skills",
             DefinitionKind::Mcp => "mcp",
+            DefinitionKind::Tools => "tools",
         }
     }
 }
@@ -442,10 +447,11 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 Some(text) => Some(
                     DefinitionKind::ALL
                         .into_iter()
+                        .chain([DefinitionKind::Tools])
                         .find(|kind| kind.as_str() == text)
                         .ok_or_else(|| {
                             usage(format!(
-                                "definitions lists agents, skills or mcp, got {text:?}"
+                                "definitions lists agents, skills, mcp or tools, got {text:?}"
                             ))
                         })?,
                 ),
