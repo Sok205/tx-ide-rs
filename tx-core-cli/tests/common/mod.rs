@@ -27,7 +27,7 @@ pub fn stand_in_definition(config_dir: &std::path::Path) {
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
         agents.join("developer.md"),
-        "---\nname: developer\ndescription: stand-in\ntools: Bash, Read, Edit, Write\n---\n",
+        "---\nname: developer\ndescription: stand-in\ntools: Bash, Read, Edit, Write\nroles: [COMMON]\n---\n",
     )
     .unwrap();
 }
@@ -63,8 +63,9 @@ pub struct Cli {
     pub dir: tempfile::TempDir,
 }
 
-/// The roles `create` gets when no `--role` is given (`agent.roles` in `config.yaml`).
-pub const DEFAULT_ROLES: [&str; 2] = ["COMMON", "DEVELOPER"];
+/// Stand-ins for the roles `ui install` writes: COMMON, which the stand-in default definition
+/// runs on, and REVIEWER, a role of the operator's own for `--role`.
+pub const STAND_IN_ROLES: [&str; 2] = ["COMMON", "REVIEWER"];
 
 impl Cli {
     pub fn new() -> Self {
@@ -76,7 +77,7 @@ impl Cli {
         // runs it finds stand-ins here, outside the state dir, below any role it installs.
         let roles = dir.path().join("default-roles");
         std::fs::create_dir_all(&roles).unwrap();
-        for role in DEFAULT_ROLES {
+        for role in STAND_IN_ROLES {
             std::fs::write(roles.join(format!("{role}.md")), "stand-in role\n").unwrap();
         }
         // Likewise the default agent definition (`agent.definition: developer`), which a real

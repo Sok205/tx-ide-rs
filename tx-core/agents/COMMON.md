@@ -19,9 +19,9 @@ Lead your **first response** with a brief self-introduction so the operator can 
 setup at a glance:
 
 1. Your agent name (`tx whoami`) + cwd and current git branch.
-2. Which convention/role files you have loaded — always this `COMMON.md`; state whether a role
-   file (`DEVELOPER.md`, etc.) is **also** loaded, and quote one identifying line from each so it
-   is verifiable.
+2. What your system prompt is made of: always this `COMMON.md`, then your agent definition's
+   prompt (`developer`, `qa`, …; `tx show "$(tx whoami)"` names the definition) or any other role
+   loaded. Quote one identifying line from each so it is verifiable.
 3. One line on your purpose.
 
 Keep it to a few lines, then continue with whatever was asked (or wait for instructions if nothing

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # prefix+n: create a new agent in the firing pane's directory, asking name / tags / prompt /
-# project / engine / model / effort / role in a popup on the firing client.
+# project / engine / model / effort / agent in a popup on the firing client.
 set -eu
 
 TX="$(tmux show-option -gv @tx-bin) $(tmux show-option -gv @tx-arguments)"

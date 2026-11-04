@@ -145,7 +145,7 @@ fn ui_install_materialises_resources() {
     assert!(state.join("conf/tmux.conf").is_file());
     for role in [
         "roles/COMMON.md",
-        "roles/DEVELOPER.md",
+        "definitions/agents/developer.md",
         "roles/TX-ASSISTANT.md",
         "definitions/skills/tx-sessions/SKILL.md",
         "definitions/mcp.json",

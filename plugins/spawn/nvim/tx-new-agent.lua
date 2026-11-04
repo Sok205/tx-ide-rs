@@ -6,14 +6,14 @@
 --
 --   spec = { result, projects = { … }, project_paths = { [project] = path }, project,
 --            engines = { … }, models = { [engine] = { … } }, efforts = { [engine] = { … } },
---            engine, effort, roles = { … }, role, tags_hint }
+--            engine, effort, agents = { … }, agent, tags_hint }
 --
 -- spec.project is preselected among the projects (the answers carry its path as cwd). Each model
--- list starts with the engine's default, which is what the form preselects; the roles start with
--- "none" (COMMON alone), and spec.role is preselected.
+-- list starts with the engine's default, which is what the form preselects; the agents are the
+-- agent definitions, and spec.agent (the configured default) is preselected.
 --
 -- Panels: [1] Name  [2] Tags  [3] Project  [4] Prompt  [5] Engine  [6] Model  [7] Effort
--- [8] Role. The form opens in normal mode on Name (i to type), and moving between panels keeps
+-- [8] Agent. The form opens in normal mode on Name (i to type), and moving between panels keeps
 -- the mode.
 -- Tab / S-Tab step through the panels in either mode. In normal mode h/l step too, 1-8 jump to
 -- a panel, and on the text panels and Project j/k move to the panel below / above. In a list
@@ -69,21 +69,21 @@ function M.open()
     engine = spec.engine,
     model = spec.models[spec.engine][1],
     effort = spec.effort,
-    role = spec.role,
+    agent = spec.agent,
   }
   local function options(key)
     if key == "project" then
       return spec.projects
     elseif key == "engine" then
       return spec.engines
-    elseif key == "role" then
-      return spec.roles
+    elseif key == "agent" then
+      return spec.agents
     end
     return spec[key .. "s"][picked.engine]
   end
 
   -- Geometry: full-width text panels (Tags and Project split their row) around a row of four
-  -- lists, Model as wide as its longest name and Role taking the rest; a help line under them.
+  -- lists, Model as wide as its longest name and Agent taking the rest; a help line under them.
   local width = vim.o.columns - 2
   local project_width = math.floor((width - 2) / 2)
   local tags_width = width - project_width - 2
@@ -93,8 +93,8 @@ function M.open()
       model_width = math.max(model_width, #model + 4)
     end
   end
-  local role_width = width - engine_width - model_width - effort_width - 6
-  local list_height = math.max(#spec.engines, #spec.roles)
+  local agent_width = width - engine_width - model_width - effort_width - 6
+  local list_height = math.max(#spec.engines, #spec.agents)
   for _, key in ipairs({ "models", "efforts" }) do
     for _, list in pairs(spec[key]) do
       list_height = math.max(list_height, #list)
@@ -156,11 +156,11 @@ function M.open()
       height = list_height,
     },
     {
-      label = "Role",
-      key = "role",
+      label = "Agent",
+      key = "agent",
       row = 12,
       col = engine_width + model_width + effort_width + 6,
-      width = role_width,
+      width = agent_width,
       height = list_height,
     },
   }
@@ -333,7 +333,7 @@ function M.open()
       engine = picked.engine,
       model = picked.model,
       effort = picked.effort,
-      role = picked.role,
+      agent = picked.agent,
       tags = text(panel_for("tags"), ","),
       cwd = spec.project_paths[picked.project],
     }

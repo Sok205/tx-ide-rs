@@ -34,8 +34,8 @@ one front end; every action an operator, a key binding or an agent takes goes th
   the timeline, artifacts and code tours, the assistant, mockups and a tutor.
 - Two binaries: `tx`, the CLI people type, and `txi`, the internal entry point the engines' hooks
   run.
-- Shipped roles (`COMMON`, `DEVELOPER`, `ORCHESTRATOR`, `QA`, `TX-ASSISTANT`) and skills, which
-  every agent's system prompt is built from.
+- Shipped agent definitions (`developer`, `qa`, `orchestrator`, `claude`), roles (`COMMON`,
+  `TX-ASSISTANT`) and skills, which every agent's system prompt is built from.
 
 ## Install
 

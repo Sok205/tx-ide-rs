@@ -46,18 +46,17 @@ To delegate work — coding, scoping, planning, research — the standard recipe
 ```bash
 tx create <name> --tag <scope> --cwd <project-root> --parent "$(tx whoami)" \
   --engine claude --model <model> --effort <1-5> \
-  --role COMMON --role DEVELOPER --prompt "<task>"
+  --agent developer --prompt "<task>"
 ```
 
-- `--role` is what injects the shared conventions into the worker's system prompt — without it
-  the worker sees none of them. `tx create` adds nothing by itself: pass `--role COMMON` first,
-  then the worker's role (`DEVELOPER` is the usual one; `ORCHESTRATOR` and `QA` also ship). Roles
-  resolve from `$TX_DATA_DIR/roles` (the shipped ones) then `$TX_CONFIG_DIR/roles` (the
-  operator's own).
+- `--agent` picks the worker's agent definition: its prompt, tools, skills, and the roles it
+  runs on (the shared conventions, COMMON). `developer` is the usual one; `qa` and `orchestrator`
+  also ship, and `tx definitions agents` lists every one, the operator's own included. Leave
+  `--role` out: the definition names its roles, and any `--role` replaces them.
 - `--cwd` and `--prompt` are required. `--engine` is `claude` or `codex` (`tx engines` lists
   them); left out, it is the operator's `agent.engine` in `config.yaml` (default `claude`). Keep
-  passing `--role` explicitly: without it the worker gets the operator's `agent.roles`, which
-  need not be the ones the task wants.
+  passing `--agent` explicitly: without it the worker gets the operator's `agent.definition`,
+  which need not be the one the task wants.
 - `--model` and `--effort` are placeholders, not recommendations. Omit either one and it comes
   from the operator's `agent.model` / `agent.effort` in `config.yaml` (default Opus 5.5, effort
   3; `null` there leaves it to the engine) — which is what you want unless the operator named a
