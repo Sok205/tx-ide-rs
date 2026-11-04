@@ -184,6 +184,32 @@ fn program_arguments(program: &str, arguments: &[String], nvim_runtime: &Path) -
     words
 }
 
+/// A directory for tmux's `-c`, which is format-expanded: a literal `#` must be doubled.
+fn tmux_directory(path: &Path) -> String {
+    path.to_string_lossy().replace('#', "##")
+}
+
+/// A session name from a title: every byte outside `[A-Za-z0-9_-]` becomes `-`, at most 64
+/// bytes, `artifact` when nothing is left.
+pub fn sanitize(title: &str) -> String {
+    let name: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(64)
+        .collect();
+    if name.trim_matches('-').is_empty() {
+        "artifact".to_owned()
+    } else {
+        name
+    }
+}
+
 /// `new-session -d` running `program arguments…` in the working directory, then the view's
 /// options. The program and its arguments go to tmux as separate words, so no shell is in the
 /// way; an nvim view also gets tx-client's nvim runtime (`program_arguments`).
@@ -191,11 +217,7 @@ pub fn open(ui: &Ui, request: &ViewRequest<'_>) -> Result<View, ViewError> {
     if ui.has_session(request.name) {
         return Err(ViewError::NameTaken(request.name.to_owned()));
     }
-    // `-c` is format-expanded by tmux, so a literal `#` must be doubled.
-    let working_directory = request
-        .working_directory
-        .to_string_lossy()
-        .replace('#', "##");
+    let working_directory = tmux_directory(request.working_directory);
     let mut create = vec![
         "new-session",
         "-d",
@@ -236,6 +258,62 @@ pub fn open(ui: &Ui, request: &ViewRequest<'_>) -> Result<View, ViewError> {
         bound: request.bound.map(str::to_owned),
         created_at,
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitDirection {
+    /// Side by side (`split-window -h`).
+    Horizontal,
+    /// Stacked (`split-window -v`).
+    Vertical,
+}
+
+pub struct SplitRequest<'a> {
+    /// The pane to split: a tmux target such as `=view:.{top-right}` or a `%id`.
+    pub target: &'a str,
+    pub direction: SplitDirection,
+    /// `-l`: lines or columns, or a percentage such as `50%`; tmux halves the pane when unset.
+    pub size: Option<&'a str>,
+    pub program: &'a str,
+    pub arguments: &'a [String],
+    pub working_directory: &'a Path,
+}
+
+/// The `split-window` argv for `request`, printing the new pane's id.
+fn split_arguments(request: &SplitRequest<'_>, nvim_runtime: &Path) -> Vec<String> {
+    let direction = match request.direction {
+        SplitDirection::Horizontal => "-h",
+        SplitDirection::Vertical => "-v",
+    };
+    let mut words = vec!["split-window".to_owned(), direction.to_owned()];
+    if let Some(size) = request.size {
+        words.extend(["-l".to_owned(), size.to_owned()]);
+    }
+    words.extend([
+        "-t".to_owned(),
+        request.target.to_owned(),
+        "-c".to_owned(),
+        tmux_directory(request.working_directory),
+        "-P".to_owned(),
+        "-F".to_owned(),
+        "#{pane_id}".to_owned(),
+        request.program.to_owned(),
+    ]);
+    words.extend(program_arguments(
+        request.program,
+        request.arguments,
+        nvim_runtime,
+    ));
+    words
+}
+
+/// `split-window` running `program arguments…` beside or under `target`, the way `open` runs
+/// a view's first pane: separate words, no shell, and an nvim pane gets tx-client's runtime.
+/// Returns the new pane's id. A single word with spaces still goes through tmux's shell.
+pub fn split(ui: &Ui, request: &SplitRequest<'_>) -> Result<String, ViewError> {
+    let words = split_arguments(request, ui.nvim_runtime());
+    let arguments: Vec<&str> = words.iter().map(String::as_str).collect();
+    Ok(ui.run(&arguments)?.trim().to_owned())
 }
 
 /// Every session marked `@tx-view 1` with a kind, in tmux's listing order; none when no server
@@ -430,6 +508,71 @@ mod tests {
     }
 
     #[test]
+    fn titles_become_session_names() {
+        assert_eq!(sanitize("plan.md"), "plan-md");
+        assert_eq!(sanitize("My plan: v2"), "My-plan--v2");
+        assert_eq!(sanitize("..."), "artifact");
+        assert_eq!(sanitize(""), "artifact");
+        assert_eq!(sanitize(&"x".repeat(100)).len(), 64);
+        assert!(tx_core::validate_name(&sanitize("é/ü")).is_ok());
+    }
+
+    #[test]
+    fn split_doubles_hashes_and_gives_nvim_the_runtime() {
+        let arguments = ["plan.md".to_owned()];
+        let request = SplitRequest {
+            target: "%3",
+            direction: SplitDirection::Vertical,
+            size: Some("50%"),
+            program: "nvim",
+            arguments: &arguments,
+            working_directory: Path::new("/w/proj #1"),
+        };
+        assert_eq!(
+            split_arguments(&request, Path::new("/d/nvim")),
+            [
+                "split-window",
+                "-v",
+                "-l",
+                "50%",
+                "-t",
+                "%3",
+                "-c",
+                "/w/proj ##1",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "nvim",
+                "plan.md",
+                "-c",
+                "set rtp^=/d/nvim | runtime plugin/tx.lua",
+            ]
+        );
+        let shell = SplitRequest {
+            direction: SplitDirection::Horizontal,
+            size: None,
+            program: "zsh",
+            arguments: &[],
+            ..request
+        };
+        assert_eq!(
+            split_arguments(&shell, Path::new("/d/nvim")),
+            [
+                "split-window",
+                "-h",
+                "-t",
+                "%3",
+                "-c",
+                "/w/proj ##1",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "zsh",
+            ]
+        );
+    }
+
+    #[test]
     fn parse_views_reads_every_field_and_skips_non_views() {
         let listing = "home\t1\thome\t\t\t\t1700000000.5\t/Users/me\n\
                        agent\t\t\t\t\t\t\t/w\n\
@@ -519,6 +662,32 @@ mod tests {
             .trim(),
             "sleep 30"
         );
+
+        let hashed = dir.path().join("proj #S");
+        std::fs::create_dir(&hashed).unwrap();
+        let pane = split(
+            &ui,
+            &SplitRequest {
+                target: "=sh1:",
+                direction: SplitDirection::Horizontal,
+                size: Some("30%"),
+                program: "sleep",
+                arguments: &arguments,
+                working_directory: &hashed,
+            },
+        )
+        .unwrap();
+        assert!(pane.starts_with('%'), "{pane}");
+        let started = ui
+            .run(&[
+                "display-message",
+                "-p",
+                "-t",
+                &pane,
+                "#{pane_start_command}\t#{pane_start_path}",
+            ])
+            .unwrap();
+        assert_eq!(started.trim(), format!("sleep 30\t{}", hashed.display()));
 
         let listed = get(&ui, "sh1").unwrap().unwrap();
         assert_eq!(listed.parent_id.as_ref(), Some(&parent));

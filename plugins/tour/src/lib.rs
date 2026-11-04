@@ -385,7 +385,7 @@ fn open(
 fn view_name(ui: &Ui, artifact: &Artifact) -> String {
     let base = format!(
         "{}{VIEW_SUFFIX}",
-        tx_artifacts::views::sanitize(artifact.display_name())
+        tx_client::views::sanitize(artifact.display_name())
     );
     if ui.has_session(&base) {
         let short: String = artifact.id.chars().take(8).collect();

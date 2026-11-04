@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use tx_client::tmux::Ui;
-use tx_client::views::{self, View, ViewKind, ViewRequest};
+use tx_client::views::{self, View, ViewKind, ViewRequest, sanitize};
 use tx_core::{Agent, AgentId, VerbError};
 
 use crate::artifact::{Artifact, USER_ACTOR};
@@ -18,27 +18,6 @@ use crate::service::ArtifactService;
 pub struct Opener {
     pub id: Option<AgentId>,
     pub tags: Vec<String>,
-}
-
-/// A session name from an artifact's title: every byte outside `[A-Za-z0-9_-]` becomes `-`,
-/// at most 64 bytes, `artifact` when nothing is left.
-pub fn sanitize(title: &str) -> String {
-    let name: String = title
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .take(64)
-        .collect();
-    if name.trim_matches('-').is_empty() {
-        "artifact".to_owned()
-    } else {
-        name
-    }
 }
 
 /// The view's name: the sanitized title (plus `-diff` for a diff), with the id's first 8 chars
@@ -148,19 +127,4 @@ pub fn open(
     }
     artifacts.opened(&artifact.id, &actor).map_err(failed)?;
     Ok(view)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::sanitize;
-
-    #[test]
-    fn titles_become_session_names() {
-        assert_eq!(sanitize("plan.md"), "plan-md");
-        assert_eq!(sanitize("My plan: v2"), "My-plan--v2");
-        assert_eq!(sanitize("..."), "artifact");
-        assert_eq!(sanitize(""), "artifact");
-        assert_eq!(sanitize(&"x".repeat(100)).len(), 64);
-        assert!(tx_core::validate_name(&sanitize("é/ü")).is_ok());
-    }
 }
