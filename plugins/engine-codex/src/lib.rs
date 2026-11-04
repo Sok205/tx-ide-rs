@@ -71,7 +71,10 @@ const MCP_TOOL_PREFIX: &str = "mcp__";
 pub const BUILT_IN_SWITCHES: [(&[&str], &[&str]); 6] = [
     (&["Bash"], &[DISABLE_FLAG, "shell_tool"]),
     (&["Read"], &[DISABLE_FLAG, "view_image"]),
-    (&["WebSearch", "WebFetch"], &["-c", "web_search=\"disabled\""]),
+    (
+        &["WebSearch", "WebFetch"],
+        &["-c", "web_search=\"disabled\""],
+    ),
     // Code-mode models take their subagents from v2, the others from v1 (`multi_agent`).
     (
         &["Agent", "Task"],

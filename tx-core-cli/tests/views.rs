@@ -5,7 +5,7 @@ mod common;
 
 use std::process::Command;
 
-use common::{Cli, state_of, pane_id_of};
+use common::{Cli, pane_id_of, state_of};
 
 fn view_option(cli: &Cli, view: &str, option: &str) -> String {
     cli.tmux_out(&["show-options", "-vqt", &format!("={view}:"), option])
@@ -90,13 +90,22 @@ fn view_open_runs_the_default_shell_in_the_current_directory_when_given_no_comma
     let cwd = cli.dir.path().join("here");
     std::fs::create_dir_all(&cwd).unwrap();
     let output = cli
-        .command(&["ui", "view", "open", "plain", "--kind", "editor"], &[("SHELL", "sh")])
+        .command(
+            &["ui", "view", "open", "plain", "--kind", "editor"],
+            &[("SHELL", "sh")],
+        )
         .current_dir(&cwd)
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
-        cli.tmux_out(&["display-message", "-p", "-t", "=plain:", "#{pane_start_command}"]),
+        cli.tmux_out(&[
+            "display-message",
+            "-p",
+            "-t",
+            "=plain:",
+            "#{pane_start_command}"
+        ]),
         "sh"
     );
     assert_eq!(
@@ -111,9 +120,13 @@ fn view_open_rejects_a_taken_name_a_missing_kind_and_an_unknown_parent() {
     require_tmux!();
     let cli = Cli::new();
     cli.create("a");
-    cli.ok(&["ui", "view", "open", "s", "--kind", "shell", "--", "sleep", "600"]);
+    cli.ok(&[
+        "ui", "view", "open", "s", "--kind", "shell", "--", "sleep", "600",
+    ]);
     let taken = cli.run(
-        &["ui", "view", "open", "s", "--kind", "shell", "--", "sleep", "600"],
+        &[
+            "ui", "view", "open", "s", "--kind", "shell", "--", "sleep", "600",
+        ],
         &[],
         "",
     );
@@ -126,7 +139,9 @@ fn view_open_rejects_a_taken_name_a_missing_kind_and_an_unknown_parent() {
     assert!(usage.contains("usage: tx ui view open"), "{usage}");
     cli.fails(&["ui", "view", "nope"], 2);
     let parent = cli.run(
-        &["ui", "view", "open", "t", "--kind", "shell", "--parent", "ghost"],
+        &[
+            "ui", "view", "open", "t", "--kind", "shell", "--parent", "ghost",
+        ],
         &[],
         "",
     );
@@ -144,10 +159,7 @@ fn view_close_refuses_an_agent_session() {
     let output = cli.run(&["ui", "view", "close", "a"], &[], "");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("'a' is an agent's session"),
-        "{stderr:?}"
-    );
+    assert!(stderr.contains("'a' is an agent's session"), "{stderr:?}");
     assert!(has_session(&cli, "a"));
     assert_ne!(state_of(&cli, "a"), "ended");
     assert!(cli.ok(&["ui", "view", "ls"]).is_empty());
@@ -162,11 +174,12 @@ fn view_ls_closes_the_views_of_a_stopped_agent() {
     cli.create("b");
     for (view, parent) in [("va", "a"), ("vb", "b")] {
         cli.ok(&[
-            "ui", "view", "open", view, "--kind", "shell", "--parent", parent, "--", "sleep",
-            "600",
+            "ui", "view", "open", view, "--kind", "shell", "--parent", parent, "--", "sleep", "600",
         ]);
     }
-    cli.ok(&["ui", "view", "open", "free", "--kind", "shell", "--", "sleep", "600"]);
+    cli.ok(&[
+        "ui", "view", "open", "free", "--kind", "shell", "--", "sleep", "600",
+    ]);
     cli.ok(&["kill", "a"]);
     // A stopped agent still resolves, so a late view can name it; the listing closes it too.
     cli.ok(&[
@@ -196,7 +209,9 @@ fn kill_closes_a_view_by_name() {
     require_tmux!();
     let cli = Cli::new();
     cli.create("a");
-    cli.ok(&["ui", "view", "open", "s", "--kind", "shell", "--", "sleep", "600"]);
+    cli.ok(&[
+        "ui", "view", "open", "s", "--kind", "shell", "--", "sleep", "600",
+    ]);
     assert_eq!(cli.ok(&["kill", "s"]), "Killed 's'\n");
     assert!(!has_session(&cli, "s"));
 }
@@ -273,7 +288,9 @@ fn prefix_x_closes_a_shell_view_after_confirming() {
     let cli = Cli::new();
     installed_server(&cli);
     cli.create("a");
-    cli.ok(&["ui", "view", "open", "qa-shell", "--kind", "shell", "--", "sleep", "600"]);
+    cli.ok(&[
+        "ui", "view", "open", "qa-shell", "--kind", "shell", "--", "sleep", "600",
+    ]);
     attach_outer_client(&cli, "qa-shell");
     press_prefix_x(&cli, "qa-shell");
     assert!(
@@ -296,7 +313,9 @@ fn prefix_x_refuses_the_home_view() {
     require_tmux!();
     let cli = Cli::new();
     installed_server(&cli);
-    cli.ok(&["ui", "view", "open", "home", "--kind", "home", "--", "sleep", "600"]);
+    cli.ok(&[
+        "ui", "view", "open", "home", "--kind", "home", "--", "sleep", "600",
+    ]);
     attach_outer_client(&cli, "home");
     press_prefix_x(&cli, "home");
     assert!(

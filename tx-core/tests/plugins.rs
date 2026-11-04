@@ -454,7 +454,11 @@ fn invalid_resource_names_are_refused() {
     let mut core = h.open();
     core.plug(vec![Box::new(NameProbe)], &PluginConfig::default())
         .unwrap();
-    assert_eq!(core.plugin_resources("").len(), 6, "only the valid names landed");
+    assert_eq!(
+        core.plugin_resources("").len(),
+        6,
+        "only the valid names landed"
+    );
 }
 
 #[test]

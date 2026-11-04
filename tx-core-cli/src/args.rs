@@ -712,7 +712,9 @@ mod tests {
             })
         );
         assert_eq!(
-            parse_str("create w --cwd /w --prompt go --skill s").unwrap_err().0,
+            parse_str("create w --cwd /w --prompt go --skill s")
+                .unwrap_err()
+                .0,
             "--skill, --mcp and --tool extend an --agent"
         );
     }

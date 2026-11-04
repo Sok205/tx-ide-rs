@@ -64,7 +64,8 @@ fn installed_server(cli: &Cli, yaml: &str) {
     );
 }
 
-const PLAIN_HOME: &str = "plugins:\n  assistant: { enabled: false }\n  home-themes: { enabled: false }\n";
+const PLAIN_HOME: &str =
+    "plugins:\n  assistant: { enabled: false }\n  home-themes: { enabled: false }\n";
 
 #[test]
 fn ui_install_binds_prefix_m_only() {

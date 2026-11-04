@@ -144,8 +144,11 @@ impl CoreConfig {
         K: Into<String>,
         V: Into<String>,
     {
-        self.caller_env
-            .extend(variables.into_iter().map(|(key, value)| (key.into(), value.into())));
+        self.caller_env.extend(
+            variables
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into())),
+        );
         self
     }
 
@@ -246,10 +249,7 @@ mod tests {
     #[test]
     fn paths_follow_the_directories() {
         let config = CoreConfig::new(Directories::under("/tmp/tx"));
-        assert_eq!(
-            config.socket_path(),
-            PathBuf::from("/tmp/tx/run/tmux.sock")
-        );
+        assert_eq!(config.socket_path(), PathBuf::from("/tmp/tx/run/tmux.sock"));
         assert_eq!(
             config.tmux_conf_path(),
             PathBuf::from("/tmp/tx/data/tmux.conf")

@@ -359,7 +359,6 @@ pub trait LlmEngine: Send + Sync {
         let _ = session;
         None
     }
-
 }
 
 /// This engine's data in a record: `ext[ext_key]`, `Null` when absent. A non-object value (a

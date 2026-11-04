@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::agent::{Agent, AgentId, DefinitionChoice, validate_name};
-use crate::definitions::Definitions;
 use crate::config::{AGENTS_DIR, CoreConfig};
+use crate::definitions::Definitions;
 use crate::engine::{
     Conversation, EngineError, EngineKind, EngineRegistry, Input, LaunchRequest, LlmEngine,
     apply_workspace,
