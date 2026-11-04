@@ -3,8 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::agent::AgentId;
+use serde::Deserialize;
 
+use crate::agent::{AgentId, DefinitionChoice};
+use crate::core::LaunchOptions;
+use crate::engine::EngineKind;
 use crate::error::CoreError;
 
 /// The longest tmux socket path `open` accepts. `sun_path` holds 104 bytes on macOS and 108 on
@@ -86,6 +89,99 @@ impl Directories {
     }
 }
 
+/// `config.yaml`'s `agent:` block: what a launch uses for everything the caller left unset.
+/// `Default` is what a missing or empty file means; [`AgentDefaults::none`] is a core nobody
+/// configured.
+///
+/// ```yaml
+/// agent:
+///   engine: claude
+///   roles: []                    # empty: the definition's `roles`
+///   definition: developer        # null: roles alone, with the engine's base tools
+///   model: claude-opus-5-5       # null: the engine's own default
+///   effort: 3                    # 1-5 or the engine's word; null: the engine's own default
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentDefaults {
+    pub engine: EngineKind,
+    /// Empty: the definition's own `roles`.
+    pub roles: Vec<String>,
+    /// The agent definition every launch without one of its own runs (its prompt, tools, skills
+    /// and roles). `None`: roles alone, with the engine's base tools.
+    pub definition: Option<String>,
+    /// A model of `engine`: another engine gets its own default.
+    pub model: Option<String>,
+    /// A number on the tx scale or an engine's word, as text; the engine checks it.
+    #[serde(deserialize_with = "crate::effort::deserialize_optional_effort")]
+    pub effort: Option<String>,
+}
+
+impl Default for AgentDefaults {
+    fn default() -> Self {
+        Self {
+            engine: EngineKind::Claude,
+            roles: Vec::new(),
+            definition: Some("developer".to_owned()),
+            model: Some("claude-opus-5-5".to_owned()),
+            effort: Some("3".to_owned()),
+        }
+    }
+}
+
+impl AgentDefaults {
+    /// Nothing configured: claude, with no roles, definition, model or effort of its own. What
+    /// [`CoreConfig::new`] holds until the caller hands in a file's values.
+    pub fn none() -> Self {
+        Self {
+            engine: EngineKind::Claude,
+            roles: Vec::new(),
+            definition: None,
+            model: None,
+            effort: None,
+        }
+    }
+
+    /// The launch `tx create` makes: what the caller chose, with these defaults for the rest.
+    ///
+    /// - An unset `engine` is `self.engine`.
+    /// - Empty `roles` are `self.roles`, but only when no `definition` was chosen either: a
+    ///   definition without roles runs its own `roles`.
+    /// - `self.model` goes in when the launch's engine is `self.engine`, and `self.effort` always;
+    ///   both before `options`, so a caller's key for the same name wins.
+    /// - `definition` passes through; a launch without one runs `self.definition`, filled in at
+    ///   create so that forks, respawns and in-process callers get it too.
+    pub fn launch(
+        &self,
+        engine: Option<EngineKind>,
+        roles: Vec<String>,
+        definition: Option<DefinitionChoice>,
+        options: impl IntoIterator<Item = (String, String)>,
+        prompt: impl Into<String>,
+    ) -> LaunchOptions {
+        let engine = engine.unwrap_or(self.engine);
+        let roles = if roles.is_empty() && definition.is_none() {
+            self.roles.clone()
+        } else {
+            roles
+        };
+        let model = self.model.clone().filter(|_| engine == self.engine);
+        let file_options = [("model", model), ("effort", self.effort.clone())]
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value)));
+        let mut launch = LaunchOptions::agent(engine)
+            .profile(roles)
+            .initial_prompt(prompt);
+        if let Some(choice) = definition {
+            launch = launch.definition(choice);
+        }
+        for (key, value) in file_options.chain(options) {
+            launch = launch.option(key, value);
+        }
+        launch
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CoreConfig {
@@ -94,10 +190,10 @@ pub struct CoreConfig {
     pub tmux_socket: Option<PathBuf>,
     /// Base environment for every session, applied before the per-session env.
     pub env: Vec<(String, String)>,
-    /// The agent definition a launch without one of its own runs (create, fork, and the respawn
-    /// of a record from before definitions): `config.yaml`'s `agent.definition`. `None`: roles
-    /// alone, with the engine's base tools.
-    pub default_definition: Option<String>,
+    /// `config.yaml`'s `agent:` block. Its `definition` is what a launch without one of its own
+    /// runs (create, fork, and the respawn of a record from before definitions); the rest is
+    /// applied by [`AgentDefaults::launch`]. [`AgentDefaults::none`] until the caller sets it.
+    pub agent_defaults: AgentDefaults,
     /// The caller's environment. Never passed into a session whole: a launch takes from it only
     /// the variables its MCP servers name (`${NAME}`), and refuses when one is unset.
     pub caller_env: Vec<(String, String)>,
@@ -115,7 +211,7 @@ impl CoreConfig {
             directories,
             tmux_socket: None,
             env: Vec::new(),
-            default_definition: None,
+            agent_defaults: AgentDefaults::none(),
             caller_env: Vec::new(),
             profile_dirs: Vec::new(),
             skill_dirs: Vec::new(),
@@ -133,8 +229,8 @@ impl CoreConfig {
         self
     }
 
-    pub fn default_definition(mut self, name: impl Into<String>) -> Self {
-        self.default_definition = Some(name.into());
+    pub fn agent_defaults(mut self, defaults: AgentDefaults) -> Self {
+        self.agent_defaults = defaults;
         self
     }
 
@@ -313,7 +409,143 @@ mod tests {
         assert!(config.profile_dirs.is_empty());
         assert!(config.skill_dirs.is_empty());
         assert!(config.hook_command.is_empty());
+        assert_eq!(config.agent_defaults, AgentDefaults::none());
         assert_eq!(config.directories.state, Path::new("/x/state"));
+    }
+
+    fn fields(
+        launch: &LaunchOptions,
+    ) -> (
+        EngineKind,
+        &[String],
+        &serde_json::Value,
+        &str,
+        Option<&str>,
+    ) {
+        let LaunchOptions::Agent {
+            engine,
+            profile,
+            options,
+            initial_prompt,
+            definition,
+        } = launch;
+        (
+            *engine,
+            profile,
+            options,
+            initial_prompt,
+            definition.as_ref().map(|choice| choice.agent.as_str()),
+        )
+    }
+
+    fn file() -> AgentDefaults {
+        AgentDefaults {
+            engine: EngineKind::Claude,
+            roles: vec!["COMMON".to_owned()],
+            definition: Some("developer".to_owned()),
+            model: Some("opus".to_owned()),
+            effort: Some("3".to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_launch_that_chose_nothing_takes_the_file() {
+        let launch = file().launch(None, Vec::new(), None, [], "start");
+        let (engine, roles, options, prompt, definition) = fields(&launch);
+        assert_eq!(engine, EngineKind::Claude);
+        assert_eq!(roles, ["COMMON"]);
+        assert_eq!(
+            *options,
+            serde_json::json!({"model": "opus", "effort": "3"})
+        );
+        assert_eq!(prompt, "start");
+        // Filled at create, from the same struct.
+        assert_eq!(definition, None);
+    }
+
+    #[test]
+    fn a_chosen_engine_wins_and_drops_the_files_model() {
+        let launch = file().launch(Some(EngineKind::Codex), Vec::new(), None, [], "p");
+        let (engine, _, options, _, _) = fields(&launch);
+        assert_eq!(engine, EngineKind::Codex);
+        assert_eq!(*options, serde_json::json!({"effort": "3"}));
+    }
+
+    #[test]
+    fn the_files_model_applies_to_its_own_engine_when_chosen_explicitly() {
+        let launch = file().launch(Some(EngineKind::Claude), Vec::new(), None, [], "p");
+        let (_, _, options, _, _) = fields(&launch);
+        assert_eq!(
+            *options,
+            serde_json::json!({"model": "opus", "effort": "3"})
+        );
+    }
+
+    #[test]
+    fn chosen_roles_replace_the_files_whole_list() {
+        let launch = file().launch(None, vec!["QA".to_owned()], None, [], "p");
+        assert_eq!(fields(&launch).1, ["QA"]);
+    }
+
+    #[test]
+    fn a_chosen_definition_without_roles_runs_its_own() {
+        let launch = file().launch(None, Vec::new(), Some(DefinitionChoice::new("qa")), [], "p");
+        let (_, roles, _, _, definition) = fields(&launch);
+        assert!(roles.is_empty());
+        assert_eq!(definition, Some("qa"));
+    }
+
+    #[test]
+    fn a_chosen_definition_with_roles_keeps_both() {
+        let launch = file().launch(
+            None,
+            vec!["QA".to_owned()],
+            Some(DefinitionChoice::new("qa")),
+            [],
+            "p",
+        );
+        let (_, roles, _, _, definition) = fields(&launch);
+        assert_eq!(roles, ["QA"]);
+        assert_eq!(definition, Some("qa"));
+    }
+
+    #[test]
+    fn a_callers_option_beats_the_file_and_others_pass_through() {
+        let launch = file().launch(
+            None,
+            Vec::new(),
+            None,
+            [
+                ("model".to_owned(), "sonnet".to_owned()),
+                ("effort".to_owned(), "low".to_owned()),
+                ("x".to_owned(), "y".to_owned()),
+            ],
+            "p",
+        );
+        assert_eq!(
+            *fields(&launch).2,
+            serde_json::json!({"model": "sonnet", "effort": "low", "x": "y"})
+        );
+    }
+
+    #[test]
+    fn a_null_model_and_effort_leave_the_options_to_the_caller() {
+        let launch = AgentDefaults::none().launch(None, Vec::new(), None, [], "p");
+        let (engine, roles, options, _, definition) = fields(&launch);
+        assert_eq!(engine, EngineKind::Claude);
+        assert!(roles.is_empty());
+        assert_eq!(*options, serde_json::json!({}));
+        assert_eq!(definition, None);
+    }
+
+    #[test]
+    fn the_default_is_a_missing_file() {
+        let parsed: AgentDefaults = serde_norway::from_str("{}").unwrap();
+        assert_eq!(parsed, AgentDefaults::default());
+        assert_eq!(parsed.definition.as_deref(), Some("developer"));
+        assert_eq!(parsed.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(parsed.effort.as_deref(), Some("3"));
+        assert_ne!(parsed, AgentDefaults::none());
     }
 
     /// Directories whose `run/tmux.sock` lands at exactly `len` bytes.

@@ -233,6 +233,58 @@ fn a_launch_without_roles_runs_its_definitions_roles() {
     assert_eq!(profile_of(&id), "Shared.\n\nDev.\n\nPM.");
 }
 
+/// A launch that names no definition runs the configured default (`config.yaml`'s
+/// `agent.definition`), recorded on the agent; one that names its own keeps it.
+#[test]
+fn a_launch_without_a_definition_runs_the_configured_default() {
+    require_tmux!();
+    let h = Harness::new();
+    let agents = h.data_dir().join("definitions/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("pm.md"),
+        "---\nname: pm\ndescription: d\ntools: []\n---\nPM.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        agents.join("qa.md"),
+        "---\nname: qa\ndescription: d\ntools: []\n---\nQA.\n",
+    )
+    .unwrap();
+    let config = h.config().agent_defaults(tx_core::AgentDefaults {
+        definition: Some("pm".to_owned()),
+        ..tx_core::AgentDefaults::none()
+    });
+    let mut core = tx_core::TxCore::open(config).unwrap();
+    core.register_engine(Box::new(common::ShellStub)).unwrap();
+    let repository = h.repository("a");
+    let profile_of = |id: &AgentId| {
+        std::fs::read_to_string(h.state_dir().join(format!("profiles/{id}.md"))).unwrap()
+    };
+
+    let launch = LaunchOptions::agent(STUB_KIND).initial_prompt("start");
+    let id = core
+        .create_agent(CreateOptions::new("bare", repository.clone(), launch))
+        .unwrap();
+    assert_eq!(
+        core.get_agent(&id).unwrap().definition,
+        Some(DefinitionChoice::new("pm"))
+    );
+    assert_eq!(profile_of(&id), "PM.");
+
+    let launch = LaunchOptions::agent(STUB_KIND)
+        .definition(DefinitionChoice::new("qa"))
+        .initial_prompt("start");
+    let own = core
+        .create_agent(CreateOptions::new("own", repository, launch))
+        .unwrap();
+    assert_eq!(
+        core.get_agent(&own).unwrap().definition,
+        Some(DefinitionChoice::new("qa"))
+    );
+    assert_eq!(profile_of(&own), "QA.");
+}
+
 /// The engine is handed the record being created (its id), and the engine data its plan carries
 /// is in the record from the first save.
 #[test]

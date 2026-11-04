@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
-use tx_core::EngineKind;
+pub use tx_core::AgentDefaults;
 
 use crate::args::UsageError;
 use crate::plugins::Entry;
@@ -33,34 +33,6 @@ pub struct Config {
     pub agent: AgentDefaults,
     #[serde(default)]
     pub plugins: BTreeMap<String, Entry>,
-}
-
-/// What `tx create` uses for every flag it was not given.
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct AgentDefaults {
-    pub engine: EngineKind,
-    /// Empty: the definition's own `roles`.
-    pub roles: Vec<String>,
-    /// The agent definition every launch without `--agent` runs (its prompt, tools, skills and
-    /// roles). `null`: roles alone, with the engine's base tools.
-    pub definition: Option<String>,
-    pub model: Option<String>,
-    /// A number on the tx scale or an engine's word, as text; the engine checks it.
-    #[serde(deserialize_with = "tx_core::deserialize_optional_effort")]
-    pub effort: Option<String>,
-}
-
-impl Default for AgentDefaults {
-    fn default() -> Self {
-        Self {
-            engine: EngineKind::Claude,
-            roles: Vec::new(),
-            definition: Some("developer".to_owned()),
-            model: Some("claude-opus-5-5".to_owned()),
-            effort: Some("3".to_owned()),
-        }
-    }
 }
 
 /// Reads `path`; a missing file is every default.
@@ -88,6 +60,7 @@ pub fn parse(text: &str, path: &Path) -> Result<Config, UsageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tx_core::EngineKind;
 
     fn parse_text(text: &str) -> Result<Config, UsageError> {
         parse(text, Path::new("/c/config.yaml"))

@@ -7,12 +7,11 @@ use std::process::{Command, ExitCode};
 
 use tx_client::tmux::Ui;
 use tx_core::{
-    AgentId, CoreError, CreateOptions, ForkOptions, LaunchOptions, ListFilter, SendOptions, Sender,
-    TxCore,
+    AgentId, CoreError, CreateOptions, ForkOptions, ListFilter, SendOptions, Sender, TxCore,
 };
 use tx_core_cli::args::{self, Invocation, Verb};
 
-use tx_core_cli::setup::{Failure, config_file, core_config, load_config, open, preview_verbs};
+use tx_core_cli::setup::{Failure, config_file, core_config, open, preview_verbs};
 
 fn main() -> ExitCode {
     let args: Result<Vec<String>, args::UsageError> = std::env::args_os()
@@ -171,31 +170,15 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             // Records whose session vanished without a hook (a crash, a `kill -9`, a reboot)
             // read `ended` before they are listed.
             core.refresh_all()?;
-            let defaults = load_config(&invocation.global, core.config())?.agent;
-            let engine = engine.unwrap_or(defaults.engine);
-            // An agent definition carries its own prompt: the default roles apply without one.
-            let roles = if roles.is_empty() && definition.is_none() {
-                defaults.roles
-            } else {
-                roles
-            };
-            // The file's model and effort go first, so a flag for the same key wins. Its model
-            // names a model of its own engine: another engine gets its own default.
-            let model = defaults.model.filter(|_| engine == defaults.engine);
-            let file_options = [("model", model), ("effort", defaults.effort)]
-                .into_iter()
-                .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value)));
-            let options: Vec<(String, String)> = file_options.chain(options).collect();
             let parent = match parent {
                 Some(parent) => Some(core.resolve(&parent)?),
                 None => None,
             };
-            let mut launch = LaunchOptions::agent(engine)
-                .profile(roles)
-                .initial_prompt(prompt);
-            if let Some(choice) = definition {
+            // `config.yaml`'s `agent:` block fills in every flag not given.
+            let defaults = &core.config().agent_defaults;
+            if let Some(choice) = &definition {
                 // Claude turns its bundled skills on all at once: say so before the launch.
-                if engine == tx_core::EngineKind::Claude
+                if engine.unwrap_or(defaults.engine) == tx_core::EngineKind::Claude
                     && let Ok(agent) = tx_core::definitions::Definitions::new(
                         core.config().directories.definition_roots(),
                     )
@@ -215,11 +198,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                         eprintln!("tx: warning: {warning}");
                     }
                 }
-                launch = launch.definition(choice);
             }
-            for (key, value) in options {
-                launch = launch.option(key, value);
-            }
+            let launch = defaults.launch(engine, roles, definition, options, prompt);
             let mut opts = CreateOptions::new(name, cwd, launch).tags(tags);
             if let Some(parent) = parent {
                 opts = opts.parent(parent);

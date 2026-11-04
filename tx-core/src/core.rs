@@ -1020,7 +1020,8 @@ impl TxCore {
     /// `config.yaml`'s `agent.definition`, as a choice with no extras.
     fn default_definition(&self) -> Option<DefinitionChoice> {
         self.config
-            .default_definition
+            .agent_defaults
+            .definition
             .as_ref()
             .map(DefinitionChoice::new)
     }
