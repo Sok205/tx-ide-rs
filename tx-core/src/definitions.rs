@@ -13,7 +13,7 @@ use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::DefinitionChoice;
-use crate::profile::{BuiltInTools, ResolvedProfile};
+use crate::profile::ResolvedProfile;
 
 pub const AGENTS_DIR: &str = "agents";
 pub const AGENT_SUFFIX: &str = ".md";
@@ -50,8 +50,9 @@ impl DefinitionError {
 pub struct AgentDefinition {
     pub name: String,
     pub description: String,
-    /// The built-in tools it gets; `None` is the engine's default set.
-    pub tools: Option<Vec<String>>,
+    /// The built-in tools it gets: required. The engine adds only its named baseline (Claude's
+    /// `BASELINE_TOOLS`), nothing else.
+    pub tools: Vec<String>,
     pub mcp_servers: Vec<String>,
     pub disallowed_tools: Vec<String>,
     pub skills: Vec<String>,
@@ -66,8 +67,7 @@ pub struct AgentDefinition {
 struct AgentFrontmatter {
     name: String,
     description: String,
-    #[serde(default)]
-    tools: Option<NameList>,
+    tools: NameList,
     #[serde(default)]
     mcp_servers: NameList,
     #[serde(default)]
@@ -312,7 +312,7 @@ pub fn read_agent(path: &Path) -> Result<AgentDefinition, DefinitionError> {
     let agent = AgentDefinition {
         name: parsed.name,
         description: parsed.description,
-        tools: parsed.tools.map(|tools| tools.0),
+        tools: parsed.tools.0,
         mcp_servers: parsed.mcp_servers.0,
         disallowed_tools: parsed.disallowed_tools.0,
         skills: parsed.skills.0,
@@ -493,8 +493,7 @@ impl Definitions {
     /// - the text is the roles' text, then the agent's prompt;
     /// - the skills are the roles' grants, then the agent's and the `--skill` extras, each name
     ///   once;
-    /// - the tools are every built-in when the agent has no `tools`, else its list with the
-    ///   `--tool` extras added;
+    /// - the tools are its `tools` with the `--tool` extras added;
     /// - `disallowedTools` is the agent's;
     /// - the MCP servers are the agent's and the `--mcp` extras, from the winning `mcp.json` keys.
     pub fn apply(
@@ -523,17 +522,13 @@ impl Definitions {
                 resolved.skill_dirs.push(directory.clone());
             }
         }
-        resolved.tools = match agent.tools {
-            None => BuiltInTools::All,
-            Some(mut tools) => {
-                for tool in &choice.tools {
-                    if !tools.contains(tool) {
-                        tools.push(tool.clone());
-                    }
-                }
-                BuiltInTools::Listed(tools)
+        let mut tools = agent.tools;
+        for tool in &choice.tools {
+            if !tools.contains(tool) {
+                tools.push(tool.clone());
             }
-        };
+        }
+        resolved.tools = Some(tools);
         resolved.disallowed_tools = agent.disallowed_tools;
         let servers = self.mcp_servers()?;
         for name in agent.mcp_servers.iter().chain(&choice.mcp_servers) {
@@ -592,7 +587,8 @@ impl Definitions {
             }
             match read_agent(path) {
                 Ok(agent) => {
-                    check_agent(&agent, &skill_directories, &servers, &mut report.problems)
+                    check_agent(&agent, &skill_directories, &servers, &mut report);
+                    report.agent_definitions.push(agent);
                 }
                 Err(error) => report.problems.push(error),
             }
@@ -633,6 +629,8 @@ pub struct CheckReport {
     pub skills: usize,
     pub servers: usize,
     pub problems: Vec<DefinitionError>,
+    /// The checked agents that read, for engine-specific reports.
+    pub agent_definitions: Vec<AgentDefinition>,
 }
 
 /// Agent, skill and server names become path fragments and tool-name parts.
@@ -651,10 +649,11 @@ fn check_agent(
     agent: &AgentDefinition,
     skill_directories: &BTreeMap<String, PathBuf>,
     servers: &BTreeMap<String, PathBuf>,
-    problems: &mut Vec<DefinitionError>,
+    report: &mut CheckReport,
 ) {
     let problem =
         |key: &str, message: String| DefinitionError::new(&agent.path, agent.line_of(key), message);
+    let problems = &mut report.problems;
     for skill in &agent.skills {
         if !skill_directories.contains_key(skill) {
             problems.push(problem("skills", format!("unknown skill {skill:?}")));
@@ -668,7 +667,7 @@ fn check_agent(
             ));
         }
     }
-    for tool in agent.tools.iter().flatten() {
+    for tool in &agent.tools {
         if tool.starts_with(MCP_TOOL_PREFIX) {
             problems.push(problem(
                 "tools",
@@ -780,10 +779,7 @@ mod tests {
              disallowedTools: mcp__linear__delete_comment\nskills:\n  - tx-artifacts\n---\n\nThe prompt.\n",
         );
         let agent = read_agent(&path).unwrap();
-        assert_eq!(
-            agent.tools,
-            Some(vec!["Bash".to_owned(), "Read".to_owned()])
-        );
+        assert_eq!(agent.tools, ["Bash", "Read"]);
         assert_eq!(agent.mcp_servers, ["linear"]);
         assert_eq!(agent.disallowed_tools, ["mcp__linear__delete_comment"]);
         assert_eq!(agent.skills, ["tx-artifacts"]);
@@ -843,11 +839,11 @@ mod tests {
         let (shipped, user) = (dir.path().join("data"), dir.path().join("config"));
         write(
             &shipped.join("agents/a.md"),
-            "---\nname: a\ndescription: shipped\n---\n",
+            "---\nname: a\ndescription: shipped\ntools: []\n---\n",
         );
         write(
             &user.join("agents/a.md"),
-            "---\nname: a\ndescription: yours\n---\n",
+            "---\nname: a\ndescription: yours\ntools: []\n---\n",
         );
         write(
             &shipped.join("skills/s/SKILL.md"),
@@ -880,7 +876,7 @@ mod tests {
         );
         write(
             &root.join("agents/plain.md"),
-            "---\nname: plain\ndescription: d\n---\n",
+            "---\nname: plain\ndescription: d\ntools: []\n---\n",
         );
         for skill in ["a", "b"] {
             write(
@@ -912,7 +908,7 @@ mod tests {
         );
         assert_eq!(
             resolved.tools,
-            BuiltInTools::Listed(vec!["Bash".into(), "Read".into()])
+            Some(vec!["Bash".to_owned(), "Read".to_owned()])
         );
         assert_eq!(resolved.disallowed_tools, ["mcp__probe__x"]);
         assert_eq!(
@@ -922,7 +918,7 @@ mod tests {
         let plain = definitions
             .apply(ResolvedProfile::default(), &DefinitionChoice::new("plain"))
             .unwrap();
-        assert_eq!(plain.tools, BuiltInTools::All);
+        assert_eq!(plain.tools, Some(Vec::new()));
         assert!(plain.mcp_servers.is_empty());
         let unknown = DefinitionChoice {
             mcp_servers: vec!["nope".into()],

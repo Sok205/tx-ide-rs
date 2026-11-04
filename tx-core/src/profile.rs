@@ -64,25 +64,16 @@ pub struct Profiles {
     skill_dirs: Vec<PathBuf>,
 }
 
-/// Which built-in tools a launch offers, in Claude's names; each engine maps them.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum BuiltInTools {
-    /// No agent definition: the engine's own minimal set.
-    #[default]
-    EngineBase,
-    /// An agent definition without `tools`: every built-in tool.
-    All,
-    /// An agent definition's `tools`, then the `--tool` extras.
-    Listed(Vec<String>),
-}
-
 /// A resolved profile: the combined text, the granted skill directories, and what an agent
 /// definition adds (roles alone leave those at their defaults).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedProfile {
     pub text: String,
     pub skill_dirs: Vec<PathBuf>,
-    pub tools: BuiltInTools,
+    /// The built-in tools, in Claude's names, each engine mapping them: an agent definition's
+    /// `tools` and the `--tool` extras, exactly. `None` without a definition: the engine's own
+    /// base set.
+    pub tools: Option<Vec<String>>,
     pub disallowed_tools: Vec<String>,
     /// The MCP servers the agent gets, by name; none means none at all.
     pub mcp_servers: BTreeMap<String, McpServer>,
@@ -94,7 +85,7 @@ pub struct Profile {
     text: String,
     file: PathBuf,
     skill_dirs: Vec<PathBuf>,
-    tools: BuiltInTools,
+    tools: Option<Vec<String>>,
     disallowed_tools: Vec<String>,
     mcp_servers: BTreeMap<String, McpServer>,
 }
@@ -128,8 +119,8 @@ impl Profile {
         &self.skill_dirs
     }
 
-    pub fn tools(&self) -> &BuiltInTools {
-        &self.tools
+    pub fn tools(&self) -> Option<&[String]> {
+        self.tools.as_deref()
     }
 
     pub fn disallowed_tools(&self) -> &[String] {

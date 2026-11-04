@@ -8,26 +8,29 @@ verbs and key. Verbs starting with `_` are internal: key bindings, hooks and pop
 
 **`engine-claude`** registers the Claude Code adapter. It launches a minimal session,
 `claude --session-id <tx id> --strict-mcp-config --setting-sources "" --tools
-Bash,Read,Edit,Write[,Skill] --append-system-prompt <profile> --dangerously-skip-permissions …`
+Bash,Read,Edit,Write,Skill,ToolSearch --append-system-prompt <profile> --dangerously-skip-permissions …`
 (or `--resume`, or `--resume … --fork-session` for a fork): the profile is appended to Claude
 Code's own system prompt, and no setting source is read, so no user or project settings, CLAUDE.md,
 auto-memory, MCP servers, claude.ai connectors, or synced or bundled skills reach the session.
 Granted skills are delivered as a per-agent plugin named `tx` (`tx:<skill>`) under
 `.claude/tx-plugin/`, passed with `--plugin-dir`. An agent created with `--agent` gets its
-definition's tools instead (`--tools <list>`, or `default` for every built-in when the definition
-has no list), with `Skill` added when it has skills and `ToolSearch` when it has MCP servers, so
-their schemas stay deferred; its `disallowedTools` as `--disallowedTools`; and its MCP servers as
-inline `--mcp-config` JSON. It wires Claude's hooks to `txi hook <Event>`. It keeps
+definition's `tools` instead of Bash, Read, Edit and Write. Every agent also gets the one baseline,
+`BASELINE_TOOLS`: `Skill` (so granted skills are listed) and `ToolSearch` (so MCP schemas stay
+deferred); `tx definitions` and `tx check` show it, and nothing else is ever added. The definition's
+`disallowedTools` go as `--disallowedTools`, and its MCP servers as inline `--mcp-config` JSON.
+`tx check --engine claude` lists what every launch carries that no flag removes. It wires Claude's hooks to `txi hook <Event>`. It keeps
 `conversation_id`, `transcript_path`, `model` and `effort` under `ext.claude`, archives each
 transcript with its sidecar directory, and restores it for a resume when Claude has cleaned it up.
 
 **`engine-codex`** does the same for Codex: `codex [resume ID | fork ID]` with the profile as
 `-c developer_instructions=…`, skills under `.agents/skills/`, hooks as `-c hooks.<Event>=…`
-overrides. Every launch passes `--disable apps` and `-c mcp_servers.<name>.enabled=false` for each
-server in your `config.toml`; an agent definition's servers arrive as `-c mcp_servers.<name>.…`
-(a `${NAME}` secret as `env_vars`, `env_http_headers` or `bearer_token_env_var`, never expanded),
+overrides. Every launch passes `--disable apps`, `-c mcp_servers.<name>.enabled=false` for each
+server in your `config.toml`, and switches off the `codex_worktrees` server the TUI adds itself; an agent definition's servers arrive as `-c mcp_servers.<name>.…`
+(a `${NAME}` secret as `env_vars`, `env_http_headers` or `bearer_token_env_var`, never expanded;
+Codex silently drops an http server whose bearer variable is unset, and an unset `env_vars` entry),
 its `mcp__<server>__<tool>` cuts as `disabled_tools`, and the built-in tools it leaves out as
-switches (`--disable shell_tool`, `-c web_search="disabled"`, …). Codex picks its own conversation id, so it arrives with the first `SessionStart`;
+switches (`--disable shell_tool`, `-c web_search="disabled"`, …). Codex has no baseline (skills are
+files, not a tool); `tx check --engine codex` lists what cannot be separated or removed. Codex picks its own conversation id, so it arrives with the first `SessionStart`;
 until then a resume or fork is refused. Without a `model` option Codex runs your configured
 default.
 

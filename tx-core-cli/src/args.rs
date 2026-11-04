@@ -53,8 +53,10 @@ verbs:
   definitions [agents|skills|mcp]                                   name and description of each definition, every kind
                                                                     or one; yours (<config>/definitions) win by name over
                                                                     the shipped ones (<data>/definitions)
-  check [NAME]...                                                   validate the definitions, all or those named (agents,
-                                                                    skills, MCP servers); path:line per problem, exit 1
+  check [--engine ENGINE] [NAME]...                                 validate the definitions, all or those named (agents,
+                                                                    skills, MCP servers); path:line per problem, exit 1;
+                                                                    --engine: also what ENGINE adds to each agent and what
+                                                                    it carries that no flag removes
   plugins                                                           id and active|disabled per plugin
 
 TARGET is a session id or name. Files live in five directories named after the application,
@@ -169,8 +171,10 @@ pub enum Verb {
     },
     Engines,
     Plugins,
-    /// `check [NAME]...`: validate the definitions, all of them or those named.
+    /// `check [--engine E] [NAME]...`: validate the definitions, all of them or those named;
+    /// with an engine, also what it adds or cannot remove.
     Check {
+        engine: Option<EngineKind>,
         names: Vec<String>,
     },
     /// `definitions [agents|skills|mcp]`: list them, every kind or one.
@@ -419,9 +423,19 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("respawn") => Verb::Respawn {
             target: target(&mut cursor, "respawn")?,
         },
-        Some("check") => Verb::Check {
-            names: cursor.rest(),
-        },
+        Some("check") => {
+            let engine = match cursor.peek() {
+                Some("--engine") => {
+                    cursor.next();
+                    Some(engine_kind(cursor.value("--engine")?)?)
+                }
+                _ => None,
+            };
+            Verb::Check {
+                engine,
+                names: cursor.rest(),
+            }
+        }
         Some("definitions") => Verb::Definitions {
             kind: match cursor.next() {
                 None => None,
@@ -939,7 +953,15 @@ mod tests {
         assert_eq!(
             parse_str("check pm linear").unwrap().verb,
             Verb::Check {
+                engine: None,
                 names: vec!["pm".into(), "linear".into()]
+            }
+        );
+        assert_eq!(
+            parse_str("check --engine codex pm").unwrap().verb,
+            Verb::Check {
+                engine: Some(EngineKind::Codex),
+                names: vec!["pm".into()]
             }
         );
         assert_eq!(

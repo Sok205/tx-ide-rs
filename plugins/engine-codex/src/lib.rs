@@ -40,9 +40,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::definitions::{AUTHORIZATION_HEADER, McpServer, bearer_variable, variable_name};
 use tx_core::{
-    Agent, BuiltInTools, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan,
-    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
-    WorkspaceAction, engine_data, hook_shell_command, mirror_file, mirror_file_exact,
+    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
+    LlmEngineChange, LlmEngineHook, LlmEngineState, Profile, WorkspaceAction, engine_data,
+    hook_shell_command, mirror_file, mirror_file_exact,
 };
 
 pub const CODEX_BIN: &str = "codex";
@@ -68,8 +68,9 @@ const MCP_TOOL_PREFIX: &str = "mcp__";
 /// Codex's built-in tools have no allowlist; each Claude tool name an agent definition leaves out
 /// (or cuts) is a switch that removes Codex's counterpart. A group is off only when none of its
 /// names is offered.
-pub const BUILT_IN_SWITCHES: [(&[&str], [&str; 2]); 5] = [
+pub const BUILT_IN_SWITCHES: [(&[&str], [&str; 2]); 6] = [
     (&["Bash"], [DISABLE_FLAG, "shell_tool"]),
+    (&["Read"], [DISABLE_FLAG, "view_image"]),
     (
         &["WebSearch", "WebFetch"],
         ["-c", "web_search=\"disabled\""],
@@ -84,8 +85,75 @@ pub const BUILT_IN_SWITCHES: [(&[&str], [&str; 2]); 5] = [
     ),
     (&["ScheduleWakeup"], [DISABLE_FLAG, "sleep_tool"]),
 ];
-/// Codex-only tools no Claude name stands for: off for an agent definition with a `tools` list.
-pub const CODEX_ONLY_FEATURES: [&str; 2] = ["goals", "tool_suggest"];
+/// What every launch carries that no switch removes (codex-cli 0.166.0): reported by
+/// `tx check --engine codex`, never silently accepted.
+pub const FORCED: [&str; 5] = [
+    "the tools exec and wait, through which every other tool runs (the model's code mode)",
+    "apply_patch (include_apply_patch_tool=false leaves it) and clock__curr_time",
+    "the MCP resource tools (list and read resources), with or without MCP servers",
+    "with the shared CODEX_HOME: the global AGENTS.md, the user's hooks.json, and the user and \
+     bundled skills (a per-agent CODEX_HOME is pending)",
+    "Codex's own base instructions: the profile goes in developer_instructions beside them",
+];
+
+/// The Claude tool names that mean something on Codex; any other in `tools` has no counterpart.
+const MAPPED_TOOLS: [&str; 12] = [
+    "Bash",
+    "Read",
+    "Edit",
+    "Write",
+    "WebSearch",
+    "WebFetch",
+    "Agent",
+    "Task",
+    "AskUserQuestion",
+    "ScheduleWakeup",
+    "Skill",
+    "ToolSearch",
+];
+
+/// What one agent definition gets on Codex that its file does not say: tools that cannot be
+/// separated or removed, and listed names with no Codex counterpart.
+pub fn definition_notes(agent: &tx_core::definitions::AgentDefinition) -> Vec<String> {
+    let lists = |tool: &str| agent.tools.iter().any(|listed| listed == tool);
+    let cuts = |tool: &str| agent.disallowed_tools.iter().any(|cut| cut == tool);
+    let mut notes = Vec::new();
+    if lists("Bash") && !(lists("Edit") && lists("Write")) {
+        notes.push(
+            "`Bash` is listed: files stay writable through the shell without Edit/Write".into(),
+        );
+    }
+    if lists("Read") && !lists("Bash") {
+        notes.push(
+            "`Read` without `Bash`: codex reads only through the shell, so nothing reads".into(),
+        );
+    }
+    if lists("WebSearch") != lists("WebFetch") {
+        notes.push("web search and fetch are one switch on codex: listing one keeps both".into());
+    }
+    for tool in ["Read", "Edit", "Write"] {
+        if cuts(tool) {
+            notes.push(format!("`{tool}` cannot be cut on codex"));
+        }
+    }
+    let unmapped: Vec<&str> = agent
+        .tools
+        .iter()
+        .map(String::as_str)
+        .filter(|tool| !MAPPED_TOOLS.contains(tool))
+        .collect();
+    if !unmapped.is_empty() {
+        notes.push(format!("no codex counterpart: {}", unmapped.join(", ")));
+    }
+    notes
+}
+
+/// Codex-only tools no Claude name stands for: off for every agent definition.
+pub const CODEX_ONLY_FEATURES: [&str; 3] = ["goals", "tool_suggest", "image_generation"];
+/// The MCP server the interactive TUI adds on its own (codex-cli 0.166.0). `enabled=false` alone
+/// is refused for a server no config layer defines, so it is given a dead URL first.
+pub const TUI_WORKTREES_SERVER: &str = "codex_worktrees";
+const DEAD_URL: &str = "http://127.0.0.1:9/none";
 /// The slash command that exits the CLI cleanly, idle or mid-turn (codex-cli 0.164.0: exit 0
 /// within half a second). Not Ctrl-C: idle it exits at once, but mid-turn it opens a menu.
 pub const QUIT_COMMAND: &str = "/quit";
@@ -212,7 +280,10 @@ impl CodexAdapter {
         if !request.profile.text().is_empty() {
             args.extend([
                 "-c".to_owned(),
-                format!("{DEVELOPER_INSTRUCTIONS_KEY}={}", request.profile.text()),
+                format!(
+                    "{DEVELOPER_INSTRUCTIONS_KEY}={}",
+                    toml_string(request.profile.text())
+                ),
             ]);
         }
         if !request.hook_command.is_empty() {
@@ -500,7 +571,7 @@ fn toml_table(entries: &BTreeMap<String, String>) -> String {
 /// The `-c` overrides that give the agent exactly its MCP servers: each declared server as
 /// `mcp_servers.<name>.*`, minus what `disallowedTools` cuts (`mcp__<server>` drops the server,
 /// `mcp__<server>__<tool>` one tool), and `enabled=false` for every server of the operator's
-/// `config.toml` it does not declare. A secret (`${NAME}`) is never expanded: an `env` entry
+/// `config.toml` it does not declare, and the TUI's own [`TUI_WORKTREES_SERVER`]. A secret (`${NAME}`) is never expanded: an `env` entry
 /// passes the variable of the same name through (`env_vars`); a header passes it as
 /// `env_http_headers`, or `bearer_token_env_var` for `Authorization: Bearer ${NAME}`.
 pub fn mcp_overrides(profile: &Profile, configured: &[String]) -> Result<Vec<String>, EngineError> {
@@ -592,33 +663,35 @@ pub fn mcp_overrides(profile: &Profile, configured: &[String]) -> Result<Vec<Str
             overrides.push(format!("mcp_servers.{name}.enabled=false"));
         }
     }
+    if !configured.iter().any(|name| name == TUI_WORKTREES_SERVER) {
+        overrides.push(format!(
+            "mcp_servers.{TUI_WORKTREES_SERVER}.url={}",
+            toml_string(DEAD_URL)
+        ));
+        overrides.push(format!("mcp_servers.{TUI_WORKTREES_SERVER}.enabled=false"));
+    }
     Ok(overrides)
 }
 
 /// The switches that take away the built-in tools an agent definition does not offer: every
-/// [`BUILT_IN_SWITCHES`] group none of whose names is offered, and the [`CODEX_ONLY_FEATURES`]
-/// for a definition with a `tools` list. Without a definition nothing is switched.
+/// [`BUILT_IN_SWITCHES`] group none of whose names is listed (and not cut), and the
+/// [`CODEX_ONLY_FEATURES`]. Without a definition nothing is switched.
 pub fn tool_switches(profile: &Profile) -> Vec<String> {
-    let offered = |name: &str| {
-        let listed = match profile.tools() {
-            BuiltInTools::EngineBase | BuiltInTools::All => true,
-            BuiltInTools::Listed(tools) => tools.iter().any(|tool| tool == name),
-        };
-        listed && !profile.disallowed_tools().iter().any(|tool| tool == name)
-    };
-    if *profile.tools() == BuiltInTools::EngineBase {
+    let Some(tools) = profile.tools() else {
         return Vec::new();
-    }
+    };
+    let offered = |name: &str| {
+        tools.iter().any(|tool| tool == name)
+            && !profile.disallowed_tools().iter().any(|tool| tool == name)
+    };
     let mut switches = Vec::new();
     for (names, switch) in BUILT_IN_SWITCHES {
         if !names.iter().any(|name| offered(name)) {
             switches.extend(switch.map(str::to_owned));
         }
     }
-    if matches!(profile.tools(), BuiltInTools::Listed(_)) {
-        for feature in CODEX_ONLY_FEATURES {
-            switches.extend([DISABLE_FLAG.to_owned(), feature.to_owned()]);
-        }
+    for feature in CODEX_ONLY_FEATURES {
+        switches.extend([DISABLE_FLAG.to_owned(), feature.to_owned()]);
     }
     switches
 }
@@ -922,6 +995,10 @@ mod tests {
                 "model_reasoning_effort=high",
                 "--disable",
                 "apps",
+                "-c",
+                "mcp_servers.codex_worktrees.url=\"http://127.0.0.1:9/none\"",
+                "-c",
+                "mcp_servers.codex_worktrees.enabled=false",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
             ])
@@ -963,7 +1040,7 @@ mod tests {
         ]);
         let profile = Profile::write(
             ResolvedProfile {
-                tools: BuiltInTools::Listed(vec!["Bash".into(), "WebFetch".into()]),
+                tools: Some(vec!["Bash".into(), "WebFetch".into()]),
                 disallowed_tools: vec!["mcp__probe__delete_thing".into()],
                 mcp_servers: servers,
                 ..ResolvedProfile::default()
@@ -994,6 +1071,8 @@ mod tests {
                 r#"mcp_servers.web.http_headers={"X-Team" = "tx"}"#,
                 r#"mcp_servers.web.env_http_headers={"X-Key" = "KEY"}"#,
                 "mcp_servers.other.enabled=false",
+                r#"mcp_servers.codex_worktrees.url="http://127.0.0.1:9/none""#,
+                "mcp_servers.codex_worktrees.enabled=false",
             ]
         );
         let joined = args.join(" ");
@@ -1006,6 +1085,8 @@ mod tests {
             "--disable sleep_tool",
             "--disable goals",
             "--disable tool_suggest",
+            "--disable image_generation",
+            "--disable view_image",
         ] {
             assert!(joined.contains(switch), "{switch}");
         }
@@ -1026,9 +1107,13 @@ mod tests {
                 "-c",
                 "model_reasoning_effort=low",
                 "-c",
-                "developer_instructions=be good",
+                "developer_instructions=\"be good\"",
                 "--disable",
                 "apps",
+                "-c",
+                "mcp_servers.codex_worktrees.url=\"http://127.0.0.1:9/none\"",
+                "-c",
+                "mcp_servers.codex_worktrees.enabled=false",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
                 "go",
@@ -1073,6 +1158,10 @@ mod tests {
                 "model_reasoning_effort=high",
                 "--disable",
                 "apps",
+                "-c",
+                "mcp_servers.codex_worktrees.url=\"http://127.0.0.1:9/none\"",
+                "-c",
+                "mcp_servers.codex_worktrees.enabled=false",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
             ])
@@ -1099,6 +1188,10 @@ mod tests {
                 "model_reasoning_effort=high",
                 "--disable",
                 "apps",
+                "-c",
+                "mcp_servers.codex_worktrees.url=\"http://127.0.0.1:9/none\"",
+                "-c",
+                "mcp_servers.codex_worktrees.enabled=false",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--dangerously-bypass-hook-trust",
                 "go",
@@ -1197,7 +1290,7 @@ mod tests {
         let plan = adapter()
             .start(&LaunchRequest::new(&session, &profile), "")
             .unwrap();
-        assert_eq!(plan.args.len(), 6);
+        assert_eq!(plan.args.len(), 10);
         assert!(!plan.args.contains(&"-m".to_owned()));
     }
 

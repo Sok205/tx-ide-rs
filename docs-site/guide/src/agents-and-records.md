@@ -83,9 +83,11 @@ COMMON; `tx create` uses exactly the `--role`s given.
 
 An **agent definition** is `agents/<name>.md` under `<data>/definitions` (shipped) or
 `<config>/definitions` (yours, which win by name): Claude's agent format, reduced to `name`,
-`description`, `tools`, `mcpServers`, `disallowedTools` and `skills`, with the prompt as the body.
+`description`, `tools` (required: the built-in tools, in Claude's names), `mcpServers`,
+`disallowedTools` and `skills`, with the prompt as the body.
 `mcp.json` beside it holds the MCP servers in Claude's `.mcp.json` format, and `skills/` the
-skills. `tx definitions [agents|skills|mcp]` lists them; `tx check` validates them.
+skills. `tx definitions [agents|skills|mcp]` lists them; `tx check` validates them, and
+`tx check --engine claude|codex` adds what that engine adds to each agent or cannot remove.
 
 `tx create NAME --agent A [--skill S]... [--mcp M]... [--tool T]...` runs definition `A`: its
 prompt after any `--role` text, its skills plus the `--skill` extras, its tools plus the `--tool`

@@ -4,8 +4,8 @@
 //! <profile text>] --settings <launch settings> --dangerously-skip-permissions [prompt]`.
 //!
 //! The launch is a clean slate: Claude Code's own system prompt with the profile text appended,
-//! only the built-in tools of [`tools`] offered ([`BASE_TOOLS`] unless an agent definition lists
-//! others), only the agent definition's MCP servers, and no setting source is read — no user,
+//! only the built-in tools of [`tools`] offered (the agent definition's, else [`BASE_TOOLS`], plus
+//! the [`BASELINE_TOOLS`]), only the agent definition's MCP servers, and no setting source is read — no user,
 //! project or local settings, hooks, CLAUDE.md, auto-memory, skills or commands, and with
 //! `--strict-mcp-config` no other MCP servers or claude.ai connectors. What the
 //! session still needs is restated in [`launch_settings`]. Granted skills reach it as the skills
@@ -48,9 +48,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Agent, BuiltInTools, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan,
-    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
-    WorkspaceAction, engine_data, hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
+    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
+    LlmEngineChange, LlmEngineHook, LlmEngineState, Profile, WorkspaceAction, engine_data,
+    hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -74,16 +74,40 @@ pub const SETTING_SOURCES_FLAG: &str = "--setting-sources";
 /// No setting source at all: neither the operator's `~/.claude` (settings, CLAUDE.md, skills,
 /// claude.ai skill sync) nor the project's `.claude` and CLAUDE.md.
 pub const SETTING_SOURCES: &str = "";
-/// The built-in tools every launch offers.
+/// What every launch carries that no flag removes (Claude Code 2.1.317, measured in the request
+/// bodies): reported by `tx check --engine claude`, never silently accepted.
+pub const FORCED: [&str; 5] = [
+    "the tools EndConversation, advisor and DeferredToolPlaceholder",
+    "the built-in plugin-authoring skill (disableBundledSkills leaves it)",
+    "Claude Code's built-in plugins (cc-plugin-agents-md, telemetry, privacy)",
+    "a userEmail system reminder from the subscription's OAuth profile",
+    "Claude Code's own system prompt: the profile text is appended to it",
+];
+
+/// What one agent definition gets on Claude that its file does not say: the baseline it does not
+/// list, and writes through `Bash` when `Edit`/`Write` are left out.
+pub fn definition_notes(agent: &tx_core::definitions::AgentDefinition) -> Vec<String> {
+    let lists = |tool: &str| agent.tools.iter().any(|listed| listed == tool);
+    let mut notes = Vec::new();
+    let added: Vec<&str> = BASELINE_TOOLS
+        .into_iter()
+        .filter(|tool| !lists(tool))
+        .collect();
+    if !added.is_empty() {
+        notes.push(format!("gets the baseline tools {}", added.join(", ")));
+    }
+    if lists("Bash") && !(lists("Edit") && lists("Write")) {
+        notes.push("`Bash` is listed: files stay writable through it without Edit/Write".into());
+    }
+    notes
+}
+
+/// The built-in tools of an agent without an agent definition (roles only).
 pub const BASE_TOOLS: [&str; 4] = ["Bash", "Read", "Edit", "Write"];
-/// Offered on top of the listed tools when the profile grants a skill: without it the skills
-/// are not listed to the model.
-pub const SKILL_TOOL: &str = "Skill";
-/// Offered on top of the listed tools when the profile has an MCP server: with it the servers'
-/// tools stay deferred; without it every schema loads up front.
-pub const TOOL_SEARCH_TOOL: &str = "ToolSearch";
-/// `--tools` value for every built-in tool: an agent definition without a `tools` list.
-pub const ALL_TOOLS: &str = "default";
+/// The one implicit part of every launch's `--tools`: `Skill`, without which the granted skills
+/// are not listed to the model, and `ToolSearch`, which keeps MCP tool schemas deferred instead of
+/// loaded up front. `tx definitions` and `tx check` show it; nothing else is ever added.
+pub const BASELINE_TOOLS: [&str; 2] = ["Skill", "ToolSearch"];
 pub const DISALLOWED_TOOLS_FLAG: &str = "--disallowedTools";
 /// Takes the agent's MCP servers as inline JSON, in Claude's `.mcp.json` format.
 pub const MCP_CONFIG_FLAG: &str = "--mcp-config";
@@ -514,20 +538,15 @@ pub fn conversation_started(current: &Value, payload: &Value) -> Option<Value> {
     Some(Value::Object(data))
 }
 
-/// The `--tools` list: [`BASE_TOOLS`] without an agent definition, [`ALL_TOOLS`] for one
-/// without a `tools` list, else its list; then [`SKILL_TOOL`] when a skill is granted and
-/// [`TOOL_SEARCH_TOOL`] when an MCP server is.
+/// The `--tools` list: the agent definition's tools ([`BASE_TOOLS`] without one), then the
+/// [`BASELINE_TOOLS`] it does not list already.
 pub fn tools(profile: &Profile) -> String {
     let mut tools: Vec<String> = match profile.tools() {
-        BuiltInTools::EngineBase => BASE_TOOLS.iter().map(|tool| (*tool).to_owned()).collect(),
-        BuiltInTools::All => return ALL_TOOLS.to_owned(),
-        BuiltInTools::Listed(tools) => tools.clone(),
+        Some(tools) => tools.to_vec(),
+        None => BASE_TOOLS.iter().map(|tool| (*tool).to_owned()).collect(),
     };
-    for (needed, tool) in [
-        (!profile.skill_dirs().is_empty(), SKILL_TOOL),
-        (!profile.mcp_servers().is_empty(), TOOL_SEARCH_TOOL),
-    ] {
-        if needed && !tools.iter().any(|listed| listed == tool) {
+    for tool in BASELINE_TOOLS {
+        if !tools.iter().any(|listed| listed == tool) {
             tools.push(tool.to_owned());
         }
     }
@@ -975,7 +994,7 @@ mod tests {
         "--setting-sources",
         "",
         "--tools",
-        "Bash,Read,Edit,Write",
+        "Bash,Read,Edit,Write,Skill,ToolSearch",
     ];
 
     /// What every launch ends with when no option is set and the profile is empty.
@@ -1115,9 +1134,9 @@ mod tests {
                 env: std::collections::BTreeMap::new(),
             },
         )]);
-        let resolved = |tools: tx_core::BuiltInTools, mcp_servers| ResolvedProfile {
+        let resolved = |tools: Vec<String>, mcp_servers| ResolvedProfile {
             skill_dirs: vec![PathBuf::from("/skills/one")],
-            tools,
+            tools: Some(tools),
             disallowed_tools: vec!["mcp__probe__delete".into(), "Agent".into()],
             mcp_servers,
             ..ResolvedProfile::default()
@@ -1135,12 +1154,13 @@ mod tests {
             Some(args[at + 1].clone())
         };
         let args = launch(resolved(
-            tx_core::BuiltInTools::Listed(vec!["Bash".into(), "Read".into()]),
+            vec!["Bash".into(), "Read".into()],
             servers.clone(),
         ));
         assert_eq!(
             value_of(&args, "--tools").as_deref(),
-            Some("Bash,Read,Skill,ToolSearch")
+            Some("Bash,Read,Skill,ToolSearch"),
+            "the listed tools, then the baseline"
         );
         assert_eq!(
             value_of(&args, "--disallowedTools").as_deref(),
@@ -1153,12 +1173,15 @@ mod tests {
             serde_json::json!({"mcpServers": {"probe": {"type": "stdio", "command": "python3", "args": ["probe.py"]}}})
         );
         assert!(args.contains(&"--strict-mcp-config".to_owned()));
-        // No tools list: every built-in; no MCP server: no --mcp-config.
+        // A baseline tool listed already is not repeated; no MCP server: no --mcp-config.
         let args = launch(resolved(
-            tx_core::BuiltInTools::All,
+            vec!["ToolSearch".into(), "Bash".into()],
             std::collections::BTreeMap::new(),
         ));
-        assert_eq!(value_of(&args, "--tools").as_deref(), Some("default"));
+        assert_eq!(
+            value_of(&args, "--tools").as_deref(),
+            Some("ToolSearch,Bash,Skill")
+        );
         assert_eq!(value_of(&args, "--mcp-config"), None);
     }
 
@@ -1187,7 +1210,7 @@ mod tests {
                 "--setting-sources",
                 "",
                 "--tools",
-                "Bash,Read,Edit,Write,Skill",
+                "Bash,Read,Edit,Write,Skill,ToolSearch",
                 "--plugin-dir",
                 &plugin_dir.to_string_lossy(),
                 "--append-system-prompt",

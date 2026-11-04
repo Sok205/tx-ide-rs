@@ -104,11 +104,15 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 .map_err(Failure::Definition)?;
             return Ok(ExitCode::SUCCESS);
         }
-        Verb::Check { names } => {
+        Verb::Check { engine, names } => {
             let directories = core_config(&invocation.global)?.directories;
-            let clean =
-                tx_core_cli::definitions::check(&directories, names, &mut std::io::stdout().lock())
-                    .map_err(Failure::Definition)?;
+            let clean = tx_core_cli::definitions::check(
+                &directories,
+                *engine,
+                names,
+                &mut std::io::stdout().lock(),
+            )
+            .map_err(Failure::Definition)?;
             return Ok(if clean {
                 ExitCode::SUCCESS
             } else {

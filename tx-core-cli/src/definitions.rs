@@ -3,10 +3,18 @@
 
 use std::io::Write;
 
-use tx_core::Directories;
+use tx_core::{Directories, EngineKind};
 use tx_core::definitions::{DefinitionError, Definitions, McpServer, read_agent, read_skill};
 
 use crate::args::DefinitionKind;
+
+/// The one line saying what Claude adds to every agent's tools, shown wherever agents are.
+fn baseline_line() -> String {
+    format!(
+        "# claude adds to every agent's tools: {}",
+        tx_engine_claude::BASELINE_TOOLS.join(", ")
+    )
+}
 
 /// `name<TAB>description` per definition (for a server: its type and URL or command). One kind
 /// prints bare rows; every kind prints each under a `<kind>:` heading, empty kinds included. An
@@ -31,6 +39,9 @@ pub fn list(
         }
         for (name, description) in rows {
             writeln!(out, "{name}\t{description}").ok();
+        }
+        if *kind == DefinitionKind::Agents {
+            writeln!(out, "{}", baseline_line()).ok();
         }
     }
     Ok(())
@@ -84,15 +95,39 @@ fn described(description: Result<String, DefinitionError>) -> String {
 const INVALID: &str = "(invalid: see `tx check`)";
 
 /// Prints `path:line: message` per problem and returns whether there were none; on success, one
-/// line saying what was checked.
+/// line saying what was checked. With an engine, it also prints what that engine carries on
+/// every launch that no flag removes, then per agent what it gets that its file does not say.
+/// The Claude baseline is always shown.
 pub fn check(
     directories: &Directories,
+    engine: Option<EngineKind>,
     names: &[String],
     out: &mut dyn Write,
 ) -> Result<bool, DefinitionError> {
     let report = Definitions::new(directories.definition_roots()).check(names)?;
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
+    }
+    writeln!(out, "{}", baseline_line()).ok();
+    if let Some(engine) = engine {
+        let (forced, notes): (&[&str], fn(&_) -> Vec<String>) = match engine {
+            EngineKind::Claude => (
+                &tx_engine_claude::FORCED,
+                tx_engine_claude::definition_notes,
+            ),
+            EngineKind::Codex => (
+                &tx_engine_codex::FORCED,
+                tx_engine_codex::definition_notes,
+            ),
+        };
+        for item in forced {
+            writeln!(out, "{engine}: always present: {item}").ok();
+        }
+        for agent in &report.agent_definitions {
+            for note in notes(agent) {
+                writeln!(out, "{}: {engine}: {note}", agent.path.display()).ok();
+            }
+        }
     }
     if report.problems.is_empty() {
         writeln!(
