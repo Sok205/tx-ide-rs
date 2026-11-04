@@ -68,22 +68,25 @@ const MCP_TOOL_PREFIX: &str = "mcp__";
 /// Codex's built-in tools have no allowlist; each Claude tool name an agent definition leaves out
 /// (or cuts) is a switch that removes Codex's counterpart. A group is off only when none of its
 /// names is offered.
-pub const BUILT_IN_SWITCHES: [(&[&str], [&str; 2]); 6] = [
-    (&["Bash"], [DISABLE_FLAG, "shell_tool"]),
-    (&["Read"], [DISABLE_FLAG, "view_image"]),
-    (
-        &["WebSearch", "WebFetch"],
-        ["-c", "web_search=\"disabled\""],
-    ),
+pub const BUILT_IN_SWITCHES: [(&[&str], &[&str]); 6] = [
+    (&["Bash"], &[DISABLE_FLAG, "shell_tool"]),
+    (&["Read"], &[DISABLE_FLAG, "view_image"]),
+    (&["WebSearch", "WebFetch"], &["-c", "web_search=\"disabled\""]),
+    // Code-mode models take their subagents from v2, the others from v1 (`multi_agent`).
     (
         &["Agent", "Task"],
-        ["-c", "features.multi_agent_v2.disable_native_tools=true"],
+        &[
+            "-c",
+            "features.multi_agent_v2.disable_native_tools=true",
+            DISABLE_FLAG,
+            "multi_agent",
+        ],
     ),
     (
         &["AskUserQuestion"],
-        ["-c", "tools.experimental_request_user_input.enabled=false"],
+        &["-c", "tools.experimental_request_user_input.enabled=false"],
     ),
-    (&["ScheduleWakeup"], [DISABLE_FLAG, "sleep_tool"]),
+    (&["ScheduleWakeup"], &[DISABLE_FLAG, "sleep_tool"]),
 ];
 /// What every launch carries that no switch removes (codex-cli 0.166.0): reported by
 /// `tx check --engine codex`, never silently accepted.
@@ -93,7 +96,8 @@ pub const FORCED: [&str; 5] = [
     "the MCP resource tools (list and read resources), with or without MCP servers",
     "with the shared CODEX_HOME: the global AGENTS.md, the user's hooks.json, and the user and \
      bundled skills (a per-agent CODEX_HOME is pending)",
-    "Codex's own base instructions: the profile goes in developer_instructions beside them",
+    "Codex's own base instructions: the profile goes in developer_instructions beside them, and \
+     its multi-agent role text even when the subagent tools are off",
 ];
 
 /// The Claude tool names that mean something on Codex; any other in `tools` has no counterpart.
@@ -704,7 +708,7 @@ pub fn tool_switches(profile: &Profile) -> Vec<String> {
     let mut switches = Vec::new();
     for (names, switch) in BUILT_IN_SWITCHES {
         if !names.iter().any(|name| offered(name)) {
-            switches.extend(switch.map(str::to_owned));
+            switches.extend(switch.iter().map(|word| (*word).to_owned()));
         }
     }
     for feature in CODEX_ONLY_FEATURES {

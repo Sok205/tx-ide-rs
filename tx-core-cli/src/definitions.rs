@@ -102,7 +102,7 @@ const INVALID: &str = "(invalid: see `tx check`)";
 /// Prints `path:line: message` per problem and returns whether there were none; on success, one
 /// line saying what was checked. With an engine, it also prints what that engine carries on
 /// every launch that no flag removes, then per agent what it gets that its file does not say.
-/// The Claude baseline is always shown.
+/// The Claude baseline is shown unless the engine is Codex, which has none.
 pub fn check(
     directories: &Directories,
     engine: Option<EngineKind>,
@@ -114,7 +114,9 @@ pub fn check(
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
     }
-    writeln!(out, "{}", baseline_line()).ok();
+    if engine != Some(EngineKind::Codex) {
+        writeln!(out, "{}", baseline_line()).ok();
+    }
     if let Some(engine) = engine {
         let (forced, notes): (&[&str], fn(&_) -> Vec<String>) = match engine {
             EngineKind::Claude => (

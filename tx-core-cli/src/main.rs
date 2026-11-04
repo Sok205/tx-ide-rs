@@ -174,8 +174,10 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             } else {
                 roles
             };
-            // The file's model and effort go first, so a flag for the same key wins.
-            let file_options = [("model", defaults.model), ("effort", defaults.effort)]
+            // The file's model and effort go first, so a flag for the same key wins. Its model
+            // names a model of its own engine: another engine gets its own default.
+            let model = defaults.model.filter(|_| engine == defaults.engine);
+            let file_options = [("model", model), ("effort", defaults.effort)]
                 .into_iter()
                 .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value)));
             let options: Vec<(String, String)> = file_options.chain(options).collect();
