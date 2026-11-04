@@ -13,13 +13,21 @@ Bash,Read,Edit,Write[,Skill] --append-system-prompt <profile> --dangerously-skip
 Code's own system prompt, and no setting source is read, so no user or project settings, CLAUDE.md,
 auto-memory, MCP servers, claude.ai connectors, or synced or bundled skills reach the session.
 Granted skills are delivered as a per-agent plugin named `tx` (`tx:<skill>`) under
-`.claude/tx-plugin/`, passed with `--plugin-dir`. It wires Claude's hooks to `txi hook <Event>`. It keeps
+`.claude/tx-plugin/`, passed with `--plugin-dir`. An agent created with `--agent` gets its
+definition's tools instead (`--tools <list>`, or `default` for every built-in when the definition
+has no list), with `Skill` added when it has skills and `ToolSearch` when it has MCP servers, so
+their schemas stay deferred; its `disallowedTools` as `--disallowedTools`; and its MCP servers as
+inline `--mcp-config` JSON. It wires Claude's hooks to `txi hook <Event>`. It keeps
 `conversation_id`, `transcript_path`, `model` and `effort` under `ext.claude`, archives each
 transcript with its sidecar directory, and restores it for a resume when Claude has cleaned it up.
 
 **`engine-codex`** does the same for Codex: `codex [resume ID | fork ID]` with the profile as
 `-c developer_instructions=…`, skills under `.agents/skills/`, hooks as `-c hooks.<Event>=…`
-overrides. Codex picks its own conversation id, so it arrives with the first `SessionStart`;
+overrides. Every launch passes `--disable apps` and `-c mcp_servers.<name>.enabled=false` for each
+server in your `config.toml`; an agent definition's servers arrive as `-c mcp_servers.<name>.…`
+(a `${NAME}` secret as `env_vars`, `env_http_headers` or `bearer_token_env_var`, never expanded),
+its `mcp__<server>__<tool>` cuts as `disabled_tools`, and the built-in tools it leaves out as
+switches (`--disable shell_tool`, `-c web_search="disabled"`, …). Codex picks its own conversation id, so it arrives with the first `SessionStart`;
 until then a resume or fork is refused. Without a `model` option Codex runs your configured
 default.
 

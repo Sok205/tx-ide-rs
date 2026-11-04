@@ -79,6 +79,21 @@ chat with reasoning in artifacts, full variable names, branch in your worktree, 
 unasked), **ORCHESTRATOR**, **QA** and **TX-ASSISTANT**. The new-agent form and the assistant add
 COMMON; `tx create` uses exactly the `--role`s given.
 
+## Agent definitions
+
+An **agent definition** is `agents/<name>.md` under `<data>/definitions` (shipped) or
+`<config>/definitions` (yours, which win by name): Claude's agent format, reduced to `name`,
+`description`, `tools`, `mcpServers`, `disallowedTools` and `skills`, with the prompt as the body.
+`mcp.json` beside it holds the MCP servers in Claude's `.mcp.json` format, and `skills/` the
+skills. `tx definitions [agents|skills|mcp]` lists them; `tx check` validates them.
+
+`tx create NAME --agent A [--skill S]... [--mcp M]... [--tool T]...` runs definition `A`: its
+prompt after any `--role` text, its skills plus the `--skill` extras, its tools plus the `--tool`
+extras, and exactly its MCP servers plus the `--mcp` extras — nothing from the engine's own
+config. The record keeps `definition: {agent, skills, mcp_servers, tools}`, and every launch
+resolves it again, so a respawn keeps the extras and picks up an edited definition. With `--agent`
+the default roles of `config.yaml` do not apply.
+
 ## Engines
 
 An [`LlmEngine`](../internal/tx_core/engine/trait.LlmEngine.html) is a pure function from a
