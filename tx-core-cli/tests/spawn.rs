@@ -58,7 +58,7 @@ fn new_agent_creates_the_session_the_form_describes() {
     // Options are engine data: the default model passes nothing, the effort lands in `ext`.
     assert_eq!(json["ext"]["claude"]["effort"], "low");
     assert_eq!(json["ext"]["claude"].get("model"), None);
-    assert!(worktree.join(".claude/skills/tx-diff-review").exists());
+    assert!(worktree.join(".claude/tx-plugin/skills/tx-diff-review").exists());
     assert!(!cwd.join(".claude").exists());
 }
 
