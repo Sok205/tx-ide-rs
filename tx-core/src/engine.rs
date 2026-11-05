@@ -135,6 +135,10 @@ pub enum WorkspaceAction {
     Symlink { src: PathBuf, dst: PathBuf },
 }
 
+/// The engine option holding `tx create … --engine-args ARGS`: a JSON array of strings each engine appends
+/// after its own flags (before the prompt), so they win over them.
+pub const ENGINE_ARGS_OPTION: &str = "args";
+
 /// How to start the engine: `program args…`, extra environment, workspace preparation, and the
 /// engine data known before the process starts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

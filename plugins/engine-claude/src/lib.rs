@@ -25,8 +25,11 @@
 //!  "model": "sonnet", "effort": "max"}
 //! ```
 //!
-//! `model` and `effort` are launch options: `configure` validates them (`ClaudeOptions`, with
-//! this crate's own [`Effort`] vocabulary) and merges them in before a launch reads them.
+//! `model`, `effort` and `command` are launch options: `configure` validates them
+//! (`ClaudeOptions`, with this crate's own [`Effort`] vocabulary) and merges them in before a
+//! launch reads them. `command` replaces the program started, [`CLAUDE_BIN`] by default, and
+//! keeps every argument: a wrapper that extends the launch, such as
+//! `exec claude "$@" --chrome` (the last of `--no-chrome` / `--chrome` wins).
 //!
 //! A start or a fork names its conversation after the tx session id, so the launch plan carries
 //! both up front. After that, `SessionStart` reports them on every start (`startup`, `resume`,
@@ -49,9 +52,10 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, Profile, SkillProvider, WorkspaceAction,
-    engine_data, hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
+    Agent, Conversation, ENGINE_ARGS_OPTION, EngineError, EngineKind, Input, Key, LaunchPlan,
+    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
+    SkillProvider, WorkspaceAction, engine_data, hook_shell_command, mirror_file,
+    mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -151,6 +155,7 @@ pub const CONVERSATION_ID_KEY: &str = "conversation_id";
 pub const TRANSCRIPT_PATH_KEY: &str = "transcript_path";
 pub const MODEL_KEY: &str = "model";
 pub const EFFORT_KEY: &str = "effort";
+pub const COMMAND_KEY: &str = "command";
 
 /// A reasoning-effort tier, as `claude --effort` names them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -216,6 +221,12 @@ pub struct ClaudeOptions {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
+    /// The program started in place of [`CLAUDE_BIN`], given tx's whole argument list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Appended after tx's own flags, before the prompt: `tx create … --engine-args ARGS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
 }
 
 /// Claude's own directory: `CLAUDE_CONFIG_DIR`, else `$HOME/.claude`. Transcripts live under
@@ -333,10 +344,18 @@ impl ClaudeAdapter {
             ),
             SKIP_PERMISSIONS_FLAG.to_owned(),
         ]);
+        args.extend(
+            data.get(ENGINE_ARGS_OPTION)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned),
+        );
         if !prompt.is_empty() {
             args.push(prompt.to_owned());
         }
-        let mut plan = LaunchPlan::new(CLAUDE_BIN).args(args);
+        let mut plan = LaunchPlan::new(option(COMMAND_KEY).unwrap_or(CLAUDE_BIN)).args(args);
         plan.engine_data = stored_data;
         if plugin_skills {
             plan = plan.workspace(WorkspaceAction::Write {
@@ -470,6 +489,11 @@ impl LlmEngine for ClaudeAdapter {
                 "claude options: model must not be empty".into(),
             ));
         }
+        if options.command.as_deref() == Some("") {
+            return Err(EngineError::Refused(
+                "claude options: command must not be empty".into(),
+            ));
+        }
         let mut data = engine_data(self, session)
             .as_object()
             .cloned()
@@ -479,6 +503,12 @@ impl LlmEngine for ClaudeAdapter {
         }
         if let Some(effort) = options.effort {
             data.insert(EFFORT_KEY.into(), effort.as_str().into());
+        }
+        if let Some(command) = options.command {
+            data.insert(COMMAND_KEY.into(), command.into());
+        }
+        if let Some(args) = options.args {
+            data.insert(ENGINE_ARGS_OPTION.into(), args.into());
         }
         Ok(Value::Object(data))
     }
@@ -1481,6 +1511,50 @@ mod tests {
     }
 
     #[test]
+    fn a_command_replaces_the_program_and_keeps_every_argument() {
+        let (dir, profile) = profile("", &[]);
+        let plain = adapter()
+            .start(
+                &LaunchRequest::new(&record(dir.path(), serde_json::json!({})), &profile),
+                "go",
+            )
+            .unwrap();
+        let session = record(
+            dir.path(),
+            serde_json::json!({"command": "/bin/claude-chrome"}),
+        );
+        let wrapped = adapter()
+            .start(&LaunchRequest::new(&session, &profile), "go")
+            .unwrap();
+        assert_eq!(wrapped.program, "/bin/claude-chrome");
+        assert_eq!(wrapped.args[2..], plain.args[2..]);
+    }
+
+    #[test]
+    fn args_come_after_every_flag_of_tx_and_before_the_prompt() {
+        let (dir, profile) = profile("", &[]);
+        let plain = adapter()
+            .start(
+                &LaunchRequest::new(&record(dir.path(), serde_json::json!({})), &profile),
+                "go",
+            )
+            .unwrap();
+        let session = record(
+            dir.path(),
+            serde_json::json!({"args": ["--chrome", "--verbose"]}),
+        );
+        let extended = adapter()
+            .start(&LaunchRequest::new(&session, &profile), "go")
+            .unwrap();
+        let tail = plain.args.len() - 1;
+        assert_eq!(extended.args[2..tail], plain.args[2..tail]);
+        assert_eq!(
+            extended.args[tail..],
+            argv(&["--chrome", "--verbose", "go"])
+        );
+    }
+
+    #[test]
     fn stop_is_exit_submitted_and_interrupt_is_escape() {
         let (dir, _) = profile("", &[]);
         let session = record(dir.path(), serde_json::Value::Null);
@@ -1503,11 +1577,16 @@ mod tests {
             json!({"conversation_id": "c", "transcript_path": "/t", "effort": "low"}),
         );
         let merged = adapter()
-            .configure(&session, &json!({"model": "sonnet", "effort": "max"}))
+            .configure(
+                &session,
+                &json!({"model": "sonnet", "effort": "max", "command": "claude-chrome",
+                        "args": ["--chrome"]}),
+            )
             .unwrap();
         assert_eq!(
             merged,
-            json!({"conversation_id": "c", "transcript_path": "/t", "model": "sonnet", "effort": "max"})
+            json!({"conversation_id": "c", "transcript_path": "/t", "model": "sonnet", "effort": "max",
+                   "command": "claude-chrome", "args": ["--chrome"]})
         );
         // Nothing to set: the data as it is (an object, even from nothing).
         assert_eq!(
@@ -1533,6 +1612,11 @@ mod tests {
             (json!({"effort": "6"}), "expects 1-5 or low"),
             (json!({"effort": 3}), "invalid type: integer `3`"),
             (json!({"model": ""}), "model must not be empty"),
+            (json!({"command": ""}), "command must not be empty"),
+            (
+                json!({"args": "--chrome"}),
+                "invalid type: string \"--chrome\", expected a sequence",
+            ),
             (
                 json!({"model": 7}),
                 "invalid type: integer `7`, expected a string",

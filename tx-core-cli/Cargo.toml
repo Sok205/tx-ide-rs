@@ -17,6 +17,7 @@ name = "txi"
 path = "src/txi.rs"
 
 [dependencies]
+shlex = "2"
 tx-core.workspace = true
 tx-client.workspace = true
 tx-engine-claude = { path = "../plugins/engine-claude" }

@@ -12,7 +12,7 @@ usage: tx [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR
 verbs:
   create NAME --cwd DIR --prompt T [--engine ENGINE] [--role R]... [--option KEY=VALUE]... [--model M]
                 [--effort E] [--parent ID] [--tag T]... [--env KEY=VALUE]...
-                [--agent A [--skill S]... [--mcp M]... [--tool T]...]
+                [--agent A [--skill S]... [--mcp M]... [--tool T]...] [--engine-args ARGS]
                                                                     start an agent; prints its id. It runs in its own
                                                                     worktree of the checkout DIR (name NAME, else NAME-2 …).
                                                                     --model M and --effort E are --option model=M / effort=E;
@@ -24,13 +24,20 @@ verbs:
                                                                     skills, plus the --skill/--mcp/--tool extras, all kept
                                                                     on the record and resolved again at every respawn;
                                                                     with --agent, the roles are the --roles given, else
-                                                                    the definition's `roles:`
+                                                                    the definition's `roles:`.
+                                                                    --engine-args ARGS: arguments passed to the engine
+                                                                    after tx's own flags, so they win (`--engine-args
+                                                                    --chrome`: Claude in Chrome); split like a shell
+                                                                    line, quotes kept together; the option `args`, kept
+                                                                    for respawn and fork
   fork SOURCE --prompt T [--name NAME] [--tag T]... [--option KEY=VALUE]... [--model M] [--effort E]
+                [--engine-args ARGS]
                                                                     a new agent continuing SOURCE's conversation in a branch,
                                                                     in its own worktree at SOURCE's committed HEAD (uncommitted
                                                                     changes are not carried over); SOURCE's engine, roles and
                                                                     engine options unless an option says otherwise; name NAME,
-                                                                    else SOURCE-fork; tags default to SOURCE's; prints its id
+                                                                    else SOURCE-fork; tags default to SOURCE's; prints its id;
+                                                                    --engine-args ARGS replaces SOURCE's, as on create
   ls [--parent ID] [--tag T] [--running|--ended] [--json]
                                                                     id, name, state, working directory per line
                                                                     of the running agents (the default, --running),
@@ -124,6 +131,8 @@ pub enum Verb {
         /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
         /// a repeated key is settled by the engine's options object, last one wins.
         options: Vec<(String, String)>,
+        /// `--engine-args ARGS`, split: arguments the engine appends after its own flags.
+        engine_args: Vec<String>,
         prompt: String,
     },
     Fork {
@@ -133,6 +142,8 @@ pub enum Verb {
         tags: Vec<String>,
         /// Engine options in command-line order, as `Create` carries them.
         options: Vec<(String, String)>,
+        /// `--engine-args ARGS`, as `Create` carries them.
+        engine_args: Vec<String>,
     },
     Ls {
         parent: Option<String>,
@@ -264,6 +275,11 @@ fn option_pair(text: &str) -> Result<(String, String), UsageError> {
         return Err(usage(format!("--option {key} needs a non-empty value")));
     }
     Ok((key.to_owned(), value.to_owned()))
+}
+
+/// `--engine-args ARGS` as the words a shell would split it into: `--chrome -c "a b"` is three.
+fn engine_args_words(text: &str) -> Result<Vec<String>, UsageError> {
+    shlex::split(text).ok_or_else(|| usage(format!("--engine-args: unbalanced quotes in {text:?}")))
 }
 
 fn env_pair(text: &str) -> Result<(String, String), UsageError> {
@@ -493,6 +509,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut prompt = None;
     let mut agent = None;
     let mut extras = tx_core::DefinitionChoice::default();
+    let mut engine_args = Vec::new();
     while let Some(flag) = cursor.next() {
         match flag {
             "--cwd" => cwd = Some(cursor.value(flag)?.into()),
@@ -509,6 +526,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             "--effort" => options.push(option_value("effort", flag, cursor.value(flag)?)?),
             "--option" => options.push(option_pair(cursor.value(flag)?)?),
             "--prompt" => prompt = Some(cursor.value(flag)?.to_owned()),
+            "--engine-args" => engine_args.extend(engine_args_words(cursor.value(flag)?)?),
             other => return Err(usage(format!("create: unexpected argument {other:?}"))),
         }
     }
@@ -529,6 +547,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         roles,
         definition,
         options,
+        engine_args,
         prompt,
     })
 }
@@ -543,6 +562,7 @@ fn parse_fork(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let mut prompt = None;
     let mut tags = Vec::new();
     let mut options = Vec::new();
+    let mut engine_args = Vec::new();
     while let Some(flag) = cursor.next() {
         match flag {
             "--name" => name = Some(cursor.value(flag)?.to_owned()),
@@ -551,6 +571,7 @@ fn parse_fork(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
             "--model" => options.push(option_value("model", flag, cursor.value(flag)?)?),
             "--effort" => options.push(option_value("effort", flag, cursor.value(flag)?)?),
             "--option" => options.push(option_pair(cursor.value(flag)?)?),
+            "--engine-args" => engine_args.extend(engine_args_words(cursor.value(flag)?)?),
             other => return Err(usage(format!("fork: unexpected argument {other:?}"))),
         }
     }
@@ -561,6 +582,7 @@ fn parse_fork(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         prompt,
         tags,
         options,
+        engine_args,
     })
 }
 
@@ -667,11 +689,13 @@ mod tests {
             roles,
             definition,
             options,
+            engine_args,
             prompt,
         } = inv.verb
         else {
             panic!()
         };
+        assert_eq!(engine_args, Vec::<String>::new());
         assert_eq!(definition, None);
         assert_eq!(name, "w1");
         assert_eq!(cwd, Path::new("/w"));
@@ -690,6 +714,37 @@ mod tests {
             ]
         );
         assert_eq!(prompt, "go");
+    }
+
+    #[test]
+    fn create_splits_engine_args_like_a_shell() {
+        let argv = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+        let create = |engine_args: &str| {
+            parse(&argv(&[
+                "create",
+                "w",
+                "--cwd",
+                "/w",
+                "--engine-args",
+                engine_args,
+                "--prompt",
+                "go",
+            ]))
+        };
+        let Verb::Create {
+            engine_args,
+            prompt,
+            ..
+        } = create(r#"--chrome -c "a b""#).unwrap().verb
+        else {
+            panic!()
+        };
+        assert_eq!(prompt, "go");
+        assert_eq!(engine_args, ["--chrome", "-c", "a b"]);
+        let error = create(r#"-c "a"#).unwrap_err();
+        assert!(error.0.contains("unbalanced quotes"), "{error}");
+        let error = parse_str("create w --cwd /w --prompt go --engine-args").unwrap_err();
+        assert!(error.0.contains("--engine-args needs a value"), "{error}");
     }
 
     #[test]
@@ -755,6 +810,7 @@ mod tests {
                 prompt: "go".into(),
                 tags: vec![],
                 options: vec![],
+                engine_args: vec![],
             }
         );
         assert_eq!(
@@ -773,8 +829,17 @@ mod tests {
                     ("k".into(), "v".into()),
                     ("effort".into(), "low".into()),
                 ],
+                engine_args: vec![],
             }
         );
+        let Verb::Fork { engine_args, .. } =
+            parse_str("fork src --prompt go --engine-args --chrome")
+                .unwrap()
+                .verb
+        else {
+            panic!()
+        };
+        assert_eq!(engine_args, ["--chrome"]);
         for (line, needle) in [
             ("fork", "source"),
             ("fork --prompt go", "source"),
