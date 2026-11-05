@@ -302,6 +302,10 @@ the `developer` agent definition on the COMMON role. Effort is 1–5 (or the eng
 3 = high, 4 = xhigh, 5 = max, the same for every engine, in this file, `--effort` and
 `--option effort=`; the record stores the word. Codex's `none` and `minimal` are words only. With `--engine codex`, pass `--model` / `--effort` too (or set them to
 `null`): the defaults name a Claude model.
+Claude also takes `--option command=PATH`: the program started instead of `claude`, given tx's
+whole argument list, so a wrapper can extend the launch. For Claude in Chrome, which tx turns
+off with `--no-chrome`, a script holding `exec claude "$@" --chrome` (the last flag wins). The
+record keeps it, so a respawn or a fork launches the same way.
 An unknown key, a bad value or malformed YAML stops `tx` with a usage error naming the file. The
 directories, the socket, the roles and skills directories and `--env` stay flags and environment
 variables (see "Where files live" above); they are not in this file.
