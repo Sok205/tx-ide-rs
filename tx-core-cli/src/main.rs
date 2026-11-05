@@ -165,6 +165,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             roles,
             definition,
             options,
+            engine_args,
             prompt,
         } => {
             // Records whose session vanished without a hook (a crash, a `kill -9`, a reboot)
@@ -199,7 +200,10 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                     }
                 }
             }
-            let launch = defaults.launch(engine, roles, definition, options, prompt);
+            let mut launch = defaults.launch(engine, roles, definition, options, prompt);
+            if !engine_args.is_empty() {
+                launch = launch.option(tx_core::ENGINE_ARGS_OPTION, engine_args);
+            }
             let mut opts = CreateOptions::new(name, cwd, launch).tags(tags);
             if let Some(parent) = parent {
                 opts = opts.parent(parent);
@@ -216,6 +220,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             prompt,
             tags,
             options: engine_options,
+            engine_args,
         } => {
             let mut options = ForkOptions::new(prompt);
             if let Some(name) = name {
@@ -226,6 +231,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
             for (key, value) in engine_options {
                 options = options.option(key, value);
+            }
+            if !engine_args.is_empty() {
+                options = options.option(tx_core::ENGINE_ARGS_OPTION, engine_args);
             }
             let id = core.fork_agent(&core.resolve(&source)?, options)?;
             writeln!(out, "{id}").ok();

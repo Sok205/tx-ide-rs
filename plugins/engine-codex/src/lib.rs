@@ -41,9 +41,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::definitions::{AUTHORIZATION_HEADER, McpServer, bearer_variable, variable_name};
 use tx_core::{
-    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, Profile, WorkspaceAction, engine_data,
-    hook_shell_command, mirror_file, mirror_file_exact,
+    Agent, Conversation, ENGINE_ARGS_OPTION, EngineError, EngineKind, Input, Key, LaunchPlan,
+    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
+    WorkspaceAction, engine_data, hook_shell_command, mirror_file, mirror_file_exact,
 };
 
 pub const CODEX_BIN: &str = "codex";
@@ -251,6 +251,9 @@ pub struct CodexOptions {
     /// The program started in place of [`CODEX_BIN`], given tx's whole argument list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// Appended after tx's own flags, before the prompt: `tx create … --engine-args ARGS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
 }
 /// The hooks wired per launch, one `-c hooks.<Event>=…` each; each runs
 /// `<hook_command> <Event>`. Codex skips them without `--dangerously-bypass-hook-trust`.
@@ -318,6 +321,14 @@ impl CodexAdapter {
             BYPASS_APPROVALS_FLAG.to_owned(),
             BYPASS_HOOK_TRUST_FLAG.to_owned(),
         ]);
+        args.extend(
+            data.get(ENGINE_ARGS_OPTION)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned),
+        );
         if !prompt.is_empty() {
             args.push(prompt.to_owned());
         }
@@ -423,6 +434,9 @@ impl LlmEngine for CodexAdapter {
         }
         if let Some(command) = options.command {
             data.insert(COMMAND_KEY.into(), command.into());
+        }
+        if let Some(args) = options.args {
+            data.insert(ENGINE_ARGS_OPTION.into(), args.into());
         }
         Ok(Value::Object(data))
     }
@@ -1034,6 +1048,27 @@ mod tests {
     }
 
     #[test]
+    fn args_come_after_every_flag_of_tx_and_before_the_prompt() {
+        let (_dir, profile) = profile("", &[]);
+        let plain = adapter()
+            .start(
+                &LaunchRequest::new(&record(serde_json::json!({})), &profile),
+                "go",
+            )
+            .unwrap();
+        let session = record(serde_json::json!({"args": ["--search", "-c", "k=v"]}));
+        let extended = adapter()
+            .start(&LaunchRequest::new(&session, &profile), "go")
+            .unwrap();
+        let tail = plain.args.len() - 1;
+        assert_eq!(extended.args[..tail], plain.args[..tail]);
+        assert_eq!(
+            extended.args[tail..],
+            argv(&["--search", "-c", "k=v", "go"])
+        );
+    }
+
+    #[test]
     fn defaults() {
         let (_dir, profile) = profile("", &[]);
         let session = record(serde_json::Value::Null);
@@ -1356,11 +1391,12 @@ mod tests {
             adapter()
                 .configure(
                     &session,
-                    &json!({"model": "gpt-6.1-sol", "effort": "medium", "command": "codex-wrapped"})
+                    &json!({"model": "gpt-6.1-sol", "effort": "medium", "command": "codex-wrapped",
+                            "args": ["--search"]})
                 )
                 .unwrap(),
             json!({"conversation_id": "c", "model": "gpt-6.1-sol", "effort": "medium",
-                   "command": "codex-wrapped"})
+                   "command": "codex-wrapped", "args": ["--search"]})
         );
         assert_eq!(
             adapter().configure(&session, &json!({})).unwrap(),
@@ -1386,6 +1422,10 @@ mod tests {
             (json!({"effort": true}), "invalid type: boolean `true`"),
             (json!({"model": ""}), "model must not be empty"),
             (json!({"command": ""}), "command must not be empty"),
+            (
+                json!({"args": [1]}),
+                "invalid type: integer `1`, expected a string",
+            ),
             (json!({"model": ["a"]}), "invalid type: sequence"),
             (json!({"sandbox": "none"}), "unknown field `sandbox`"),
             (json!([]), "expected a JSON object, got []"),

@@ -36,8 +36,8 @@ pub use core::{
 };
 pub use effort::{EFFORT_SCALE, deserialize_effort, deserialize_optional_effort, effort_word};
 pub use engine::{
-    Conversation, EngineError, Input, Key, LaunchPlan, LaunchRequest, LlmEngine, WorkspaceAction,
-    engine_data, hook_shell_command,
+    Conversation, ENGINE_ARGS_OPTION, EngineError, Input, Key, LaunchPlan, LaunchRequest,
+    LlmEngine, WorkspaceAction, engine_data, hook_shell_command,
 };
 #[doc(hidden)]
 pub use engine::{EngineKind, EngineRegistry};

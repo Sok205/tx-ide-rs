@@ -52,9 +52,10 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Agent, Conversation, EngineError, EngineKind, Input, Key, LaunchPlan, LaunchRequest, LlmEngine,
-    LlmEngineChange, LlmEngineHook, LlmEngineState, Profile, SkillProvider, WorkspaceAction,
-    engine_data, hook_shell_command, mirror_file, mirror_file_exact, mirror_tree,
+    Agent, Conversation, ENGINE_ARGS_OPTION, EngineError, EngineKind, Input, Key, LaunchPlan,
+    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
+    SkillProvider, WorkspaceAction, engine_data, hook_shell_command, mirror_file,
+    mirror_file_exact, mirror_tree,
 };
 
 pub const CLAUDE_BIN: &str = "claude";
@@ -223,6 +224,9 @@ pub struct ClaudeOptions {
     /// The program started in place of [`CLAUDE_BIN`], given tx's whole argument list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// Appended after tx's own flags, before the prompt: `tx create … --engine-args ARGS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
 }
 
 /// Claude's own directory: `CLAUDE_CONFIG_DIR`, else `$HOME/.claude`. Transcripts live under
@@ -340,6 +344,14 @@ impl ClaudeAdapter {
             ),
             SKIP_PERMISSIONS_FLAG.to_owned(),
         ]);
+        args.extend(
+            data.get(ENGINE_ARGS_OPTION)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned),
+        );
         if !prompt.is_empty() {
             args.push(prompt.to_owned());
         }
@@ -494,6 +506,9 @@ impl LlmEngine for ClaudeAdapter {
         }
         if let Some(command) = options.command {
             data.insert(COMMAND_KEY.into(), command.into());
+        }
+        if let Some(args) = options.args {
+            data.insert(ENGINE_ARGS_OPTION.into(), args.into());
         }
         Ok(Value::Object(data))
     }
@@ -1516,6 +1531,30 @@ mod tests {
     }
 
     #[test]
+    fn args_come_after_every_flag_of_tx_and_before_the_prompt() {
+        let (dir, profile) = profile("", &[]);
+        let plain = adapter()
+            .start(
+                &LaunchRequest::new(&record(dir.path(), serde_json::json!({})), &profile),
+                "go",
+            )
+            .unwrap();
+        let session = record(
+            dir.path(),
+            serde_json::json!({"args": ["--chrome", "--verbose"]}),
+        );
+        let extended = adapter()
+            .start(&LaunchRequest::new(&session, &profile), "go")
+            .unwrap();
+        let tail = plain.args.len() - 1;
+        assert_eq!(extended.args[2..tail], plain.args[2..tail]);
+        assert_eq!(
+            extended.args[tail..],
+            argv(&["--chrome", "--verbose", "go"])
+        );
+    }
+
+    #[test]
     fn stop_is_exit_submitted_and_interrupt_is_escape() {
         let (dir, _) = profile("", &[]);
         let session = record(dir.path(), serde_json::Value::Null);
@@ -1540,13 +1579,14 @@ mod tests {
         let merged = adapter()
             .configure(
                 &session,
-                &json!({"model": "sonnet", "effort": "max", "command": "claude-chrome"}),
+                &json!({"model": "sonnet", "effort": "max", "command": "claude-chrome",
+                        "args": ["--chrome"]}),
             )
             .unwrap();
         assert_eq!(
             merged,
             json!({"conversation_id": "c", "transcript_path": "/t", "model": "sonnet", "effort": "max",
-                   "command": "claude-chrome"})
+                   "command": "claude-chrome", "args": ["--chrome"]})
         );
         // Nothing to set: the data as it is (an object, even from nothing).
         assert_eq!(
@@ -1573,6 +1613,10 @@ mod tests {
             (json!({"effort": 3}), "invalid type: integer `3`"),
             (json!({"model": ""}), "model must not be empty"),
             (json!({"command": ""}), "command must not be empty"),
+            (
+                json!({"args": "--chrome"}),
+                "invalid type: string \"--chrome\", expected a sequence",
+            ),
             (
                 json!({"model": 7}),
                 "invalid type: integer `7`, expected a string",
