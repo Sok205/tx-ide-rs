@@ -15,9 +15,10 @@
 //!  "model": "gpt-6.1-sol", "effort": "medium"}
 //! ```
 //!
-//! `model` and `effort` are launch options: `configure` validates them (`CodexOptions`, with this
-//! crate's own [`Effort`] vocabulary: what `model_reasoning_effort` accepts) and merges them in
-//! before a launch reads them.
+//! `model`, `effort` and `command` are launch options: `configure` validates them
+//! (`CodexOptions`, with this crate's own [`Effort`] vocabulary: what `model_reasoning_effort`
+//! accepts) and merges them in before a launch reads them. `command` replaces the program
+//! started, [`CODEX_BIN`] by default, and keeps every argument: a wrapper that extends the launch.
 //!
 //! A resume continues `conversation_id`; a fork branches the source's `conversation_id`; both are
 //! refused when there is none yet. Codex picks its own id, so both keys come from the
@@ -171,6 +172,7 @@ pub const CONVERSATION_ID_KEY: &str = "conversation_id";
 pub const TRANSCRIPT_PATH_KEY: &str = "transcript_path";
 pub const MODEL_KEY: &str = "model";
 pub const EFFORT_KEY: &str = "effort";
+pub const COMMAND_KEY: &str = "command";
 
 /// A reasoning-effort tier, as `model_reasoning_effort` accepts them. The CLI passes the string
 /// through; the API refuses anything else (codex-cli 0.164.0: "Supported values are: 'none',
@@ -246,6 +248,9 @@ pub struct CodexOptions {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
+    /// The program started in place of [`CODEX_BIN`], given tx's whole argument list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 /// The hooks wired per launch, one `-c hooks.<Event>=…` each; each runs
 /// `<hook_command> <Event>`. Codex skips them without `--dangerously-bypass-hook-trust`.
@@ -316,7 +321,7 @@ impl CodexAdapter {
         if !prompt.is_empty() {
             args.push(prompt.to_owned());
         }
-        let mut plan = LaunchPlan::new(CODEX_BIN).args(args);
+        let mut plan = LaunchPlan::new(option(COMMAND_KEY).unwrap_or(CODEX_BIN)).args(args);
         plan.engine_data = stored_data;
         for link in skill_links(SKILLS_DIR, request.profile.skill_dirs()) {
             plan = plan.workspace(link);
@@ -401,6 +406,11 @@ impl LlmEngine for CodexAdapter {
                 "codex options: model must not be empty".into(),
             ));
         }
+        if options.command.as_deref() == Some("") {
+            return Err(EngineError::Refused(
+                "codex options: command must not be empty".into(),
+            ));
+        }
         let mut data = engine_data(self, session)
             .as_object()
             .cloned()
@@ -410,6 +420,9 @@ impl LlmEngine for CodexAdapter {
         }
         if let Some(effort) = options.effort {
             data.insert(EFFORT_KEY.into(), effort.as_str().into());
+        }
+        if let Some(command) = options.command {
+            data.insert(COMMAND_KEY.into(), command.into());
         }
         Ok(Value::Object(data))
     }
@@ -1004,6 +1017,23 @@ mod tests {
     }
 
     #[test]
+    fn a_command_replaces_the_program_and_keeps_every_argument() {
+        let (_dir, profile) = profile("", &[]);
+        let plain = adapter()
+            .start(
+                &LaunchRequest::new(&record(serde_json::json!({})), &profile),
+                "go",
+            )
+            .unwrap();
+        let session = record(serde_json::json!({"command": "/bin/codex-wrapped"}));
+        let wrapped = adapter()
+            .start(&LaunchRequest::new(&session, &profile), "go")
+            .unwrap();
+        assert_eq!(wrapped.program, "/bin/codex-wrapped");
+        assert_eq!(wrapped.args, plain.args);
+    }
+
+    #[test]
     fn defaults() {
         let (_dir, profile) = profile("", &[]);
         let session = record(serde_json::Value::Null);
@@ -1326,10 +1356,11 @@ mod tests {
             adapter()
                 .configure(
                     &session,
-                    &json!({"model": "gpt-6.1-sol", "effort": "medium"})
+                    &json!({"model": "gpt-6.1-sol", "effort": "medium", "command": "codex-wrapped"})
                 )
                 .unwrap(),
-            json!({"conversation_id": "c", "model": "gpt-6.1-sol", "effort": "medium"})
+            json!({"conversation_id": "c", "model": "gpt-6.1-sol", "effort": "medium",
+                   "command": "codex-wrapped"})
         );
         assert_eq!(
             adapter().configure(&session, &json!({})).unwrap(),
@@ -1354,6 +1385,7 @@ mod tests {
             (json!({"effort": "6"}), "expects 1-5 or none"),
             (json!({"effort": true}), "invalid type: boolean `true`"),
             (json!({"model": ""}), "model must not be empty"),
+            (json!({"command": ""}), "command must not be empty"),
             (json!({"model": ["a"]}), "invalid type: sequence"),
             (json!({"sandbox": "none"}), "unknown field `sandbox`"),
             (json!([]), "expected a JSON object, got []"),
