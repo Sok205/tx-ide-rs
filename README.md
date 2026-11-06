@@ -49,6 +49,7 @@ to this one; it is reachable at the tag `old-tx-final`.
 | `plugins/picker` (`tx-picker`) | plugin: the fzf session picker `tx pick`, prefix+t | tx-core, tx-client |
 | `plugins/chat` (`tx-chat`, plugin `chat`) | plugin: `chat ls` (the engine's conversation), `doctor --fix-hooks`, prefix+f (through core's fork); the peer-message parser the timeline uses | tx-core, tx-client |
 | `plugins/edit` (`tx-edit`) | plugin: the session and tag editors, prefix+e | tx-core, tx-client |
+| `plugins/details` (`tx-details`) | plugin: `tx details`, an agent's spawn configuration, and prefix+i, the same in a popup | tx-core, tx-client |
 | `plugins/spawn` (`tx-spawn`) | plugin: the new-agent form `tx _new-agent`, prefix+n | tx-core, tx-client |
 | `plugins/assistant` (`tx-assistant`) | plugin: `tx assistant warm\|ask`, the `tx-assistant` session `ui attach` lands in and prefix+/ asks from any pane | tx-core, tx-client |
 | `plugins/mockup` (`tx-mockup`) | plugin: `tx mockup start\|show\|wait\|stop`, ratatui mockups rendered in a per-agent `mockup-<agent>` view the operator is switched to and back; ships the tx-mockup skill | tx-core, tx-client, ratatui |

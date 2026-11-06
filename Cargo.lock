@@ -1819,6 +1819,7 @@ dependencies = [
  "tx-chat",
  "tx-client",
  "tx-core",
+ "tx-details",
  "tx-edit",
  "tx-engine-claude",
  "tx-engine-codex",
@@ -1832,6 +1833,17 @@ dependencies = [
  "tx-timeline",
  "tx-tour",
  "tx-tutor",
+]
+
+[[package]]
+name = "tx-details"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tx-client",
+ "tx-core",
 ]
 
 [[package]]

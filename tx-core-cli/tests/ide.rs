@@ -47,6 +47,7 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/kill.tmux\"\n\
          run-shell \"{state}/keys/picker.tmux\"\n\
          run-shell \"{state}/keys/edit.tmux\"\n\
+         run-shell \"{state}/keys/details.tmux\"\n\
          run-shell \"{state}/keys/spawn.tmux\"\n\
          run-shell \"{state}/keys/assistant.tmux\"\n\
          run-shell \"{state}/keys/artifacts.tmux\"\n\
@@ -118,6 +119,7 @@ fn ui_install_materialises_resources() {
     for script in [
         "tmux-kill-tx-session",
         "tmux-edit-tx-session",
+        "tmux-details-tx-session",
         "tmux-nav",
         "tmux-system-resources",
         "tmux-new-agent",
@@ -131,6 +133,7 @@ fn ui_install_materialises_resources() {
         "ide",
         "picker",
         "edit",
+        "details",
         "kill",
         "labels",
         "spawn",
@@ -164,6 +167,7 @@ fn ui_install_materialises_resources() {
         ("kill", "keys=X"),
         ("picker", "keys=t"),
         ("edit", "keys=e"),
+        ("details", "keys=i"),
         ("spawn", "keys=n"),
         ("artifacts", "keys=a"),
         ("timeline", "keys=T"),
