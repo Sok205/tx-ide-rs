@@ -551,7 +551,7 @@ impl TxCore {
     }
 
     /// `<state>/profiles/<id>.md`: the composed role prompt a session was launched with.
-    fn profile_path(&self, id: &AgentId) -> PathBuf {
+    pub fn profile_path(&self, id: &AgentId) -> PathBuf {
         self.config
             .directories
             .state
@@ -1024,6 +1024,16 @@ impl TxCore {
             .definition
             .as_ref()
             .map(DefinitionChoice::new)
+    }
+
+    /// The profile `agent` launches with, resolved now against the current definitions: what a
+    /// respawn would run, a record without a definition adopting the configured default.
+    pub fn agent_profile(&self, agent: &Agent) -> Result<ResolvedProfile, CoreError> {
+        let definition = agent
+            .definition
+            .clone()
+            .or_else(|| self.default_definition());
+        self.resolve_profile(&agent.roles, definition.as_ref())
     }
 
     /// The profile a launch runs: the roles' text and skills, with the agent definition and its

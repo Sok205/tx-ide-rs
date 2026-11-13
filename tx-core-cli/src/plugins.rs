@@ -27,6 +27,7 @@ pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
     || Box::new(tx_kill::KillPlugin),
     || Box::new(tx_picker::PickerPlugin),
     || Box::new(tx_edit::EditPlugin),
+    || Box::new(tx_details::DetailsPlugin),
     || Box::new(tx_spawn::SpawnPlugin),
     || Box::new(tx_assistant::AssistantPlugin),
     || Box::new(tx_mockup::MockupPlugin),

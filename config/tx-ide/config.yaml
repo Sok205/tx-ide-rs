@@ -21,6 +21,7 @@ plugins:
   kill: { enabled: true }
   picker: { enabled: true }
   edit: { enabled: true }
+  details: { enabled: true }
   spawn: { enabled: true }
   assistant:
     enabled: true

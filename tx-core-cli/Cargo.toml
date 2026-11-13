@@ -27,6 +27,7 @@ tx-labels = { path = "../plugins/labels" }
 tx-kill = { path = "../plugins/kill" }
 tx-picker = { path = "../plugins/picker" }
 tx-edit = { path = "../plugins/edit" }
+tx-details = { path = "../plugins/details" }
 tx-spawn = { path = "../plugins/spawn" }
 tx-assistant = { path = "../plugins/assistant" }
 tx-mockup = { path = "../plugins/mockup" }
