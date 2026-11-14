@@ -26,6 +26,9 @@ pub const INSTALL_VERB: &str = "_home-install";
 pub const PERFORM_VERB: &str = "_home-perform";
 const STATUS_MILLISECONDS: &str = "4000";
 const ASSISTANT_VERB: &str = "assistant";
+/// The definition of the agent that writes a new layout, and the tag it gets.
+const LAYOUT_AUTHOR: &str = "layout-author";
+const LAYOUT_AUTHOR_TAG: &str = "layouts";
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![
@@ -751,8 +754,46 @@ impl Performer<'_> {
                     Err(error) => self.status(&format!("layout: {error}")),
                 }
             }
+            Action::NewLayout {
+                name,
+                project,
+                description,
+            } => {
+                let agent = layout_author_name(name);
+                let prompt = format!("Write layout {name}: {description}");
+                let project = project.to_string_lossy();
+                let created = output(tx.command(&[
+                    "create",
+                    &agent,
+                    "--cwd",
+                    &project,
+                    "--agent",
+                    LAYOUT_AUTHOR,
+                    "--tag",
+                    LAYOUT_AUTHOR_TAG,
+                    "--prompt",
+                    &prompt,
+                ]));
+                // `create` prints the id; the session is the agent's name, `agent` or `agent-2` ….
+                match created.map(|id| self.name_of(id.trim())) {
+                    Ok(Some(session)) => self.show(&session),
+                    Ok(None) => {
+                        self.status("new layout: started");
+                        self.back(None);
+                    }
+                    Err(error) => {
+                        self.status(&format!("new layout: {error}"));
+                        self.back(None);
+                    }
+                }
+            }
         }
     }
+}
+
+/// `layout-<name>`: an agent name has no `.`, a layout name may.
+fn layout_author_name(layout: &str) -> String {
+    format!("layout-{}", layout.replace('.', "-"))
 }
 
 fn switch(ui: &Ui, client: &str, session: &str) {
@@ -786,6 +827,12 @@ mod tests {
                    tutor-rust is ready: tmux -S '/s/tmux.sock' attach -t =tutor-rust\n";
         assert_eq!(ready_view(out), Some("tutor-rust"));
         assert_eq!(ready_view("tutor-rust view created.\n"), None);
+    }
+
+    #[test]
+    fn the_layout_author_is_named_after_the_layout() {
+        assert_eq!(layout_author_name("trio"), "layout-trio");
+        assert_eq!(layout_author_name("solo.v2"), "layout-solo-v2");
     }
 
     #[test]

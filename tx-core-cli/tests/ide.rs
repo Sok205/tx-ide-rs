@@ -146,6 +146,7 @@ fn ui_install_materialises_resources() {
     for role in [
         "roles/COMMON.md",
         "definitions/agents/developer.md",
+        "definitions/agents/layout-author.md",
         "roles/TX-ASSISTANT.md",
         "definitions/skills/tx-sessions/SKILL.md",
         "definitions/mcp.json",
