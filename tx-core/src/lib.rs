@@ -56,7 +56,7 @@ pub use plugin::{
     Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError, SkillProvider};
-pub use state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
+pub use state::{IdleReason, LlmEngineChange, LlmEngineHook, LlmEngineState, state_label};
 #[doc(hidden)]
 pub use store::AgentStore;
 /// Stable: they are the payload of `CoreError::Store`.

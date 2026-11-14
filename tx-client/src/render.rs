@@ -265,6 +265,7 @@ mod tests {
             roles: vec![],
             definition: None,
             state: tx_core::LlmEngineState::Idle,
+            idle_reason: None,
             created_at,
             last_modified_at: created_at,
             last_activity_at: None,

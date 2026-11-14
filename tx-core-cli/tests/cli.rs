@@ -283,7 +283,7 @@ fn agent_session_round_trip() {
 }
 
 #[test]
-fn ls_json_lists_running_agents_with_exactly_five_keys() {
+fn ls_json_lists_running_agents_with_exactly_six_keys() {
     require_tmux!();
     let cli = Cli::new();
     assert_eq!(cli.ok(&["ls", "--json"]).trim(), "[]");
@@ -299,12 +299,23 @@ fn ls_json_lists_running_agents_with_exactly_five_keys() {
     let keys: Vec<&str> = entry.keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        ["id", "name", "state", "working_directory", "tags"],
-        "exactly the five keys"
+        [
+            "id",
+            "name",
+            "state",
+            "idle_reason",
+            "working_directory",
+            "tags"
+        ],
+        "exactly the six keys"
     );
     assert_eq!(entry["id"], live.as_str());
     assert_eq!(entry["name"], "live");
     assert!(entry["state"].is_string());
+    assert!(
+        entry["idle_reason"].is_null(),
+        "no hook has said why: {entry:?}"
+    );
     assert_eq!(entry["tags"], serde_json::json!(["scope"]));
     assert_eq!(
         entry["working_directory"],

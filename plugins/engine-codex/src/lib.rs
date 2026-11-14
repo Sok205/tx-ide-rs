@@ -41,8 +41,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::definitions::{AUTHORIZATION_HEADER, McpServer, bearer_variable, variable_name};
 use tx_core::{
-    Agent, Conversation, ENGINE_ARGS_OPTION, EngineError, EngineKind, Input, Key, LaunchPlan,
-    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
+    Agent, Conversation, ENGINE_ARGS_OPTION, EngineError, EngineKind, IdleReason, Input, Key,
+    LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
     WorkspaceAction, engine_data, hook_shell_command, mirror_file, mirror_file_exact,
 };
 
@@ -257,15 +257,19 @@ pub struct CodexOptions {
 }
 /// The hooks wired per launch, one `-c hooks.<Event>=…` each; each runs
 /// `<hook_command> <Event>`. Codex skips them without `--dangerously-bypass-hook-trust`.
-pub const HOOK_EVENTS: [&str; 7] = [
+pub const HOOK_EVENTS: [&str; 8] = [
     "SessionStart",
     "UserPromptSubmit",
+    "PreToolUse",
     "PermissionRequest",
     "PostToolUse",
     "Stop",
     "Interrupt",
     "SessionEnd",
 ];
+
+/// The tool through which the model asks the operator a question and waits for the answer.
+pub const QUESTION_TOOL: &str = "request_user_input";
 
 /// Codex's own directory: `CODEX_HOME`, else `$HOME/.codex`. Rollouts live under
 /// `<codex home>/sessions/`.
@@ -481,23 +485,32 @@ impl LlmEngine for CodexAdapter {
         Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
     }
 
-    /// An approval stops the turn on the operator (`Idle`); the next `PostToolUse` means they
-    /// answered. `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the
-    /// process lives, and its payload cannot tell the two apart; core ends the session when the
-    /// process is gone.
+    /// A turn stops on the operator (`Idle`, waiting) at an approval (`PermissionRequest`,
+    /// which tx's bypass flag keeps from firing) or at the model's question (`PreToolUse` of
+    /// [`QUESTION_TOOL`]); the next `PostToolUse` means they answered. Unverified: no Codex was
+    /// at hand, so both come from reading Codex 0.169's source, not from a captured payload.
+    /// `SessionEnd` changes nothing: Codex also fires it after 30 min idle while the process
+    /// lives, and its payload cannot tell the two apart; core ends the session when the process
+    /// is gone.
     fn on_hook(&self, session: &Agent, hook: &LlmEngineHook) -> LlmEngineChange {
-        let state = match hook.name.as_str() {
-            "SessionStart" | "Stop" | "Interrupt" | "PermissionRequest" => {
-                Some(LlmEngineState::Idle)
+        let asks = hook.payload.get("tool_name").and_then(Value::as_str) == Some(QUESTION_TOOL);
+        let change = match hook.name.as_str() {
+            "SessionStart" | "Stop" | "Interrupt" => LlmEngineChange::idle(IdleReason::Finished),
+            "PermissionRequest" => LlmEngineChange::idle(IdleReason::Waiting),
+            "PreToolUse" if asks => LlmEngineChange::idle(IdleReason::Waiting),
+            "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => {
+                LlmEngineChange::to(LlmEngineState::Working)
             }
-            "UserPromptSubmit" | "PostToolUse" => Some(LlmEngineState::Working),
-            _ => None,
+            _ => LlmEngineChange::NONE,
         };
         let engine_data = match hook.name.as_str() {
             "SessionStart" => conversation_started(engine_data(self, session), &hook.payload),
             _ => None,
         };
-        LlmEngineChange { state, engine_data }
+        LlmEngineChange {
+            engine_data,
+            ..change
+        }
     }
 
     /// The rollout at the recorded `transcript_path`, keyed by conversation id so the
@@ -844,6 +857,7 @@ mod tests {
             roles: Vec::new(),
             definition: None,
             state,
+            idle_reason: None,
             created_at: 1.0,
             last_modified_at: 1.0,
             last_activity_at: None,
@@ -880,6 +894,14 @@ mod tests {
         LlmEngineChange::to(state)
     }
 
+    fn finished() -> LlmEngineChange {
+        LlmEngineChange::idle(IdleReason::Finished)
+    }
+
+    fn waiting() -> LlmEngineChange {
+        LlmEngineChange::idle(IdleReason::Waiting)
+    }
+
     #[test]
     fn hooks_to_states() {
         use LlmEngineState::*;
@@ -899,7 +921,7 @@ mod tests {
                 null.clone(),
                 "PermissionRequest",
                 json!({"tool_name": "shell"}),
-                to(Idle),
+                waiting(),
             ),
             // The operator answered: a tool ran.
             (Idle, null.clone(), "PostToolUse", none.clone(), to(Working)),
@@ -910,8 +932,8 @@ mod tests {
                 none.clone(),
                 to(Working),
             ),
-            (Working, null.clone(), "Stop", none.clone(), to(Idle)),
-            (Working, null.clone(), "Interrupt", none.clone(), to(Idle)),
+            (Working, null.clone(), "Stop", none.clone(), finished()),
+            (Working, null.clone(), "Interrupt", none.clone(), finished()),
             (
                 Idle,
                 null.clone(),
@@ -920,11 +942,18 @@ mod tests {
                 LlmEngineChange::NONE,
             ),
             (
+                Working,
+                null.clone(),
+                "PreToolUse",
+                json!({"tool_name": "request_user_input", "tool_input": {"questions": []}}),
+                waiting(),
+            ),
+            (
                 Idle,
                 null.clone(),
                 "PreToolUse",
-                none.clone(),
-                LlmEngineChange::NONE,
+                json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
+                to(Working),
             ),
             (
                 Idle,
@@ -960,7 +989,7 @@ mod tests {
                 null.clone(),
                 "SessionStart",
                 started("id-1"),
-                to(Idle).engine_data(first.clone()),
+                finished().engine_data(first.clone()),
             ),
             // The same id again: state only.
             (
@@ -968,7 +997,7 @@ mod tests {
                 first.clone(),
                 "SessionStart",
                 started("id-1"),
-                to(Idle),
+                finished(),
             ),
             // A resume launched with only the id gains the transcript path.
             (
@@ -976,23 +1005,29 @@ mod tests {
                 json!({"conversation_id": "id-1"}),
                 "SessionStart",
                 started("id-1"),
-                to(Idle).engine_data(first.clone()),
+                finished().engine_data(first.clone()),
             ),
             // A payload without both strings changes no data.
-            (Starting, null.clone(), "SessionStart", json!({}), to(Idle)),
+            (
+                Starting,
+                null.clone(),
+                "SessionStart",
+                json!({}),
+                finished(),
+            ),
             (
                 Starting,
                 null.clone(),
                 "SessionStart",
                 json!({"session_id": "id-1"}),
-                to(Idle),
+                finished(),
             ),
             (
                 Starting,
                 null.clone(),
                 "SessionStart",
                 json!({"session_id": "id-1", "transcript_path": null}),
-                to(Idle),
+                finished(),
             ),
             // Hand-edited non-object data counts as absent.
             (
@@ -1000,7 +1035,7 @@ mod tests {
                 json!(["junk"]),
                 "SessionStart",
                 started("id-1"),
-                to(Idle).engine_data(first.clone()),
+                finished().engine_data(first.clone()),
             ),
             // Other keys of the object survive a new conversation.
             (
@@ -1008,14 +1043,14 @@ mod tests {
                 json!({"conversation_id": "id-1", "transcript_path": "/old", "effort": "high"}),
                 "SessionStart",
                 started("id-2"),
-                to(Idle).engine_data(json!({
+                finished().engine_data(json!({
                     "conversation_id": "id-2",
                     "transcript_path": path.replace("id-1", "id-2"),
                     "effort": "high",
                 })),
             ),
             // Only SessionStart carries data.
-            (Working, null.clone(), "Stop", started("id-3"), to(Idle)),
+            (Working, null.clone(), "Stop", started("id-3"), finished()),
         ]);
     }
 
@@ -1501,7 +1536,7 @@ mod tests {
             .collect();
         assert_eq!(overrides.len(), HOOK_EVENTS.len());
         assert_eq!(
-            overrides[4],
+            overrides[5],
             r#"hooks.Stop=[{matcher="",hooks=[{type="command",command="'/x\"y/tx' 'chat' 'hook' 'Stop' || exit 1"}]}]"#
         );
         assert_eq!(

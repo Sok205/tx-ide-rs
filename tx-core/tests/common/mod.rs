@@ -240,8 +240,9 @@ pub const STUB_KIND: EngineKind = EngineKind::Claude;
 pub const STUB_ID: &str = "stub";
 
 impl LlmEngine for ShellStub {
-    /// A hook named after a state moves to it; `data` rewrites the engine data to the payload
-    /// (`{}` clears nothing: it is the complete new value); any other name changes nothing.
+    /// A hook named after a state moves to it, for the payload's `idle_reason` when it names
+    /// one; `data` rewrites the engine data to the payload (`{}` clears nothing: it is the
+    /// complete new value); any other name changes nothing.
     fn on_hook(
         &self,
         _: &tx_core::Agent,
@@ -254,6 +255,9 @@ impl LlmEngine for ShellStub {
             state: tx_core::LlmEngineState::ALL
                 .into_iter()
                 .find(|state| state.as_str() == hook.name),
+            idle_reason: tx_core::IdleReason::ALL.into_iter().find(|reason| {
+                hook.payload.get("idle_reason") == Some(&serde_json::json!(reason.as_str()))
+            }),
             engine_data: None,
         }
     }

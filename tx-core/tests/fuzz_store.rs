@@ -30,6 +30,7 @@ fn session(id: &str, created_at: f64) -> Agent {
         roles: vec![],
         definition: None,
         state: LlmEngineState::Idle,
+        idle_reason: None,
         created_at,
         last_modified_at: created_at,
         last_activity_at: None,

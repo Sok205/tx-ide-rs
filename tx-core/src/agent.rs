@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 use crate::engine::EngineKind;
 use crate::error::CoreError;
-use crate::state::LlmEngineState;
+use crate::state::{IdleReason, LlmEngineState};
 
 /// The record schema this build reads and writes; any other version is unreadable.
 pub const RECORD_VERSION: u64 = 2;
@@ -124,6 +124,11 @@ pub struct Agent {
     pub definition: Option<DefinitionChoice>,
     /// The agent's state as its engine adapter reported it. Core-owned.
     pub state: LlmEngineState,
+    /// Why the agent is `Idle`, when its adapter said; core clears it in every save that moves
+    /// `state` away from `Idle`. `None` on an idle record: not known (an older record, an
+    /// interrupt), read as finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_reason: Option<IdleReason>,
     pub created_at: f64,
     /// When the record was last written; core stamps it on every save.
     pub last_modified_at: f64,
@@ -255,6 +260,7 @@ mod tests {
             roles: vec!["COMMON".into(), "dev".into()],
             definition: None,
             state: LlmEngineState::Working,
+            idle_reason: None,
             created_at: 1727000000.5,
             last_modified_at: 1727000000.5,
             last_activity_at: None,
@@ -275,6 +281,7 @@ mod tests {
             roles: vec![],
             definition: None,
             state: LlmEngineState::Ended,
+            idle_reason: None,
             created_at: 1.0,
             last_modified_at: 2.0,
             last_activity_at: None,
