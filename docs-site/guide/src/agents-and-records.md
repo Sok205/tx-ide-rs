@@ -23,14 +23,28 @@ are atomic under the agent's lock, and every mutation appends a line to `<data>/
 stopped on an approval or a question), **working**, or **ended**. There is no separate lifecycle
 field: an agent is running while its state is not `ended`, which lasts until a respawn.
 
+An idle agent may also say why, in the record's `idle_reason`
+([`IdleReason`](../internal/tx_core/state/enum.IdleReason.html)): **finished** (the turn ended)
+or **waiting** (the turn stopped mid-way on the operator: an approval, a question, a plan to
+accept). The field exists only while the state is `idle`; core drops it in every save that moves
+the state elsewhere. Missing on an idle record, it means not known (an older record, an interrupt)
+and reads as finished. `state` alone keeps meaning "the operator's move", so a reader that does
+not care why needs no change. `tx show` and `tx ls --json` carry `idle_reason`; the `tx ls` text
+column stays the single token `idle`, so it splits on whitespace as before. A `state-changed`
+line reads `working → idle (waiting)`.
+
 The vocabulary is core's; the rules are the engine adapter's. At launch the adapter wires the
 CLI's own hooks to run `txi hook <Event>`. When one fires inside the session, core asks the
 adapter's `on_hook` for an [`LlmEngineChange`](../internal/tx_core/state/struct.LlmEngineChange.html)
-(a new state and new engine data, both optional) and writes it under the agent's lock. For
-Claude, `SessionStart`, `Stop` and a permission-prompt `Notification` mean idle; `UserPromptSubmit`
-and the tool hooks mean working; `SessionEnd` means ended, unless its reason is `clear` or
-`resume`. Codex is similar. Core owns what an adapter cannot see: a new agent starts `starting`,
-and a session that vanished reads `ended` after a refresh.
+(a new state, why when it is idle, and new engine data, all optional) and writes it under the
+agent's lock. For Claude, `SessionStart`, `Stop` and `StopFailure` mean idle, finished;
+`PermissionRequest` and a permission-prompt or elicitation `Notification` mean idle, waiting
+(even with permissions skipped, `AskUserQuestion` and `ExitPlanMode` stop on the operator);
+`UserPromptSubmit` and the tool hooks mean working; `SessionEnd` means ended, unless its reason
+is `clear` or `resume`. Codex is similar: `Stop` and `Interrupt` mean finished, and a
+`PreToolUse` of its `request_user_input` question tool means waiting (read from Codex's source,
+not yet seen live). Core owns what an adapter cannot see: a new agent starts `starting`, and a
+session that vanished reads `ended` after a refresh.
 
 ## Lifecycle
 

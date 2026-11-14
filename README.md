@@ -134,7 +134,9 @@ agent's name is free again.
 
 An agent record carries `state` (an `LlmEngineState`): `starting`, `idle`, `working` or
 `ended`. Idle means it is the operator's move, whether the turn finished or stopped on an approval
-or a question; the next tool hook moves it back to `working`. The vocabulary is core's; when to
+or a question; the next tool hook moves it back to `working`. An idle record may say which in
+`idle_reason` (an `IdleReason`): `finished` or `waiting` on the operator; core keeps it only while
+the state is `idle`; `tx show` and `tx ls --json` carry it. The vocabulary is core's; when to
 move between states is the adapter's. `last_activity_at` is stamped in the save that moves the
 state, and only there: how long an agent has been working or resting. A rename, a tag or an `ext`
 write leaves it alone and moves only the record-wide `last_modified_at`, which every write stamps.
