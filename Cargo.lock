@@ -1872,6 +1872,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-graph"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "tx-chat",
+ "tx-client",
+ "tx-core",
+]
+
+[[package]]
 name = "tx-home"
 version = "0.1.0"
 dependencies = [
