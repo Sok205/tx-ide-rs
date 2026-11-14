@@ -31,9 +31,9 @@ trap 'rm -f "$CONF"' EXIT
 
 # --- Pane border look, agent scroll intercept ---
 # Pane borders: the look only; `labels` owns the format and the new-window hook. Hex literals
-# duplicate shared/palette.sh:
-#   ACCENT_HEX       #7aa2f7   (active border)
-#   BORDER_DIM_HEX   #3b4261   (inactive border)
+# duplicate `tx_client::palette` (tx-client/src/palette.rs):
+#   ACCENT       #7aa2f7   (active border)
+#   BORDER_DIM   #3b4261   (inactive border)
 # Agent scroll: inside an agent (Claude Code / Codex) pane, C-u/C-d scroll the TUI buffer
 # (PageUp/PageDown). Outside one, they pass through (default copy-mode-vi behavior). Match the
 # literal "claude" or "codex" command, or a version-string-shaped command (an agent TUI shows its

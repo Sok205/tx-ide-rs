@@ -4,11 +4,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-
-const ACCENT: Color = Color::Rgb(122, 162, 247);
-const WARN: Color = Color::Rgb(224, 175, 104);
-const FG: Color = Color::Rgb(192, 202, 245);
-const INFO: Color = Color::Rgb(125, 207, 255);
+use tx_client::palette::{ACCENT, FG, INFO, WARN};
 
 pub fn lines(text: &str) -> Vec<Line<'static>> {
     text.split('\n').map(line).collect()

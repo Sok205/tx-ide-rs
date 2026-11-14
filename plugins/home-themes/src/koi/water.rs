@@ -6,7 +6,8 @@ use std::f32::consts::{FRAC_PI_8, PI, TAU};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{dim, is_text, palette};
+use tx_client::palette::palette;
+use tx_home::backdrop::{dim, is_text};
 
 /// Pixels per second a ripple's ring grows.
 const RIPPLE_SPEED: f32 = 9.0;

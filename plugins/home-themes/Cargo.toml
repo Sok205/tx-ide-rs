@@ -8,6 +8,7 @@ description = "tx-core plugin: animated themes for the tx-ide home backdrop, cho
 
 [dependencies]
 tx-core.workspace = true
+tx-client.workspace = true
 tx-home = { path = "../home" }
 serde_json.workspace = true
 ratatui = "0.30"
