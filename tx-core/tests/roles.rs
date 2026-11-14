@@ -29,6 +29,7 @@ fn the_shipped_roles_and_definitions_are_resources_of_the_core() {
             "agents/TX-ASSISTANT.md",
             "definitions/agents/claude.md",
             "definitions/agents/developer.md",
+            "definitions/agents/layout-author.md",
             "definitions/agents/orchestrator.md",
             "definitions/agents/qa.md",
             "definitions/mcp.json",

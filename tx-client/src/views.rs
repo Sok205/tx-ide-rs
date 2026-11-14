@@ -409,6 +409,48 @@ fn parse_home_panes(listing: &str) -> Vec<HomePane> {
         .collect()
 }
 
+/// A pane of a session's current window, with its rectangle in cells, as [`window_panes`]
+/// lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowPane {
+    pub id: String,
+    pub left: usize,
+    pub top: usize,
+    pub width: usize,
+    pub height: usize,
+    /// The program in the foreground, without its arguments (`#{pane_current_command}`).
+    pub command: String,
+}
+
+/// Every pane of `session`'s current window, in tmux's pane-index order.
+pub fn window_panes(ui: &Ui, session: &str) -> Result<Vec<WindowPane>, UiError> {
+    let listing = ui.run(&[
+        "list-panes",
+        "-t",
+        &format!("={session}:"),
+        "-F",
+        "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_current_command}",
+    ])?;
+    Ok(parse_window_panes(&listing))
+}
+
+fn parse_window_panes(listing: &str) -> Vec<WindowPane> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(6, '\t');
+            Some(WindowPane {
+                id: fields.next()?.to_owned(),
+                left: fields.next()?.parse().ok()?,
+                top: fields.next()?.parse().ok()?,
+                width: fields.next()?.parse().ok()?,
+                height: fields.next()?.parse().ok()?,
+                command: fields.next()?.to_owned(),
+            })
+        })
+        .collect()
+}
+
 /// One `LIST_FORMAT` line per session; a session without `@tx-view 1` or without a known kind
 /// is not a view and is skipped.
 pub fn parse_views(listing: &str) -> Vec<View> {
@@ -459,6 +501,33 @@ mod tests {
                     floor: true,
                     dead: true,
                     command: "tx".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn window_panes_are_parsed_with_their_rectangles() {
+        assert_eq!(
+            parse_window_panes(
+                "%0\t0\t1\t70\t33\ttmux\n%2\t0\tx\t70\t15\tzsh\n%1\t71\t1\t129\t38\tnvim\n"
+            ),
+            [
+                WindowPane {
+                    id: "%0".into(),
+                    left: 0,
+                    top: 1,
+                    width: 70,
+                    height: 33,
+                    command: "tmux".into(),
+                },
+                WindowPane {
+                    id: "%1".into(),
+                    left: 71,
+                    top: 1,
+                    width: 129,
+                    height: 38,
+                    command: "nvim".into(),
                 },
             ]
         );

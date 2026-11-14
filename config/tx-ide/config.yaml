@@ -36,3 +36,4 @@ plugins:
   home-themes:
     enabled: true
     settings: { theme: koi }                     # the home's animation; `t` in the home picks another
+  layouts: { enabled: true }

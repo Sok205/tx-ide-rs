@@ -3,11 +3,12 @@
 //! `Agent.ext` (D3).
 
 use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use tx_client::tmux::Ui;
 use tx_client::views::ViewKind;
-use tx_core::{Agent, CoreError, ListFilter, LlmEngineState, PluginStatus, TxCore};
+use tx_core::{Agent, CoreError, ListFilter, LlmEngineState, PluginStatus, TxCore, VerbIo};
 
 use crate::model::{AgentRow, AssistantState, Context, KeyHint, Project, ViewRow};
 use crate::project::ProjectCache;
@@ -144,7 +145,37 @@ pub fn context(
             .collect(),
         now: tx_core::events::now(),
         home_directory: home_directory(std::env::var_os("HOME")),
+        layouts: layouts(core),
     })
+}
+
+const LAYOUT_VERB: &str = "layout";
+
+/// The names `tx layout ls` prints, run in-process; `None` without the verb. A failing `ls`
+/// lists nothing, its message on stderr.
+fn layouts(core: &TxCore) -> Option<Vec<String>> {
+    let verb = core.verb(LAYOUT_VERB)?;
+    let mut stdin = io::empty();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = verb.run(
+        core,
+        &mut VerbIo {
+            stdin: &mut stdin,
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+        },
+        &["ls".to_owned()],
+    );
+    if !matches!(result, Ok(0)) {
+        return Some(Vec::new());
+    }
+    Some(
+        String::from_utf8_lossy(&stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+    )
 }
 
 /// `$HOME`, else the root.

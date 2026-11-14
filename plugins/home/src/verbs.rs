@@ -26,6 +26,9 @@ pub const INSTALL_VERB: &str = "_home-install";
 pub const PERFORM_VERB: &str = "_home-perform";
 const STATUS_MILLISECONDS: &str = "4000";
 const ASSISTANT_VERB: &str = "assistant";
+/// The definition of the agent that writes a new layout, and the tag it gets.
+const LAYOUT_AUTHOR: &str = "layout-author";
+const LAYOUT_AUTHOR_TAG: &str = "layouts";
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![
@@ -723,15 +726,74 @@ impl Performer<'_> {
                 let mut command = tx.command(&["tutor", "start", "--detach"]);
                 command.env_remove("TMUX");
                 match output(command) {
-                    Ok(out) => match tutor_view(&out) {
+                    Ok(out) => match ready_view(&out) {
                         Some(view) => self.switch(view),
                         None => self.status(out.lines().last().unwrap_or("tutor started")),
                     },
                     Err(error) => self.status(&format!("tutor: {error}")),
                 }
             }
+            Action::Layout {
+                name,
+                agent,
+                project,
+            } => {
+                self.back(None);
+                let project = project.to_string_lossy();
+                let mut words = vec!["layout", "open", name, "--cwd", &project, "--detach"];
+                if let Some(id) = agent {
+                    words.extend(["--agent", id]);
+                }
+                let mut command = tx.command(&words);
+                command.env_remove("TMUX");
+                match output(command) {
+                    Ok(out) => match ready_view(&out) {
+                        Some(view) => self.switch(view),
+                        None => self.status(out.lines().last().unwrap_or("layout opened")),
+                    },
+                    Err(error) => self.status(&format!("layout: {error}")),
+                }
+            }
+            Action::NewLayout {
+                name,
+                project,
+                description,
+            } => {
+                let agent = layout_author_name(name);
+                let prompt = format!("Write layout {name}: {description}");
+                let project = project.to_string_lossy();
+                let created = output(tx.command(&[
+                    "create",
+                    &agent,
+                    "--cwd",
+                    &project,
+                    "--agent",
+                    LAYOUT_AUTHOR,
+                    "--tag",
+                    LAYOUT_AUTHOR_TAG,
+                    "--prompt",
+                    &prompt,
+                ]));
+                // `create` prints the id; the session is the agent's name, `agent` or `agent-2` ….
+                match created.map(|id| self.name_of(id.trim())) {
+                    Ok(Some(session)) => self.show(&session),
+                    Ok(None) => {
+                        self.status("new layout: started");
+                        self.back(None);
+                    }
+                    Err(error) => {
+                        self.status(&format!("new layout: {error}"));
+                        self.back(None);
+                    }
+                }
+            }
         }
     }
+}
+
+/// `layout-<name>`: an agent name has no `.`, a layout name may.
+fn layout_author_name(layout: &str) -> String {
+    format!("layout-{}", layout.replace('.', "-"))
 }
 
 fn switch(ui: &Ui, client: &str, session: &str) {
@@ -746,8 +808,9 @@ fn respawned_name(stdout: &str) -> Option<&str> {
     (!name.is_empty()).then_some(name)
 }
 
-/// `tutor start --detach` ends with `<view> is ready: tmux … attach -t =<view>`.
-fn tutor_view(stdout: &str) -> Option<&str> {
+/// `tutor start --detach` and `layout open --detach` end with
+/// `<view> is ready: tmux … attach -t =<view>`.
+fn ready_view(stdout: &str) -> Option<&str> {
     stdout
         .lines()
         .find_map(|line| line.split_once(" is ready: ").map(|(view, _)| view.trim()))
@@ -759,11 +822,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tutor_view_is_read_from_the_ready_line() {
+    fn the_view_is_read_from_the_ready_line() {
         let out = "Scaffolded /h/tx-tutor/rust\ntutor-rust view created.\n\
                    tutor-rust is ready: tmux -S '/s/tmux.sock' attach -t =tutor-rust\n";
-        assert_eq!(tutor_view(out), Some("tutor-rust"));
-        assert_eq!(tutor_view("tutor-rust view created.\n"), None);
+        assert_eq!(ready_view(out), Some("tutor-rust"));
+        assert_eq!(ready_view("tutor-rust view created.\n"), None);
+    }
+
+    #[test]
+    fn the_layout_author_is_named_after_the_layout() {
+        assert_eq!(layout_author_name("trio"), "layout-trio");
+        assert_eq!(layout_author_name("solo.v2"), "layout-solo-v2");
     }
 
     #[test]

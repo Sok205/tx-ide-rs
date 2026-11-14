@@ -1826,6 +1826,7 @@ dependencies = [
  "tx-home-themes",
  "tx-kill",
  "tx-labels",
+ "tx-layouts",
  "tx-mockup",
  "tx-picker",
  "tx-spawn",
@@ -1906,6 +1907,17 @@ name = "tx-labels"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "tx-client",
+ "tx-core",
+]
+
+[[package]]
+name = "tx-layouts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_norway",
+ "thiserror 2.0.21",
  "tx-client",
  "tx-core",
 ]

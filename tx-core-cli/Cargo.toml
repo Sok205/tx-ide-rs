@@ -36,6 +36,7 @@ tx-tour = { path = "../plugins/tour" }
 tx-timeline = { path = "../plugins/timeline" }
 tx-home = { path = "../plugins/home" }
 tx-home-themes = { path = "../plugins/home-themes" }
+tx-layouts = { path = "../plugins/layouts" }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway.workspace = true

@@ -1,6 +1,6 @@
 ---
 name: tx-sessions
-description: Use when about to start or delegate to a tx agent — a worker agent, an nvim view, or an ad-hoc shell view. Conventions for tags, naming, and the worker recipe; flag syntax is in `tx help`.
+description: Use when about to start or delegate to a tx agent — a worker agent, an nvim view, an ad-hoc shell view, or a saved layout (`tx layout`). Conventions for tags, naming, and the worker recipe; flag syntax is in `tx help`.
 ---
 
 # tx agent and view conventions
@@ -72,6 +72,67 @@ tx create <name> --tag <scope> --cwd <project-root> --parent "$(tx whoami)" \
 
 Every agent gets its own tx-owned worktree of the `--cwd` checkout automatically — never create
 one yourself.
+
+## Starting a layout
+
+A layout is a saved arrangement of panes — agents, commands, shells — opened as one view by a
+single command. When the operator asks for one ("open my pair layout here"), run exactly one
+`tx layout open`; don't rebuild it from `tx create` and `tx ui view open` calls:
+
+```bash
+tx layout ls                                   # the operator's layouts
+tx layout open pair --cwd <project> --tag <scope>
+tx layout open pair --cwd <project> --agent <agent> --tag <scope>   # around an existing agent
+```
+
+- `--cwd` is the project the operator means — "here" is the cwd of the pane they are looking at
+  (the focus envelope's `pane-path`), not yours.
+- Always pass a non-empty `--tag`. With no scope named, take the tags of the agent or view in
+  focus (`tx show <agent>`; for a view, `tx ui view ls` prints name, kind, parent, cwd, tags,
+  binding, tab-separated, and an empty field stays a field); if that is empty or only `agent`,
+  use the project directory's name.
+- `--agent` puts an existing agent in the layout's first `agent:` pane instead of a new one (a
+  shell if it has ended). Without `--tag`, the layout then takes that agent's tags; with
+  neither, the tag is `agent`.
+- Inside tx's server, `open` switches the operator's terminal to the view; `--detach` only prints
+  the `… is ready:` line. Opening the same layout for the same `--cwd` again shows the view
+  already built rather than a second one.
+- A failing open (an unknown definition, a bad file) leaves no view and no agent behind, and its
+  message names the file or definition: report it, don't retry with other flags.
+
+Each layout is `<config>/layouts/<name>.yaml` (name `[A-Za-z0-9_.-]+`). `tx layout path <name>`
+prints the file, existing or not; edit it there to make or change one, then run
+`tx layout check <name>`: it validates the file as `open` would (`<name> ok: N panes`, else the
+error), starting nothing. To keep a view the
+operator arranged by hand, `tx layout save <name> --view <view>` writes it (without `--view`,
+the session you run in, which must be a view); it refuses an existing file unless `--force`, so ask before overwriting:
+
+```yaml
+panes:
+  - agent: developer          # pane 0: the window itself
+  - agent: qa                 # model, effort, engine, prompt, tags, name: optional
+    model: claude-sonnet-5-5
+    effort: 2
+    split: right              # every later pane: split right|below …
+    of: 0                     # … of an earlier pane, by its position in this list …
+    size: 50%                 # … taking N% of it, or a whole number of cells
+  - command: nvim .
+    split: below
+    of: 1
+    size: 40%
+  - split: below              # no content: a shell
+    of: 0
+    size: 30%
+```
+
+A pane holds one of `agent: <definition>` (a new agent, as `tx create --agent`), `attach: <agent>`
+(an existing one; a shell when it is not running) or `command: <words>`; none is a shell.
+Commands and shells start in the worktree of the first agent the view shows, else in `--cwd`.
+An `agent:` pane's model and effort follow the same chain as `tx create`: the pane's own key,
+else the operator's `agent.model` / `agent.effort` in `config.yaml`, else the engine's default.
+`save` prints `<view> saved to <path>`. It writes `agent: <definition>` for every nested agent
+(never `attach:`; one without a definition becomes a shell, with a warning on stderr), the
+program name for a command, `{}` for a shell, and no model or effort: add those by hand.
 
 ## Talking to it and ending it
 

@@ -30,9 +30,12 @@ same core as the `tx` that launched it.
 
 ## What lives where
 
-**config** holds what you write by hand: `plugins.yaml` (which plugins are on, and their
-settings), `roles/` (your own roles, never pruned, overriding a shipped role of the same name)
-and `definitions/` (your own `skills/`, overriding a shipped skill of the same name).
+**config** holds what you write by hand: `config.yaml` (the defaults for `tx create` in its
+`agent:` block, and which plugins are on, with their settings, in `plugins:`), `roles/` (your own
+roles, never pruned, overriding a shipped role of the same name), `definitions/` (your own
+`agents/` and `skills/`, each overriding a shipped one of the same name) and `layouts/` (one `<name>.yaml` per
+saved pane layout, opened by `tx layout open <name>`; `tx layout path <name>` prints the file,
+and `tx layout save <name>` writes one from a view).
 
 **data** holds everything durable tx writes:
 

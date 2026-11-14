@@ -29,6 +29,10 @@ pub const SHIPPED: &[(&str, &[u8])] = &[
         include_bytes!("../../config/tx/agents/developer.md"),
     ),
     (
+        "definitions/agents/layout-author.md",
+        include_bytes!("../../config/tx/agents/layout-author.md"),
+    ),
+    (
         "definitions/agents/orchestrator.md",
         include_bytes!("../../config/tx/agents/orchestrator.md"),
     ),

@@ -43,7 +43,9 @@ over when it ends.
 
 The TUI draws, polls, and exits with a **choice**: one line written to
 `<data>/plugins/home/choice.<pane digits>`. The choices are `attach <name>`, `resume <id>`,
-`new <cwd>`, `stop <id>`, `ask <text>`, `artifacts <id>`, `timeline`, `tutor` and `warm`. The pane dies,
+`new <cwd>`, `stop <id>`, `ask <text>`, `artifacts <id>`, `timeline`, `tutor`, `warm`,
+`layout <name> <id or -> <cwd>` and `new-layout <name> <cwd><TAB><description>`. In the last one the
+directory runs up to the last tab, so it may hold spaces. The pane dies,
 the `pane-died` hook fires, and `_home-perform <pane>` reads and deletes the choice:
 
 - `attach <name>` respawns the pane with a **nested attach** of that session and nothing after
@@ -53,8 +55,17 @@ the `pane-died` hook fires, and `_home-perform <pane>` reads and deletes the cho
   selected.
 - `resume <id>` runs `tx respawn <id>` and nests into the agent; `stop <id>` runs `tx stop`;
   `new <cwd>` opens the new-agent form with the project preset; `artifacts`, `timeline` and
-  `tutor` open that plugin's popup or view; `warm` runs `tx assistant warm`. Each then respawns
-  the TUI.
+  `tutor` open that plugin's popup or view; `warm` runs `tx assistant warm`; `layout` runs
+  `tx layout open <name> --cwd <cwd> --detach`, with `--agent <id>` unless the id is `-`, and
+  switches the client to the view it prints (a failure shows `layout: <message>` on the status
+  line). Each then respawns the TUI.
+- `new-layout` runs `tx create layout-<name> --cwd <cwd> --agent layout-author --tag layouts
+  --prompt "Write layout <name>: <description>"` (a `.` in the name becomes `-`, since agent
+  names have none). Model, effort and engine come from `config.yaml`. Like `ask`, it then nests
+  into the agent (the popup switches to it), so you can watch it and answer its questions. A
+  failure shows `new layout: <message>` on the status line and brings the TUI back. The agent
+  writes `<config>/layouts/<name>.yaml`, runs `tx layout check <name>` until the file passes, and
+  reports. The new layout shows up in `w` at the home's next refresh.
 - `ask <text>` runs `tx assistant warm` for the assistant's name, nests into it at once, and sends
   the line with `tx assistant ask` in the background; the engine queues input typed while it
   starts.
@@ -114,11 +125,13 @@ keypress triggers nothing. Ctrl and Alt chords belong to tmux and never reach th
 | `/` | ask the assistant one line |
 | `f` | find: filter by name, tag, project, branch or view |
 | `L` | the tutor |
+| `w` | the layout list (only with the `layouts` plugin on); Enter opens the highlighted layout in the selected project, around the selected agent unless it ended; `n` asks `new layout › NAME DESCRIPTION` and starts a `layout-author` agent in the selected project that writes it (Esc cancels; a bad name, an existing name or an empty description keeps the line open with a hint) |
 | `p` | the plugin list; `?`/`K` the key sheet |
 | `q`, Esc | close (popup only; on the floor they do nothing) |
 
 The footer changes with context: `enter resume …` on an ended agent,
-`enter attach · n new · / ask · L tour · ? keys` on first run, `· q close` in the popup.
+`enter attach · n new · / ask · L tour · ? keys` on first run, `· q close` in the popup, and
+`· w layouts` last when the `layouts` plugin is on.
 
 ## prefix+m and the disabled case
 

@@ -64,6 +64,7 @@ pub fn draw(home: &Home, frame: usize, area: Rect, buf: &mut Buffer, themed: boo
         View::Main => draw_main(home, frame, area, buf, themed),
         View::Plugins(row) => draw_plugins(home, row, area, buf, themed),
         View::Keys(row) => draw_keys(home, row, area, buf, themed),
+        View::Layouts(row) => draw_layouts(home, row, area, buf, themed),
     }
 }
 
@@ -495,6 +496,32 @@ fn draw_keys(home: &Home, row: usize, area: Rect, buf: &mut Buffer, themed: bool
         row,
         highlight: false,
         hint: "j/k scroll · esc back",
+    };
+    draw_list(&list, area, buf, themed);
+}
+
+/// One layout name per row, the selected one highlighted; with none, how to make one. The hint
+/// line is the new-layout input while it is open.
+fn draw_layouts(home: &Home, row: usize, area: Rect, buf: &mut Buffer, themed: bool) {
+    let names = home.context.layouts.as_deref().unwrap_or_default();
+    let (rows, highlight) = if names.is_empty() {
+        let empty = r#"no layouts — n new, or nvim "$(tx layout path NAME)""#;
+        (vec![Line::styled(empty, dim())], false)
+    } else {
+        let rows = names
+            .iter()
+            .map(|name| Line::styled(name.clone(), fg(FG)))
+            .collect();
+        (rows, true)
+    };
+    let footer = home.layouts_footer();
+    let list = List {
+        title: "layouts",
+        header: None,
+        rows,
+        row,
+        highlight,
+        hint: &footer,
     };
     draw_list(&list, area, buf, themed);
 }
@@ -973,6 +1000,75 @@ mod tests {
         let lines = text(&render(&home));
         let row = row_of(&lines, "kill");
         assert!(lines[row].contains("X  kill  stop"), "{}", lines[row]);
+    }
+
+    #[test]
+    fn layouts_view_highlights_the_selected_name() {
+        let mut home = Home::new(Context {
+            layouts: Some(vec!["pair".into(), "solo".into()]),
+            ..context()
+        });
+        home.key(KeyCode::Char('w'));
+        home.key(KeyCode::Char('j'));
+        let buf = render(&home);
+        let lines = text(&buf);
+        assert!(lines[0].contains(" layouts "), "{}", lines[0]);
+        let pair = u16::try_from(row_of(&lines, "│pair ")).unwrap();
+        let solo = u16::try_from(row_of(&lines, "│solo ")).unwrap();
+        let reversed =
+            |y: u16| (1..W - 1).all(|x| buf[(x, y)].modifier.contains(Modifier::REVERSED));
+        assert!(reversed(solo) && !reversed(pair));
+        row_of(&lines, "enter open here");
+    }
+
+    #[test]
+    fn an_empty_layouts_view_says_how_to_make_one() {
+        let mut home = Home::new(Context {
+            layouts: Some(Vec::new()),
+            ..context()
+        });
+        home.key(KeyCode::Char('w'));
+        let buf = render(&home);
+        let lines = text(&buf);
+        let y = row_of(
+            &lines,
+            r#"no layouts — n new, or nvim "$(tx layout path NAME)""#,
+        );
+        assert!(
+            !buf[(1, u16::try_from(y).unwrap())]
+                .modifier
+                .contains(Modifier::REVERSED)
+        );
+        assert!(!lines.iter().any(|line| line.contains("(none)")));
+    }
+
+    #[test]
+    fn the_new_layout_input_takes_the_layout_hint_line() {
+        let mut home = Home::new(Context {
+            layouts: Some(vec!["pair".into()]),
+            ..context()
+        });
+        home.key(KeyCode::Char('w'));
+        let lines = text(&render(&home));
+        let hint = row_of(&lines, "enter open here · n new");
+        home.key(KeyCode::Char('n'));
+        for character in "pair two agents".chars() {
+            home.key(KeyCode::Char(character));
+        }
+        let lines = text(&render(&home));
+        assert!(
+            lines[hint].contains("new layout › pair two agents"),
+            "{}",
+            lines[hint]
+        );
+        home.key(KeyCode::Enter);
+        let lines = text(&render(&home));
+        assert!(
+            lines[hint].contains("new layout › pair two agents  — pair exists"),
+            "{}",
+            lines[hint]
+        );
+        row_of(&lines, "│pair ");
     }
 
     #[test]
