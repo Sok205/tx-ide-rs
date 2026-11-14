@@ -32,7 +32,7 @@ pub enum EventType {
     Renamed,
     Tagged,
     MessageSent,
-    /// The agent's `state` moved; detail is "<from> → <to>".
+    /// The agent's `state` moved; detail is `<from> → <to>`.
     StateChanged,
     /// The engine's own data under `ext[<ext key>]` was rewritten by a hook; detail is the key.
     EngineDataChanged,
