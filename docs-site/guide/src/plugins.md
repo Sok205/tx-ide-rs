@@ -105,7 +105,9 @@ markers; `timeline health` prints, per agent record, what the timeline can read 
 lineage, and solid edges for the messages agents (and you, the node "you") sent each other in the
 window (`--last`, default 1h), brighter the busier, with the count on the edge. Running agents,
 agents active in the window and the ancestors that connect them are shown; `--tag` and `--group`
-narrow it, and `g` cycles the group. `--snapshot` prints one frame as text. No key yet.
+narrow it, and `g` cycles the group. It is live: each new message travels its edge as a pulse.
+prefix+g opens a resident graph in a popup (q detaches, it stays warm; Enter jumps to the
+selected agent). `--snapshot` prints one frame as text.
 
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).

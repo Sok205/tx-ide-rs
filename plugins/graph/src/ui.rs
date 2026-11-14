@@ -5,16 +5,18 @@
 //! The canvas is drawn whole into an off-screen buffer as tall as the layout, then the rows the
 //! scroll shows are copied into the frame, so a box cut by the view's edge stays a box.
 
+use std::f64::consts::TAU;
+
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Context, Line as Segment};
+use ratatui::widgets::canvas::{Canvas, Context, Line as Segment, Points};
 use ratatui::widgets::{Block, BorderType, Clear, LineGauge, Paragraph, Widget};
 
-use crate::app::App;
+use crate::app::{App, PULSE_TRAVEL};
 use crate::model::{Edge, Graph, Node, NodeState};
 use tx_client::palette::{
     ACCENT, BG_DEEP, BORDER_DIM, DIM_FG, FG, GREEN, INFO, ON_ACCENT, WARN, palette,
@@ -27,6 +29,12 @@ const ARC_BULGE: f64 = 7.0;
 const CURVE_STEPS: u16 = 48;
 /// The "parent ended" stub's length in cells.
 const STUB_LENGTH: f64 = 12.0;
+const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
+/// Seconds of one breath of a working node's border.
+const BREATH_PERIOD: f64 = 2.4;
+/// Dots behind a pulse's head, each a step further back along the edge.
+const PULSE_TRAIL: u16 = 10;
+const PULSE_TRAIL_STEP: f64 = 0.018;
 
 fn colour(color: Color) -> Style {
     Style::new().fg(palette(color))
@@ -98,14 +106,23 @@ fn tokens(count: u64) -> String {
     }
 }
 
-fn glyph(state: NodeState) -> &'static str {
+/// The state's glyph at `clock`: the starting spinner turns at 4 Hz, the needs-you ▲ blinks at
+/// 2 Hz.
+fn glyph(state: NodeState, clock: f64) -> &'static str {
     match state {
         NodeState::Operator => "◇",
-        NodeState::Starting => "◐",
+        NodeState::Starting => SPINNER[(clock * 4.0) as usize % SPINNER.len()],
         NodeState::Working => "●",
         NodeState::Idle | NodeState::Ended => "○",
-        NodeState::NeedsYou => "▲",
+        NodeState::NeedsYou if (clock * 2.0).fract() < 0.6 => "▲",
+        NodeState::NeedsYou => " ",
     }
+}
+
+/// A working node's border at `clock`: GREEN breathing down to 45% and back.
+fn breathing(clock: f64) -> Color {
+    let breath = 0.5 + 0.5 * (clock * TAU / BREATH_PERIOD).sin();
+    mix(mix(GREEN, BG_DEEP, 0.55), GREEN, breath)
 }
 
 fn state_colour(state: NodeState) -> Color {
@@ -147,13 +164,14 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         frame.render_widget(detail_line(app), detail);
     }
     let group = app.group().unwrap_or("all");
-    frame.render_widget(
-        Paragraph::new(Line::styled(
-            format!("  tab/hjkl select · g group: {group} · q quit"),
+    let footer_line = match &app.notice {
+        Some(notice) => Line::styled(format!("  {notice}"), colour(WARN)),
+        None => Line::styled(
+            format!("  tab/hjkl select · enter jump · g group: {group} · q quit"),
             dim(),
-        )),
-        footer,
-    );
+        ),
+    };
+    frame.render_widget(Paragraph::new(footer_line), footer);
 }
 
 fn header_line(app: &App) -> Paragraph<'static> {
@@ -291,7 +309,7 @@ fn draw_canvas(app: &App, frame: &mut Frame, view: Rect) {
         let rect = app.placement.boxes[index];
         let selected = index == app.selected;
         if app.placement.compact {
-            draw_compact_node(node, rect, selected, &mut buffer);
+            draw_compact_node(node, app.clock, rect, selected, &mut buffer);
         } else {
             draw_node(app, index, rect, selected, &mut buffer);
         }
@@ -427,6 +445,33 @@ fn draw_edges(app: &App, area: Rect, buffer: &mut Buffer) {
                     context.print(start.0, start.1 + 1.0, Line::styled("parent ended", dim()));
                 }
             }
+            for pulse in &app.pulses {
+                let progress = (app.clock - pulse.started) / PULSE_TRAVEL;
+                let from = match &pulse.from {
+                    Some(id) => graph.index_of(id),
+                    None => graph
+                        .nodes
+                        .first()
+                        .filter(|node| node.state == NodeState::Operator)
+                        .map(|_| 0),
+                };
+                let (Some(from), Some(to)) = (from, graph.index_of(&pulse.to)) else {
+                    continue;
+                };
+                let Some(edge) = graph.edges.iter().find(|edge| {
+                    (edge.from, edge.to) == (from, to) || (edge.from, edge.to) == (to, from)
+                }) else {
+                    continue;
+                };
+                let curve = edge_curve(area, boxes[edge.from], boxes[edge.to]);
+                draw_pulse(
+                    context,
+                    &curve,
+                    progress,
+                    edge.from != from,
+                    edge_colour(edge),
+                );
+            }
             for edge in &graph.edges {
                 let curve = edge_curve(area, boxes[edge.from], boxes[edge.to]);
                 let selected = touches(edge);
@@ -461,6 +506,30 @@ fn draw_edges(app: &App, area: Rect, buffer: &mut Buffer) {
     canvas.render(area, buffer);
 }
 
+/// A message `progress` (0..1) of the way along `curve`, backwards when `reverse`: an FG head
+/// and a trail fading from INFO into the edge's colour.
+fn draw_pulse(context: &mut Context, curve: &Curve, progress: f64, reverse: bool, edge: Color) {
+    if !(0.0..=1.0).contains(&progress) {
+        return;
+    }
+    for trail in 0..PULSE_TRAIL {
+        let along = progress - f64::from(trail) * PULSE_TRAIL_STEP;
+        if !(0.0..=1.0).contains(&along) {
+            continue;
+        }
+        let (x, y) = bezier(curve, if reverse { 1.0 - along } else { along });
+        let shade = if trail == 0 {
+            FG
+        } else {
+            mix(INFO, edge, f64::from(trail) / f64::from(PULSE_TRAIL))
+        };
+        context.draw(&Points {
+            coords: &[(x, y), (x, y + 0.25), (x + 0.5, y)],
+            color: palette(shade),
+        });
+    }
+}
+
 fn title_style(node: &Node, selected: bool) -> Style {
     if selected {
         bold(ON_ACCENT).bg(palette(ACCENT))
@@ -476,7 +545,7 @@ fn draw_node(app: &App, index: usize, rect: Rect, selected: bool, buffer: &mut B
     let state = node.state;
     let border = match state {
         _ if selected => ACCENT,
-        NodeState::Working => GREEN,
+        NodeState::Working => breathing(app.clock),
         NodeState::Starting | NodeState::NeedsYou => WARN,
         NodeState::Operator => FG,
         NodeState::Idle | NodeState::Ended => BORDER_DIM,
@@ -490,7 +559,7 @@ fn draw_node(app: &App, index: usize, rect: Rect, selected: bool, buffer: &mut B
     let room = usize::from(rect.width.saturating_sub(6));
     let title = Line::from(vec![
         Span::styled(" ", name_style),
-        Span::styled(glyph(state), glyph_style),
+        Span::styled(glyph(state, app.clock), glyph_style),
         Span::styled(format!(" {} ", cut(&node.name, room)), name_style),
     ]);
     let block = Block::bordered()
@@ -549,7 +618,7 @@ fn draw_node(app: &App, index: usize, rect: Rect, selected: bool, buffer: &mut B
 }
 
 /// One borderless line: `glyph name`.
-fn draw_compact_node(node: &Node, rect: Rect, selected: bool, buffer: &mut Buffer) {
+fn draw_compact_node(node: &Node, clock: f64, rect: Rect, selected: bool, buffer: &mut Buffer) {
     let name_style = title_style(node, selected);
     let glyph_style = if selected {
         name_style
@@ -559,7 +628,7 @@ fn draw_compact_node(node: &Node, rect: Rect, selected: bool, buffer: &mut Buffe
     let room = usize::from(rect.width.saturating_sub(3));
     Clear.render(rect, buffer);
     Paragraph::new(Line::from(vec![
-        Span::styled(glyph(node.state), glyph_style),
+        Span::styled(glyph(node.state, clock), glyph_style),
         Span::styled(format!(" {:<room$}", cut(&node.name, room)), name_style),
     ]))
     .render(rect, buffer);

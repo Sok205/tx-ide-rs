@@ -15,7 +15,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use tx_chat::transcript::metadata::Metadata;
@@ -191,67 +191,141 @@ pub fn transcript_context(core: &TxCore, agent: &Agent) -> Option<Context> {
 
 /// The latest context report in a transcript.
 pub fn context_of(transcript: &Path) -> Option<Context> {
-    let text = std::fs::read_to_string(transcript).ok()?;
-    let mut metadata = Metadata::default();
-    for line in text.lines() {
-        if let Ok(entry) = serde_json::from_str::<Value>(line) {
-            metadata.update(&entry);
-        }
-    }
-    Some(Context {
-        tokens: metadata.context_tokens?,
-        window: metadata.context_window,
-    })
+    TranscriptReader::default().context(transcript)
 }
 
 /// The `message-sent` lines with `since <= ts <= until`, oldest first. A missing log has none.
 pub fn read_messages(log: &Path, since: f64, until: f64) -> io::Result<Vec<Message>> {
-    let mut file = match File::open(log) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let mut start = file.metadata()?.len();
-    let mut buffer = Vec::new();
-    while start > 0 {
-        let block = LOG_BLOCK.min(start);
-        start -= block;
-        file.seek(SeekFrom::Start(start))?;
-        let mut chunk = vec![0; block as usize];
-        file.read_exact(&mut chunk)?;
-        chunk.extend_from_slice(&buffer);
-        buffer = chunk;
-        let first_complete = if start == 0 {
-            Some(&buffer[..])
-        } else {
-            buffer
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .map(|newline| &buffer[newline + 1..])
-        };
-        let reached = first_complete
-            .and_then(|lines| lines.split(|byte| *byte == b'\n').next())
-            .and_then(|line| serde_json::from_slice::<Value>(line).ok())
-            .and_then(|entry| entry["ts"].as_f64())
-            .is_some_and(|ts| ts < since);
-        if reached {
-            break;
+    LogTail::new(log).backfill(since, until)
+}
+
+/// Core's log, read once backwards to the window's start, then followed from where that read
+/// ended. Core appends each line in one write, so a read never sees half a line; a line still
+/// without its newline waits for the next read anyway.
+#[derive(Clone, Debug)]
+pub struct LogTail {
+    path: PathBuf,
+    offset: u64,
+}
+
+impl LogTail {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            offset: 0,
         }
     }
-    let complete = if start == 0 {
-        &buffer[..]
-    } else {
-        let newline = buffer
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .unwrap_or(buffer.len());
-        &buffer[(newline + 1).min(buffer.len())..]
-    };
-    Ok(complete
-        .split(|byte| *byte == b'\n')
-        .filter_map(parse_message)
-        .filter(|message| since <= message.at && message.at <= until)
-        .collect())
+
+    /// The window's messages, oldest first; following starts after them.
+    pub fn backfill(&mut self, since: f64, until: f64) -> io::Result<Vec<Message>> {
+        let mut file = match File::open(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let end = file.metadata()?.len();
+        self.offset = end;
+        let mut start = end;
+        let mut buffer = Vec::new();
+        while start > 0 {
+            let block = LOG_BLOCK.min(start);
+            start -= block;
+            file.seek(SeekFrom::Start(start))?;
+            let mut chunk = vec![0; block as usize];
+            file.read_exact(&mut chunk)?;
+            chunk.extend_from_slice(&buffer);
+            buffer = chunk;
+            let reached = complete_lines(&buffer, start)
+                .split(|byte| *byte == b'\n')
+                .next()
+                .and_then(|line| serde_json::from_slice::<Value>(line).ok())
+                .and_then(|entry| entry["ts"].as_f64())
+                .is_some_and(|ts| ts < since);
+            if reached {
+                break;
+            }
+        }
+        Ok(complete_lines(&buffer, start)
+            .split(|byte| *byte == b'\n')
+            .filter_map(parse_message)
+            .filter(|message| since <= message.at && message.at <= until)
+            .collect())
+    }
+
+    /// The messages appended since the last read. A log that shrank is read from its start.
+    pub fn follow(&mut self) -> io::Result<Vec<Message>> {
+        let bytes = match read_appended(&self.path, &mut self.offset) {
+            Ok((bytes, _)) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        Ok(bytes
+            .split(|byte| *byte == b'\n')
+            .filter_map(parse_message)
+            .collect())
+    }
+}
+
+/// `buffer` read from file offset `start`: without its first, partial line unless it starts the
+/// file.
+fn complete_lines(buffer: &[u8], start: u64) -> &[u8] {
+    if start == 0 {
+        return buffer;
+    }
+    match buffer.iter().position(|byte| *byte == b'\n') {
+        Some(newline) => &buffer[newline + 1..],
+        None => &[],
+    }
+}
+
+/// The whole lines appended to `path` after `offset`, moving `offset` past them, and whether
+/// the file was replaced (shorter than `offset`), in which case it is read from its start.
+fn read_appended(path: &Path, offset: &mut u64) -> io::Result<(Vec<u8>, bool)> {
+    let mut file = File::open(path)?;
+    let length = file.metadata()?.len();
+    let replaced = length < *offset;
+    if replaced {
+        *offset = 0;
+    }
+    file.seek(SeekFrom::Start(*offset))?;
+    let mut bytes = Vec::new();
+    file.take(length - *offset).read_to_end(&mut bytes)?;
+    let whole = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |newline| newline + 1);
+    bytes.truncate(whole);
+    *offset += whole as u64;
+    Ok((bytes, replaced))
+}
+
+/// Each transcript's context use, kept up to date by reading only what was appended.
+#[derive(Debug, Default)]
+pub struct TranscriptReader {
+    transcripts: HashMap<PathBuf, (u64, Metadata)>,
+}
+
+impl TranscriptReader {
+    /// The transcript's latest context report; `None` while it has none or cannot be read.
+    pub fn context(&mut self, transcript: &Path) -> Option<Context> {
+        let (offset, metadata) = self
+            .transcripts
+            .entry(transcript.to_path_buf())
+            .or_default();
+        let (bytes, replaced) = read_appended(transcript, offset).ok()?;
+        if replaced {
+            *metadata = Metadata::default();
+        }
+        for line in bytes.split(|byte| *byte == b'\n') {
+            if let Ok(entry) = serde_json::from_slice::<Value>(line) {
+                metadata.update(&entry);
+            }
+        }
+        Some(Context {
+            tokens: metadata.context_tokens?,
+            window: metadata.context_window,
+        })
+    }
 }
 
 /// One log line as a [`Message`]; `None` for any other event or a malformed line.

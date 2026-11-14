@@ -27,4 +27,4 @@
 
   ┏┓ selected   ┏┓ working   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
   you  sent 1
-  tab/hjkl select · g group: persistent-views · q quit
+  tab/hjkl select · enter jump · g group: persistent-views · q quit

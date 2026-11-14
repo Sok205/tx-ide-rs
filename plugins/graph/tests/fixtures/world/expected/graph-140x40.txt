@@ -37,4 +37,4 @@
                                        ┗━━━━━━━━━━━━━━━━━━━━━━┛
   ┏┓ selected   ┏┓ working   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
   you  sent 4
-  tab/hjkl select · g group: all · q quit
+  tab/hjkl select · enter jump · g group: all · q quit

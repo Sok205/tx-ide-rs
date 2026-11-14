@@ -1,12 +1,23 @@
-//! `tx graph`: the agent graph in the terminal, or one frame of it as text (`--snapshot`).
+//! `tx graph`: the agent graph in the terminal, or one frame of it as text (`--snapshot`);
+//! `_graph-resident`, the graph a popup attaches to; `_graph-attach` (prefix+g), which starts
+//! or attaches the resident.
 
+use std::fs::OpenOptions;
+use std::process::Stdio;
 use std::sync::Arc;
 
+use tx_client::tmux::Ui;
+use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
 use crate::app::App;
 use crate::model::Filter;
-use crate::run;
+use crate::{PLUGIN_ID, run};
+
+pub const RESIDENT_VERB: &str = "_graph-resident";
+/// The tmux session (a view, not a record) hosting the resident graph.
+pub const POPUP_SESSION: &str = "tx-graph";
+const POPUP_LOCK: &str = "popup.lock";
 
 pub const DEFAULT_WINDOW: f64 = 3600.0;
 const DEFAULT_SNAPSHOT_COLUMNS: u16 = 140;
@@ -17,7 +28,11 @@ usage: tx graph [--tag T] [--group G] [--last DURATION] [--snapshot [--cols N] [
 ";
 
 pub fn verbs() -> Vec<Arc<dyn Verb>> {
-    vec![Arc::new(GraphVerb)]
+    vec![
+        Arc::new(GraphVerb { resident: false }),
+        Arc::new(GraphVerb { resident: true }),
+        Arc::new(GraphAttach),
+    ]
 }
 
 fn failed(error: impl std::fmt::Display) -> VerbError {
@@ -105,22 +120,32 @@ pub fn parse_options(argv: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
-struct GraphVerb;
+struct GraphVerb {
+    resident: bool,
+}
 
 impl Verb for GraphVerb {
     fn name(&self) -> &'static str {
-        "graph"
+        if self.resident {
+            RESIDENT_VERB
+        } else {
+            "graph"
+        }
     }
 
     fn usage(&self) -> &'static str {
-        "graph [--tag T] [--group G] [--last DURATION] [--snapshot]   the agents as a graph of lineage and messages (q quits)"
+        if self.resident {
+            "_graph-resident   the popup's resident graph; q detaches (internal)"
+        } else {
+            "graph [--tag T] [--group G] [--last DURATION] [--snapshot]   the agents as a graph of lineage and messages (q quits)"
+        }
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         let options = match parse_options(argv) {
             Ok(options) => options,
             Err(message) => {
-                write!(io.stderr, "tx graph: {message}\n{USAGE}").map_err(failed)?;
+                write!(io.stderr, "tx {}: {message}\n{USAGE}", self.name()).map_err(failed)?;
                 return Ok(2);
             }
         };
@@ -132,7 +157,95 @@ impl Verb for GraphVerb {
             writeln!(io.stdout, "{text}").map_err(failed)?;
             return Ok(0);
         }
-        run::run(core, options.filter, options.window).map_err(failed)?;
+        let resident = self.resident.then_some(POPUP_SESSION);
+        run::run(core, options.filter, options.window, resident).map_err(failed)?;
         Ok(0)
+    }
+}
+
+/// Starts the resident graph unless it is running. Callers hold the popup lock.
+fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
+    if ui.has_session(POPUP_SESSION) {
+        return Ok(());
+    }
+    let program =
+        std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
+    let mut arguments = core.config().cli_arguments().to_vec();
+    arguments.push(RESIDENT_VERB.to_owned());
+    views::open(
+        ui,
+        &ViewRequest {
+            name: POPUP_SESSION,
+            kind: ViewKind::Graph,
+            program: &program.to_string_lossy(),
+            arguments: &arguments,
+            working_directory: &core.config().directories.data,
+            tags: &[],
+            parent_id: None,
+            bound: None,
+        },
+    )
+    .map_err(failed)?;
+    ui.set_session_option(POPUP_SESSION, "status", "off")
+        .map_err(failed)?;
+    Ok(())
+}
+
+/// The popup is a client of a persistent resident graph, so closing it keeps the graph's log
+/// position and transcript reads warm.
+struct GraphAttach;
+
+impl Verb for GraphAttach {
+    fn name(&self) -> &'static str {
+        "_graph-attach"
+    }
+
+    fn usage(&self) -> &'static str {
+        "_graph-attach   start or attach the resident graph; q detaches (prefix+g, internal)"
+    }
+
+    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+        if !argv.is_empty() {
+            writeln!(io.stderr, "usage: tx _graph-attach").map_err(failed)?;
+            return Ok(2);
+        }
+        let ui = Ui::from_core(core);
+        let directory = core.config().plugin_data_dir(PLUGIN_ID);
+        tx_chat::ensure_dir(&directory)
+            .map_err(|error| failed(format!("{}: {error}", directory.display())))?;
+        // Two clients opening at once must reuse the same session.
+        let lock_path = directory.join(POPUP_LOCK);
+        let lock = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|error| failed(format!("{}: {error}", lock_path.display())))?;
+        lock.lock().map_err(failed)?;
+        ensure_resident(core, &ui)?;
+        drop(lock);
+        let status = ui
+            .command(&["attach-session", "-t", &format!("={POPUP_SESSION}")])
+            .stdin(Stdio::inherit())
+            .env_remove("TMUX")
+            .status()
+            .map_err(failed)?;
+        // Enter in the resident left the agent behind and detached us; this process runs on
+        // the outer client, so the focusing happens here.
+        if let Some(target) = ui.session_option(POPUP_SESSION, run::GOTO_OPTION) {
+            ui.quiet(&[
+                "set-option",
+                "-u",
+                "-t",
+                &format!("={POPUP_SESSION}:"),
+                run::GOTO_OPTION,
+            ]);
+            if let Err(reason) = run::focus_session_pane(&ui, &target)
+                && let Some(client) = ui.display_message("#{client_name}", None)
+            {
+                ui.display_status(&client, &format!("graph: {target}: {reason}"));
+            }
+        }
+        Ok(status.code().unwrap_or(1))
     }
 }

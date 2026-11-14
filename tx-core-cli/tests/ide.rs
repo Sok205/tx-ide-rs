@@ -51,6 +51,7 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"{state}/keys/assistant.tmux\"\n\
          run-shell \"{state}/keys/artifacts.tmux\"\n\
          run-shell \"{state}/keys/timeline.tmux\"\n\
+         run-shell \"{state}/keys/graph.tmux\"\n\
          run-shell \"{state}/keys/home.tmux\"\n",
         exe().display(),
         arguments = cli.arguments(),
@@ -136,6 +137,7 @@ fn ui_install_materialises_resources() {
         "spawn",
         "artifacts",
         "timeline",
+        "graph",
         "home",
     ] {
         let path = state.join(format!("keys/{id}.tmux"));
@@ -168,6 +170,7 @@ fn ui_install_materialises_resources() {
         ("spawn", "keys=n"),
         ("artifacts", "keys=a"),
         ("timeline", "keys=T"),
+        ("graph", "keys=g"),
         ("home", "keys=m"),
     ] {
         assert!(
@@ -321,6 +324,7 @@ fn fragments_do_nothing_outside_an_installed_server() {
         "spawn",
         "artifacts",
         "timeline",
+        "graph",
         "home",
     ] {
         let output = Command::new(cli.state().join(format!("keys/{id}.tmux")))

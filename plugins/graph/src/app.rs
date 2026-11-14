@@ -1,5 +1,5 @@
 //! The view's state and input: the graph built from its source, the selected node, the
-//! vertical scroll and the group filter `g` cycles.
+//! vertical scroll, the group filter `g` cycles, and the pulses of messages in flight.
 
 use std::collections::HashMap;
 
@@ -11,6 +11,19 @@ use crate::layout::{self, Placement};
 use crate::model::{self, Context, Filter, Graph, Message};
 
 const WHEEL_ROWS: u16 = 3;
+/// Seconds a pulse takes to cross its edge.
+pub const PULSE_TRAVEL: f64 = 1.1;
+/// Seconds between two pulses that start in the same refresh on the same pair.
+const PULSE_STAGGER: f64 = 0.3;
+
+/// A message in flight: drawn along its pair's edge from `started` (on [`App::clock`]) for
+/// [`PULSE_TRAVEL`] seconds. `from` is `None` for the operator.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pulse {
+    pub from: Option<AgentId>,
+    pub to: AgentId,
+    pub started: f64,
+}
 
 /// What the graph is built from: the records, the window's messages and each agent's context.
 #[derive(Clone, Debug, Default)]
@@ -35,6 +48,14 @@ pub struct App {
     pub scroll: u16,
     /// The canvas area the last frame drew.
     pub canvas: Rect,
+    /// Seconds since the view started: drives the breathing, the spinner and the pulses. Stays
+    /// 0 in a snapshot.
+    pub clock: f64,
+    pub pulses: Vec<Pulse>,
+    /// Enter asked to jump to this node.
+    pub goto: Option<usize>,
+    /// One line for the operator, shown until the next key.
+    pub notice: Option<String>,
     pub quit: bool,
 }
 
@@ -51,6 +72,10 @@ impl App {
             selected: 0,
             scroll: 0,
             canvas: Rect::default(),
+            clock: 0.0,
+            pulses: Vec::new(),
+            goto: None,
+            notice: None,
             quit: false,
         }
     }
@@ -67,8 +92,36 @@ impl App {
             .and_then(|id| self.graph.nodes.iter().position(|node| node.id == id))
             .unwrap_or(0);
         self.placement = layout::place(&self.graph, self.canvas.width);
-        self.scroll = 0;
+        let most = self.placement.height.saturating_sub(self.canvas.height);
+        self.scroll = self.scroll.min(most);
         self.reveal_selected();
+    }
+
+    /// New messages from the log: added to the source and started as pulses. Messages that left
+    /// the window are dropped.
+    pub fn receive(&mut self, messages: Vec<Message>) {
+        let mut started: HashMap<(Option<AgentId>, AgentId), f64> = HashMap::new();
+        for message in &messages {
+            let pair = (message.from.clone(), message.to.clone());
+            let delay = started.entry(pair).or_insert(-PULSE_STAGGER);
+            *delay += PULSE_STAGGER;
+            self.pulses.push(Pulse {
+                from: message.from.clone(),
+                to: message.to.clone(),
+                started: self.clock + *delay,
+            });
+        }
+        self.source.messages.extend(messages);
+        let since = self.now - self.window;
+        self.source.messages.retain(|message| message.at >= since);
+    }
+
+    /// Drops the pulses that arrived; whether one is still in flight.
+    pub fn animating(&mut self) -> bool {
+        let clock = self.clock;
+        self.pulses
+            .retain(|pulse| clock - pulse.started <= PULSE_TRAVEL);
+        !self.pulses.is_empty()
     }
 
     /// Lays the graph out for `canvas`; the renderer calls it before drawing.
@@ -85,8 +138,10 @@ impl App {
             self.quit = true;
             return;
         }
+        self.notice = None;
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
+            KeyCode::Enter => self.goto = Some(self.selected),
             KeyCode::Tab => self.cycle(1),
             KeyCode::BackTab => self.cycle(-1),
             KeyCode::Char('j') | KeyCode::Down => self.move_vertically(1),
@@ -123,6 +178,7 @@ impl App {
                 .cloned(),
         };
         self.filter.group = next;
+        self.scroll = 0;
         self.rebuild();
     }
 
