@@ -7,7 +7,8 @@ use std::process::{Command, ExitCode};
 
 use tx_client::tmux::Ui;
 use tx_core::{
-    AgentId, CoreError, CreateOptions, ForkOptions, ListFilter, SendOptions, Sender, TxCore,
+    AgentId, CoreError, CreateOptions, ForkOptions, IdleReason, ListFilter, SendOptions, Sender,
+    TxCore,
 };
 use tx_core_cli::args::{self, Invocation, Verb};
 
@@ -272,6 +273,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                         "id": session.id.as_str(),
                         "name": session.name,
                         "state": session.state.as_str(),
+                        "idle_reason": session.idle_reason.map(IdleReason::as_str),
                         "working_directory": session.working_directory,
                         "tags": session.tags,
                     }));

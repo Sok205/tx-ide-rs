@@ -268,6 +268,7 @@ fn sample() -> Agent {
         roles: vec![],
         definition: None,
         state: LlmEngineState::Ended,
+        idle_reason: None,
         created_at: 1.0,
         last_modified_at: 1.0,
         last_activity_at: Some(2.0),

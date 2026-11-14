@@ -16,7 +16,7 @@ use crate::events::{Event, EventLog, EventSink, EventType, now};
 use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, EnvelopeSender, build_envelope, deliver};
 use crate::profile::{Profile, Profiles, ResolvedProfile};
-use crate::state::{LlmEngineHook, LlmEngineState};
+use crate::state::{IdleReason, LlmEngineHook, LlmEngineState, state_label};
 use crate::store::{AgentStore, SkippedRecord, StoreError};
 use crate::tmux::{Live, Tmux, TmuxError, exact};
 use crate::worktree::WorktreeManager;
@@ -436,6 +436,30 @@ fn archive_lock(directory: &Path) -> Result<Option<std::fs::File>, EngineError> 
 /// `StateChanged`: `Exited` / `Stopped` already say so, and the save stamps when.
 fn mark_ended(session: &mut Agent) {
     session.state = LlmEngineState::Ended;
+    session.idle_reason = None;
+}
+
+/// Moves the agent to `to` (with `idle_reason` when `to` is `Idle`, none otherwise), stamping
+/// its activity, and returns the `StateChanged` (`from → to`, the reason in brackets); `None`
+/// when state and reason are already those.
+fn move_state(
+    session: &mut Agent,
+    to: LlmEngineState,
+    idle_reason: Option<IdleReason>,
+) -> Option<Event> {
+    let idle_reason = idle_reason.filter(|_| to == LlmEngineState::Idle);
+    if (session.state, session.idle_reason) == (to, idle_reason) {
+        return None;
+    }
+    let detail = format!(
+        "{} → {}",
+        state_label(session.state, session.idle_reason),
+        state_label(to, idle_reason)
+    );
+    session.state = to;
+    session.idle_reason = idle_reason;
+    session.last_activity_at = Some(now());
+    Some(event(EventType::StateChanged, session, None, detail))
 }
 
 /// How long `stop` waits for the pane's process to exit on its own: first after the engine's
@@ -808,6 +832,7 @@ impl TxCore {
             definition,
             // `Starting` until the adapter's first change.
             state: LlmEngineState::Starting,
+            idle_reason: None,
             created_at,
             last_modified_at: created_at,
             last_activity_at: None,
@@ -1003,6 +1028,7 @@ impl TxCore {
             });
         }
         session.state = LlmEngineState::Starting;
+        session.idle_reason = None;
         adapter.restore(&session, &self.config.archive_directory(id))?;
         let engine = EngineLaunch {
             adapter,
@@ -1155,9 +1181,10 @@ impl TxCore {
         Ok(true)
     }
 
-    /// A hook the session's engine wired fired inside it: the engine decides the new state and
-    /// its own data, core writes both under the session lock (one save) and emits
-    /// `StateChanged` (`from → to`) when the state moved and `EngineDataChanged` (the ext key)
+    /// A hook the session's engine wired fired inside it: the engine decides the new state (and
+    /// why, when it is `Idle`) and its own data, core writes them under the session lock (one
+    /// save) and emits `StateChanged` (`from → to`) when the state or its idle reason moved and
+    /// `EngineDataChanged` (the ext key)
     /// when `ext[ext_key]` was rewritten. Core reads `ext` only to hand the engine its own key,
     /// never to interpret it. Returns the state after the hook; `None` when the hook is not for
     /// a live agent this core can read: the session is no longer `Running` (a stale hook), is a
@@ -1185,19 +1212,12 @@ impl TxCore {
             let Some(adapter) = self.engines.get(session.engine) else {
                 return Ok(None);
             };
-            let current = session.state;
             let change = adapter.on_hook(&session, &hook);
             let mut changed = Vec::new();
-            let state = match change.state {
-                Some(to) if to != current => {
-                    session.state = to;
-                    session.last_activity_at = Some(now());
-                    let detail = format!("{} → {}", current.as_str(), to.as_str());
-                    changed.push(event(EventType::StateChanged, &session, None, detail));
-                    to
-                }
-                _ => current,
-            };
+            if let Some(to) = change.state {
+                changed.extend(move_state(&mut session, to, change.idle_reason));
+            }
+            let state = session.state;
             let ext_key = adapter.ext_key();
             if let Some(value) = change.engine_data
                 && session.ext.get(ext_key) != Some(&value)
@@ -1350,15 +1370,12 @@ impl TxCore {
             })?;
             let live = self.live_or_not_running(id)?;
             deliver(&self.tmux, &live.pane_target, &input, DELIVERY_PAUSE)?;
-            let current = session.state;
-            let Some(to) = state.filter(|to| *to != current) else {
+            // The operator stopped the turn themselves: no reason to report.
+            let Some(changed) = state.and_then(|to| move_state(&mut session, to, None)) else {
                 return Ok(());
             };
-            session.state = to;
-            session.last_activity_at = Some(now());
             self.save(&mut session)?;
-            let detail = format!("{} → {}", current.as_str(), to.as_str());
-            event(EventType::StateChanged, &session, None, detail)
+            changed
         };
         self.emit(vec![changed]);
         Ok(())
@@ -1734,6 +1751,7 @@ mod tests {
             roles: vec![],
             definition: None,
             state,
+            idle_reason: None,
             created_at: 1.0,
             last_modified_at: 1.0,
             last_activity_at: None,

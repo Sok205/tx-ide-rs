@@ -117,32 +117,53 @@ fn the_wired_hooks_move_a_claude_session() {
         .unwrap();
     assert!(child.wait().unwrap().success());
     assert_eq!(cli.state_of("a"), "idle");
+    assert_eq!(cli.show("a")["idle_reason"], "finished");
 
     assert!(cli.txi_hook("UserPromptSubmit", &id, "{}").status.success());
     assert_eq!(cli.state_of("a"), "working");
+    assert_eq!(cli.show("a").get("idle_reason"), None);
     assert!(
         cli.txi_hook(
-            "Notification",
+            "PermissionRequest",
             &id,
-            r#"{"notification_type":"permission_prompt","message":"needs Bash"}"#
+            r#"{"tool_name":"AskUserQuestion","tool_input":{"questions":[]}}"#
         )
         .status
         .success()
     );
     assert_eq!(cli.state_of("a"), "idle", "stopped on the operator");
+    assert_eq!(cli.show("a")["idle_reason"], "waiting");
+    assert!(
+        cli.ok(&["ls"]).starts_with(&format!("{id}\ta\tidle\t")),
+        "the text column stays one token"
+    );
+    let listing: Value = serde_json::from_str(&cli.ok(&["ls", "--json"])).unwrap();
+    assert_eq!(listing[0]["state"], "idle");
+    assert_eq!(listing[0]["idle_reason"], "waiting");
+    // Six seconds later Claude also notifies; the agent is already waiting.
+    assert!(
+        cli.txi_hook(
+            "Notification",
+            &id,
+            r#"{"notification_type":"permission_prompt","message":"Claude needs your permission"}"#
+        )
+        .status
+        .success()
+    );
     assert!(cli.txi_hook("PostToolUse", &id, "{}").status.success());
     assert_eq!(cli.state_of("a"), "working");
     assert!(cli.txi_hook("Stop", &id, "not json").status.success());
     assert_eq!(cli.state_of("a"), "idle");
+    assert_eq!(cli.show("a")["idle_reason"], "finished");
 
     assert_eq!(
         cli.state_log(),
         [
-            "starting → idle",
-            "idle → working",
-            "working → idle",
-            "idle → working",
-            "working → idle"
+            "starting → idle (finished)",
+            "idle (finished) → working",
+            "working → idle (waiting)",
+            "idle (waiting) → working",
+            "working → idle (finished)"
         ]
     );
 

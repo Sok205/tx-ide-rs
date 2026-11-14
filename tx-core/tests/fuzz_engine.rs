@@ -839,6 +839,7 @@ fn core_accepts_a_plan_with_empty_program() {
         roles: Vec::new(),
         definition: None,
         state: LlmEngineState::Starting,
+        idle_reason: None,
         created_at: 0.0,
         last_modified_at: 0.0,
         last_activity_at: None,

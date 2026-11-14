@@ -80,6 +80,7 @@ fn record(cwd: &Path) -> Agent {
         roles: Vec::new(),
         definition: None,
         state: LlmEngineState::Idle,
+        idle_reason: None,
         created_at: 0.0,
         last_modified_at: 0.0,
         last_activity_at: None,

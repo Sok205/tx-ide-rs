@@ -43,7 +43,9 @@ verbs:
                                                                     of the running agents (the default, --running),
                                                                     or of the ended ones (--ended);
                                                                     --json: one array of {id, name, state,
-                                                                    working_directory, tags}
+                                                                    idle_reason, working_directory, tags}, where
+                                                                    idle_reason says why an idle agent is idle
+                                                                    (finished, waiting on the operator, or null)
   show TARGET                                                       the record as JSON
   rename TARGET NAME
   tag TARGET [TAG]...                                               replace the tag list

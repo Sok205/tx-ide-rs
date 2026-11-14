@@ -4,7 +4,7 @@ mod common;
 
 use common::{Harness, STUB_ID, agent};
 use serde_json::json;
-use tx_core::{EventType, LlmEngineHook, LlmEngineState};
+use tx_core::{EventType, IdleReason, LlmEngineHook, LlmEngineState};
 
 fn hook(name: &str, payload: serde_json::Value, at: f64) -> LlmEngineHook {
     LlmEngineHook {
@@ -111,6 +111,61 @@ fn hooks_write_engine_data_under_the_engines_key() {
 
     assert_eq!(data_lines(&h), [STUB_ID, STUB_ID]);
     assert_eq!(state_lines(&h), ["starting → idle"]);
+}
+
+/// The idle reason rides with `Idle`: a new reason is a state change of its own, any other
+/// state clears it, and the record carries it only while it is set.
+#[test]
+fn an_idle_reason_lives_only_while_idle() {
+    require_tmux!();
+    let h = Harness::new();
+    let core = h.open_with_engine();
+    let id = core.create_agent(agent("a", &h.repository("a"))).unwrap();
+    let reason = |core: &tx_core::TxCore| core.get_agent(&id).unwrap().idle_reason;
+    let finished = json!({"idle_reason": "finished"});
+    let waiting = json!({"idle_reason": "waiting"});
+
+    core.hook(&id, hook("idle", finished.clone(), 10.0))
+        .unwrap();
+    assert_eq!(reason(&core), Some(IdleReason::Finished));
+    core.hook(&id, hook("working", json!({}), 11.0)).unwrap();
+    assert_eq!(reason(&core), None);
+    core.hook(&id, hook("idle", waiting.clone(), 12.0)).unwrap();
+    // The same state and reason again: nothing is written or logged.
+    core.hook(&id, hook("idle", waiting.clone(), 13.0)).unwrap();
+    assert_eq!(reason(&core), Some(IdleReason::Waiting));
+    let record = String::from_utf8(h.record_bytes(&id)).unwrap();
+    assert!(record.contains(r#""idle_reason": "waiting""#), "{record}");
+    // A reason on a state other than `Idle` is dropped.
+    core.hook(&id, hook("working", waiting.clone(), 14.0))
+        .unwrap();
+    assert_eq!(reason(&core), None);
+    core.hook(&id, hook("idle", waiting, 15.0)).unwrap();
+    core.hook(&id, hook("idle", finished, 16.0)).unwrap();
+    // No reason given: not known.
+    core.hook(&id, hook("idle", json!({}), 17.0)).unwrap();
+    assert_eq!(reason(&core), None);
+
+    assert_eq!(
+        state_lines(&h),
+        [
+            "starting → idle (finished)",
+            "idle (finished) → working",
+            "working → idle (waiting)",
+            "idle (waiting) → working",
+            "working → idle (waiting)",
+            "idle (waiting) → idle (finished)",
+            "idle (finished) → idle",
+        ]
+    );
+
+    core.hook(&id, hook("idle", json!({"idle_reason": "waiting"}), 18.0))
+        .unwrap();
+    let stopped = core.stop_agent(&id).unwrap();
+    assert_eq!(stopped.state, LlmEngineState::Ended);
+    assert_eq!(stopped.idle_reason, None);
+    let record = String::from_utf8(h.record_bytes(&id)).unwrap();
+    assert!(!record.contains("idle_reason"), "{record}");
 }
 
 #[test]
