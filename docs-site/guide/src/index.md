@@ -7,8 +7,8 @@ the command that launched them exits. Attaching shows the agent's native termina
 leaves it running. Nothing is wrapped or re-rendered: what you see is the engine's own UI.
 
 This guide explains how the pieces fit. It is written for a developer or power user who wants to
-understand the system, not just use it. The repository's `README.md` is the full reference (every
-flag, every key, every file); this guide is the map you read before it. The API documentation of
+understand the system, not just use it. The repository's `README.md` is the short introduction
+(install, first steps, keys); `tx help` lists every verb and flag. The API documentation of
 the `tx-core` library sits next to this guide, in an [internal](../internal/tx_core/index.html)
 build (every item, private and hidden ones included) and a [public](../public/tx_core/index.html)
 one.
