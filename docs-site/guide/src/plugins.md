@@ -2,7 +2,7 @@
 
 Every bundled plugin, in the order `tx-core-cli/src/plugins.rs::MANIFEST` lists them, with its
 verbs and key. Verbs starting with `_` are internal: key bindings, hooks and popups call them.
-`tx plugins` shows which are active; `<config>/plugins.yaml` switches them.
+`tx plugins` shows which are active; the `plugins:` block of `<config>/config.yaml` switches them.
 
 ## Engines
 
@@ -104,9 +104,51 @@ markers; `timeline health` prints, per agent record, what the timeline can read 
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).
 
+**`layouts`**: `layout ls | open NAME | path NAME` opens a saved pane layout, one YAML file per
+layout under `<config>/layouts/` (see [Files and directories](files.md)), as one view. `ls` lists
+the names, and `path NAME` prints the file to edit, existing or not. `open NAME [--cwd DIR]
+[--agent A] [--tag T]… [--detach]` reads the file's `panes:`, one record per pane in build order:
+
+```yaml
+panes:
+  - agent: developer          # pane 0: the window itself
+  - agent: qa
+    model: claude-sonnet-5-5
+    effort: 2
+    prompt: Review every commit the developer makes.
+    split: right
+    of: 0
+    size: 50%
+  - command: nvim .
+    split: below
+    of: 1
+    size: 40%
+  - split: below              # nothing chosen: a shell
+    of: 0
+    size: 30%
+```
+
+A pane holds one of `agent: <definition>` (a new agent, as `tx create --agent` starts it),
+`attach: <agent>` (an existing agent, a shell when it is not running) or `command: <words>`, and
+nothing means a shell. `prompt`, `model`, `effort`, `engine`, `tags` and `name` are valid only next
+to `agent:`. An unset model or effort takes the `agent:` block of `config.yaml`, as `tx create`
+does (the model only when the engine is the file's), and otherwise the engine's default. An unset
+prompt is "Introduce yourself, then wait for instructions." Tags are `--tag`, else the tags of the
+`--agent` agent, else `agent`; the view gets the same tags. Every pane after the first has `split`
+(`right` or `below`), `of` (the index of an earlier pane) and `size` (`N%` of the pane it splits,
+or a whole number of cells). An unknown key, an agent key on another pane, or an `of` that is not
+an earlier pane is an error naming the file.
+
+`open` starts the agents first, with `--agent` shown in the first `agent:` pane in place of a new
+one. It then opens the view `<layout>-<project>` and splits each later pane off its `of`, with
+commands and shells in the first shown agent's worktree. A failure closes the view and stops the
+agents it started. Opening the same layout for the same `--cwd` again shows the view already built.
+Inside tx's server it switches your terminal to the view; with `--detach` it only prints the
+`… is ready:` line; from a terminal outside it attaches. No key.
+
 ## Retired ids
 
-`plugins.yaml` entries for these are skipped, so an old file keeps loading:
+`config.yaml` entries for these are skipped, so an old file keeps loading:
 
 - **`hooks`**: agent state moved into core and the engine adapters (`txi hook`).
 - **`history`**: the transcript mirror; core archives conversations through the engines.
