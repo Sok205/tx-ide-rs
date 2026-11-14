@@ -66,6 +66,39 @@ fn the_sidebar_when_there_is_room() {
 }
 
 #[test]
+fn the_header_names_the_filters_and_the_detail_a_hidden_parent() {
+    let mut app = app(Filter {
+        tag: None,
+        group: Some("persistent-views".into()),
+    });
+    app.selected = world::index(&app.graph, "pv-orchestrator");
+    let text = run::snapshot(&mut app, 120, 30);
+    assert!(
+        text.lines().next().unwrap().contains("persistent-views"),
+        "{text}"
+    );
+    assert!(text.contains("parent tx-assistant (hidden)"), "{text}");
+    let text = run::snapshot(&mut app, 170, 30);
+    assert!(
+        text.contains("┃ parent      tx-assistant (hidden)"),
+        "the sidebar: {text}"
+    );
+    let mut app = app_with_tag("legacy");
+    let text = run::snapshot(&mut app, 100, 30);
+    assert!(
+        text.lines().next().unwrap().contains("tag legacy"),
+        "{text}"
+    );
+}
+
+fn app_with_tag(tag: &str) -> App {
+    app(Filter {
+        tag: Some(tag.into()),
+        group: None,
+    })
+}
+
+#[test]
 fn compact_boxes_at_80_columns() {
     let mut app = app(Filter::default());
     check("graph-80x24.txt", &run::snapshot(&mut app, 80, 24));
@@ -106,4 +139,65 @@ fn g_cycles_the_groups() {
         "graph-140x30-persistent-views.txt",
         &run::snapshot(&mut app, 140, 30),
     );
+}
+
+/// An orchestrator with twenty workers, each sent a different number of messages: one bus, and
+/// every count on its worker's own row, never stacked.
+#[test]
+fn a_wide_fan_shares_a_bus_and_keeps_each_badge_on_its_row() {
+    use tx_core::{Agent, AgentId};
+    use tx_graph::model::Message;
+    let now = 1_000_000.0;
+    let id = |number: usize| format!("{number:08x}-0000-4000-8000-000000000000");
+    let record = |number: usize, name: String, parent: Option<String>| {
+        let parent = parent.map_or("null".to_owned(), |parent| format!("\"{parent}\""));
+        Agent::from_json(&format!(
+            r#"{{"version":2,"id":"{}","name":"{name}","engine":"claude","working_directory":"/tmp","roles":[],"state":"working","created_at":{},"last_modified_at":{now},"tags":[],"parent_id":{parent}}}"#,
+            id(number),
+            now - 1000.0 + number as f64
+        ))
+        .unwrap()
+    };
+    let mut agents = vec![record(0, "lead".into(), None)];
+    agents.extend((1..=20).map(|number| record(number, format!("worker-{number}"), Some(id(0)))));
+    let lead: AgentId = id(0).parse().unwrap();
+    let mut messages = Vec::new();
+    for number in 1..=20 {
+        let worker: AgentId = id(number).parse().unwrap();
+        for _ in 0..number {
+            messages.push(Message {
+                at: now - 60.0,
+                from: Some(lead.clone()),
+                to: worker.clone(),
+            });
+        }
+    }
+    for (columns, compact) in [(120, false), (60, true)] {
+        let mut app = App::new(
+            Source {
+                agents: agents.clone(),
+                messages: messages.clone(),
+                ..Source::default()
+            },
+            Filter::default(),
+            now,
+            HOUR,
+        );
+        let text = run::snapshot(&mut app, columns, 120);
+        assert_eq!(app.placement.compact, compact);
+        for number in 1..=20 {
+            let name = format!("worker-{number}");
+            let row = text
+                .lines()
+                .position(|line| line.contains(&format!(" {name} ")) || line.ends_with(&name))
+                .unwrap_or_else(|| panic!("{name} not drawn:\n{text}"));
+            // A full box's name is on its top border; the edge arrives one row below.
+            let arrival = if compact { row } else { row + 1 };
+            let line = text.lines().nth(arrival).unwrap();
+            assert!(
+                line.contains(&format!(" {number} ▶")),
+                "{columns} columns, {name}: {line:?}\n{text}"
+            );
+        }
+    }
 }

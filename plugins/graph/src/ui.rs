@@ -65,6 +65,17 @@ const BREATH_PERIOD: f64 = 2.4;
 /// Dots behind a pulse's head, each a step further back along the edge.
 const PULSE_TRAIL: u16 = 10;
 const PULSE_TRAIL_STEP: f64 = 0.018;
+/// The edge length, in cells, the trail step was tuned for.
+const CURVE_REFERENCE_LENGTH: f64 = 40.0;
+/// The box rows incoming edges arrive on, in order: the first inner line, the second, the top
+/// border, the bottom border.
+const ARRIVAL_ROWS: [u16; 4] = [1, 2, 0, 3];
+/// How far left a badge moves per round of arrivals beyond the box's rows.
+const BADGE_SHIFT: f64 = 6.0;
+/// Cells from a node's right side to its fan's bus.
+const BUS_OFFSET: f64 = 2.0;
+/// Cells on, then off, in a dashed (lineage-only) edge.
+const DASH: f64 = 1.5;
 
 fn colour(color: Color) -> Style {
     Style::new().fg(palette(color))
@@ -280,7 +291,12 @@ fn header_line(app: &App) -> Paragraph<'static> {
             .count()
     };
     let agents = graph.nodes.iter().filter(|node| node.id.is_some()).count();
-    let scope = app.group().unwrap_or("all agents").to_owned();
+    let scope = match (app.group(), app.filter.tag.as_deref()) {
+        (None, None) => "all agents".to_owned(),
+        (Some(group), None) => group.to_owned(),
+        (None, Some(tag)) => format!("tag {tag}"),
+        (Some(group), Some(tag)) => format!("{group} · tag {tag}"),
+    };
     let mut spans = vec![
         Span::styled(" tx-ide", bold(ACCENT)),
         Span::styled("  graph  ", dim()),
@@ -359,11 +375,7 @@ fn detail_line(app: &App) -> Paragraph<'static> {
         pair("definition", definition.clone());
     }
     pair("group", node.group.clone());
-    let parent = match (node.parent, node.parent_lost) {
-        (Some(parent), _) => graph.nodes[parent].name.clone(),
-        (None, true) => "ended".to_owned(),
-        (None, false) => "—".to_owned(),
-    };
+    let parent = parent_label(graph, node);
     pair("parent", parent);
     let children = graph
         .nodes
@@ -440,11 +452,7 @@ fn draw_sidebar(app: &App, frame: &mut Frame, area: Rect) {
             fact("sent", sent_by(graph, app.selected).to_string()),
         ]
     } else {
-        let parent = match (node.parent, node.parent_lost) {
-            (Some(parent), _) => graph.nodes[parent].name.clone(),
-            (None, true) => "ended".to_owned(),
-            (None, false) => "—".to_owned(),
-        };
+        let parent = parent_label(graph, node);
         let children = graph
             .nodes
             .iter()
@@ -548,6 +556,17 @@ fn draw_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(lines), recent);
 }
 
+/// The parent's name, `<name> (hidden)` when a filter hides it, `ended` when its record
+/// is gone, `—` for a root.
+fn parent_label(graph: &Graph, node: &Node) -> String {
+    match (node.parent, &node.hidden_parent) {
+        (Some(parent), _) => graph.nodes[parent].name.clone(),
+        (None, Some(name)) => format!("{name} (hidden)"),
+        (None, None) if node.parent_lost => "ended".to_owned(),
+        (None, None) => "—".to_owned(),
+    }
+}
+
 fn sent_by(graph: &Graph, index: usize) -> usize {
     graph
         .traffic
@@ -600,58 +619,178 @@ fn bezier(curve: &Curve, t: f64) -> (f64, f64) {
     point
 }
 
+/// An edge's route on the canvas, as a polyline walked by length.
+struct Path {
+    points: Vec<(f64, f64)>,
+    /// The length up to each point.
+    lengths: Vec<f64>,
+}
+
+impl Path {
+    fn new(points: Vec<(f64, f64)>) -> Self {
+        let mut lengths = vec![0.0];
+        for pair in points.windows(2) {
+            let step = (pair[1].0 - pair[0].0).hypot(pair[1].1 - pair[0].1);
+            lengths.push(lengths.last().copied().unwrap_or(0.0) + step);
+        }
+        Self { points, lengths }
+    }
+
+    fn curve(curve: &Curve) -> Self {
+        Self::new(
+            (0..=CURVE_STEPS)
+                .map(|step| bezier(curve, f64::from(step) / f64::from(CURVE_STEPS)))
+                .collect(),
+        )
+    }
+
+    fn length(&self) -> f64 {
+        self.lengths.last().copied().unwrap_or(0.0)
+    }
+
+    /// The point `t` (0..1) of the way along.
+    fn at(&self, t: f64) -> (f64, f64) {
+        let target = t.clamp(0.0, 1.0) * self.length();
+        let segment = self
+            .lengths
+            .windows(2)
+            .position(|pair| target <= pair[1])
+            .unwrap_or(self.points.len().saturating_sub(2));
+        let (start, end) = (self.points[segment], self.points[segment + 1]);
+        let span = self.lengths[segment + 1] - self.lengths[segment];
+        let along = if span > 0.0 {
+            (target - self.lengths[segment]) / span
+        } else {
+            0.0
+        };
+        (
+            start.0 + (end.0 - start.0) * along,
+            start.1 + (end.1 - start.1) * along,
+        )
+    }
+
+    /// Dashed: on and off every [`DASH`] cells. Thick: drawn twice, a quarter cell apart.
+    fn draw(&self, context: &mut Context, color: Color, dashed: bool, thick: bool) {
+        let pieces = (self.length() / DASH * 2.0).ceil().max(1.0) as u32;
+        let mut previous = self.at(0.0);
+        for piece in 1..=pieces {
+            let next = self.at(f64::from(piece) / f64::from(pieces));
+            if !dashed || (piece / 2) % 2 == 0 {
+                context.draw(&Segment::new(previous.0, previous.1, next.0, next.1, color));
+                if thick {
+                    context.draw(&Segment::new(
+                        previous.0 + 0.5,
+                        previous.1 + 0.25,
+                        next.0 + 0.5,
+                        next.1 + 0.25,
+                        color,
+                    ));
+                }
+            }
+            previous = next;
+        }
+    }
+}
+
 /// The row an edge meets a box at: the first inner line, or the only line of a compact box.
 fn anchor_row(rect: Rect) -> f64 {
     f64::from(rect.y + 1.min(rect.height - 1))
 }
 
-/// From the right side of `from` to just before the left side of `to`, leaving the cell
-/// before `to` for the arrowhead; within one column, an arc out to the right and back.
-fn edge_curve(area: Rect, from: Rect, to: Rect) -> Curve {
+/// The route of an edge. Within one column: an arc out to the right and back. Across columns,
+/// from the right side of `from` to just before `to`, leaving the cell before `to` for the
+/// arrowhead: a curve, or with a `bus` column, straight out to the bus, along it to the
+/// target's row and across, so a fan shares one trunk.
+fn route(area: Rect, from: Rect, to: Rect, bus: Option<f64>, end_row: f64) -> Path {
+    let start = point(area, f64::from(from.right()), anchor_row(from));
     if from.x == to.x {
-        let start = point(area, f64::from(from.right()), anchor_row(from));
         let end = point(area, f64::from(to.right()), anchor_row(to));
-        return [
+        return Path::curve(&[
             start,
             (start.0 + ARC_BULGE, start.1),
             (end.0 + ARC_BULGE, end.1),
             end,
-        ];
+        ]);
     }
-    let start = point(area, f64::from(from.right()), anchor_row(from));
-    let end = point(area, f64::from(to.x) - 2.0, anchor_row(to));
+    let end = point(area, f64::from(to.x) - 2.0, end_row);
+    if let Some(bus) = bus {
+        return Path::new(vec![start, (bus, start.1), (bus, end.1), end]);
+    }
     let reach = (end.0 - start.0) * 0.55;
-    [
+    Path::curve(&[
         start,
         (start.0 + reach, start.1),
         (end.0 - reach, end.1),
         end,
-    ]
+    ])
 }
 
-fn draw_curve(context: &mut Context, curve: &Curve, color: Color, dashed: bool, thick: bool) {
-    let mut previous = curve[0];
-    for step in 1..=CURVE_STEPS {
-        let next = bezier(curve, f64::from(step) / f64::from(CURVE_STEPS));
-        if !dashed || (step / 3) % 2 == 0 {
-            context.draw(&Segment::new(previous.0, previous.1, next.0, next.1, color));
-            if thick {
-                context.draw(&Segment::new(
-                    previous.0,
-                    previous.1 + 0.25,
-                    next.0,
-                    next.1 + 0.25,
-                    color,
-                ));
-            }
-        }
-        previous = next;
+/// Where an edge comes into its target: the box row, and how far left of the arrowhead its
+/// badge moves when the box has fewer rows than incoming edges.
+#[derive(Clone, Copy)]
+struct Arrival {
+    row: f64,
+    badge_shift: f64,
+}
+
+/// Each edge's route and arrival. A node with two or more edges into later columns sends them
+/// along one bus just right of it. A node's incoming edges from earlier columns arrive on
+/// different rows of its box (top to bottom by source), so their badges never overwrite each
+/// other; past the box's rows they line up leftwards.
+fn routes(app: &App, area: Rect) -> (Vec<Path>, Vec<Arrival>) {
+    let graph = &app.graph;
+    let boxes = &app.placement.boxes;
+    let across = |edge: &Edge| boxes[edge.from].x != boxes[edge.to].x;
+    let mut fan = vec![0usize; graph.nodes.len()];
+    let mut incoming: Vec<Vec<usize>> = vec![Vec::new(); graph.nodes.len()];
+    for (index, edge) in graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| across(edge))
+    {
+        fan[edge.from] += 1;
+        incoming[edge.to].push(index);
     }
+    let mut arrivals = vec![
+        Arrival {
+            row: 0.0,
+            badge_shift: 0.0
+        };
+        graph.edges.len()
+    ];
+    for (target, edges) in incoming.iter_mut().enumerate() {
+        let rect = boxes[target];
+        edges.sort_by_key(|index| boxes[graph.edges[*index].from].y);
+        let rows: Vec<u16> = ARRIVAL_ROWS
+            .into_iter()
+            .filter(|row| *row < rect.height)
+            .collect();
+        for (slot, index) in edges.iter().enumerate() {
+            arrivals[*index] = Arrival {
+                row: f64::from(rect.y + rows[slot % rows.len()]),
+                badge_shift: (slot / rows.len()) as f64 * BADGE_SHIFT,
+            };
+        }
+    }
+    let paths = graph
+        .edges
+        .iter()
+        .zip(&arrivals)
+        .map(|(edge, arrival)| {
+            let from = boxes[edge.from];
+            let bus =
+                (across(edge) && fan[edge.from] > 1).then(|| f64::from(from.right()) + BUS_OFFSET);
+            route(area, from, boxes[edge.to], bus, arrival.row)
+        })
+        .collect();
+    (paths, arrivals)
 }
 
 fn draw_edges(app: &App, area: Rect, buffer: &mut Buffer) {
     let graph = &app.graph;
     let boxes = &app.placement.boxes;
+    let (paths, arrivals) = routes(app, area);
     let busiest = graph
         .edges
         .iter()
@@ -670,17 +809,22 @@ fn draw_edges(app: &App, area: Rect, buffer: &mut Buffer) {
             mix(BG_DEEP, INFO, strength * 0.7)
         }
     };
+    // Quiet edges first, the selection's last, so a shared trunk shows its brightest use.
+    let mut order: Vec<usize> = (0..graph.edges.len()).collect();
+    order.sort_by_key(|index| {
+        let edge = &graph.edges[*index];
+        (touches(edge), edge.messages())
+    });
     let canvas = Canvas::default()
         .marker(Marker::Braille)
         .x_bounds([0.0, f64::from(area.width.max(2) - 1)])
         .y_bounds([0.0, f64::from(area.height.max(2) - 1)])
         .paint(|context| {
-            for edge in &graph.edges {
-                let curve = edge_curve(area, boxes[edge.from], boxes[edge.to]);
+            for index in &order {
+                let edge = &graph.edges[*index];
                 let quiet = edge.messages() == 0;
-                draw_curve(
+                paths[*index].draw(
                     context,
-                    &curve,
                     palette(edge_colour(edge)),
                     quiet,
                     touches(edge) && !quiet,
@@ -691,13 +835,7 @@ fn draw_edges(app: &App, area: Rect, buffer: &mut Buffer) {
                     let rect = boxes[index];
                     let end = point(area, f64::from(rect.x) - 2.0, anchor_row(rect));
                     let start = (end.0 - STUB_LENGTH, end.1);
-                    draw_curve(
-                        context,
-                        &[start, start, end, end],
-                        palette(BORDER_DIM),
-                        true,
-                        false,
-                    );
+                    Path::new(vec![start, end]).draw(context, palette(BORDER_DIM), true, false);
                     context.print(start.0, start.1 + 1.0, Line::styled("parent ended", dim()));
                 }
             }
@@ -714,66 +852,92 @@ fn draw_edges(app: &App, area: Rect, buffer: &mut Buffer) {
                 let (Some(from), Some(to)) = (from, graph.index_of(&pulse.to)) else {
                     continue;
                 };
-                let Some(edge) = graph.edges.iter().find(|edge| {
+                let Some(index) = graph.edges.iter().position(|edge| {
                     (edge.from, edge.to) == (from, to) || (edge.from, edge.to) == (to, from)
                 }) else {
                     continue;
                 };
-                let curve = edge_curve(area, boxes[edge.from], boxes[edge.to]);
+                let edge = &graph.edges[index];
                 draw_pulse(
                     context,
-                    &curve,
+                    &paths[index],
                     progress,
                     edge.from != from,
                     edge_colour(edge),
                 );
             }
-            for edge in &graph.edges {
-                let curve = edge_curve(area, boxes[edge.from], boxes[edge.to]);
-                let selected = touches(edge);
-                if edge.messages() > 0 {
-                    let (x, y) = bezier(&curve, 0.5);
-                    let badge = if selected {
-                        bold(ON_ACCENT).bg(palette(INFO))
-                    } else {
-                        bold(INFO).bg(palette(BG_DEEP))
-                    };
-                    context.print(
-                        x - 1.0,
-                        y,
-                        Line::styled(format!(" {} ", edge.messages()), badge),
-                    );
-                }
-                if boxes[edge.from].x == boxes[edge.to].x {
-                    continue;
-                }
-                let arrow_colour = if selected { INFO } else { edge_colour(edge) };
-                if edge.lineage || edge.forward > 0 {
-                    let head = if edge.messages() == 0 { "▷" } else { "▶" };
-                    let end = curve[3];
-                    context.print(end.0 + 1.0, end.1, Line::styled(head, colour(arrow_colour)));
-                }
-                if edge.backward > 0 {
-                    let start = curve[0];
-                    context.print(start.0, start.1, Line::styled("◀", colour(arrow_colour)));
-                }
+            for (index, edge) in graph.edges.iter().enumerate() {
+                draw_ends(
+                    context,
+                    edge,
+                    &paths[index],
+                    arrivals[index].badge_shift,
+                    boxes,
+                    touches(edge),
+                    edge_colour(edge),
+                );
             }
         });
     canvas.render(area, buffer);
 }
 
-/// A message `progress` (0..1) of the way along `curve`, backwards when `reverse`: an FG head
+/// An edge's count badge and arrowheads. Across columns they sit at the target end, on the
+/// target's row (`◀ 7 ▶`: messages both ways), so badges of a fan never stack; within one
+/// column the badge sits on the arc's bulge.
+fn draw_ends(
+    context: &mut Context,
+    edge: &Edge,
+    path: &Path,
+    badge_shift: f64,
+    boxes: &[Rect],
+    selected: bool,
+    edge_colour: Color,
+) {
+    let badge_style = if selected {
+        bold(ON_ACCENT).bg(palette(INFO))
+    } else {
+        bold(INFO).bg(palette(BG_DEEP))
+    };
+    let badge = format!(" {} ", edge.messages());
+    if boxes[edge.from].x == boxes[edge.to].x {
+        if edge.messages() > 0 {
+            let (x, y) = path.at(0.5);
+            context.print(x - 1.0, y, Line::styled(badge, badge_style));
+        }
+        return;
+    }
+    let arrow = colour(if selected { INFO } else { edge_colour });
+    let (end_x, end_y) = path.at(1.0);
+    let head = match (edge.forward, edge.backward) {
+        (0, 0) => "▷",
+        (0, _) => "◀",
+        _ => "▶",
+    };
+    context.print(end_x + 1.0, end_y, Line::styled(head, arrow));
+    if edge.messages() == 0 {
+        return;
+    }
+    let badge_x = end_x + 1.0 - badge.chars().count() as f64 - badge_shift;
+    context.print(badge_x, end_y, Line::styled(badge, badge_style));
+    if edge.forward > 0 && edge.backward > 0 {
+        context.print(badge_x - 1.0, end_y, Line::styled("◀", arrow));
+    }
+}
+
+/// A message `progress` (0..1) of the way along `path`, backwards when `reverse`: an FG head
 /// and a trail fading from INFO into the edge's colour.
-fn draw_pulse(context: &mut Context, curve: &Curve, progress: f64, reverse: bool, edge: Color) {
+fn draw_pulse(context: &mut Context, path: &Path, progress: f64, reverse: bool, edge: Color) {
     if !(0.0..=1.0).contains(&progress) {
         return;
     }
+    // The trail keeps its length in cells, whatever the path's length.
+    let step = PULSE_TRAIL_STEP * CURVE_REFERENCE_LENGTH / path.length().max(1.0);
     for trail in 0..PULSE_TRAIL {
-        let along = progress - f64::from(trail) * PULSE_TRAIL_STEP;
+        let along = progress - f64::from(trail) * step;
         if !(0.0..=1.0).contains(&along) {
             continue;
         }
-        let (x, y) = bezier(curve, if reverse { 1.0 - along } else { along });
+        let (x, y) = path.at(if reverse { 1.0 - along } else { along });
         let shade = if trail == 0 {
             FG
         } else {

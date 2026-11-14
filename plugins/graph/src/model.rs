@@ -98,6 +98,8 @@ pub struct Node {
     pub parent: Option<usize>,
     /// The record names a parent that no longer exists.
     pub parent_lost: bool,
+    /// The parent's name when its record exists but a filter keeps it out.
+    pub hidden_parent: Option<String>,
     /// Shown only to connect a descendant: ended and quiet in the window.
     pub connector: bool,
     pub engine: Option<EngineKind>,
@@ -482,6 +484,7 @@ pub fn build(
             depth: 0,
             parent: None,
             parent_lost: false,
+            hidden_parent: None,
             connector: false,
             engine: None,
             definition: None,
@@ -513,6 +516,9 @@ pub fn build(
                 .parent_id
                 .as_ref()
                 .is_some_and(|parent| !by_id.contains_key(parent.as_str())),
+            hidden_parent: parent_of(agent, &by_id)
+                .filter(|parent| !shown.contains_key(parent.id.as_str()))
+                .map(|parent| parent.name.clone()),
             connector: shown[agent.id.as_str()],
             engine: Some(agent.engine),
             definition: agent.definition.as_ref().map(|choice| choice.agent.clone()),

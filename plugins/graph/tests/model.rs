@@ -144,6 +144,12 @@ fn a_group_filter_keeps_its_own_ancestors_only() {
     );
     assert_eq!(names(&legacy), ["old-lead", "legacy-worker"]);
     assert_eq!(legacy.groups, ["legacy"]);
+    // A parent kept out by the filter is still named.
+    assert_eq!(
+        graph.nodes[1].hidden_parent.as_deref(),
+        Some("tx-assistant")
+    );
+    assert_eq!(graph.nodes[2].hidden_parent, None);
 }
 
 #[test]
