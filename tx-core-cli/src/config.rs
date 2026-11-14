@@ -7,6 +7,8 @@
 //!   definition: developer        # the agent definition without --agent; null: roles alone
 //!   model: claude-opus-5-5       # null: the engine's own default
 //!   effort: 3                    # 1-5 (or the engine's word); null: the engine's own default
+//! worktree:
+//!   build_outputs: [target]      # paths in an agent's worktree `tx gc` may delete
 //! plugins:
 //!   engine-codex: { enabled: false }
 //!   assistant:
@@ -16,7 +18,7 @@
 //! or malformed YAML is a usage error naming the file.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
 pub use tx_core::AgentDefaults;
@@ -32,7 +34,60 @@ pub struct Config {
     #[serde(default)]
     pub agent: AgentDefaults,
     #[serde(default)]
+    pub worktree: WorktreeSettings,
+    #[serde(default)]
     pub plugins: BTreeMap<String, Entry>,
+}
+
+/// The `worktree:` section.
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorktreeSettings {
+    /// What `tx gc` deletes in the worktree of an ended agent.
+    #[serde(default = "default_build_outputs")]
+    pub build_outputs: Vec<BuildOutput>,
+}
+
+impl Default for WorktreeSettings {
+    fn default() -> Self {
+        Self {
+            build_outputs: default_build_outputs(),
+        }
+    }
+}
+
+fn default_build_outputs() -> Vec<BuildOutput> {
+    vec![BuildOutput(PathBuf::from("target"))]
+}
+
+/// A path relative to a worktree that names something inside it: plain names only, so no
+/// absolute path, no `.` or `..`, and never `.git`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct BuildOutput(PathBuf);
+
+impl BuildOutput {
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for BuildOutput {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        let path = PathBuf::from(&text);
+        let plain = !text.is_empty()
+            && path
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)));
+        if !plain || path.starts_with(".git") {
+            return Err(format!(
+                "build_outputs: {text:?} must be a path inside the worktree, without `..`, `.` or `.git`"
+            ));
+        }
+        Ok(Self(path))
+    }
 }
 
 /// Reads `path`; a missing file is every default.
@@ -73,6 +128,7 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/tx-ide/config.yaml");
         let config = load(&path).unwrap();
         assert_eq!(config.agent, AgentDefaults::default());
+        assert_eq!(config.worktree, WorktreeSettings::default());
         let mut listed: Vec<&str> = config.plugins.keys().map(String::as_str).collect();
         let mut known = crate::plugins::known_ids();
         listed.sort_unstable();
@@ -165,6 +221,46 @@ mod tests {
             error.0.contains("a number 1-5 or the engine's word"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn build_outputs_default_to_target() {
+        let paths = |config: Config| {
+            config
+                .worktree
+                .build_outputs
+                .iter()
+                .map(|output| output.path().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(parse_text("").unwrap()), [PathBuf::from("target")]);
+        assert_eq!(
+            paths(parse_text("worktree: {}\n").unwrap()),
+            [PathBuf::from("target")]
+        );
+        assert_eq!(
+            paths(parse_text("worktree:\n  build_outputs: [node_modules, web/dist]\n").unwrap()),
+            [PathBuf::from("node_modules"), PathBuf::from("web/dist")]
+        );
+        assert!(paths(parse_text("worktree:\n  build_outputs: []\n").unwrap()).is_empty());
+    }
+
+    #[test]
+    fn build_outputs_leaving_the_worktree_are_refused() {
+        for bad in [
+            "/tmp",
+            "../x",
+            "a/../../x",
+            ".",
+            "./target",
+            ".git",
+            ".git/x",
+            "\"\"",
+        ] {
+            let error = parse_text(&format!("worktree:\n  build_outputs: [{bad}]\n")).unwrap_err();
+            assert!(error.0.starts_with("/c/config.yaml: "), "{bad}: {error}");
+            assert!(error.0.contains("build_outputs"), "{bad}: {error}");
+        }
     }
 
     #[test]

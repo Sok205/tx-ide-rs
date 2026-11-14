@@ -31,7 +31,8 @@ same core as the `tx` that launched it.
 ## What lives where
 
 **config** holds what you write by hand: `config.yaml` (the defaults for `tx create` in its
-`agent:` block, and which plugins are on, with their settings, in `plugins:`), `roles/` (your own
+`agent:` block, the build output `tx gc` may delete in `worktree:`, and which plugins are on,
+with their settings, in `plugins:`), `roles/` (your own
 roles, never pruned, overriding a shipped role of the same name), `definitions/` (your own
 `agents/` and `skills/`, each overriding a shipped one of the same name) and `layouts/` (one `<name>.yaml` per
 saved pane layout, opened by `tx layout open <name>`; `tx layout path <name>` prints the file,
@@ -43,7 +44,7 @@ and `tx layout save <name>` writes one from a view).
 agents/<id>/agent.json      the agent's record
 agents/<id>/archive/        the engine's archived transcripts
 log.jsonl                   one {"ts","actor","type","msg"} line per mutation
-worktrees/<repo-key>/…      the agents' git worktrees
+worktrees/<repo-key>/…      the agents' git worktrees; `tx gc` empties their build output
 plugins/<id>/               each plugin's own data (artifacts, home, assistant, tutor, …)
 roles/                      shipped roles and skills, written by `tx ui install`
 bin/ keys/ conf/ nvim/      plugin resources, written by `tx ui install`

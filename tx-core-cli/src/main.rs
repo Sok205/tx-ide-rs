@@ -12,7 +12,7 @@ use tx_core::{
 };
 use tx_core_cli::args::{self, Invocation, Verb};
 
-use tx_core_cli::setup::{Failure, config_file, core_config, open, preview_verbs};
+use tx_core_cli::setup::{Failure, config_file, core_config, load_config, open, preview_verbs};
 
 fn main() -> ExitCode {
     let args: Result<Vec<String>, args::UsageError> = std::env::args_os()
@@ -356,6 +356,46 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         Verb::Respawn { target } => {
             let session = core.respawn_agent(&core.resolve(&target)?)?;
             writeln!(out, "{}\t{}", session.id, session.name).ok();
+        }
+        Verb::Gc {
+            older_than,
+            dry_run,
+        } => {
+            let build_outputs = load_config(&invocation.global, core.config())?
+                .worktree
+                .build_outputs;
+            let mut total = 0;
+            let mut failed = false;
+            for worktree in tx_core_cli::gc::ended_worktrees(&core, older_than)? {
+                let outcome = tx_core_cli::gc::clean(&worktree.directory, &build_outputs, dry_run);
+                for failure in &outcome.failures {
+                    eprintln!("tx: gc: {failure}");
+                }
+                failed |= !outcome.failures.is_empty();
+                for refusal in &outcome.refusals {
+                    eprintln!(
+                        "tx: gc: left {}: {}",
+                        refusal.path.display(),
+                        refusal.reason
+                    );
+                }
+                if outcome.found {
+                    total += outcome.bytes;
+                    writeln!(
+                        out,
+                        "{}\t{}\t{}",
+                        tx_core_cli::gc::human_size(outcome.bytes),
+                        worktree.agents.join(","),
+                        worktree.directory.display()
+                    )
+                    .ok();
+                }
+            }
+            let label = if dry_run { "total, dry run" } else { "total" };
+            writeln!(out, "{}\t{label}", tx_core_cli::gc::human_size(total)).ok();
+            if failed {
+                return Ok(ExitCode::from(1));
+            }
         }
     }
     Ok(ExitCode::SUCCESS)

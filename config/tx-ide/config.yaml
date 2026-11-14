@@ -11,6 +11,13 @@ agent:
   model: claude-opus-5-5       # Opus 5.5; null: the engine's own default (for claude, settings.json)
   effort: 3                    # 1-5: low|medium|high|xhigh|max, or the engine's word (codex also none|minimal); null: the engine's own
 
+# The agents' git worktrees (<data>/worktrees).
+worktree:
+  # Paths in a worktree that are safe to delete: `tx gc` removes them once its agents have ended,
+  # and a respawned agent rebuilds them. Relative to the worktree; no `..`, nothing git tracks.
+  # A Node project would add node_modules and dist.
+  build_outputs: [target]
+
 # Every plugin, on. `enabled: false` switches one off; `tx plugins` shows the result.
 plugins:
   engine-claude: { enabled: true }

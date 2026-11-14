@@ -293,6 +293,9 @@ agent:                         # defaults for `tx create`; a flag given replaces
   model: claude-opus-5-5       # null: the engine's own default
   effort: 3                    # 1-5 (or the engine's own word); null: the engine's own default
 
+worktree:
+  build_outputs: [target]      # what `tx gc` may delete in an ended agent's worktree
+
 plugins:                       # one entry per plugin id; see Plugins below
   engine-codex: { enabled: false }
   assistant:
@@ -312,6 +315,14 @@ Claude in Chrome, which tx otherwise turns off with `--no-chrome`. For more than
 engines take `--option command=PATH`: the program started instead of `claude` or `codex`, given
 tx's whole argument list, so a wrapper can extend the launch. The record keeps both, so a respawn
 or a fork launches the same way.
+`worktree.build_outputs` lists paths, relative to an agent's worktree, that are safe to delete:
+`tx gc [--older-than 1d] [--dry-run]` deletes them in the worktrees of agents ended longer ago
+than the threshold and prints the size freed per worktree and in total. The worktree, its branch,
+the record and the conversation stay, so `tx respawn` works and the agent just rebuilds. A Node
+project would add `node_modules` and `dist`. An absolute path, `..`, `.` or `.git` is a usage
+error. A path that is a symlink or lies under one (tx never follows a link), or under which git
+tracks a file, is left alone with a warning. A path that cannot be deleted is a warning too: the
+rest go on, the total is printed, and `gc` exits 1.
 An unknown key, a bad value or malformed YAML stops `tx` with a usage error naming the file. The
 directories, the socket, the roles and skills directories and `--env` stay flags and environment
 variables (see "Where files live" above); they are not in this file.

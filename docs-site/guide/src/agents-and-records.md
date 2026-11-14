@@ -61,6 +61,15 @@ built-in `tx` verb:
 - **stop** (`tx stop TARGET`): types the engine's exit command (`/exit`, `/quit`), waits, and
   kills what is left after a grace period.
 
+- **gc** (`tx gc [--older-than 1d] [--dry-run]`): deletes the build output named in
+  `worktree.build_outputs` (default `[target]`) in the worktrees of agents ended longer ago than
+  the threshold, and prints the size freed per worktree and in total. The end time is the
+  record's `last_modified_at`, which is never earlier than the end. A worktree a running agent
+  uses, or one outside `<data>/worktrees`, is skipped. A configured path that is a symlink or
+  lies under one (never followed), or under which git tracks a file, is left alone with a
+  warning. A path that cannot be deleted is warned about and the rest go on; `gc` then exits 1.
+  The worktree, branch, record and conversation stay, so a respawn works and rebuilds.
+
 There is no archive: an ended agent is finished, `tx ls --ended` lists it, and a respawn brings
 it back. There is no refresh verb either: `tx ls` and `tx show` first mark a record whose tmux
 session is gone as ended, then read.
@@ -74,7 +83,8 @@ Every agent runs in its own worktree of the checkout it was given:
 `<repo-key>` is the repository's name plus eight hex digits of a hash of its git common
 directory, so same-named repositories stay apart. The agent's name is the first of `name`,
 `name-2`, … `name-99` not held by a running record. A `--cwd` that is not a git checkout fails
-with git's message. The worktree is detached; the agent makes its own branch.
+with git's message. The worktree is detached; the agent makes its own branch. Its build output
+(`target/` for Rust) stays after the agent ends until `tx gc` deletes it.
 
 ## Roles, profiles and skills
 
