@@ -1,0 +1,40 @@
+ tx-ide  graph  all agents   11 agents · ● 4 working · ▲ 1 needs you · ━ 26 messages / 1h
+
+  depth 0                              1                                    2                                    3
+  ╭ ◇ you ───────────────╮⢀⣀
+  │ 4 sent               │⠉⠑⢿⣦
+  │                      │   ⢻⣧
+  ╰──────────────────────╯    ⡿⣣
+                              ⠸⣿
+  ┏ ○ old-lead ━━━━━━━━━━┓     ⢱⡇      ┏ ○ legacy-worker ━━━━━┓
+  ┃ ended · 4h           ┃⠒⠂⠐⠒ 3  ⠒⠒  ▷┃ idle · 15m           ┃
+  ┃                      ┃     ⣼⢱⡇     ┃                      ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━┛    ⢀⡟⠘⣵     ┗━━━━━━━━━━━━━━━━━━━━━━┛
+                              ⡼⠁ ⠱⣣
+  ┏ ● tx-assistant ━━━━━━┓  ⣀⠜⠁   ⠱⡣⣀  ┏ ○ pv-orchestrator ━━━┓             ┏ ● pv-pr4 ━━━━━━━━━━━━┓             ┏ ◐ qa-pr4 ━━━━━━━━━━━━┓
+  ┃ working · 4s         ┃⠚⠛⡅       1 ▶┃ idle · 12s           ┃⠒⠒⡖⠒⠒⠒⠒◀ 12 ▶┃ working · 3m         ┃⠐⠒⠲⢖⠂⠐⠒⠂⠐⠒⠂ ▷┃ starting · 20s       ┃
+  ┃                      ┃  ⡗⠒⠒⠒⠒⠒⠒ 4 ▶┃                      ┃  ⡇          ┃ ctx 75K              ┃    ⠱⡀       ┃                      ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━┛  ⡇          ┗━━━━━━━━━━━━━━━━━━━━━━┛  ⡇          ┗━━━━━━━━━━━━━━━━━━━━━━┛     2       ┗━━━━━━━━━━━━━━━━━━━━━━┛
+                            ⡇                                    ⡇                                       ⡸
+                            ⡇          ┏ ● openbot-research ━━┓  ⡇          ┏ ● pv-pr5 ━━━━━━━━━━━━┓    ⡰⠁
+                            ⠑⠒⠒⠒⠒⠒⠒ 1 ◀┃ working · 1m         ┃  ⠑⠒⠒⠒⠒⠒⠒ 3 ▶┃ working · 41s        ┃⠐⠒⠒⠊
+                                       ┃                      ┃  ⡀          ┃                      ┃
+                                       ┗━━━━━━━━━━━━━━━━━━━━━━┛  ⡇          ┗━━━━━━━━━━━━━━━━━━━━━━┛
+                                                                 ⠃
+                                                                 ⡀          ┏ ▲ pv-pr6 ━━━━━━━━━━━━┓
+                                                                 ⠧⠄⠠⠤⠄⠠⠤⠄⠠⠤▷┃ needs you · 8s       ┃
+                                                                            ┃ ctx ━━━━━━━━━━━━━─── ┃
+                                                                            ┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏ ○ finished ━━━━━━━━━━┓
+  ┃ ended · 20m          ┃
+  ┃                      ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+                         parent ended  ┏ ○ stray ━━━━━━━━━━━━━┓
+                         ⣀⡀⢀⣀⡀⢀⣀⡀⢀⣀⡀⢀⡀ ┃ idle · 5m            ┃
+                                       ┃                      ┃
+                                       ┗━━━━━━━━━━━━━━━━━━━━━━┛
+  ┏┓ selected   ┏┓ working   ┏┓ needs you   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
+  you  sent 4
+  enter jump · s send · f fork · a artifacts · x stop · g group: all · ? keys

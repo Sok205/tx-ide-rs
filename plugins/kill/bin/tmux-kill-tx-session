@@ -8,7 +8,7 @@
 # Target: the session attached INSIDE the pane when it hosts a nested `tmux attach`
 # (the same pane→client join the border label uses), else the outer session itself
 # (a direct foreground attach). A view (@tx-view) is closed when it is a shell, editor,
-# timeline, tutor or mockup view (@tx-view-kind); the home base is refused — from a home
+# timeline, graph, tutor or mockup view (@tx-view-kind); the home base is refused — from a home
 # pane hosting nothing nested there is no session to kill.
 #
 # The prompt shows the store-owned DISPLAY name (a PROCESS is tmux-named by its id);

@@ -1,0 +1,20 @@
+ tx-ide  graph  all agents   11 agents · ● 4 working · ▲ 1 needs you · ━ 26 messages / 1h
+
+  depth 0                              1                                    2                                    3
+  ┏ ● tx-assistant ━━━━━━┓  ⢀⠜    ⠱⡀   ┏ ○ pv-orchestrator ━━━┓             ┏ ● pv-pr4 ━━━━━━━━━━━━┓             ┏ ◐ qa-pr4 ━━━━━━━━━━━━┓
+  ┃ working · 4s         ┃⠒⠚⡅       1 ▶┃ idle · 12s           ┃⠒⠒⡖⠒⠒⠒⠒◀ 12 ▶┃ working · 3m         ┃⠐⠒⠲⢖⠂⠐⠒⠂⠐⠒⠂ ▷┃ starting · 20s       ┃
+  ┃                      ┃  ⡗⠒⠒⠒⠒⠒⠒ 4 ▶┃                      ┃  ⡇          ┃ ctx 75K              ┃    ⠱⡀       ┃                      ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━┛  ⡇          ┗━━━━━━━━━━━━━━━━━━━━━━┛  ⡇          ┗━━━━━━━━━━━━━━━━━━━━━━┛     2       ┗━━━━━━━━━━━━━━━━━━━━━━┛
+                            ⡇                                    ⡇                                       ⡸
+                            ⡇          ┏ ● openbot-research ━━┓  ⡇          ┏ ● pv-pr5 ━━━━━━━━━━━━┓    ⡰⠁
+                            ⠑⠒⠒⠒⠒⠒⠒ 1 ◀┃ working · 1m         ┃  ⠑⠒⠒⠒⠒⠒⠒ 3 ▶┃ working · 41s        ┃⠐⠒⠒⠊
+                                       ┃                      ┃  ⡀          ┃                      ┃
+                                       ┗━━━━━━━━━━━━━━━━━━━━━━┛  ⡇          ┗━━━━━━━━━━━━━━━━━━━━━━┛
+                                                                 ⠃
+                                                                 ⡀          ┏ ▲ pv-pr6 ━━━━━━━━━━━━┓
+                                                                 ⠧⠄⠠⠤⠄⠠⠤⠄⠠⠤▷┃ needs you · 8s       ┃
+                                                                            ┃ ctx ━━━━━━━━━━━━━─── ┃
+                                                                            ┗━━━━━━━━━━━━━━━━━━━━━━┛
+  ┏┓ selected   ┏┓ working   ┏┓ needs you   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
+  qa-pr4  engine claude · definition qa · group persistent-views · parent pv-pr4 · children 0 · messages 0
+  enter jump · s send · f fork · a artifacts · x stop · g group: all · ? keys

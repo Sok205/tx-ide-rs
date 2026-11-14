@@ -1824,6 +1824,7 @@ dependencies = [
  "tx-edit",
  "tx-engine-claude",
  "tx-engine-codex",
+ "tx-graph",
  "tx-home",
  "tx-home-themes",
  "tx-kill",
@@ -1868,6 +1869,18 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml",
+ "tx-core",
+]
+
+[[package]]
+name = "tx-graph"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "tx-chat",
+ "tx-client",
  "tx-core",
 ]
 

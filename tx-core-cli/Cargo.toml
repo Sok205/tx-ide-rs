@@ -34,6 +34,7 @@ tx-tutor = { path = "../plugins/tutor" }
 tx-artifacts = { path = "../plugins/artifacts" }
 tx-tour = { path = "../plugins/tour" }
 tx-timeline = { path = "../plugins/timeline" }
+tx-graph = { path = "../plugins/graph" }
 tx-home = { path = "../plugins/home" }
 tx-home-themes = { path = "../plugins/home-themes" }
 tx-layouts = { path = "../plugins/layouts" }

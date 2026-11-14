@@ -1,0 +1,241 @@
+{
+ "now": 1794000000.0,
+ "agents": [
+  {
+   "version": 2,
+   "id": "00000001-0000-4000-8000-000000000000",
+   "name": "tx-assistant",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "working",
+   "created_at": 1793991000.0,
+   "last_modified_at": 1793999996.0,
+   "last_activity_at": 1793999996.0,
+   "tags": [
+    "tx-system"
+   ],
+   "parent_id": null,
+   "ext": {},
+   "definition": {
+    "agent": "tx-assistant"
+   }
+  },
+  {
+   "version": 2,
+   "id": "00000002-0000-4000-8000-000000000000",
+   "name": "pv-orchestrator",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "idle",
+   "created_at": 1793993000.0,
+   "last_modified_at": 1793999988.0,
+   "last_activity_at": 1793999988.0,
+   "tags": [],
+   "parent_id": "00000001-0000-4000-8000-000000000000",
+   "ext": {
+    "artifacts": {
+     "group": "persistent-views"
+    }
+   },
+   "definition": {
+    "agent": "orchestrator"
+   },
+   "idle_reason": "finished"
+  },
+  {
+   "version": 2,
+   "id": "00000003-0000-4000-8000-000000000000",
+   "name": "openbot-research",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "working",
+   "created_at": 1793994000.0,
+   "last_modified_at": 1793999940.0,
+   "last_activity_at": 1793999940.0,
+   "tags": [],
+   "parent_id": "00000001-0000-4000-8000-000000000000",
+   "ext": {},
+   "definition": {
+    "agent": "developer"
+   }
+  },
+  {
+   "version": 2,
+   "id": "00000004-0000-4000-8000-000000000000",
+   "name": "pv-pr4",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "working",
+   "created_at": 1793995000.0,
+   "last_modified_at": 1793999820.0,
+   "last_activity_at": 1793999820.0,
+   "tags": [],
+   "parent_id": "00000002-0000-4000-8000-000000000000",
+   "ext": {
+    "claude": {
+     "transcript_path": "pr4.jsonl"
+    }
+   },
+   "definition": {
+    "agent": "developer"
+   }
+  },
+  {
+   "version": 2,
+   "id": "00000005-0000-4000-8000-000000000000",
+   "name": "pv-pr5",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "working",
+   "created_at": 1793995100.0,
+   "last_modified_at": 1793999959.0,
+   "last_activity_at": 1793999959.0,
+   "tags": [],
+   "parent_id": "00000002-0000-4000-8000-000000000000",
+   "ext": {},
+   "definition": {
+    "agent": "developer"
+   }
+  },
+  {
+   "version": 2,
+   "id": "00000006-0000-4000-8000-000000000000",
+   "name": "pv-pr6",
+   "engine": "codex",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "idle",
+   "created_at": 1793995200.0,
+   "last_modified_at": 1793999992.0,
+   "last_activity_at": 1793999992.0,
+   "tags": [],
+   "parent_id": "00000002-0000-4000-8000-000000000000",
+   "ext": {
+    "codex": {
+     "transcript_path": "pr6.jsonl"
+    }
+   },
+   "definition": {
+    "agent": "developer"
+   },
+   "idle_reason": "waiting"
+  },
+  {
+   "version": 2,
+   "id": "00000007-0000-4000-8000-000000000000",
+   "name": "qa-pr4",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "starting",
+   "created_at": 1793997000.0,
+   "last_modified_at": 1793999980.0,
+   "last_activity_at": 1793999980.0,
+   "tags": [],
+   "parent_id": "00000004-0000-4000-8000-000000000000",
+   "ext": {},
+   "definition": {
+    "agent": "qa"
+   }
+  },
+  {
+   "version": 2,
+   "id": "00000008-0000-4000-8000-000000000000",
+   "name": "old-lead",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "ended",
+   "created_at": 1793980000.0,
+   "last_modified_at": 1793985000.0,
+   "last_activity_at": 1793985000.0,
+   "tags": [
+    "legacy"
+   ],
+   "parent_id": null,
+   "ext": {}
+  },
+  {
+   "version": 2,
+   "id": "00000009-0000-4000-8000-000000000000",
+   "name": "legacy-worker",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "idle",
+   "created_at": 1793986000.0,
+   "last_modified_at": 1793999100.0,
+   "last_activity_at": 1793999100.0,
+   "tags": [
+    "legacy"
+   ],
+   "parent_id": "00000008-0000-4000-8000-000000000000",
+   "ext": {}
+  },
+  {
+   "version": 2,
+   "id": "0000000a-0000-4000-8000-000000000000",
+   "name": "stray",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "idle",
+   "created_at": 1793998000.0,
+   "last_modified_at": 1793999700.0,
+   "last_activity_at": 1793999700.0,
+   "tags": [],
+   "parent_id": "00000063-0000-4000-8000-000000000000",
+   "ext": {}
+  },
+  {
+   "version": 2,
+   "id": "0000000b-0000-4000-8000-000000000000",
+   "name": "finished",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "ended",
+   "created_at": 1793997500.0,
+   "last_modified_at": 1793998800.0,
+   "last_activity_at": 1793998800.0,
+   "tags": [],
+   "parent_id": null,
+   "ext": {}
+  },
+  {
+   "version": 2,
+   "id": "0000000c-0000-4000-8000-000000000000",
+   "name": "ancient",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "ended",
+   "created_at": 1793910000.0,
+   "last_modified_at": 1793920000.0,
+   "last_activity_at": 1793920000.0,
+   "tags": [],
+   "parent_id": null,
+   "ext": {}
+  },
+  {
+   "version": 2,
+   "id": "0000000d-0000-4000-8000-000000000000",
+   "name": "future",
+   "engine": "claude",
+   "working_directory": "/tmp",
+   "roles": [],
+   "state": "working",
+   "created_at": 1794000100.0,
+   "last_modified_at": 1794000100.0,
+   "last_activity_at": 1794000100.0,
+   "tags": [],
+   "parent_id": null,
+   "ext": {}
+  }
+ ]
+}

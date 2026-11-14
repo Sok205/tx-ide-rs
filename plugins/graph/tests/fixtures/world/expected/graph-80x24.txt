@@ -1,0 +1,24 @@
+ tx-ide  graph  all agents   11 agents · ● 4 working · ▲ 1 needs you · ━ 26 mess
+
+  depth 0              1                    2                    3
+  ◇ you       ⠉⠙⡷⡪⢖⡄
+                ⠘⡵ 3
+  ○ old-lead  ⠉⠁⠉⠙⣵⢹⠏ ▷○ legacy-w…
+                ⣀⣀⡵⡻⣀⡀
+  ● tx-assis… 4 ⡟⠓⠒ 1 ▶○ pv-orche… ⠒⠒⡖◀ 12 ▶● pv-pr4    ⠐⠒⠒⠒⠦⡔⠒ ▷◐ qa-pr4
+                ⡇                    ⡇                       2
+                ⠑⠒⠒ 1 ◀● openbot-…   ⠑⠒⠒ 3 ▶● pv-pr5    ⠐⠒⠒⠊⠉
+                                     ⡄
+                                     ⠓⠂⠐⠒⠂ ▷▲ pv-pr6
+
+  ○ finished
+         parent ended
+         ⠤⠄⠠⠤⠄⠠⠤⠄⠠⠤⠄⠠⠄ ○ stray
+
+
+
+
+
+  ┏┓ selected   ┏┓ working   ┏┓ needs you   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage
+  you  sent 4
+  enter jump · s send · f fork · a artifacts · x stop · g group: all · ? keys

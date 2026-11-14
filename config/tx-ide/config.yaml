@@ -39,6 +39,7 @@ plugins:
     settings: { editor: nvim }                   # the program an artifact's view runs
   tour: { enabled: true }
   timeline: { enabled: true }
+  graph: { enabled: true }
   home: { enabled: true }
   home-themes:
     enabled: true
