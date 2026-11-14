@@ -153,7 +153,11 @@ pub fn role_of(entry: PickerEntry<'_>) -> &'static str {
         PickerEntry::View(view) => match view.kind {
             ViewKind::Editor | ViewKind::Diff | ViewKind::Tour => "nvim",
             ViewKind::Shell => "shell",
-            ViewKind::Home | ViewKind::Timeline | ViewKind::Tutor | ViewKind::Mockup => "other",
+            ViewKind::Home
+            | ViewKind::Timeline
+            | ViewKind::Graph
+            | ViewKind::Tutor
+            | ViewKind::Mockup => "other",
         },
     }
 }
@@ -531,6 +535,7 @@ mod tests {
             (ViewKind::Tour, "nvim"),
             (ViewKind::Shell, "shell"),
             (ViewKind::Timeline, "other"),
+            (ViewKind::Graph, "other"),
             (ViewKind::Tutor, "other"),
             (ViewKind::Mockup, "other"),
         ];

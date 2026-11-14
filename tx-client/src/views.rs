@@ -1,5 +1,5 @@
 //! Views: the non-LLM tmux sessions tx-client owns (the home base, editors, diffviews, shells,
-//! the timeline, tutor and mockup viewers). A view has no core record and never shows in `tx ls`;
+//! the timeline, graph, tutor and mockup viewers). A view has no core record and never shows in `tx ls`;
 //! its fields live in tmux session options only, so nothing goes stale when the server dies.
 //! Core marks its own sessions with `@tx-id`, and nothing here kills or renames one of those.
 
@@ -34,18 +34,21 @@ pub enum ViewKind {
     Tour,
     Shell,
     Timeline,
+    /// The resident agent graph behind prefix+g.
+    Graph,
     Tutor,
     Mockup,
 }
 
 impl ViewKind {
-    pub const ALL: [ViewKind; 8] = [
+    pub const ALL: [ViewKind; 9] = [
         ViewKind::Home,
         ViewKind::Editor,
         ViewKind::Diff,
         ViewKind::Tour,
         ViewKind::Shell,
         ViewKind::Timeline,
+        ViewKind::Graph,
         ViewKind::Tutor,
         ViewKind::Mockup,
     ];
@@ -58,6 +61,7 @@ impl ViewKind {
             ViewKind::Tour => "tour",
             ViewKind::Shell => "shell",
             ViewKind::Timeline => "timeline",
+            ViewKind::Graph => "graph",
             ViewKind::Tutor => "tutor",
             ViewKind::Mockup => "mockup",
         }
@@ -65,7 +69,7 @@ impl ViewKind {
 
     /// Whether the picker's Enter may replace one of this view's shell panes with a nested
     /// attach: the home base and the tutor (its viewer pane) are built for that; a shell,
-    /// editor, diff, tour, mockup or timeline view is the operator's own and gets the client
+    /// editor, diff, tour, mockup, timeline or graph view is the operator's own and gets the client
     /// switched.
     pub fn hosts_nested_attaches(self) -> bool {
         matches!(self, ViewKind::Home | ViewKind::Tutor)
@@ -74,7 +78,7 @@ impl ViewKind {
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "unknown view kind {0:?} (expected home, editor, diff, tour, shell, timeline, tutor or mockup)"
+    "unknown view kind {0:?} (expected home, editor, diff, tour, shell, timeline, graph, tutor or mockup)"
 )]
 pub struct InvalidViewKind(pub String);
 
@@ -548,6 +552,7 @@ mod tests {
             ViewKind::Tour,
             ViewKind::Mockup,
             ViewKind::Timeline,
+            ViewKind::Graph,
         ] {
             assert!(!kind.hosts_nested_attaches(), "{kind}");
         }

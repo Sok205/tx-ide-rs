@@ -500,16 +500,16 @@ record with `"kind": "process"` left on disk by an older build is skipped by eve
 named on stderr when `tx` opens the core.
 
 **Views.** Every non-LLM tmux session on the core's server is a tx-client *view*: the `home`
-base, the `tutor-<lang>`, `mockup-<agent>` and `tx-timeline` viewers, an artifact's nvim
+base, the `tutor-<lang>`, `mockup-<agent>`, `tx-timeline` and `tx-graph` viewers, an artifact's nvim
 (`tx artifact open`, prefix+a: kind `editor`, `diff` for a diff artifact's diffview, or `tour` for a tour,
 `@tx-view-bound <artifact id>`, parent the opening
 agent), and the shells and editors `tx ui view open` starts. A view has no core record and never shows in `tx ls`; its fields live
-in tmux session options only (`@tx-view 1`, `@tx-view-kind home|editor|diff|tour|shell|timeline|tutor|mockup`,
+in tmux session options only (`@tx-view 1`, `@tx-view-kind home|editor|diff|tour|shell|timeline|graph|tutor|mockup`,
 `@tx-view-parent <agent id>`, `@tx-view-bound`, `@tx-view-tags`, `@tx-view-created`), so nothing
 goes stale when the server dies. `tx ui view ls` first closes the views whose parent agent is
 gone (no longer running), then lists the rest. Closing and renaming go through the
 `views` guard, which refuses any session core marked with `@tx-id`: an agent is stopped only
-through `tx kill`. prefix+X closes a shell, editor, timeline, tutor or mockup view after a
+through `tx kill`. prefix+X closes a shell, editor, timeline, graph, tutor or mockup view after a
 confirmation, keeps refusing the home base, and kills an agent through `tx kill` as before.
 
 The prefix is `C-a`.
