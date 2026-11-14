@@ -87,8 +87,10 @@ tx layout open pair --cwd <project> --agent <agent> --tag <scope>   # around an 
 
 - `--cwd` is the project the operator means — "here" is the cwd of the pane they are looking at
   (the focus envelope's `pane-path`), not yours.
-- Always pass `--tag`. With no scope named, take the tags of the agent or view in focus (`tx ls`,
-  `tx ui view ls`); if it has none, or only `agent`, use the project directory's name.
+- Always pass a non-empty `--tag`. With no scope named, take the tags of the agent or view in
+  focus (`tx show <agent>`; for a view, `tx ui view ls` prints name, kind, parent, cwd, tags,
+  binding, tab-separated, and an empty field stays a field); if that is empty or only `agent`,
+  use the project directory's name.
 - `--agent` puts an existing agent in the layout's first `agent:` pane instead of a new one (a
   shell if it has ended). Without `--tag`, the layout then takes that agent's tags; with
   neither, the tag is `agent`.
@@ -101,7 +103,7 @@ tx layout open pair --cwd <project> --agent <agent> --tag <scope>   # around an 
 Each layout is `<config>/layouts/<name>.yaml` (name `[A-Za-z0-9_.-]+`). `tx layout path <name>`
 prints the file, existing or not; edit it there to make or change one. To keep a view the
 operator arranged by hand, `tx layout save <name> --view <view>` writes it (without `--view`,
-the view you run in); it refuses an existing file unless `--force`, so ask before overwriting:
+the session you run in, which must be a view); it refuses an existing file unless `--force`, so ask before overwriting:
 
 ```yaml
 panes:
@@ -126,8 +128,9 @@ A pane holds one of `agent: <definition>` (a new agent, as `tx create --agent`),
 Commands and shells start in the worktree of the first agent the view shows, else in `--cwd`.
 An `agent:` pane's model and effort follow the same chain as `tx create`: the pane's own key,
 else the operator's `agent.model` / `agent.effort` in `config.yaml`, else the engine's default.
-`save` writes `agent: <definition>` for every nested agent (never `attach:`), the program name
-for a command, `{}` for a shell, and no model or effort: add those by hand.
+`save` prints `<view> saved to <path>`. It writes `agent: <definition>` for every nested agent
+(never `attach:`; one without a definition becomes a shell, with a warning on stderr), the
+program name for a command, `{}` for a shell, and no model or effort: add those by hand.
 
 ## Talking to it and ending it
 

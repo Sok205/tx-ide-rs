@@ -104,7 +104,7 @@ markers; `timeline health` prints, per agent record, what the timeline can read 
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).
 
-**`layouts`**: `layout ls | open NAME | path NAME | save NAME` opens a saved pane layout, one YAML file per
+**`layouts`**: `layout ls | open NAME | save NAME | path NAME` opens a saved pane layout, one YAML file per
 layout under `<config>/layouts/` (see [Files and directories](files.md)), as one view. `ls` lists
 the names, and `path NAME` prints the file to edit, existing or not. `open NAME [--cwd DIR]
 [--agent A] [--tag T]… [--detach]` reads the file's `panes:`, one record per pane in build order:
@@ -146,11 +146,13 @@ agents it started. Opening the same layout for the same `--cwd` again shows the 
 Inside tx's server it switches your terminal to the view; with `--detach` it only prints the
 `… is ready:` line; from a terminal outside it attaches. No key.
 
-`save NAME [--view VIEW] [--force]` goes the other way: it writes the current window of a view you
-arranged by hand to `<config>/layouts/NAME.yaml` and prints `saved NAME: <path>`. VIEW defaults
-to the view you run it in, inside tx's server, and must be a view. An existing file is refused
+`save NAME [--view V] [--force]` goes the other way: it writes the current window of a view you
+arranged by hand to `<config>/layouts/NAME.yaml` and prints `<view> saved to <path>`. V defaults
+to the session you run it in, inside tx's server, and must be a view. An existing file is refused
 unless `--force`. A nested agent becomes `agent: <its definition>` (never `attach:`, so the layout
-works in any project), a command `command: <program name>`, a shell `{}`, and each pane's `split`,
+works in any project); a nested session that runs no agent definition is saved as a shell, with a
+`tx layout: pane … saved as a shell` warning on stderr. A command becomes `command: <program
+name>`, a shell `{}`, and each pane's `split`,
 `of` and `size` (always `N%`) come from the panes' rectangles, so the layout keeps its proportions
 on any terminal size. No model or effort is written; add them by hand.
 

@@ -48,7 +48,7 @@ it dies with the server. `tx ui view ls` lists them, `tx ui view open` starts on
 
 ## Starting things
 
-Follow the `tx-sessions` skill. Two things are yours:
+Follow the `tx-sessions` skill. These are yours:
 
 - `--cwd` — if the user said "here", take it from the focus envelope; otherwise resolve the
   project root they named.
