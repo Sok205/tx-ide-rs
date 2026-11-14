@@ -6,16 +6,11 @@ use tx_core::Agent;
 use crate::tmux::Location;
 use crate::views::{View, ViewKind};
 
-pub const WARN_ANSI: &str = "\x1b[38;2;224;175;104m";
+pub use crate::palette::{ACCENT_ANSI, DIM_FG_ANSI, FG_ANSI, INFO_ANSI, WARN_ANSI};
+
 pub const RESET_FG: &str = "\x1b[39m";
-pub const ACCENT_ANSI: &str = "\x1b[38;2;122;162;247m";
-pub const FG_ANSI: &str = "\x1b[38;2;192;202;245m";
 pub const BOLD: &str = "\x1b[1m";
 pub const RESET: &str = "\x1b[0m";
-
-// Inlined from main's `crates/tx/src/palette.rs` (tx-client has no palette module).
-pub const DIM_FG_ANSI: &str = "\x1b[38;2;169;177;214m";
-pub const INFO_ANSI: &str = "\x1b[38;2;125;207;255m";
 pub const ITALIC: &str = "\x1b[3m";
 pub const SELECTION_BG: &str = "236";
 

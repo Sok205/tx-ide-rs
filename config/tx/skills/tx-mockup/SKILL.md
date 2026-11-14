@@ -91,8 +91,11 @@ JSON, keys kept short. A three-option screen should be about 20–60 lines. A fi
 **Sizes:** `"size": 7` is a fixed length, `"size": "30%"` a share, absent means fill.
 
 **Markup** inside any text: `[green]…[/]`, `[bold]`, `[dim]`, `[on blue]`, combined as
-`[bold yellow]`. Named colours plus the tx palette names (`accent`, `warn`, …). `[[` is a
-literal `[`.
+`[bold yellow]`. `[[` is a literal `[`. Colours are the tx palette, so a mockup matches the real
+UI: `accent` (tx, selected), `on-accent` (text on an accent background), `fg` (primary text),
+`dim-fg` (secondary text, pair it with `dim`), `info`, `warn` (in transition), `green`
+(working), `red` (failed), `border` (inactive borders). The terminal's own `black`, `yellow`,
+`blue`, `magenta`, `cyan`, `white` and `gray` work too.
 
 Keep mockups mostly text art. Two to four options per screen. Scale fidelity to the question:
 boxes and labels for layout, colour and animation only when that is what you are asking about.

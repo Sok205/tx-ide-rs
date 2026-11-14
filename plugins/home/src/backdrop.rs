@@ -8,6 +8,7 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::MouseEvent;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use tx_client::palette::palette;
 
 pub trait Backdrop {
     fn frames_per_second(&self) -> u64;
@@ -92,28 +93,6 @@ pub fn layout(area: Rect, logo_size: (u16, u16)) -> (Option<Rect>, Rect) {
         area.height - logo_height - 1,
     );
     (Some(logo), content)
-}
-
-/// `color`, or its 256-colour palette entry when `TX_HOME_COLORS=256`.
-pub fn palette(color: Color) -> Color {
-    static INDEXED: OnceLock<bool> = OnceLock::new();
-    let indexed_palette =
-        INDEXED.get_or_init(|| std::env::var("TX_HOME_COLORS").is_ok_and(|value| value == "256"));
-    if *indexed_palette {
-        indexed(color)
-    } else {
-        color
-    }
-}
-
-/// The nearest entry of the 6x6x6 colour cube.
-fn indexed(color: Color) -> Color {
-    let Color::Rgb(red, green, blue) = color else {
-        return color;
-    };
-    let level = |channel: u8| (u16::from(channel) * 5 + 127) / 255;
-    let index = 16 + 36 * level(red) + 6 * level(green) + level(blue);
-    Color::Indexed(u8::try_from(index).expect("cube indices are at most 231"))
 }
 
 /// Scales the channels of an `Rgb` colour; other colours pass through.
@@ -365,13 +344,5 @@ mod tests {
         let area = Rect::new(0, 0, 3, 2);
         let mut buffer = Buffer::empty(area);
         pixels.render(area, &Buffer::empty(area), BACKGROUND, CEILING, &mut buffer);
-    }
-
-    #[test]
-    fn the_256_colour_palette_maps_rgb_into_the_cube_and_leaves_others() {
-        assert_eq!(indexed(Color::Rgb(0, 0, 0)), Color::Indexed(16));
-        assert_eq!(indexed(Color::Rgb(255, 255, 255)), Color::Indexed(231));
-        assert_eq!(indexed(Color::Rgb(255, 0, 0)), Color::Indexed(196));
-        assert_eq!(indexed(Color::Red), Color::Red);
     }
 }

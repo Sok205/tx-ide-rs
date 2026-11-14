@@ -4,11 +4,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-
-const ACCENT: Color = Color::Rgb(122, 162, 247);
-const WARN: Color = Color::Rgb(224, 175, 104);
-const FG: Color = Color::Rgb(192, 202, 245);
-const INFO: Color = Color::Rgb(125, 207, 255);
+use tx_client::palette::{ACCENT, BORDER_DIM, DIM_FG, FG, GREEN, INFO, ON_ACCENT, RED, WARN};
 
 pub fn lines(text: &str) -> Vec<Line<'static>> {
     text.split('\n').map(line).collect()
@@ -95,8 +91,6 @@ fn parse_spec(spec: &str) -> Option<Style> {
 fn colour(name: &str) -> Option<Color> {
     Some(match name {
         "black" => Color::Black,
-        "red" => Color::Red,
-        "green" => Color::Green,
         "yellow" => Color::Yellow,
         "blue" => Color::Blue,
         "magenta" => Color::Magenta,
@@ -107,6 +101,11 @@ fn colour(name: &str) -> Option<Color> {
         "warn" => WARN,
         "fg" => FG,
         "info" => INFO,
+        "green" => GREEN,
+        "red" => RED,
+        "dim-fg" => DIM_FG,
+        "border" => BORDER_DIM,
+        "on-accent" => ON_ACCENT,
         _ => return None,
     })
 }
@@ -115,6 +114,7 @@ fn colour(name: &str) -> Option<Color> {
 mod tests {
     use super::lines;
     use ratatui::style::{Color, Modifier};
+    use tx_client::palette::{BORDER_DIM, DIM_FG, GREEN, ON_ACCENT, RED};
 
     #[test]
     fn plain_text_one_span() {
@@ -131,7 +131,7 @@ mod tests {
         assert_eq!(spans.len(), 3);
         assert_eq!(spans[0].content, "a");
         assert_eq!(spans[1].content, "b");
-        assert_eq!(spans[1].style.fg, Some(Color::Green));
+        assert_eq!(spans[1].style.fg, Some(GREEN));
         assert_eq!(spans[2].content, "c");
         assert_eq!(spans[2].style.fg, None);
     }
@@ -141,7 +141,7 @@ mod tests {
         let lines = lines("[bold][red]x[/][/]");
         let span = &lines[0].spans[0];
         assert_eq!(span.content, "x");
-        assert_eq!(span.style.fg, Some(Color::Red));
+        assert_eq!(span.style.fg, Some(RED));
         assert!(span.style.add_modifier.contains(Modifier::BOLD));
     }
 
@@ -158,6 +158,16 @@ mod tests {
     fn palette_accent() {
         let lines = lines("[accent]x[/]");
         assert_eq!(lines[0].spans[0].style.fg, Some(Color::Rgb(122, 162, 247)));
+    }
+
+    #[test]
+    fn palette_names_match_the_ui() {
+        let lines = lines("[dim-fg]a[/][border]b[/][on-accent on green]c[/]");
+        let spans = &lines[0].spans;
+        assert_eq!(spans[0].style.fg, Some(DIM_FG));
+        assert_eq!(spans[1].style.fg, Some(BORDER_DIM));
+        assert_eq!(spans[2].style.fg, Some(ON_ACCENT));
+        assert_eq!(spans[2].style.bg, Some(GREEN));
     }
 
     #[test]
@@ -179,7 +189,7 @@ mod tests {
         let lines = lines("[red]x");
         let span = &lines[0].spans[0];
         assert_eq!(span.content, "x");
-        assert_eq!(span.style.fg, Some(Color::Red));
+        assert_eq!(span.style.fg, Some(RED));
     }
 
     #[test]

@@ -11,17 +11,10 @@ use ratatui::widgets::{Block, Widget};
 use tx_client::render::reltime;
 use tx_core::LlmEngineState;
 
-use crate::backdrop::{Backdrop, is_text, layout, palette};
-use crate::model::{AgentRow, AssistantState, Context, Detail, Home, Row, View};
+use tx_client::palette::{ACCENT, DIM_FG, FG, GREEN, ON_ACCENT, RED, WARN, palette};
 
-pub const ACCENT: Color = Color::Rgb(122, 162, 247);
-pub const ON_ACCENT: Color = Color::Rgb(26, 27, 38);
-pub const INFO: Color = Color::Rgb(125, 207, 255);
-pub const WARN: Color = Color::Rgb(224, 175, 104);
-pub const FG: Color = Color::Rgb(192, 202, 245);
-pub const DIM_FG: Color = Color::Rgb(169, 177, 214);
-pub const GREEN: Color = Color::Rgb(158, 206, 106);
-pub const RED: Color = Color::Rgb(247, 118, 142);
+use crate::backdrop::{Backdrop, is_text, layout};
+use crate::model::{AgentRow, AssistantState, Context, Detail, Home, Row, View};
 
 /// The loop's redraw rate without an animating backdrop, while a starting spinner shows.
 pub const FPS: u64 = 4;

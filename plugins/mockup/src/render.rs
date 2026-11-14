@@ -4,17 +4,13 @@ use std::time::Duration;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, List, ListState, Paragraph, Row, StatefulWidget, Table, Widget};
+use tx_client::palette::{ACCENT, WARN};
 
 use crate::markup::lines;
 use crate::model::{Choice, Kind, Node, Screen, Size};
-
-/// `tx_client::render::ACCENT_ANSI`.
-pub const ACCENT: Color = Color::Rgb(122, 162, 247);
-/// `tx_client::render::WARN_ANSI`.
-pub const WARN: Color = Color::Rgb(224, 175, 104);
 
 pub const HINT: &str = "1-9 pick · ←/→ move · tab layout · enter confirm · esc back";
 pub const WAITING: &str = "continuing in terminal…";

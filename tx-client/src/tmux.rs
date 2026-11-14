@@ -17,11 +17,7 @@ const LABEL_REV_OPTION: &str = "@tx-label-rev";
 const STATUS_MILLISECONDS: &str = "5000";
 
 /// The popup palette (the picker's and prefix+a's).
-pub const ACCENT_HEX: &str = "#7aa2f7";
-pub const FG_HEX: &str = "#c0caf5";
-pub const DIM_FG_HEX: &str = "#a9b1d6";
-pub const WORKING_HEX: &str = "#9ece6a";
-pub const BG_DEEP_HEX: &str = "#15161e";
+pub use crate::palette::{ACCENT_HEX, BG_DEEP_HEX, DIM_FG_HEX, FG_HEX, WORKING_HEX};
 
 #[derive(Debug, thiserror::Error)]
 pub enum UiError {

@@ -22,8 +22,8 @@ point downwards.
   `tx-client`, and a few reuse a sibling's library code: `home` and `timeline` use `tx-chat`'s
   transcript readers, `tour` uses `tx-artifacts`' store.
 - **`tx-client`** is the code the key plugins share: the socket-bound tmux helper, the views
-  store, the row renderer, the modal editor and the fzf prompt. It is also a plugin itself, `ide`,
-  which owns `tx ui install | attach | view`.
+  store, the row renderer, the modal editor, the fzf prompt and the colour palette. It is also a
+  plugin itself, `ide`, which owns `tx ui install | attach | view`.
 - **`tx-core-cli`** builds the binaries. `tx` is a thin CLI over the library that registers the
   bundled plugins; `txi` is the internal entry point.
 

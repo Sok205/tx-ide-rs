@@ -7,7 +7,8 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::MouseEvent;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
-use tx_home::backdrop::{LOGO, Pixels, palette};
+use tx_client::palette::palette;
+use tx_home::backdrop::{LOGO, Pixels};
 
 /// Seconds of simulation per fixed step.
 pub const STEP: f32 = 1.0 / 60.0;
