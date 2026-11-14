@@ -723,11 +723,32 @@ impl Performer<'_> {
                 let mut command = tx.command(&["tutor", "start", "--detach"]);
                 command.env_remove("TMUX");
                 match output(command) {
-                    Ok(out) => match tutor_view(&out) {
+                    Ok(out) => match ready_view(&out) {
                         Some(view) => self.switch(view),
                         None => self.status(out.lines().last().unwrap_or("tutor started")),
                     },
                     Err(error) => self.status(&format!("tutor: {error}")),
+                }
+            }
+            Action::Layout {
+                name,
+                agent,
+                project,
+            } => {
+                self.back(None);
+                let project = project.to_string_lossy();
+                let mut words = vec!["layout", "open", name, "--cwd", &project, "--detach"];
+                if let Some(id) = agent {
+                    words.extend(["--agent", id]);
+                }
+                let mut command = tx.command(&words);
+                command.env_remove("TMUX");
+                match output(command) {
+                    Ok(out) => match ready_view(&out) {
+                        Some(view) => self.switch(view),
+                        None => self.status(out.lines().last().unwrap_or("layout opened")),
+                    },
+                    Err(error) => self.status(&format!("layout: {error}")),
                 }
             }
         }
@@ -746,8 +767,9 @@ fn respawned_name(stdout: &str) -> Option<&str> {
     (!name.is_empty()).then_some(name)
 }
 
-/// `tutor start --detach` ends with `<view> is ready: tmux … attach -t =<view>`.
-fn tutor_view(stdout: &str) -> Option<&str> {
+/// `tutor start --detach` and `layout open --detach` end with
+/// `<view> is ready: tmux … attach -t =<view>`.
+fn ready_view(stdout: &str) -> Option<&str> {
     stdout
         .lines()
         .find_map(|line| line.split_once(" is ready: ").map(|(view, _)| view.trim()))
@@ -759,11 +781,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tutor_view_is_read_from_the_ready_line() {
+    fn the_view_is_read_from_the_ready_line() {
         let out = "Scaffolded /h/tx-tutor/rust\ntutor-rust view created.\n\
                    tutor-rust is ready: tmux -S '/s/tmux.sock' attach -t =tutor-rust\n";
-        assert_eq!(tutor_view(out), Some("tutor-rust"));
-        assert_eq!(tutor_view("tutor-rust view created.\n"), None);
+        assert_eq!(ready_view(out), Some("tutor-rust"));
+        assert_eq!(ready_view("tutor-rust view created.\n"), None);
     }
 
     #[test]
