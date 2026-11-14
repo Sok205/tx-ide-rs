@@ -34,8 +34,8 @@ same core as the `tx` that launched it.
 `agent:` block, and which plugins are on, with their settings, in `plugins:`), `roles/` (your own
 roles, never pruned, overriding a shipped role of the same name), `definitions/` (your own
 `agents/` and `skills/`, each overriding a shipped one of the same name) and `layouts/` (one `<name>.yaml` per
-saved pane layout, opened by `tx layout open <name>`; `tx layout path <name>` prints the file).
-tx never creates `layouts/`: your editor writes the first file.
+saved pane layout, opened by `tx layout open <name>`; `tx layout path <name>` prints the file,
+and `tx layout save <name>` writes one from a view).
 
 **data** holds everything durable tx writes:
 

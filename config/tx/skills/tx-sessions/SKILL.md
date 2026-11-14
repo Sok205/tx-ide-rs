@@ -97,7 +97,9 @@ tx layout open pair --cwd <project> --agent <agent> --tag <scope>   # around an 
   message names the file or definition: report it, don't retry with other flags.
 
 Each layout is `<config>/layouts/<name>.yaml` (name `[A-Za-z0-9_.-]+`). `tx layout path <name>`
-prints the file, existing or not; edit it there to make or change one:
+prints the file, existing or not; edit it there to make or change one. To keep a view the
+operator arranged by hand, `tx layout save <name> --view <view>` writes it (without `--view`,
+the view you run in); it refuses an existing file unless `--force`, so ask before overwriting:
 
 ```yaml
 panes:
@@ -122,6 +124,8 @@ A pane holds one of `agent: <definition>` (a new agent, as `tx create --agent`),
 Commands and shells start in the worktree of the first agent the view shows, else in `--cwd`.
 An `agent:` pane's model and effort follow the same chain as `tx create`: the pane's own key,
 else the operator's `agent.model` / `agent.effort` in `config.yaml`, else the engine's default.
+`save` writes `agent: <definition>` for every nested agent (never `attach:`), the program name
+for a command, `{}` for a shell, and no model or effort: add those by hand.
 
 ## Talking to it and ending it
 
