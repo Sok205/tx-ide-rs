@@ -87,6 +87,8 @@ tx layout open pair --cwd <project> --agent <agent> --tag <scope>   # around an 
 
 - `--cwd` is the project the operator means — "here" is the cwd of the pane they are looking at
   (the focus envelope's `pane-path`), not yours.
+- Always pass `--tag`. With no scope named, take the tags of the agent or view in focus (`tx ls`,
+  `tx ui view ls`); if it has none, or only `agent`, use the project directory's name.
 - `--agent` puts an existing agent in the layout's first `agent:` pane instead of a new one (a
   shell if it has ended). Without `--tag`, the layout then takes that agent's tags; with
   neither, the tag is `agent`.
