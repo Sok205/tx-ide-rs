@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use tx_core::EngineKind;
 
 /// One pane of a layout, in file order.
@@ -61,7 +61,7 @@ pub struct AgentPane {
     pub name: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Split {
     Right,

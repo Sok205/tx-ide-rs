@@ -1,7 +1,8 @@
 //! tx-core plugin `layouts`: saved pane layouts, `tx layout`. A layout is one YAML file,
 //! `<config>/layouts/<name>.yaml` (its format is in [`pane`]), read only when the verb runs.
-//! `ls` lists the names, `path` prints a layout's file (it need not exist yet), and `open`
-//! builds the layout's agents, commands and shells as one view ([`open`]).
+//! `ls` lists the names, `path` prints a layout's file (it need not exist yet), `open`
+//! builds the layout's agents, commands and shells as one view ([`open`]), and `save` writes a
+//! view's window as a layout ([`save`]).
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -11,14 +12,14 @@ use tx_core::{Plugin, PluginError, Registry, TxCore, Verb, VerbError, VerbIo};
 
 pub mod open;
 pub mod pane;
+pub mod save;
 
 pub const PLUGIN_ID: &str = "layouts";
 /// Under the config directory: one `<name>.yaml` per layout.
 pub const LAYOUTS_DIR: &str = "layouts";
 const EXTENSION: &str = "yaml";
 
-const USAGE: &str =
-    "usage: tx layout ls | open NAME [--cwd DIR] [--agent A] [--tag T]… [--detach] | path NAME";
+const USAGE: &str = "usage: tx layout ls | open NAME [--cwd DIR] [--agent A] [--tag T]… [--detach] | save NAME [--view V] [--force] | path NAME";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LayoutsPlugin;
@@ -48,6 +49,14 @@ enum Action {
     Ls,
     Open(OpenArgs),
     Path(String),
+    Save(SaveArgs),
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SaveArgs {
+    name: String,
+    view: Option<String>,
+    force: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -81,6 +90,22 @@ fn parse_args(argv: &[String]) -> Option<Action> {
             }
             args.name = name?;
             Some(Action::Open(args))
+        }
+        ("save", _) => {
+            let mut args = SaveArgs::default();
+            let mut name = None;
+            let mut rest = rest.iter();
+            while let Some(word) = rest.next() {
+                match word.as_str() {
+                    "--view" => args.view = Some(rest.next()?.clone()),
+                    "--force" => args.force = true,
+                    flag if flag.starts_with("--") => return None,
+                    _ if name.is_none() => name = Some(word.clone()),
+                    _ => return None,
+                }
+            }
+            args.name = name?;
+            Some(Action::Save(args))
         }
         _ => None,
     }
@@ -133,7 +158,7 @@ impl Verb for LayoutVerb {
     }
 
     fn usage(&self) -> &'static str {
-        "layout ls | open NAME [--cwd DIR] [--agent A] [--tag T]… [--detach] | path NAME   open a saved pane layout as a view"
+        "layout ls | open NAME [--cwd DIR] [--agent A] [--tag T]… [--detach] | save NAME [--view V] [--force] | path NAME   open a saved pane layout as a view, or save a view as one"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -153,6 +178,18 @@ impl Verb for LayoutVerb {
                 let path = layout_path(&directory, &name)?;
                 writeln!(io.stdout, "{}", path.display()).map_err(failed)?;
                 Ok(0)
+            }
+            Action::Save(args) => {
+                let path = layout_path(&directory, &args.name)?;
+                save::save(
+                    core,
+                    io,
+                    &save::SaveRequest {
+                        view: args.view.as_deref(),
+                        path: &path,
+                        force: args.force,
+                    },
+                )
             }
             Action::Open(args) => {
                 let path = layout_path(&directory, &args.name)?;
@@ -222,6 +259,21 @@ mod tests {
             }))
         );
         assert_eq!(
+            parse_args(&argv(&["save", "mine", "--view", "sh1", "--force"])),
+            Some(Action::Save(SaveArgs {
+                name: "mine".to_owned(),
+                view: Some("sh1".to_owned()),
+                force: true,
+            }))
+        );
+        assert_eq!(
+            parse_args(&argv(&["save", "mine"])),
+            Some(Action::Save(SaveArgs {
+                name: "mine".to_owned(),
+                ..SaveArgs::default()
+            }))
+        );
+        assert_eq!(
             parse_args(&argv(&["open", "--tag", "t", "pair"])),
             Some(Action::Open(OpenArgs {
                 name: "pair".to_owned(),
@@ -232,7 +284,10 @@ mod tests {
         for bad in [
             &[][..],
             &["fly"],
-            &["save", "mine"],
+            &["save"],
+            &["save", "a", "b"],
+            &["save", "a", "--view"],
+            &["save", "a", "--cwd", "x"],
             &["ls", "x"],
             &["path"],
             &["path", "a", "b"],
