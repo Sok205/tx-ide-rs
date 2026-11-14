@@ -1,6 +1,6 @@
 ---
 name: tx-sessions
-description: Use when about to start or delegate to a tx agent — a worker agent, an nvim view, or an ad-hoc shell view. Conventions for tags, naming, and the worker recipe; flag syntax is in `tx help`.
+description: Use when about to start or delegate to a tx agent — a worker agent, an nvim view, an ad-hoc shell view, or a saved layout (`tx layout`). Conventions for tags, naming, and the worker recipe; flag syntax is in `tx help`.
 ---
 
 # tx agent and view conventions
