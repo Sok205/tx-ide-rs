@@ -21,3 +21,12 @@ serde_norway = "0.9"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# Lean debug builds: every agent worktree has its own target/, so the full debuginfo of the
+# default dev profile (several GB per worktree) adds up. Workspace crates keep file:line for
+# backtraces; dependencies carry no debuginfo.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
