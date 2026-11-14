@@ -1783,6 +1783,7 @@ name = "tx-client"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "ratatui-core",
  "serde",
  "serde_json",
  "tempfile",
@@ -1889,6 +1890,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "tempfile",
+ "tx-client",
  "tx-core",
  "tx-home",
 ]

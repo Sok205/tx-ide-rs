@@ -7,6 +7,7 @@
 
 pub mod editor;
 pub mod install;
+pub mod palette;
 pub mod prompt;
 pub mod render;
 pub mod tmux;
