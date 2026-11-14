@@ -101,6 +101,12 @@ diagnostics and a quickfix list. No key.
 markers; `timeline health` prints, per agent record, what the timeline can read for it; prefix+T opens a resident timeline view in a popup
 (q detaches, it stays warm).
 
+**`graph`**: `graph` draws the agents as a graph: columns by lineage depth, dashed edges for
+lineage, and solid edges for the messages agents (and you, the node "you") sent each other in the
+window (`--last`, default 1h), brighter the busier, with the count on the edge. Running agents,
+agents active in the window and the ancestors that connect them are shown; `--tag` and `--group`
+narrow it, and `g` cycles the group. `--snapshot` prints one frame as text. No key yet.
+
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).
 

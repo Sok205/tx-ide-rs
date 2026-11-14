@@ -3,7 +3,8 @@
 //! - Nodes: every running agent, each ended agent active inside the window, and each ancestor
 //!   needed to connect them (drawn dim). The operator is a node ("you") when they sent a message
 //!   inside the window. `--tag` and `--group` narrow every one of these.
-//! - Depth is lineage depth among the shown nodes: a node whose parent is not shown is a root.
+//! - Depth is lineage depth among the shown nodes: a node whose parent is not shown is a root
+//!   (in column 1 when the parent record is gone, so the column-0 slot holds its stub).
 //! - Edges join a parent to its child (lineage) and any two nodes that exchanged messages inside
 //!   the window. One edge per pair: it runs from the left node to the right one, and counts the
 //!   messages each way.
@@ -450,12 +451,13 @@ pub fn build(
     }
     for index in 0..nodes.len() {
         let mut depth = 0;
-        let mut ancestor = nodes[index].parent;
-        while let Some(parent) = ancestor.filter(|_| depth < nodes.len()) {
+        let mut root = index;
+        while let Some(parent) = nodes[root].parent.filter(|_| depth < nodes.len()) {
             depth += 1;
-            ancestor = nodes[parent].parent;
+            root = parent;
         }
-        nodes[index].depth = depth;
+        // A lost parent still holds column 0: the "parent ended" stub is drawn there.
+        nodes[index].depth = depth + usize::from(nodes[root].parent_lost);
     }
 
     let node_of = |id: Option<&AgentId>| match id {

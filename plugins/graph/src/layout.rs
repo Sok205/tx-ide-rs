@@ -23,7 +23,7 @@ pub const MARGIN: u16 = 2;
 const FULL_COLUMNS: u16 = 3;
 const NARROWEST_BOX: u16 = 8;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Placement {
     /// One per node, in canvas coordinates: x from the canvas's left, y from its top (before
     /// scrolling).

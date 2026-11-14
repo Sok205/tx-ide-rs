@@ -1,0 +1,30 @@
+ tx-ide  graph  persistent-views   5 agents · ● 2 working · ━ 18 messages / 1h
+
+  depth 0                                                 1                                                       2
+  ╭ ◇ you ───────────────╮⣀⣀
+  │ operator · 1 sent    │⠉⠙⠛⠶⣄
+  │                      │    ⠘⣇
+  ╰──────────────────────╯     1
+                              ⢀⡏
+  ┏ ○ pv-orchestrator ━━━┓ ⢀⣀⣴⠞                           ┏ ● pv-pr4 ━━━━━━━━━━━━┓                                ┏ ◐ qa-pr4 ━━━━━━━━━━━━┓
+  ┃ idle · 12s           ┃◀⠛⠛⠒⠲⢶⣶⢖⣒⠒⠒⠒⠒⠒ 12 ⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠂▶┃ working · 3m         ┃⠐⠒⠲⢄⡀⠒⠒⠂ ⠒⠒⠂⠐⠒ ⠒⠂⠐⠒⠂⠐⠒⠂ ⠐⠒⠒  ⠐⠒▷┃ starting · 20s       ┃
+  ┃                      ┃       ⠁ ⢍⠒⠤⣀                   ┃ ctx 75K              ┃    ⠑⡄                          ┃                      ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━┛          ⠑  ⠑ 3                ┗━━━━━━━━━━━━━━━━━━━━━━┛     2                          ┗━━━━━━━━━━━━━━━━━━━━━━┛
+                                      ⠢⡀ ⠈⠑⠤⡀                                          ⡸
+                                       ⠈    ⠈⠒⠢⢄⡀         ┏ ● pv-pr5 ━━━━━━━━━━━━┓    ⡴⠃
+                                        ⠈⢆      ⠈⠉⠉⠒⠒⠒⠒⠒⠂▶┃ working · 41s        ┃⠐⠒⠒⠉
+                                          ⠁               ┃                      ┃
+                                           ⠈⢆             ┗━━━━━━━━━━━━━━━━━━━━━━┛
+                                              ⢀
+                                               ⠑⠂         ┏ ○ pv-pr6 ━━━━━━━━━━━━┓
+                                                  ⠉⠑⠒  ⠤⠄▷┃ idle · 8s            ┃
+                                                          ┃ ctx ━━━━━━━━━━━━━─── ┃
+                                                          ┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+  ┏┓ selected   ┏┓ working   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
+  you  sent 1
+  tab/hjkl select · g group: persistent-views · q quit

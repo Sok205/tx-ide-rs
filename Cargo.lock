@@ -1824,6 +1824,7 @@ dependencies = [
  "tx-edit",
  "tx-engine-claude",
  "tx-engine-codex",
+ "tx-graph",
  "tx-home",
  "tx-home-themes",
  "tx-kill",
