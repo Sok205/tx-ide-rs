@@ -3,8 +3,8 @@
 //! stay, so `tx respawn` still works and the agent just rebuilds.
 //!
 //! The paths come from the user's config, which already refuses absolute paths, `..` and `.git`.
-//! Here each one is checked again on disk: it must still lead inside the worktree once symlinks
-//! are followed, and git must track nothing under it.
+//! Here each one is checked again on disk: no symlink is ever followed (a path that is one, or
+//! lies under one, is left alone), and git must track nothing under it.
 
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
@@ -38,6 +38,15 @@ pub struct Outcome {
     /// Whether any configured path existed.
     pub found: bool,
     pub refusals: Vec<Refusal>,
+    /// The paths that could not be measured or deleted; the others still were.
+    pub failures: Vec<GcError>,
+}
+
+/// What became of one configured path.
+enum Verdict {
+    Missing,
+    Refused(&'static str),
+    Freed(u64),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -108,57 +117,69 @@ fn canonical_or_self(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
-/// Deletes each of `build_outputs` that exists in `worktree` (canonical), unless it leads out of
-/// the worktree or git tracks something under it; with `dry_run`, only measures.
-pub fn clean(
-    worktree: &Path,
-    build_outputs: &[BuildOutput],
-    dry_run: bool,
-) -> Result<Outcome, GcError> {
+/// Deletes each of `build_outputs` that exists in `worktree` (canonical), unless it is or lies
+/// under a symlink, or git tracks something under it; with `dry_run`, only measures. A path that
+/// fails is recorded and the rest go on.
+pub fn clean(worktree: &Path, build_outputs: &[BuildOutput], dry_run: bool) -> Outcome {
     let mut outcome = Outcome::default();
     let mut seen = HashSet::new();
     for output in build_outputs {
         let path = worktree.join(output.path());
-        match std::fs::symlink_metadata(&path) {
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(source) => return Err(GcError::Io { path, source }),
-        }
-        outcome.found = true;
-        let resolved = std::fs::canonicalize(&path).map_err(io_error(&path))?;
-        let inside = match resolved.strip_prefix(worktree) {
-            Ok(relative) if !relative.as_os_str().is_empty() && !relative.starts_with(".git") => {
-                relative.to_owned()
+        match clean_path(worktree, output.path(), dry_run, &mut seen) {
+            Ok(Verdict::Missing) => {}
+            Ok(Verdict::Refused(reason)) => {
+                outcome.found = true;
+                outcome.refusals.push(Refusal { path, reason });
             }
-            _ => {
-                outcome.refusals.push(Refusal {
-                    path,
-                    reason: "it leads out of the worktree",
-                });
-                continue;
+            Ok(Verdict::Freed(bytes)) => {
+                outcome.found = true;
+                outcome.bytes += bytes;
             }
-        };
-        if tracked(worktree, output.path())? || tracked(worktree, &inside)? {
-            outcome.refusals.push(Refusal {
-                path,
-                reason: "git tracks files under it",
-            });
-            continue;
-        }
-        outcome.bytes += disk_usage(&resolved, &mut seen)?;
-        if !dry_run {
-            let removed = if std::fs::symlink_metadata(&resolved)
-                .map_err(io_error(&resolved))?
-                .is_dir()
-            {
-                std::fs::remove_dir_all(&resolved)
-            } else {
-                std::fs::remove_file(&resolved)
-            };
-            removed.map_err(io_error(&resolved))?;
+            Err(error) => {
+                outcome.found = true;
+                outcome.failures.push(error);
+            }
         }
     }
-    Ok(outcome)
+    outcome
+}
+
+fn clean_path(
+    worktree: &Path,
+    relative: &Path,
+    dry_run: bool,
+    seen: &mut HashSet<(u64, u64)>,
+) -> Result<Verdict, GcError> {
+    // Walk down one name at a time without following links: the config allows plain names only,
+    // so a path free of symlinks stays inside the worktree.
+    let mut path = worktree.to_owned();
+    let mut metadata = None;
+    for component in relative.components() {
+        path.push(component);
+        match std::fs::symlink_metadata(&path) {
+            Ok(found) if found.file_type().is_symlink() => {
+                return Ok(Verdict::Refused("it is a symlink or lies under one"));
+            }
+            Ok(found) => metadata = Some(found),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Verdict::Missing);
+            }
+            Err(source) => return Err(GcError::Io { path, source }),
+        }
+    }
+    if tracked(worktree, relative)? {
+        return Ok(Verdict::Refused("git tracks files under it"));
+    }
+    let bytes = disk_usage(&path, seen)?;
+    if !dry_run {
+        let removed = if metadata.is_some_and(|found| found.is_dir()) {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        removed.map_err(io_error(&path))?;
+    }
+    Ok(Verdict::Freed(bytes))
 }
 
 /// Whether git tracks `relative` or anything under it in `worktree`.

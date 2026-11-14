@@ -51,8 +51,9 @@ built-in `tx` verb:
   `worktree.build_outputs` (default `[target]`) in the worktrees of agents ended longer ago than
   the threshold, and prints the size freed per worktree and in total. The end time is the
   record's `last_modified_at`, which is never earlier than the end. A worktree a running agent
-  uses, or one outside `<data>/worktrees`, is skipped. A configured path that leads out of the
-  worktree through a symlink, or under which git tracks a file, is left alone with a warning.
+  uses, or one outside `<data>/worktrees`, is skipped. A configured path that is a symlink or
+  lies under one (never followed), or under which git tracks a file, is left alone with a
+  warning. A path that cannot be deleted is warned about and the rest go on; `gc` then exits 1.
   The worktree, branch, record and conversation stay, so a respawn works and rebuilds.
 
 There is no archive: an ended agent is finished, `tx ls --ended` lists it, and a respawn brings

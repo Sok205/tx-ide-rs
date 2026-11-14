@@ -151,18 +151,72 @@ fn a_path_git_tracks_is_left_alone() {
 }
 
 #[test]
-fn a_symlink_out_of_the_worktree_is_left_alone() {
+fn a_symlink_is_never_followed() {
     require_tmux!();
     let cli = Cli::new();
     let (_, worktree) = ended_agent(&cli, "linked", TWO_DAYS);
+    // `target` leads out of the worktree; `web/dist` lies under a link to a directory inside it.
     let outside = cli.dir.path().join("outside");
     let precious = build_output(&outside);
     std::os::unix::fs::symlink(outside.join("target"), worktree.join("target")).unwrap();
+    let inside = worktree.join("assets/dist/bundle.js");
+    std::fs::create_dir_all(inside.parent().unwrap()).unwrap();
+    std::fs::write(&inside, "bundle").unwrap();
+    std::os::unix::fs::symlink(worktree.join("assets"), worktree.join("web")).unwrap();
+    cli.write_yaml("worktree:\n  build_outputs: [target, web/dist]\n");
 
-    let stderr = String::from_utf8_lossy(&cli.run(&["gc"], &[], "").stderr).into_owned();
+    let output = cli.run(&["gc"], &[], "");
 
+    assert!(output.status.success());
     assert!(precious.exists());
-    assert!(stderr.contains("leads out of the worktree"), "{stderr}");
+    assert!(inside.exists());
+    assert!(worktree.join("target").is_symlink());
+    assert!(worktree.join("web").is_symlink());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for path in ["target", "web/dist"] {
+        assert!(
+            stderr.contains(&format!(
+                "left {}: it is a symlink or lies under one",
+                worktree.join(path).display()
+            )),
+            "{path}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_worktree_that_fails_does_not_stop_the_others() {
+    require_tmux!();
+    let cli = Cli::new();
+    let (_, stuck) = ended_agent(&cli, "stuck", TWO_DAYS);
+    let (_, fine) = ended_agent(&cli, "fine", TWO_DAYS);
+    let stuck_file = build_output(&stuck);
+    let fine_file = build_output(&fine);
+    let locked = stuck.join("target/debug");
+    std::fs::set_permissions(&locked, std::os::unix::fs::PermissionsExt::from_mode(0o555)).unwrap();
+
+    let output = cli.run(&["gc"], &[], "");
+    std::fs::set_permissions(&locked, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stuck_file.exists());
+    assert!(!fine_file.exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("tx: gc: {}", stuck.join("target").display())),
+        "{stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let fine_line = stdout
+        .lines()
+        .find(|line| line.contains("\tfine\t"))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    let fine_size = fine_line.split('\t').next().unwrap();
+    assert!(fine_size.ends_with("KB"), "{stdout}");
+    assert!(
+        stdout.lines().last().unwrap().ends_with("\ttotal"),
+        "{stdout}"
+    );
 }
 
 #[test]

@@ -363,9 +363,13 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 .worktree
                 .build_outputs;
             let mut total = 0;
+            let mut failed = false;
             for worktree in tx_core_cli::gc::ended_worktrees(&core, older_than)? {
-                let outcome = tx_core_cli::gc::clean(&worktree.directory, &build_outputs, dry_run)
-                    .map_err(Failure::Gc)?;
+                let outcome = tx_core_cli::gc::clean(&worktree.directory, &build_outputs, dry_run);
+                for failure in &outcome.failures {
+                    eprintln!("tx: gc: {failure}");
+                }
+                failed |= !outcome.failures.is_empty();
                 for refusal in &outcome.refusals {
                     eprintln!(
                         "tx: gc: left {}: {}",
@@ -387,6 +391,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
             let label = if dry_run { "total, dry run" } else { "total" };
             writeln!(out, "{}\t{label}", tx_core_cli::gc::human_size(total)).ok();
+            if failed {
+                return Ok(ExitCode::from(1));
+            }
         }
     }
     Ok(ExitCode::SUCCESS)

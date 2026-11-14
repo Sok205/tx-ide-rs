@@ -318,8 +318,9 @@ or a fork launches the same way.
 than the threshold and prints the size freed per worktree and in total. The worktree, its branch,
 the record and the conversation stay, so `tx respawn` works and the agent just rebuilds. A Node
 project would add `node_modules` and `dist`. An absolute path, `..`, `.` or `.git` is a usage
-error; a path that leads out of the worktree through a symlink, or under which git tracks a file,
-is left alone with a warning.
+error. A path that is a symlink or lies under one (tx never follows a link), or under which git
+tracks a file, is left alone with a warning. A path that cannot be deleted is a warning too: the
+rest go on, the total is printed, and `gc` exits 1.
 An unknown key, a bad value or malformed YAML stops `tx` with a usage error naming the file. The
 directories, the socket, the roles and skills directories and `--env` stay flags and environment
 variables (see "Where files live" above); they are not in this file.
