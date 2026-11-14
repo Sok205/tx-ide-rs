@@ -1814,6 +1814,7 @@ dependencies = [
  "serde_norway",
  "shlex",
  "tempfile",
+ "thiserror 2.0.21",
  "tx-artifacts",
  "tx-assistant",
  "tx-chat",

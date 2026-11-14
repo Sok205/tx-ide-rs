@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use tx_core::{CoreError, EngineKind};
 
@@ -57,6 +58,12 @@ verbs:
   interrupt TARGET                                                  abort the agent's running turn
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
+  gc [--older-than DURATION] [--dry-run]                            delete the build output (`worktree.build_outputs`)
+                                                                    in the worktrees of agents ended longer ago than
+                                                                    DURATION (default 1d; 30m, 2h, 90s, 1.5d, bare
+                                                                    minutes); size freed per worktree, then the total.
+                                                                    Worktree, branch, record and conversation stay, so
+                                                                    respawn works. --dry-run: the same, nothing deleted
   engines                                                           the engines whose plugin is enabled (claude, codex)
   definitions [agents|skills|mcp|tools]                             name and description of each definition, every kind
                                                                     or one; yours (<config>/definitions) win by name over
@@ -87,6 +94,8 @@ The config file is <config>/config.yaml (--config FILE overrides); every key is 
     definition: developer       the agent definition without --agent (null: roles alone)
     model: claude-opus-5-5      null: the engine's own default
     effort: 3                   1-5 (or the engine's own word); null: the engine's own default
+  worktree:
+    build_outputs: [target]     paths in a worktree `gc` may delete; relative, no `..`, not tracked by git
   plugins:                      one entry per plugin id (see `plugins`)
     <id>: { enabled: true, settings: {...} }
 ";
@@ -183,6 +192,12 @@ pub enum Verb {
     },
     Respawn {
         target: String,
+    },
+    /// Delete the configured build output in the worktrees of agents ended longer ago than
+    /// `older_than`.
+    Gc {
+        older_than: Duration,
+        dry_run: bool,
     },
     Engines,
     Plugins,
@@ -446,6 +461,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("respawn") => Verb::Respawn {
             target: target(&mut cursor, "respawn")?,
         },
+        Some("gc") => parse_gc(&mut cursor)?,
         Some("check") => {
             let engine = match cursor.peek() {
                 Some("--engine") => {
@@ -606,6 +622,33 @@ fn parse_ls(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         tag,
         ended,
         json,
+    })
+}
+
+/// `gc` without `--older-than`: agents ended more than a day ago.
+pub const GC_OLDER_THAN: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn parse_gc(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
+    let mut older_than = GC_OLDER_THAN;
+    let mut dry_run = false;
+    while let Some(flag) = cursor.next() {
+        match flag {
+            "--older-than" => {
+                let raw = cursor.value(flag)?;
+                let minutes = tx_timeline::verbs::parse_duration_minutes(raw).ok_or_else(|| {
+                    usage(format!(
+                        "--older-than takes a duration such as 30m, 2h or 1d, got {raw:?}"
+                    ))
+                })?;
+                older_than = Duration::from_secs_f64(minutes * 60.0);
+            }
+            "--dry-run" => dry_run = true,
+            other => return Err(usage(format!("gc: unexpected argument {other:?}"))),
+        }
+    }
+    Ok(Verb::Gc {
+        older_than,
+        dry_run,
     })
 }
 
@@ -1024,6 +1067,28 @@ mod tests {
             parse_str("respawn x").unwrap().verb,
             Verb::Respawn { target: "x".into() }
         );
+        assert_eq!(
+            parse_str("gc").unwrap().verb,
+            Verb::Gc {
+                older_than: GC_OLDER_THAN,
+                dry_run: false
+            }
+        );
+        assert_eq!(
+            parse_str("gc --older-than 2h --dry-run").unwrap().verb,
+            Verb::Gc {
+                older_than: Duration::from_secs(2 * 60 * 60),
+                dry_run: true
+            }
+        );
+        for bad in [
+            "gc --older-than",
+            "gc --older-than soon",
+            "gc --older-than 0",
+            "gc x",
+        ] {
+            assert!(parse_str(bad).is_err(), "{bad}");
+        }
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
         assert_eq!(
             parse_str("check pm linear").unwrap().verb,

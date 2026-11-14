@@ -33,6 +33,8 @@ pub enum Failure {
     Environment(String),
     /// A definition file that cannot be read where a listing needs it.
     Definition(tx_core::definitions::DefinitionError),
+    /// `gc` could not measure or delete a build output.
+    Gc(crate::gc::GcError),
 }
 
 impl From<CoreError> for Failure {
@@ -50,6 +52,7 @@ impl std::fmt::Display for Failure {
             Failure::Verb(error) => error.fmt(f),
             Failure::Environment(text) => f.write_str(text),
             Failure::Definition(error) => error.fmt(f),
+            Failure::Gc(error) => error.fmt(f),
         }
     }
 }
