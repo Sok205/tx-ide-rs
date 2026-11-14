@@ -201,3 +201,56 @@ fn a_wide_fan_shares_a_bus_and_keeps_each_badge_on_its_row() {
         }
     }
 }
+
+#[test]
+fn the_header_counts_in_the_singular_and_wears_the_brand() {
+    use tx_core::Agent;
+    use tx_graph::model::Message;
+    let now = 1_000_000.0;
+    let id = "00000001-0000-4000-8000-000000000000";
+    let agent = Agent::from_json(&format!(
+        r#"{{"version":2,"id":"{id}","name":"solo","engine":"claude","working_directory":"/tmp","roles":[],"state":"working","created_at":{},"last_modified_at":{now},"tags":[],"parent_id":null}}"#,
+        now - 100.0
+    ))
+    .unwrap();
+    let mut app = App::new(
+        Source {
+            agents: vec![agent],
+            messages: vec![Message {
+                at: now - 10.0,
+                from: None,
+                to: id.parse().unwrap(),
+            }],
+            ..Source::default()
+        },
+        Filter::default(),
+        now,
+        HOUR,
+    );
+    app.brand = "tx-qa".to_owned();
+    let text = run::snapshot(&mut app, 120, 20);
+    let header = text.lines().next().unwrap();
+    assert!(header.starts_with(" tx-qa  graph"), "{header}");
+    assert!(header.contains(" 1 agent · "), "{header}");
+    assert!(header.contains(" 1 message / 1h"), "{header}");
+}
+
+#[test]
+fn j_and_k_past_a_columns_end_stay_in_the_column() {
+    let mut app = app(Filter::default());
+    run::snapshot(&mut app, 140, 20);
+    app.selected = world::index(&app.graph, "pv-pr6");
+    press(&mut app, "j");
+    for _ in 0..10 {
+        press(&mut app, "j");
+        assert_eq!(app.graph.nodes[app.selected].name, "pv-pr6");
+    }
+    let rect = app.placement.boxes[app.selected];
+    assert!(rect.y >= app.scroll && rect.bottom() <= app.scroll + app.canvas.height);
+    app.selected = world::index(&app.graph, "you");
+    for _ in 0..10 {
+        press(&mut app, "k");
+        assert_eq!(app.graph.nodes[app.selected].name, "you");
+    }
+    assert_eq!(app.scroll, 0);
+}

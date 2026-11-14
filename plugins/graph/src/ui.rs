@@ -115,6 +115,15 @@ fn cut(text: &str, width: usize) -> String {
     kept
 }
 
+/// `1 message`, `3 messages`.
+fn counted(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
 /// `4s`, `12m`, `3h`, `2d`.
 pub fn age(seconds: f64) -> String {
     let seconds = seconds.max(0.0);
@@ -298,10 +307,10 @@ fn header_line(app: &App) -> Paragraph<'static> {
         (Some(group), Some(tag)) => format!("{group} · tag {tag}"),
     };
     let mut spans = vec![
-        Span::styled(" tx-ide", bold(ACCENT)),
+        Span::styled(format!(" {}", app.brand), bold(ACCENT)),
         Span::styled("  graph  ", dim()),
         Span::styled(scope, bold(FG)),
-        Span::styled(format!("   {agents} agents · "), dim()),
+        Span::styled(format!("   {} · ", counted(agents, "agent")), dim()),
         Span::styled("●", colour(GREEN)),
         Span::styled(format!(" {} working · ", count(NodeState::Working)), dim()),
     ];
@@ -313,8 +322,8 @@ fn header_line(app: &App) -> Paragraph<'static> {
     spans.push(Span::styled("━", colour(INFO)));
     spans.push(Span::styled(
         format!(
-            " {} messages / {}",
-            graph.traffic.len(),
+            " {} / {}",
+            counted(graph.traffic.len(), "message"),
             window_label(graph.window)
         ),
         dim(),

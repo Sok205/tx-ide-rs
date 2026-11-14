@@ -11,6 +11,8 @@ use crate::layout::{self, Placement};
 use crate::model::{self, Context, Filter, Graph, Message, NodeState};
 
 const WHEEL_ROWS: u16 = 3;
+/// The header's brand when `TX_APPNAME` is not set, as `tx` itself defaults.
+pub const DEFAULT_BRAND: &str = "tx-ide";
 /// Seconds a pulse takes to cross its edge.
 pub const PULSE_TRAVEL: f64 = 1.1;
 /// Seconds between two pulses that start in the same refresh on the same pair.
@@ -111,6 +113,8 @@ pub struct App {
     pub request: Option<Request>,
     /// One line for the operator, shown until the next key.
     pub notice: Option<String>,
+    /// The application's name, at the start of the header.
+    pub brand: String,
     pub quit: bool,
 }
 
@@ -132,6 +136,7 @@ impl App {
             mode: Mode::Browse,
             request: None,
             notice: None,
+            brand: DEFAULT_BRAND.to_owned(),
             quit: false,
         }
     }
@@ -378,8 +383,16 @@ impl App {
         let next = candidates.min_by_key(|(_, rect)| rect.y.abs_diff(current.y));
         match next {
             Some((index, _)) => self.select(index),
-            // Past the column's last box the canvas still scrolls.
-            None => self.scroll_by(step * i32::from(current.height + layout::ROW_GAP)),
+            // Past the column's last box the canvas still scrolls, but only while the
+            // selected box stays in view: j and k never leave the column.
+            None => {
+                let rows = step * i32::from(current.height + layout::ROW_GAP);
+                let most = self.placement.height.saturating_sub(self.canvas.height);
+                let lowest = current.bottom().saturating_sub(self.canvas.height);
+                let highest = current.y.min(most);
+                let wanted = (i32::from(self.scroll) + rows).clamp(0, i32::from(most)) as u16;
+                self.scroll = wanted.clamp(lowest.min(highest), highest);
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 //! `tx graph`: the agent graph in the terminal, or one frame of it as text (`--snapshot`);
 //! `_graph-resident`, the graph a popup attaches to; `_graph-attach`, the popup's command, which
-//! starts or attaches the resident; `_graph-open <client>` (prefix+g), which opens that popup on
+//! starts or attaches the resident; `_graph-open <pane> <client>` (prefix+g), which opens that popup on
 //! the client and, once it closed, carries out what the resident left behind.
 
 use std::fs::OpenOptions;
@@ -81,8 +81,13 @@ pub fn parse_options(argv: &[String]) -> Result<Options, String> {
         rows: DEFAULT_SNAPSHOT_ROWS,
         now: None,
     };
+    // The first flag that only means something with --snapshot.
+    let mut snapshot_flag: Option<&str> = None;
     let mut argv = argv.iter();
     while let Some(flag) = argv.next() {
+        if ["--cols", "--rows", "--now"].contains(&flag.as_str()) {
+            snapshot_flag = snapshot_flag.or(Some(flag));
+        }
         if flag == "--snapshot" {
             options.snapshot = true;
             continue;
@@ -120,8 +125,8 @@ pub fn parse_options(argv: &[String]) -> Result<Options, String> {
             }
         }
     }
-    if !options.snapshot && options.now.is_some() {
-        return Err("--now needs --snapshot".to_owned());
+    if let Some(flag) = snapshot_flag.filter(|_| !options.snapshot) {
+        return Err(format!("{flag} needs --snapshot"));
     }
     Ok(options)
 }
@@ -159,6 +164,7 @@ impl Verb for GraphVerb {
             let now = options.now.unwrap_or_else(tx_core::events::now);
             let source = run::source(core, now, options.window).map_err(failed)?;
             let mut app = App::new(source, options.filter, now, options.window);
+            app.brand = run::brand();
             let text = run::snapshot(&mut app, options.columns, options.rows);
             writeln!(io.stdout, "{text}").map_err(failed)?;
             return Ok(0);
@@ -240,8 +246,9 @@ impl Verb for GraphAttach {
     }
 }
 
-/// prefix+g: the resident in a popup on `client`; then what it asked for (Enter: focus an
-/// agent; `a`: its artifact menu), which needs the terminal the popup covered.
+/// prefix+g: the resident in a popup on `client`; then what it asked for (Enter: show an agent,
+/// nested into `pane` when the picker would nest there; `a`: its artifact menu), which needs
+/// the terminal the popup covered.
 struct GraphOpen;
 
 impl Verb for GraphOpen {
@@ -250,12 +257,12 @@ impl Verb for GraphOpen {
     }
 
     fn usage(&self) -> &'static str {
-        "_graph-open <client>   prefix+g: the resident graph in a popup, then what it asked for (internal)"
+        "_graph-open <pane> <client>   prefix+g: the resident graph in a popup, then what it asked for (internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let [client] = argv else {
-            writeln!(io.stderr, "usage: tx _graph-open <client>").map_err(failed)?;
+        let [pane, client] = argv else {
+            writeln!(io.stderr, "usage: tx _graph-open <pane> <client>").map_err(failed)?;
             return Ok(2);
         };
         let ui = Ui::from_core(core);
@@ -292,7 +299,7 @@ impl Verb for GraphOpen {
             &format!("={POPUP_SESSION}:"),
             run::AFTER_OPTION,
         ]);
-        if let Err(reason) = run::perform_after(&ui, &tx, client, &after) {
+        if let Err(reason) = run::perform_after(&ui, &tx, client, Some(pane), &after) {
             ui.display_status(client, &format!("graph: {reason}"));
         }
         Ok(0)

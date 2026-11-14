@@ -228,24 +228,26 @@ impl LogTail {
         let end = file.metadata()?.len();
         self.offset = end;
         let mut start = end;
-        let mut buffer = Vec::new();
+        // Newest first; joined once at the end, so a long read never copies what it has.
+        let mut blocks: Vec<Vec<u8>> = Vec::new();
         while start > 0 {
             let block = LOG_BLOCK.min(start);
             start -= block;
             file.seek(SeekFrom::Start(start))?;
             let mut chunk = vec![0; block as usize];
             file.read_exact(&mut chunk)?;
-            chunk.extend_from_slice(&buffer);
-            buffer = chunk;
-            let reached = complete_lines(&buffer, start)
-                .split(|byte| *byte == b'\n')
-                .next()
-                .and_then(|line| serde_json::from_slice::<Value>(line).ok())
+            let reached = first_line(&chunk, start, blocks.last().map(Vec::as_slice))
+                .and_then(|line| serde_json::from_slice::<Value>(&line).ok())
                 .and_then(|entry| entry["ts"].as_f64())
                 .is_some_and(|ts| ts < since);
+            blocks.push(chunk);
             if reached {
                 break;
             }
+        }
+        let mut buffer = Vec::with_capacity(blocks.iter().map(Vec::len).sum());
+        for block in blocks.iter().rev() {
+            buffer.extend_from_slice(block);
         }
         Ok(complete_lines(&buffer, start)
             .split(|byte| *byte == b'\n')
@@ -266,6 +268,25 @@ impl LogTail {
             .filter_map(parse_message)
             .collect())
     }
+}
+
+/// The first whole line that starts in `chunk` (read from file offset `start`), finished from
+/// `later`, the block read just before it, when it runs past the chunk's end.
+fn first_line(chunk: &[u8], start: u64, later: Option<&[u8]>) -> Option<Vec<u8>> {
+    if start > 0 && !chunk.contains(&b'\n') {
+        // The chunk sits inside one line; no line starts in it.
+        return None;
+    }
+    let rest = complete_lines(chunk, start);
+    if let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
+        return Some(rest[..end].to_vec());
+    }
+    let later = later?;
+    let end = later
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .unwrap_or(later.len());
+    Some([rest, &later[..end]].concat())
 }
 
 /// `buffer` read from file offset `start`: without its first, partial line unless it starts the
