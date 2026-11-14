@@ -3,6 +3,7 @@
 //! geometry: [`layout`]; state and input: [`app`]; drawing: [`ui`]; the terminal: [`run`];
 //! the verb: [`verbs`].
 
+pub mod actions;
 pub mod app;
 pub mod layout;
 pub mod model;

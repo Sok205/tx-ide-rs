@@ -9,6 +9,7 @@ use tx_graph::run;
 use world::HOUR;
 
 fn app(filter: Filter) -> App {
+    world::set_utc();
     let now = world::now();
     let agents = world::agents();
     let messages = model::read_messages(&world::dir().join("log.jsonl"), now - HOUR, now).unwrap();
@@ -54,6 +55,14 @@ fn check(name: &str, text: &str) {
 fn full_boxes_at_140_columns() {
     let mut app = app(Filter::default());
     check("graph-140x40.txt", &run::snapshot(&mut app, 140, 40));
+}
+
+#[test]
+fn the_sidebar_when_there_is_room() {
+    let mut app = app(Filter::default());
+    let text = run::snapshot(&mut app, 180, 40);
+    assert!(text.contains("messages / min"), "{text}");
+    check("graph-180x40.txt", &text);
 }
 
 #[test]

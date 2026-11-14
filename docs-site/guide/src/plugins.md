@@ -106,8 +106,10 @@ lineage, and solid edges for the messages agents (and you, the node "you") sent 
 window (`--last`, default 1h), brighter the busier, with the count on the edge. Running agents,
 agents active in the window and the ancestors that connect them are shown; `--tag` and `--group`
 narrow it, and `g` cycles the group. It is live: each new message travels its edge as a pulse.
-prefix+g opens a resident graph in a popup (q detaches, it stays warm; Enter jumps to the
-selected agent). `--snapshot` prints one frame as text.
+From 130 columns a sidebar shows the selected agent. Keys act through `tx`: `s` sends a line as
+you, `f` forks, `x` stops (after `y`), `r` respawns an ended agent, `a` opens its artifacts, Enter
+jumps to its pane; `?` lists them. prefix+g opens a resident graph in a popup (q detaches, it
+stays warm). `--snapshot` prints one frame as text.
 
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).

@@ -17,4 +17,4 @@
                                                                             ┗━━━━━━━━━━━━━━━━━━━━━━┛
   ┏┓ selected   ┏┓ working   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
   qa-pr4  engine claude · definition qa · group persistent-views · parent pv-pr4 · children 0 · messages 0
-  tab/hjkl select · enter jump · g group: all · q quit
+  enter jump · s send · f fork · a artifacts · x stop · g group: all · ? keys

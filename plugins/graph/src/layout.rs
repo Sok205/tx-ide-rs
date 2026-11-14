@@ -21,7 +21,7 @@ pub const ROW_GAP: u16 = 1;
 pub const MARGIN: u16 = 2;
 /// Full boxes need room for this many columns; below it every box is compact.
 const FULL_COLUMNS: u16 = 3;
-const NARROWEST_BOX: u16 = 8;
+const NARROWEST_BOX: u16 = 12;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Placement {
@@ -37,8 +37,13 @@ pub struct Placement {
 
 /// Whether `width` is too narrow for full boxes.
 pub fn is_compact(width: u16, columns: usize) -> bool {
-    let columns = (columns as u16).clamp(1, FULL_COLUMNS);
-    width < columns * BOX_WIDTH + (columns - 1) * COLUMN_GAP + 2 * MARGIN
+    width < full_width(columns.min(usize::from(FULL_COLUMNS)))
+}
+
+/// The width `columns` full boxes need side by side, with their gaps and margins.
+pub fn full_width(columns: usize) -> u16 {
+    let columns = (columns as u16).max(1);
+    columns * BOX_WIDTH + (columns - 1) * COLUMN_GAP + 2 * MARGIN
 }
 
 pub fn place(graph: &Graph, width: u16) -> Placement {
@@ -55,7 +60,7 @@ pub fn place(graph: &Graph, width: u16) -> Placement {
         vec![MARGIN]
     } else {
         let step = usable.saturating_sub(box_width) / (columns as u16 - 1);
-        let room = step.saturating_sub(COLUMN_GAP / 2);
+        let room = step.saturating_sub(COLUMN_GAP);
         if room < box_width {
             box_width = room.max(NARROWEST_BOX);
         }

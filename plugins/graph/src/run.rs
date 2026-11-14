@@ -5,10 +5,12 @@
 //! transcripts appended; each new message starts a pulse. It draws at [`FAST_FRAME`] while a
 //! pulse is in flight and at [`FRAME`] otherwise, enough for the breathing and the spinner.
 //!
-//! Enter jumps to the selected agent. Run in a pane, the loop focuses the agent's pane itself.
-//! The resident (viewed through a popup) cannot reach the outer client, so it leaves the agent's
-//! name in [`GOTO_OPTION`] on its own tmux session and detaches; `tx _graph-attach`, which runs
-//! on the outer client, picks it up and does the focusing (the timeline's mechanism).
+//! Keys ask for [`Request`]s. Send, fork, stop and respawn run as `tx` verbs in the background
+//! ([`crate::actions`]). Enter (focus the agent's pane) and `a` (the agent's artifact menu) need
+//! the operator's terminal: run in a pane, the loop does them itself. The resident (viewed
+//! through a popup) cannot, since a popup covers the terminal, so it leaves the request in
+//! [`AFTER_OPTION`] on its own tmux session and detaches; `tx _graph-open`, which opened the
+//! popup, carries it out once the popup has closed.
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -23,8 +25,9 @@ use tx_client::tmux::Ui;
 use tx_core::core::LOG_FILE;
 use tx_core::{Agent, LlmEngineState, TxCore};
 
-use crate::app::{App, Source};
-use crate::model::{self, Filter, LogTail, NodeState, TranscriptReader};
+use crate::actions::{self, Runner, Tx};
+use crate::app::{App, Request, Source};
+use crate::model::{self, Filter, LogTail, TranscriptReader};
 use crate::ui;
 
 /// The redraw pace with nothing travelling: enough for the spinner and the breathing.
@@ -33,8 +36,9 @@ pub const FRAME: Duration = Duration::from_millis(250);
 pub const FAST_FRAME: Duration = Duration::from_millis(33);
 /// How often the records, the log and the transcripts are read again.
 pub const REFRESH: Duration = Duration::from_secs(1);
-/// Session option on the resident's tmux session: the agent Enter asked to jump to.
-pub const GOTO_OPTION: &str = "@tx_graph_goto";
+/// Session option on the resident's tmux session: what to do once the popup closed,
+/// `focus <agent name>` or `artifacts <agent id>`.
+pub const AFTER_OPTION: &str = "@tx_graph_after";
 
 /// What a live view reads from: core, the log it follows and the transcripts it follows.
 pub struct Feed<'a> {
@@ -100,15 +104,12 @@ pub fn source(core: &TxCore, now: f64, window: f64) -> io::Result<Source> {
     Feed::new(core).source(now, window)
 }
 
-/// Focuses the pane hosting session `name` for the terminal the caller is shown on. `Err` is the
-/// reason, for the operator.
-pub fn focus_session_pane(tmux: &Ui, name: &str) -> Result<(), String> {
-    let client = tmux
-        .display_message("#{client_name}", None)
-        .ok_or_else(|| "not inside tmux".to_owned())?;
-    // The caller's client may be nested in a view's pane; the terminal is the one to move.
+/// Shows the pane hosting session `name` on `client`'s terminal. `Err` is the reason, for the
+/// operator.
+pub fn focus_session_pane(tmux: &Ui, client: &str, name: &str) -> Result<(), String> {
+    // The client may be nested in a view's pane; the terminal is the one to move.
     let (client, _) = tmux
-        .outer_client(&client)
+        .outer_client(client)
         .ok_or_else(|| "no terminal client to move".to_owned())?;
     let pane = tmux
         .pane_for_session(name, "")
@@ -118,6 +119,23 @@ pub fn focus_session_pane(tmux: &Ui, name: &str) -> Result<(), String> {
     tmux.select_window(&pane);
     tmux.select_pane(&pane);
     Ok(())
+}
+
+/// The agent's artifact menu on `client`, through `tx _artifact-menu`.
+pub fn artifact_menu(tx: &Tx, id: &str, client: &str) -> Result<(), String> {
+    let words = ["_artifact-menu", id, client].map(str::to_owned);
+    let output = tx
+        .command(&words)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .rfind(|line| !line.trim().is_empty())
+        .unwrap_or("failed")
+        .to_owned())
 }
 
 /// `detach-client -s`: every client viewing `session` (the popup's nested attach) lets go.
@@ -136,18 +154,38 @@ pub fn run(core: &TxCore, filter: Filter, window: f64, resident: Option<&str>) -
     let mut app = App::new(feed.source(now, window)?, filter, now, window);
     let mut terminal = ratatui::try_init()?;
     execute!(io::stdout(), EnableMouseCapture)?;
-    let result = event_loop(&mut terminal, &mut app, &mut feed, &tmux, resident);
+    let tx = Tx::current(core)?;
+    let runner = Runner::new(tx.clone());
+    let result = event_loop(
+        &mut terminal,
+        &mut app,
+        &mut feed,
+        &Place {
+            tmux: &tmux,
+            tx: &tx,
+            runner: &runner,
+            resident,
+        },
+    );
     let _ = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
+}
+
+/// Where requests are carried out.
+struct Place<'a> {
+    tmux: &'a Ui,
+    tx: &'a Tx,
+    runner: &'a Runner,
+    /// The resident's tmux session, when the view is the popup's resident.
+    resident: Option<&'a str>,
 }
 
 fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
     feed: &mut Feed<'_>,
-    tmux: &Ui,
-    resident: Option<&str>,
+    place: &Place<'_>,
 ) -> io::Result<()> {
     let started = Instant::now();
     let mut next_refresh = Instant::now() + REFRESH;
@@ -162,8 +200,11 @@ fn event_loop(
                 _ => {}
             }
         }
-        if let Some(index) = app.goto.take() {
-            jump(app, index, tmux, resident)?;
+        if let Some(request) = app.request.take() {
+            perform(app, &request, place)?;
+        }
+        if let Some(line) = place.runner.finished() {
+            app.notice = Some(line);
         }
         if Instant::now() >= next_refresh {
             app.now = tx_core::events::now();
@@ -176,41 +217,51 @@ fn event_loop(
             next_refresh = Instant::now() + REFRESH;
         }
         if app.quit
-            && let Some(session) = resident
+            && let Some(session) = place.resident
         {
-            detach_session(tmux, session)?;
+            detach_session(place.tmux, session)?;
             app.quit = false;
         }
     }
     Ok(())
 }
 
-/// Enter on node `index`: focus its agent's pane, or tell the operator why not.
-fn jump(app: &mut App, index: usize, tmux: &Ui, resident: Option<&str>) -> io::Result<()> {
-    let node = &app.graph.nodes[index];
-    let name = node.name.clone();
-    let outcome = match node.state {
-        NodeState::Operator => Err("that is you".to_owned()),
-        NodeState::Ended => Err("ended".to_owned()),
-        _ => match resident {
-            Some(session) => {
-                if tmux.pane_for_session(&name, "").is_none() {
-                    Err("not attached to any pane".to_owned())
-                } else {
-                    tmux.set_session_option(session, GOTO_OPTION, &name)
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| {
-                            detach_session(tmux, session).map_err(|error| error.to_string())
-                        })
-                }
-            }
-            None => focus_session_pane(tmux, &name),
-        },
+/// Carries out `request`; a reason it could not shows in the footer.
+fn perform(app: &mut App, request: &Request, place: &Place<'_>) -> io::Result<()> {
+    if let Some(words) = actions::words(request) {
+        app.notice = Some(place.runner.start(request, words));
+        return Ok(());
+    }
+    let (after, name) = match request {
+        Request::Focus { name } => (format!("focus {name}"), name),
+        Request::Artifacts { id, name } => (format!("artifacts {id}"), name),
+        _ => unreachable!("every other request is a tx verb"),
+    };
+    let outcome = match place.resident {
+        Some(session) => place
+            .tmux
+            .set_session_option(session, AFTER_OPTION, &after)
+            .map_err(|error| error.to_string())
+            .and_then(|()| detach_session(place.tmux, session).map_err(|error| error.to_string())),
+        None => place
+            .tmux
+            .terminal_client()
+            .map_err(|error| error.to_string())
+            .and_then(|client| perform_after(place.tmux, place.tx, &client, &after)),
     };
     if let Err(reason) = outcome {
         app.notice = Some(format!("{name}: {reason}"));
     }
     Ok(())
+}
+
+/// Carries out an [`AFTER_OPTION`] value on `client`.
+pub fn perform_after(tmux: &Ui, tx: &Tx, client: &str, after: &str) -> Result<(), String> {
+    match after.split_once(' ') {
+        Some(("focus", name)) => focus_session_pane(tmux, client, name),
+        Some(("artifacts", id)) => artifact_menu(tx, id, client),
+        _ => Err(format!("unknown request {after:?}")),
+    }
 }
 
 /// One frame at `columns` × `rows`, as plain text: no terminal needed.

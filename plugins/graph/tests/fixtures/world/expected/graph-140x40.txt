@@ -2,7 +2,7 @@
 
   depth 0                              1                                    2                                    3
   ╭ ◇ you ───────────────╮⣀⡀
-  │ operator · 4 sent    │⠉⠛⢷⣄
+  │ 4 sent               │⠉⠛⢷⣄
   │                      │   ⢻⣦
   ╰──────────────────────╯   ⠈⢿⡄
                               ⠘⡇
@@ -37,4 +37,4 @@
                                        ┗━━━━━━━━━━━━━━━━━━━━━━┛
   ┏┓ selected   ┏┓ working   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
   you  sent 4
-  tab/hjkl select · enter jump · g group: all · q quit
+  enter jump · s send · f fork · a artifacts · x stop · g group: all · ? keys

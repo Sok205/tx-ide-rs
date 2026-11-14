@@ -8,13 +8,67 @@ use ratatui::layout::Rect;
 use tx_core::{Agent, AgentId};
 
 use crate::layout::{self, Placement};
-use crate::model::{self, Context, Filter, Graph, Message};
+use crate::model::{self, Context, Filter, Graph, Message, NodeState};
 
 const WHEEL_ROWS: u16 = 3;
 /// Seconds a pulse takes to cross its edge.
 pub const PULSE_TRAVEL: f64 = 1.1;
 /// Seconds between two pulses that start in the same refresh on the same pair.
 const PULSE_STAGGER: f64 = 0.3;
+
+/// What the operator asked for; the event loop carries it out through `tx`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Request {
+    /// Show the agent's pane.
+    Focus {
+        name: String,
+    },
+    Send {
+        id: AgentId,
+        name: String,
+        text: String,
+    },
+    /// `fork_name` blank: the `<source>-fork` default.
+    Fork {
+        id: AgentId,
+        name: String,
+        fork_name: Option<String>,
+    },
+    Stop {
+        id: AgentId,
+        name: String,
+    },
+    Respawn {
+        id: AgentId,
+        name: String,
+    },
+    Artifacts {
+        id: AgentId,
+        name: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    /// A message to the selected agent.
+    Send,
+    /// The fork's name.
+    Fork,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Browse,
+    /// A one-line prompt in the footer.
+    Prompt {
+        purpose: Purpose,
+        text: String,
+    },
+    /// `x` asked to stop the selected agent; `y` confirms.
+    ConfirmStop,
+    /// The key help page; any key closes it.
+    Help,
+}
 
 /// A message in flight: drawn along its pair's edge from `started` (on [`App::clock`]) for
 /// [`PULSE_TRAVEL`] seconds. `from` is `None` for the operator.
@@ -52,8 +106,9 @@ pub struct App {
     /// 0 in a snapshot.
     pub clock: f64,
     pub pulses: Vec<Pulse>,
-    /// Enter asked to jump to this node.
-    pub goto: Option<usize>,
+    pub mode: Mode,
+    /// What a key asked for, for the event loop to carry out.
+    pub request: Option<Request>,
     /// One line for the operator, shown until the next key.
     pub notice: Option<String>,
     pub quit: bool,
@@ -74,7 +129,8 @@ impl App {
             canvas: Rect::default(),
             clock: 0.0,
             pulses: Vec::new(),
-            goto: None,
+            mode: Mode::Browse,
+            request: None,
             notice: None,
             quit: false,
         }
@@ -139,9 +195,21 @@ impl App {
             return;
         }
         self.notice = None;
-        match key.code {
+        match std::mem::replace(&mut self.mode, Mode::Browse) {
+            Mode::Browse => self.browse(key.code),
+            Mode::Prompt { purpose, text } => self.prompt(purpose, text, key.code),
+            Mode::ConfirmStop => {
+                if key.code == KeyCode::Char('y') {
+                    self.request = self.agent_request(|id, name| Request::Stop { id, name });
+                }
+            }
+            Mode::Help => {}
+        }
+    }
+
+    fn browse(&mut self, code: KeyCode) {
+        match code {
             KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
-            KeyCode::Enter => self.goto = Some(self.selected),
             KeyCode::Tab => self.cycle(1),
             KeyCode::BackTab => self.cycle(-1),
             KeyCode::Char('j') | KeyCode::Down => self.move_vertically(1),
@@ -149,8 +217,96 @@ impl App {
             KeyCode::Char('l') | KeyCode::Right => self.move_horizontally(1),
             KeyCode::Char('h') | KeyCode::Left => self.move_horizontally(-1),
             KeyCode::Char('g') => self.next_group(),
+            KeyCode::Char('?') => self.mode = Mode::Help,
+            KeyCode::Enter if self.running("jump to") => {
+                let name = self.graph.nodes[self.selected].name.clone();
+                self.request = Some(Request::Focus { name });
+            }
+            KeyCode::Char('s') if self.running("send to") => {
+                self.mode = Mode::Prompt {
+                    purpose: Purpose::Send,
+                    text: String::new(),
+                };
+            }
+            KeyCode::Char('x') if self.running("stop") => self.mode = Mode::ConfirmStop,
+            KeyCode::Char('f') if self.agent("fork") => {
+                self.mode = Mode::Prompt {
+                    purpose: Purpose::Fork,
+                    text: String::new(),
+                };
+            }
+            KeyCode::Char('a') if self.agent("show artifacts of") => {
+                self.request = self.agent_request(|id, name| Request::Artifacts { id, name });
+            }
+            KeyCode::Char('r') if self.agent("respawn") => {
+                let node = &self.graph.nodes[self.selected];
+                if node.state == NodeState::Ended {
+                    self.request = self.agent_request(|id, name| Request::Respawn { id, name });
+                } else {
+                    self.notice = Some(format!("{} is running", node.name));
+                }
+            }
             _ => {}
         }
+    }
+
+    fn prompt(&mut self, purpose: Purpose, mut text: String, code: KeyCode) {
+        match code {
+            KeyCode::Esc => {}
+            KeyCode::Enter => {
+                let line = text.trim().to_owned();
+                self.request = match purpose {
+                    Purpose::Send if line.is_empty() => None,
+                    Purpose::Send => self.agent_request(|id, name| Request::Send {
+                        id,
+                        name,
+                        text: line,
+                    }),
+                    Purpose::Fork => self.agent_request(|id, name| Request::Fork {
+                        id,
+                        name,
+                        fork_name: (!line.is_empty()).then_some(line),
+                    }),
+                };
+            }
+            KeyCode::Backspace => {
+                text.pop();
+                self.mode = Mode::Prompt { purpose, text };
+            }
+            KeyCode::Char(character) => {
+                text.push(character);
+                self.mode = Mode::Prompt { purpose, text };
+            }
+            _ => self.mode = Mode::Prompt { purpose, text },
+        }
+    }
+
+    /// Whether the selection is an agent; otherwise says why `verb` cannot apply.
+    fn agent(&mut self, verb: &str) -> bool {
+        let node = &self.graph.nodes[self.selected];
+        if node.id.is_none() {
+            self.notice = Some(format!("cannot {verb} the operator"));
+        }
+        node.id.is_some()
+    }
+
+    /// Whether the selection is an agent that has not ended; otherwise says why.
+    fn running(&mut self, verb: &str) -> bool {
+        if !self.agent(verb) {
+            return false;
+        }
+        let node = &self.graph.nodes[self.selected];
+        if node.state == NodeState::Ended {
+            self.notice = Some(format!("{} has ended · r respawns it", node.name));
+            return false;
+        }
+        true
+    }
+
+    /// `make` applied to the selected agent; `None` for the operator.
+    fn agent_request(&self, make: impl FnOnce(AgentId, String) -> Request) -> Option<Request> {
+        let node = &self.graph.nodes[self.selected];
+        Some(make(node.id.clone()?, node.name.clone()))
     }
 
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {

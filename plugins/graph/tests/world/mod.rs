@@ -18,6 +18,20 @@ fn world() -> Value {
     serde_json::from_str(&std::fs::read_to_string(dir().join("world.json")).unwrap()).unwrap()
 }
 
+/// The sidebar shows local times; the expected frames were made under UTC.
+pub fn set_utc() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: runs once, before any test thread of this binary reads the clock.
+        unsafe { std::env::set_var("TZ", "UTC") };
+        unsafe extern "C" {
+            fn tzset();
+        }
+        // SAFETY: tzset only re-reads TZ.
+        unsafe { tzset() };
+    });
+}
+
 pub fn now() -> f64 {
     world()["now"].as_f64().unwrap()
 }

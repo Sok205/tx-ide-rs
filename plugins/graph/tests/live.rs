@@ -130,9 +130,10 @@ fn new_messages_pulse_then_settle() {
     );
     app.clock = 0.5;
     assert!(app.animating());
-    let frame = run::snapshot(&mut app, 140, 40);
+    // Without the sidebar, so the edge is long enough to show the pulse beside its badge.
+    let frame = run::snapshot(&mut app, 120, 40);
     let pulses = std::mem::take(&mut app.pulses);
-    let still = run::snapshot(&mut app, 140, 40);
+    let still = run::snapshot(&mut app, 120, 40);
     app.pulses = pulses;
     assert_ne!(frame, still, "a pulse is drawn");
     app.clock = 0.3 + PULSE_TRAVEL + 0.01;

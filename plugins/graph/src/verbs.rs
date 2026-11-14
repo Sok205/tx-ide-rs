@@ -1,15 +1,17 @@
 //! `tx graph`: the agent graph in the terminal, or one frame of it as text (`--snapshot`);
-//! `_graph-resident`, the graph a popup attaches to; `_graph-attach` (prefix+g), which starts
-//! or attaches the resident.
+//! `_graph-resident`, the graph a popup attaches to; `_graph-attach`, the popup's command, which
+//! starts or attaches the resident; `_graph-open <client>` (prefix+g), which opens that popup on
+//! the client and, once it closed, carries out what the resident left behind.
 
 use std::fs::OpenOptions;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use tx_client::tmux::Ui;
+use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
+use crate::actions::Tx;
 use crate::app::App;
 use crate::model::Filter;
 use crate::{PLUGIN_ID, run};
@@ -18,6 +20,9 @@ pub const RESIDENT_VERB: &str = "_graph-resident";
 /// The tmux session (a view, not a record) hosting the resident graph.
 pub const POPUP_SESSION: &str = "tx-graph";
 const POPUP_LOCK: &str = "popup.lock";
+/// The popup fills most of the screen.
+const POPUP_WIDTH: &str = "92%";
+const POPUP_HEIGHT: &str = "90%";
 
 pub const DEFAULT_WINDOW: f64 = 3600.0;
 const DEFAULT_SNAPSHOT_COLUMNS: u16 = 140;
@@ -32,6 +37,7 @@ pub fn verbs() -> Vec<Arc<dyn Verb>> {
         Arc::new(GraphVerb { resident: false }),
         Arc::new(GraphVerb { resident: true }),
         Arc::new(GraphAttach),
+        Arc::new(GraphOpen),
     ]
 }
 
@@ -201,7 +207,7 @@ impl Verb for GraphAttach {
     }
 
     fn usage(&self) -> &'static str {
-        "_graph-attach   start or attach the resident graph; q detaches (prefix+g, internal)"
+        "_graph-attach   start or attach the resident graph; q detaches (the popup's command, internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
@@ -230,22 +236,65 @@ impl Verb for GraphAttach {
             .env_remove("TMUX")
             .status()
             .map_err(failed)?;
-        // Enter in the resident left the agent behind and detached us; this process runs on
-        // the outer client, so the focusing happens here.
-        if let Some(target) = ui.session_option(POPUP_SESSION, run::GOTO_OPTION) {
-            ui.quiet(&[
-                "set-option",
-                "-u",
-                "-t",
-                &format!("={POPUP_SESSION}:"),
-                run::GOTO_OPTION,
-            ]);
-            if let Err(reason) = run::focus_session_pane(&ui, &target)
-                && let Some(client) = ui.display_message("#{client_name}", None)
-            {
-                ui.display_status(&client, &format!("graph: {target}: {reason}"));
-            }
-        }
         Ok(status.code().unwrap_or(1))
+    }
+}
+
+/// prefix+g: the resident in a popup on `client`; then what it asked for (Enter: focus an
+/// agent; `a`: its artifact menu), which needs the terminal the popup covered.
+struct GraphOpen;
+
+impl Verb for GraphOpen {
+    fn name(&self) -> &'static str {
+        "_graph-open"
+    }
+
+    fn usage(&self) -> &'static str {
+        "_graph-open <client>   prefix+g: the resident graph in a popup, then what it asked for (internal)"
+    }
+
+    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+        let [client] = argv else {
+            writeln!(io.stderr, "usage: tx _graph-open <client>").map_err(failed)?;
+            return Ok(2);
+        };
+        let ui = Ui::from_core(core);
+        let tx = Tx::current(core).map_err(failed)?;
+        let mut words = vec![tx.program()];
+        words.extend(tx.arguments().iter().cloned());
+        words.push("_graph-attach".to_owned());
+        let command = words
+            .iter()
+            .map(|word| shell_quote(word))
+            .collect::<Vec<_>>()
+            .join(" ");
+        ui.run(&[
+            "display-popup",
+            "-c",
+            client,
+            "-E",
+            "-w",
+            POPUP_WIDTH,
+            "-h",
+            POPUP_HEIGHT,
+            "-T",
+            " graph ",
+            &command,
+        ])
+        .map_err(failed)?;
+        let Some(after) = ui.session_option(POPUP_SESSION, run::AFTER_OPTION) else {
+            return Ok(0);
+        };
+        ui.quiet(&[
+            "set-option",
+            "-u",
+            "-t",
+            &format!("={POPUP_SESSION}:"),
+            run::AFTER_OPTION,
+        ]);
+        if let Err(reason) = run::perform_after(&ui, &tx, client, &after) {
+            ui.display_status(client, &format!("graph: {reason}"));
+        }
+        Ok(0)
     }
 }

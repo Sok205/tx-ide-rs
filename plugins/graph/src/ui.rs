@@ -14,9 +14,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Context, Line as Segment, Points};
-use ratatui::widgets::{Block, BorderType, Clear, LineGauge, Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Clear, LineGauge, Paragraph, Sparkline, Widget};
+use tx_chat::transcript::clock;
 
-use crate::app::{App, PULSE_TRAVEL};
+use crate::app::{App, Mode, PULSE_TRAVEL, Purpose};
+use crate::layout;
 use crate::model::{Edge, Graph, Node, NodeState};
 use tx_client::palette::{
     ACCENT, BG_DEEP, BORDER_DIM, DIM_FG, FG, GREEN, INFO, ON_ACCENT, WARN, palette,
@@ -29,6 +31,34 @@ const ARC_BULGE: f64 = 7.0;
 const CURVE_STEPS: u16 = 48;
 /// The "parent ended" stub's length in cells.
 const STUB_LENGTH: f64 = 12.0;
+/// The sidebar shows from this terminal width up, when the graph keeps full boxes beside it.
+const SIDEBAR_FROM: u16 = 130;
+const SIDEBAR_WIDTH: u16 = 36;
+const KEYS: [(&str, &str); 14] = [
+    ("tab / ⇧tab", "next / previous agent, column by column"),
+    (
+        "h j k l",
+        "the nearest agent left, below, above, right; past the edge, scroll",
+    ),
+    ("wheel", "scroll"),
+    ("enter", "jump to the agent's pane"),
+    ("s", "send the agent a line, as you"),
+    ("f", "fork the agent (asks for a name; blank: <name>-fork)"),
+    ("a", "the agent's artifacts"),
+    ("x", "stop the agent, after y"),
+    ("r", "respawn an ended agent"),
+    ("g", "next group: all → each group → all"),
+    ("?", "this page"),
+    (
+        "q / esc",
+        "quit (in the popup: close it; the graph stays warm)",
+    ),
+    ("", ""),
+    (
+        "legend",
+        "● working  ○ idle or ended  ◐ starting  ▲ needs you  ◇ you",
+    ),
+];
 const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 /// Seconds of one breath of a working node's border.
 const BREATH_PERIOD: f64 = 2.4;
@@ -139,39 +169,105 @@ fn quiet(node: &Node) -> bool {
 }
 
 pub fn render(app: &mut App, frame: &mut Frame) {
-    let [header, _, labels, body, legend, detail, footer] = Layout::vertical([
-        Constraint::Length(1),
+    // The sidebar never squeezes the graph's boxes.
+    let width = frame.area().width;
+    let side_width = if width >= SIDEBAR_FROM
+        && width > layout::full_width(app.graph.columns()) + SIDEBAR_WIDTH
+    {
+        SIDEBAR_WIDTH
+    } else {
+        0
+    };
+    let [header, _, middle, legend, detail, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(u16::from(side_width == 0)),
         Constraint::Length(1),
     ])
     .areas(frame.area());
+    let [main, _, side] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(u16::from(side_width > 0)),
+        Constraint::Length(side_width),
+    ])
+    .areas(middle);
+    let [labels, body] = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(main);
     app.arrange(body);
     frame.render_widget(header_line(app), header);
+    frame.render_widget(Paragraph::new(footer_line(app)), footer);
+    if app.mode == Mode::Help {
+        frame.render_widget(help_page(), middle);
+        return;
+    }
     if app.graph.nodes.is_empty() {
         let text = format!(
             "  no agents running or active in the last {}",
             window_label(app.window)
         );
-        frame.render_widget(Paragraph::new(Line::styled(text, dim())), body);
-    } else {
-        frame.render_widget(column_labels(app, labels.width), labels);
-        draw_canvas(app, frame, body);
-        frame.render_widget(legend_line(), legend);
-        frame.render_widget(detail_line(app), detail);
+        frame.render_widget(Paragraph::new(Line::styled(text, dim())), middle);
+        return;
     }
-    let group = app.group().unwrap_or("all");
-    let footer_line = match &app.notice {
-        Some(notice) => Line::styled(format!("  {notice}"), colour(WARN)),
-        None => Line::styled(
-            format!("  tab/hjkl select · enter jump · g group: {group} · q quit"),
-            dim(),
-        ),
-    };
-    frame.render_widget(Paragraph::new(footer_line), footer);
+    frame.render_widget(column_labels(app, labels.width), labels);
+    draw_canvas(app, frame, body);
+    if side_width > 0 {
+        draw_sidebar(app, frame, side);
+    }
+    frame.render_widget(legend_line(), legend);
+    frame.render_widget(detail_line(app), detail);
+}
+
+/// The notice, else the open prompt or confirmation, else the key hints.
+fn footer_line(app: &App) -> Line<'static> {
+    if let Some(notice) = &app.notice {
+        return Line::styled(format!("  {notice}"), colour(WARN));
+    }
+    let name = app
+        .graph
+        .nodes
+        .get(app.selected)
+        .map_or(String::new(), |node| node.name.clone());
+    match &app.mode {
+        Mode::Prompt { purpose, text } => {
+            let label = match purpose {
+                Purpose::Send => format!("  send to {name} ▸ "),
+                Purpose::Fork => format!("  fork {name} as (blank: {name}-fork) ▸ "),
+            };
+            Line::from(vec![
+                Span::styled(label, bold(ACCENT)),
+                Span::styled(text.clone(), colour(FG)),
+                Span::styled("▏", colour(ACCENT)),
+                Span::styled("   enter · esc cancels", dim()),
+            ])
+        }
+        Mode::ConfirmStop => Line::from(vec![
+            Span::styled(format!("  stop {name}? "), bold(WARN)),
+            Span::styled("y stops · any other key cancels", dim()),
+        ]),
+        Mode::Help => Line::styled("  any key closes", dim()),
+        Mode::Browse => {
+            let group = app.group().unwrap_or("all");
+            Line::styled(
+                format!(
+                    "  enter jump · s send · f fork · a artifacts · x stop · g group: {group} · ? keys"
+                ),
+                dim(),
+            )
+        }
+    }
+}
+
+/// Every key, as home's `?` page lists them.
+fn help_page() -> Paragraph<'static> {
+    let mut lines = vec![Line::styled("  keys", bold(ACCENT)), Line::raw("")];
+    for (key, meaning) in KEYS {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {key:<14}"), colour(FG)),
+            Span::styled(meaning, dim()),
+        ]));
+    }
+    Paragraph::new(lines)
 }
 
 fn header_line(app: &App) -> Paragraph<'static> {
@@ -290,6 +386,166 @@ fn detail_line(app: &App) -> Paragraph<'static> {
         pair("ctx", value);
     }
     Paragraph::new(Line::from(spans))
+}
+
+/// The selected node in full: facts, messages per minute, the context window, recent messages.
+fn draw_sidebar(app: &App, frame: &mut Frame, area: Rect) {
+    let graph = &app.graph;
+    let node = &graph.nodes[app.selected];
+    let block = Block::bordered()
+        .border_type(BorderType::Thick)
+        .border_style(bold(ACCENT))
+        .title(Line::styled(
+            format!(
+                " {} ",
+                cut(&node.name, usize::from(area.width.saturating_sub(4)))
+            ),
+            bold(ON_ACCENT).bg(palette(ACCENT)),
+        ));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [
+        facts,
+        _,
+        spark_label,
+        spark,
+        _,
+        gauge_label,
+        gauge,
+        _,
+        recent_label,
+        recent,
+    ] = Layout::vertical([
+        Constraint::Length(6),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
+    let fact = |label: &str, value: String| {
+        Line::from(vec![
+            Span::styled(format!(" {label:<12}"), dim()),
+            Span::styled(value, colour(FG)),
+        ])
+    };
+    let lines = if node.state == NodeState::Operator {
+        vec![
+            fact("role", "operator".to_owned()),
+            fact("sent", sent_by(graph, app.selected).to_string()),
+        ]
+    } else {
+        let parent = match (node.parent, node.parent_lost) {
+            (Some(parent), _) => graph.nodes[parent].name.clone(),
+            (None, true) => "ended".to_owned(),
+            (None, false) => "—".to_owned(),
+        };
+        let children = graph
+            .nodes
+            .iter()
+            .filter(|child| child.parent == Some(app.selected))
+            .count();
+        let active = node.last_activity.map_or("—".to_owned(), |at| {
+            format!("{} ago", age(graph.now - at))
+        });
+        vec![
+            fact(
+                "engine",
+                node.engine.map_or("—", |engine| engine.as_str()).to_owned(),
+            ),
+            fact(
+                "definition",
+                node.definition.clone().unwrap_or("—".to_owned()),
+            ),
+            fact("parent", parent),
+            fact("children", children.to_string()),
+            fact("group", node.group.clone()),
+            fact("last active", active),
+        ]
+    };
+    frame.render_widget(Paragraph::new(lines), facts);
+
+    let spark = spark.inner(Margin::new(1, 0));
+    let minutes = (graph.window / 60.0)
+        .ceil()
+        .clamp(1.0, f64::from(spark.width.max(1)));
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            format!(" messages / min · last {minutes}m"),
+            dim(),
+        )),
+        spark_label,
+    );
+    let mut counts = vec![0u64; minutes as usize];
+    for traffic in graph
+        .traffic
+        .iter()
+        .filter(|traffic| traffic.from == app.selected || traffic.to == app.selected)
+    {
+        let back = ((graph.now - traffic.at) / 60.0).floor();
+        if (0.0..minutes).contains(&back) {
+            counts[minutes as usize - 1 - back as usize] += 1;
+        }
+    }
+    frame.render_widget(
+        Sparkline::default().data(&counts).style(colour(INFO)),
+        spark,
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::styled(" context window", dim())),
+        gauge_label,
+    );
+    let gauge = gauge.inner(Margin::new(1, 0));
+    match node.context.map(|context| (context, context.ratio())) {
+        Some((_, Some(ratio))) => frame.render_widget(
+            LineGauge::default()
+                .ratio(ratio)
+                .label(Span::styled(format!("{:>3.0}%", ratio * 100.0), colour(FG)))
+                .filled_symbol("━")
+                .unfilled_symbol("─")
+                .filled_style(bold(if ratio > CONTEXT_WARN { WARN } else { GREEN }))
+                .unfilled_style(colour(BORDER_DIM)),
+            gauge,
+        ),
+        Some((context, None)) => frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!("{} tokens", tokens(context.tokens)), colour(FG)),
+                Span::styled(" · window unknown", dim()),
+            ])),
+            gauge,
+        ),
+        None => frame.render_widget(Paragraph::new(Line::styled("—", dim())), gauge),
+    }
+
+    frame.render_widget(Paragraph::new(Line::styled(" recent", dim())), recent_label);
+    let width = usize::from(recent.width.saturating_sub(12)) / 2;
+    let lines: Vec<Line> = graph
+        .traffic
+        .iter()
+        .rev()
+        .filter(|traffic| traffic.from == app.selected || traffic.to == app.selected)
+        .take(usize::from(recent.height))
+        .map(|traffic| {
+            Line::from(vec![
+                Span::styled(format!(" {} ", clock::clock_label(traffic.at)), dim()),
+                Span::styled(cut(&graph.nodes[traffic.from].name, width), colour(FG)),
+                Span::styled(" ━▶ ", colour(INFO)),
+                Span::styled(cut(&graph.nodes[traffic.to].name, width), colour(FG)),
+            ])
+        })
+        .collect();
+    let lines = if lines.is_empty() {
+        vec![Line::styled(" none in the window", dim())]
+    } else {
+        lines
+    };
+    frame.render_widget(Paragraph::new(lines), recent);
 }
 
 fn sent_by(graph: &Graph, index: usize) -> usize {
@@ -578,8 +834,8 @@ fn draw_node(app: &App, index: usize, rect: Rect, selected: bool, buffer: &mut B
     if state == NodeState::Operator {
         let sent = sent_by(&app.graph, index);
         Paragraph::new(Line::from(vec![
-            Span::styled("operator", colour(FG)),
-            Span::styled(format!(" · {sent} sent"), dim()),
+            Span::styled(sent.to_string(), colour(FG)),
+            Span::styled(" sent", dim()),
         ]))
         .render(status_area, buffer);
         return;
