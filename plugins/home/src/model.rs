@@ -93,6 +93,8 @@ pub struct Context {
     pub now: f64,
     /// Where `n` starts an agent when the cursor is under no project.
     pub home_directory: PathBuf,
+    /// The names `tx layout ls` lists; `None` when the `layout` verb is absent, which hides `w`.
+    pub layouts: Option<Vec<String>>,
 }
 
 /// One line of the main list.
@@ -153,6 +155,12 @@ pub enum Action {
     Tutor,
     /// Start the assistant again after a failed warm.
     Warm,
+    /// Open the layout `name` in `project`, around the agent with this id when there is one.
+    Layout {
+        name: String,
+        agent: Option<String>,
+        project: PathBuf,
+    },
 }
 
 impl Action {
@@ -168,6 +176,16 @@ impl Action {
             Action::Timeline => "timeline".into(),
             Action::Tutor => "tutor".into(),
             Action::Warm => "warm".into(),
+            // The path last: it may hold spaces, a layout name and an agent id never do.
+            Action::Layout {
+                name,
+                agent,
+                project,
+            } => format!(
+                "layout {name} {} {}",
+                agent.as_deref().unwrap_or("-"),
+                project.display()
+            ),
         }
     }
 
@@ -185,6 +203,15 @@ impl Action {
             ("stop", false) => Action::Stop(argument),
             ("ask", false) => Action::Ask(argument),
             ("artifacts", false) => Action::Artifacts(argument),
+            ("layout", false) => {
+                let (name, rest) = argument.split_once(' ')?;
+                let (agent, project) = rest.split_once(' ')?;
+                Action::Layout {
+                    name: name.to_owned(),
+                    agent: (agent != "-").then(|| agent.to_owned()),
+                    project: PathBuf::from(project),
+                }
+            }
             _ => return None,
         })
     }
@@ -197,6 +224,8 @@ pub enum View {
     Plugins(usize),
     /// The cheat sheet, scrolled to this row.
     Keys(usize),
+    /// The layouts `tx layout ls` lists, this row selected.
+    Layouts(usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -440,7 +469,12 @@ impl Home {
         let close = if self.popup { " · q close" } else { "" };
         // Last, so a narrow popup cuts it rather than `q close`.
         let theme = if self.themed { " · b theme" } else { "" };
-        format!("{hint}{close}{theme}")
+        let layouts = if self.context.layouts.is_some() {
+            " · w layouts"
+        } else {
+            ""
+        };
+        format!("{hint}{close}{theme}{layouts}")
     }
 
     /// The first unfolded agent whose [`Detail`] the context lacks.
@@ -470,6 +504,18 @@ impl Home {
             }
             View::Keys(row) => {
                 self.view = View::Keys(scroll(row, self.context.keys.len(), code));
+                return self.back_on(code);
+            }
+            View::Layouts(row) => {
+                if code == KeyCode::Enter {
+                    let outcome = self.open_layout(row);
+                    if outcome != Outcome::Stay {
+                        self.view = View::Main;
+                    }
+                    return outcome;
+                }
+                let count = self.context.layouts.as_ref().map_or(0, Vec::len);
+                self.view = View::Layouts(scroll(row, count, code));
                 return self.back_on(code);
             }
             View::Main => {}
@@ -508,6 +554,7 @@ impl Home {
                 }
             }
             KeyCode::Char('b') if self.themed => return Outcome::NextTheme,
+            KeyCode::Char('w') if self.context.layouts.is_some() => self.view = View::Layouts(0),
             KeyCode::Char('t' | 'T') => return Outcome::Run(Action::Timeline),
             KeyCode::Char('L') => return Outcome::Run(Action::Tutor),
             KeyCode::Char('?' | 'K') => self.view = View::Keys(0),
@@ -564,6 +611,28 @@ impl Home {
             Some(Row::Views(views)) => Outcome::Run(Action::Attach(views[0].name.clone())),
             _ => Outcome::Stay,
         }
+    }
+
+    /// Enter on the layout list: the layout at `row` in the cursor's project, around the
+    /// cursor's agent unless it ended (an ended agent's pane would be a shell). Nothing on an
+    /// empty list.
+    fn open_layout(&self, row: usize) -> Outcome {
+        let Some(name) = self
+            .context
+            .layouts
+            .as_ref()
+            .and_then(|layouts| layouts.get(row))
+        else {
+            return Outcome::Stay;
+        };
+        Outcome::Run(Action::Layout {
+            name: name.clone(),
+            agent: self
+                .cursor_agent()
+                .filter(|agent| !is_ended(agent))
+                .map(|agent| agent.id.clone()),
+            project: self.cursor_project_path(),
+        })
     }
 
     /// `r`: an ended agent, the assistant when it is stopped, or a warm again when the last one
@@ -881,6 +950,7 @@ pub(crate) mod tests {
             }],
             now: 1000.0,
             home_directory: PathBuf::from("/home/operator"),
+            layouts: None,
         }
     }
 
@@ -1563,6 +1633,95 @@ pub(crate) mod tests {
         }
     }
 
+    fn with_layouts() -> Context {
+        Context {
+            layouts: Some(vec!["pair".into(), "solo".into()]),
+            ..context()
+        }
+    }
+
+    #[test]
+    fn w_does_nothing_without_the_layout_verb() {
+        let mut home = Home::new(context());
+        assert_eq!(home.key(KeyCode::Char('w')), Outcome::Stay);
+        assert_eq!(home.view(), View::Main);
+        assert_eq!(home.footer(), MAIN_FOOTER);
+    }
+
+    #[test]
+    fn w_opens_the_layout_list_which_scrolls_and_backs_out() {
+        let mut home = Home::new(with_layouts());
+        assert_eq!(home.footer(), format!("{MAIN_FOOTER} · w layouts"));
+        home.key(KeyCode::Char('w'));
+        assert_eq!(home.view(), View::Layouts(0));
+        home.key(KeyCode::Char('j'));
+        assert_eq!(home.view(), View::Layouts(1));
+        home.key(KeyCode::Char('j'));
+        assert_eq!(home.view(), View::Layouts(1), "stops at the last");
+        home.key(KeyCode::Char('k'));
+        assert_eq!(home.view(), View::Layouts(0));
+        assert_eq!(home.key(KeyCode::Esc), Outcome::Stay);
+        assert_eq!(home.view(), View::Main);
+        assert_eq!(selected(&home).unwrap(), "agent fixer", "the cursor stayed");
+    }
+
+    #[test]
+    fn the_layout_footer_hint_follows_theme_and_close() {
+        let mut home = Home::new_popup(with_layouts());
+        home.set_themed(true);
+        assert_eq!(
+            home.footer(),
+            format!("{MAIN_FOOTER} · q close · b theme · w layouts")
+        );
+    }
+
+    #[test]
+    fn enter_on_a_layout_opens_it_around_the_cursor() {
+        let layout = |name: &str, agent: Option<&str>, project: &str| {
+            Outcome::Run(Action::Layout {
+                name: name.into(),
+                agent: agent.map(str::to_owned),
+                project: PathBuf::from(project),
+            })
+        };
+        let mut home = Home::new(with_layouts());
+        home.key(KeyCode::Char('w'));
+        home.key(KeyCode::Char('j'));
+        assert_eq!(
+            home.key(KeyCode::Enter),
+            layout("solo", Some("w1"), "/w/wrangler"),
+            "a running agent's row: around that agent"
+        );
+        home.select_session("build-watch");
+        home.key(KeyCode::Char('w'));
+        assert_eq!(
+            home.key(KeyCode::Enter),
+            layout("pair", None, "/w/wrangler"),
+            "a views row: fresh agents in its project"
+        );
+        home.select_session("docs-site");
+        home.key(KeyCode::Char('w'));
+        assert_eq!(
+            home.key(KeyCode::Enter),
+            layout("pair", None, "/w/tx-ide-rs"),
+            "an ended agent's row: no agent"
+        );
+        home.select_session("scratch");
+        home.key(KeyCode::Char('w'));
+        assert_eq!(
+            home.key(KeyCode::Enter),
+            layout("pair", None, "/home/operator"),
+            "a view under no project: the home directory"
+        );
+        let mut empty = Home::new(Context {
+            layouts: Some(Vec::new()),
+            ..context()
+        });
+        empty.key(KeyCode::Char('w'));
+        assert_eq!(empty.key(KeyCode::Enter), Outcome::Stay, "an empty list");
+        assert_eq!(empty.view(), View::Layouts(0));
+    }
+
     #[test]
     fn action_round_trips_through_encode_decode() {
         for action in [
@@ -1575,9 +1734,28 @@ pub(crate) mod tests {
             Action::Timeline,
             Action::Tutor,
             Action::Warm,
+            Action::Layout {
+                name: "pair".into(),
+                agent: Some("0f3a".into()),
+                project: PathBuf::from("/w/my project"),
+            },
+            Action::Layout {
+                name: "solo.v2".into(),
+                agent: None,
+                project: PathBuf::from("/w"),
+            },
         ] {
             assert_eq!(Action::decode(&action.encode()), Some(action.clone()));
         }
+        assert_eq!(
+            Action::Layout {
+                name: "pair".into(),
+                agent: None,
+                project: PathBuf::from("/w/my project"),
+            }
+            .encode(),
+            "layout pair - /w/my project"
+        );
         assert_eq!(Action::encode(&Action::New(PathBuf::from("/w"))), "new /w");
         assert_eq!(
             Action::decode("  ask hello there \n"),
@@ -1590,6 +1768,9 @@ pub(crate) mod tests {
             "stop  ",
             "timeline now",
             "warm now",
+            "layout",
+            "layout pair",
+            "layout pair -",
             "plugins",
             "keys",
             "bogus",
