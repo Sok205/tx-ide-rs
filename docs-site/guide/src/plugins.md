@@ -104,9 +104,12 @@ markers; `timeline health` prints, per agent record, what the timeline can read 
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).
 
-**`layouts`**: `layout ls | open NAME | save NAME | path NAME` opens a saved pane layout, one YAML file per
+**`layouts`**: `layout ls | open NAME | save NAME | path NAME | check NAME` opens a saved pane layout, one YAML file per
 layout under `<config>/layouts/` (see [Files and directories](files.md)), as one view. `ls` lists
-the names, and `path NAME` prints the file to edit, existing or not. `open NAME [--cwd DIR]
+the names, and `path NAME` prints the file to edit, existing or not. `check NAME` reads and
+validates the file as `open` does, with the same errors, but starts no tmux and no agent: it
+prints `NAME ok: N panes` and exits 0, or prints the error and exits 1. It does not check that
+the `agent:` definitions exist (`tx definitions agents` lists them). `open NAME [--cwd DIR]
 [--agent A] [--tag T]… [--detach]` reads the file's `panes:`, one record per pane in build order:
 
 ```yaml

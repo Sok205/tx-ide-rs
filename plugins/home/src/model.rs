@@ -1,5 +1,5 @@
 //! The home's state machine: the session manager's rows (projects → agents → views, unfolded
-//! details, folded ended agents), the cursor, the find / ask inputs, the stop confirm, and what
+//! details, folded ended agents), the cursor, the find / ask / new-layout inputs, the stop confirm, and what
 //! a key does. Pure: [`Context`] is gathered by the data layer, [`Home::key`] turns a key into
 //! an [`Outcome`], nothing here touches tmux or the store.
 
@@ -161,6 +161,12 @@ pub enum Action {
         agent: Option<String>,
         project: PathBuf,
     },
+    /// Start a `layout-author` agent in `project` that writes layout `name` from `description`.
+    NewLayout {
+        name: String,
+        project: PathBuf,
+        description: String,
+    },
 }
 
 impl Action {
@@ -186,6 +192,13 @@ impl Action {
                 agent.as_deref().unwrap_or("-"),
                 project.display()
             ),
+            // The path runs to the last tab: the input types no tab, so the description holds
+            // none, while the path may hold spaces and tabs.
+            Action::NewLayout {
+                name,
+                project,
+                description,
+            } => format!("new-layout {name} {}\t{description}", project.display()),
         }
     }
 
@@ -210,6 +223,18 @@ impl Action {
                     name: name.to_owned(),
                     agent: (agent != "-").then(|| agent.to_owned()),
                     project: PathBuf::from(project),
+                }
+            }
+            ("new-layout", false) => {
+                let (name, rest) = argument.split_once(' ')?;
+                let (project, description) = rest.rsplit_once('\t')?;
+                if project.is_empty() || description.trim().is_empty() {
+                    return None;
+                }
+                Action::NewLayout {
+                    name: name.to_owned(),
+                    project: PathBuf::from(project),
+                    description: description.trim().to_owned(),
                 }
             }
             _ => return None,
@@ -249,6 +274,11 @@ enum Input {
     /// Typing edits [`Home`]'s filter.
     Find,
     Ask(String),
+    /// The layout list's `NAME DESCRIPTION` line; `hint` says why Enter refused it.
+    NewLayout {
+        text: String,
+        hint: Option<String>,
+    },
 }
 
 /// How many ended agents a project shows before the rest fold into one row.
@@ -258,6 +288,8 @@ const MAIN_FOOTER: &str = "enter attach · →/← unfold · n new here · / ask
 const ENDED_FOOTER: &str = "enter resume · →/← unfold · n new here · / ask · f find · ? keys";
 const FIRST_RUN_FOOTER: &str = "enter attach · n new · / ask · L tour · ? keys";
 const SYSTEM_TAG: &str = "tx-system";
+const LAYOUTS_FOOTER: &str = "enter open here · n new · j/k move · esc back";
+const NEW_LAYOUT_PROMPT: &str = "new layout › ";
 
 pub struct Home {
     pub context: Context,
@@ -454,6 +486,7 @@ impl Home {
         match &self.input {
             Some(Input::Find) => return format!("find › {}", self.filter),
             Some(Input::Ask(text)) => return format!("ask › {text}"),
+            Some(Input::NewLayout { .. }) => return self.layouts_footer(),
             None => {}
         }
         if let Some((text, _)) = &self.notice {
@@ -475,6 +508,19 @@ impl Home {
             ""
         };
         format!("{hint}{close}{theme}{layouts}")
+    }
+
+    /// The layout list's footer: the new-layout input, with why Enter refused it, while it is
+    /// open, else the list's keys.
+    pub fn layouts_footer(&self) -> String {
+        match &self.input {
+            Some(Input::NewLayout { text, hint: None }) => format!("{NEW_LAYOUT_PROMPT}{text}"),
+            Some(Input::NewLayout {
+                text,
+                hint: Some(hint),
+            }) => format!("{NEW_LAYOUT_PROMPT}{text}  — {hint}"),
+            _ => LAYOUTS_FOOTER.to_owned(),
+        }
     }
 
     /// The first unfolded agent whose [`Detail`] the context lacks.
@@ -506,7 +552,16 @@ impl Home {
                 self.view = View::Keys(scroll(row, self.context.keys.len(), code));
                 return self.back_on(code);
             }
+            // With the new-layout input open, the key goes to it, below.
+            View::Layouts(_) if self.input.is_some() => {}
             View::Layouts(row) => {
+                if code == KeyCode::Char('n') {
+                    self.input = Some(Input::NewLayout {
+                        text: String::new(),
+                        hint: None,
+                    });
+                    return Outcome::Stay;
+                }
                 if code == KeyCode::Enter {
                     let outcome = self.open_layout(row);
                     if outcome != Outcome::Stay {
@@ -529,6 +584,7 @@ impl Home {
         match self.input.take() {
             Some(Input::Find) => self.find_key(code),
             Some(Input::Ask(text)) => self.ask_key(text, code),
+            Some(Input::NewLayout { text, .. }) => self.new_layout_key(text, code),
             None => self.main_key(code),
         }
     }
@@ -599,6 +655,36 @@ impl Home {
             _ => {}
         }
         self.input = Some(Input::Ask(text));
+        Outcome::Stay
+    }
+
+    /// Called with the new-layout input taken; puts it back unless the key leaves it. Enter on
+    /// a refused line keeps it open with the reason.
+    fn new_layout_key(&mut self, mut text: String, code: KeyCode) -> Outcome {
+        let mut hint = None;
+        match code {
+            KeyCode::Char(character) => text.push(character),
+            KeyCode::Backspace => {
+                text.pop();
+            }
+            KeyCode::Esc => return Outcome::Stay,
+            KeyCode::Enter => {
+                let existing = self.context.layouts.as_deref().unwrap_or_default();
+                match parse_new_layout(&text, existing) {
+                    Ok((name, description)) => {
+                        self.view = View::Main;
+                        return Outcome::Run(Action::NewLayout {
+                            name,
+                            project: self.cursor_project_path(),
+                            description,
+                        });
+                    }
+                    Err(refused) => hint = Some(refused),
+                }
+            }
+            _ => {}
+        }
+        self.input = Some(Input::NewLayout { text, hint });
         Outcome::Stay
     }
 
@@ -828,6 +914,36 @@ impl Home {
         }
         Outcome::Stay
     }
+}
+
+/// A layout name, `[A-Za-z0-9_.-]+`: a file stem and a word of the choice line (the layouts
+/// plugin's rule).
+fn is_layout_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+}
+
+/// The new-layout line `NAME DESCRIPTION`: a layout name no layout in `existing` has, then a
+/// description that is not empty. Else why not, for the input's hint.
+fn parse_new_layout(text: &str, existing: &[String]) -> Result<(String, String), String> {
+    let text = text.trim();
+    let (name, description) = text.split_once(' ').unwrap_or((text, ""));
+    let description = description.trim();
+    if name.is_empty() {
+        return Err("type NAME DESCRIPTION".to_owned());
+    }
+    if !is_layout_name(name) {
+        return Err(format!("{name}: a name is [A-Za-z0-9_.-]+"));
+    }
+    if existing.iter().any(|layout| layout == name) {
+        return Err(format!("{name} exists: pick another name"));
+    }
+    if description.is_empty() {
+        return Err("describe the layout after the name".to_owned());
+    }
+    Ok((name.to_owned(), description.to_owned()))
 }
 
 fn is_ended(agent: &AgentRow) -> bool {
@@ -1744,6 +1860,16 @@ pub(crate) mod tests {
                 agent: None,
                 project: PathBuf::from("/w"),
             },
+            Action::NewLayout {
+                name: "trio".into(),
+                project: PathBuf::from("/w/my project"),
+                description: "developer left, qa right, nvim below the qa".into(),
+            },
+            Action::NewLayout {
+                name: "t.2".into(),
+                project: PathBuf::from("/w/odd\tdir"),
+                description: "two  spaces".into(),
+            },
         ] {
             assert_eq!(Action::decode(&action.encode()), Some(action.clone()));
         }
@@ -1758,6 +1884,15 @@ pub(crate) mod tests {
         );
         assert_eq!(Action::encode(&Action::New(PathBuf::from("/w"))), "new /w");
         assert_eq!(
+            Action::NewLayout {
+                name: "trio".into(),
+                project: PathBuf::from("/w/my project"),
+                description: "qa right".into(),
+            }
+            .encode(),
+            "new-layout trio /w/my project\tqa right"
+        );
+        assert_eq!(
             Action::decode("  ask hello there \n"),
             Some(Action::Ask("hello there".into()))
         );
@@ -1771,11 +1906,125 @@ pub(crate) mod tests {
             "layout",
             "layout pair",
             "layout pair -",
+            "new-layout",
+            "new-layout trio",
+            "new-layout trio /w",
+            "new-layout trio /w\t",
+            "new-layout trio \tqa right",
             "plugins",
             "keys",
             "bogus",
         ] {
             assert_eq!(Action::decode(bogus), None, "{bogus:?}");
+        }
+    }
+
+    #[test]
+    fn a_new_layout_line_is_a_free_valid_name_then_a_description() {
+        let existing = ["pair".to_owned()];
+        assert_eq!(
+            parse_new_layout("  trio developer left,  qa right ", &existing),
+            Ok(("trio".into(), "developer left,  qa right".into()))
+        );
+        assert_eq!(
+            parse_new_layout("solo.v2 one agent", &existing),
+            Ok(("solo.v2".into(), "one agent".into()))
+        );
+        for (line, hint) in [
+            ("", "type NAME DESCRIPTION"),
+            ("   ", "type NAME DESCRIPTION"),
+            ("a/b two agents", "a/b: a name is [A-Za-z0-9_.-]+"),
+            ("trio", "describe the layout after the name"),
+            ("trio   ", "describe the layout after the name"),
+            ("pair two agents", "pair exists: pick another name"),
+        ] {
+            assert_eq!(
+                parse_new_layout(line, &existing),
+                Err(hint.to_owned()),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn n_in_the_layout_list_asks_for_a_new_layout() {
+        let typed_line = |home: &mut Home, line: &str| {
+            for character in line.chars() {
+                assert_eq!(home.key(KeyCode::Char(character)), Outcome::Stay);
+            }
+        };
+        let mut home = Home::new(with_layouts());
+        home.key(KeyCode::Char('w'));
+        assert_eq!(home.layouts_footer(), LAYOUTS_FOOTER);
+        assert_eq!(home.key(KeyCode::Char('n')), Outcome::Stay);
+        assert_eq!(home.layouts_footer(), "new layout › ");
+        typed_line(&mut home, "jkq");
+        assert_eq!(home.view(), View::Layouts(0), "list keys are typed");
+        assert_eq!(home.layouts_footer(), "new layout › jkq");
+        assert_eq!(home.key(KeyCode::Esc), Outcome::Stay);
+        assert_eq!(
+            home.view(),
+            View::Layouts(0),
+            "Esc leaves the input, not the list"
+        );
+        assert_eq!(home.layouts_footer(), LAYOUTS_FOOTER);
+
+        home.key(KeyCode::Char('n'));
+        for (line, hint) in [
+            ("a/b x", "a/b: a name is"),
+            ("trio", "describe the layout"),
+            ("pair x", "pair exists"),
+        ] {
+            typed_line(&mut home, line);
+            assert_eq!(home.key(KeyCode::Enter), Outcome::Stay, "{line}");
+            let footer = home.layouts_footer();
+            assert!(
+                footer.starts_with(&format!("new layout › {line}  — {hint}")),
+                "{footer}"
+            );
+            for _ in line.chars() {
+                home.key(KeyCode::Backspace);
+            }
+            assert_eq!(
+                home.layouts_footer(),
+                "new layout › ",
+                "an edit drops the hint"
+            );
+        }
+        typed_line(&mut home, "trio developer left, qa right");
+        assert_eq!(
+            home.key(KeyCode::Enter),
+            Outcome::Run(Action::NewLayout {
+                name: "trio".into(),
+                project: PathBuf::from("/w/wrangler"),
+                description: "developer left, qa right".into(),
+            }),
+            "in the cursor's project"
+        );
+        assert_eq!(home.view(), View::Main);
+        assert_eq!(home.footer(), format!("{MAIN_FOOTER} · w layouts"));
+
+        let mut empty = Home::new(Context {
+            layouts: Some(Vec::new()),
+            ..context()
+        });
+        empty.key(KeyCode::Char('w'));
+        empty.key(KeyCode::Char('n'));
+        assert_eq!(
+            empty.layouts_footer(),
+            "new layout › ",
+            "n on an empty list"
+        );
+    }
+
+    #[test]
+    fn n_in_main_stays_new_agent() {
+        for context in [context(), with_layouts()] {
+            let mut home = Home::new(context);
+            assert_eq!(
+                home.key(KeyCode::Char('n')),
+                Outcome::Run(Action::New(PathBuf::from("/w/wrangler")))
+            );
         }
     }
 }

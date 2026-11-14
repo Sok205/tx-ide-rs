@@ -101,7 +101,9 @@ tx layout open pair --cwd <project> --agent <agent> --tag <scope>   # around an 
   message names the file or definition: report it, don't retry with other flags.
 
 Each layout is `<config>/layouts/<name>.yaml` (name `[A-Za-z0-9_.-]+`). `tx layout path <name>`
-prints the file, existing or not; edit it there to make or change one. To keep a view the
+prints the file, existing or not; edit it there to make or change one, then run
+`tx layout check <name>`: it validates the file as `open` would (`<name> ok: N panes`, else the
+error), starting nothing. To keep a view the
 operator arranged by hand, `tx layout save <name> --view <view>` writes it (without `--view`,
 the session you run in, which must be a view); it refuses an existing file unless `--force`, so ask before overwriting:
 

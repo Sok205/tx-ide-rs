@@ -500,11 +500,12 @@ fn draw_keys(home: &Home, row: usize, area: Rect, buf: &mut Buffer, themed: bool
     draw_list(&list, area, buf, themed);
 }
 
-/// One layout name per row, the selected one highlighted; with none, how to make one.
+/// One layout name per row, the selected one highlighted; with none, how to make one. The hint
+/// line is the new-layout input while it is open.
 fn draw_layouts(home: &Home, row: usize, area: Rect, buf: &mut Buffer, themed: bool) {
     let names = home.context.layouts.as_deref().unwrap_or_default();
     let (rows, highlight) = if names.is_empty() {
-        let empty = r#"no layouts — nvim "$(tx layout path NAME)" makes one"#;
+        let empty = r#"no layouts — n new, or nvim "$(tx layout path NAME)""#;
         (vec![Line::styled(empty, dim())], false)
     } else {
         let rows = names
@@ -513,13 +514,14 @@ fn draw_layouts(home: &Home, row: usize, area: Rect, buf: &mut Buffer, themed: b
             .collect();
         (rows, true)
     };
+    let footer = home.layouts_footer();
     let list = List {
         title: "layouts",
         header: None,
         rows,
         row,
         highlight,
-        hint: "enter open here · j/k move · esc back",
+        hint: &footer,
     };
     draw_list(&list, area, buf, themed);
 }
@@ -1030,7 +1032,7 @@ mod tests {
         let lines = text(&buf);
         let y = row_of(
             &lines,
-            r#"no layouts — nvim "$(tx layout path NAME)" makes one"#,
+            r#"no layouts — n new, or nvim "$(tx layout path NAME)""#,
         );
         assert!(
             !buf[(1, u16::try_from(y).unwrap())]
@@ -1038,6 +1040,35 @@ mod tests {
                 .contains(Modifier::REVERSED)
         );
         assert!(!lines.iter().any(|line| line.contains("(none)")));
+    }
+
+    #[test]
+    fn the_new_layout_input_takes_the_layout_hint_line() {
+        let mut home = Home::new(Context {
+            layouts: Some(vec!["pair".into()]),
+            ..context()
+        });
+        home.key(KeyCode::Char('w'));
+        let lines = text(&render(&home));
+        let hint = row_of(&lines, "enter open here · n new");
+        home.key(KeyCode::Char('n'));
+        for character in "pair two agents".chars() {
+            home.key(KeyCode::Char(character));
+        }
+        let lines = text(&render(&home));
+        assert!(
+            lines[hint].contains("new layout › pair two agents"),
+            "{}",
+            lines[hint]
+        );
+        home.key(KeyCode::Enter);
+        let lines = text(&render(&home));
+        assert!(
+            lines[hint].contains("new layout › pair two agents  — pair exists"),
+            "{}",
+            lines[hint]
+        );
+        row_of(&lines, "│pair ");
     }
 
     #[test]
