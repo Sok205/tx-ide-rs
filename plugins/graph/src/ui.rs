@@ -355,6 +355,7 @@ fn legend_line() -> Paragraph<'static> {
     let mut spans = vec![Span::raw("  ")];
     spans.extend(swatch("┏┓", ACCENT, " selected   "));
     spans.extend(swatch("┏┓", GREEN, " working   "));
+    spans.extend(swatch("┏┓", WARN, " needs you   "));
     spans.extend(swatch("┏┓", BORDER_DIM, " idle   "));
     spans.extend(swatch("⠉⠒⠤", INFO, " messages   "));
     spans.extend(swatch("⠁⠂⠄", BORDER_DIM, " lineage only"));

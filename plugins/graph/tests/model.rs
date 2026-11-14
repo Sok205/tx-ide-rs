@@ -34,6 +34,9 @@ fn shows_running_recent_and_connecting_agents() {
     assert_eq!(node("qa-pr4").depth, 3);
     assert_eq!(node("legacy-worker").depth, 1);
     assert_eq!(node("you").state, NodeState::Operator);
+    // Idle waiting on the operator is "needs you"; idle having finished stays idle.
+    assert_eq!(node("pv-pr6").state, NodeState::NeedsYou);
+    assert_eq!(node("pv-orchestrator").state, NodeState::Idle);
 }
 
 #[test]

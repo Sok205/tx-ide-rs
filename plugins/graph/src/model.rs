@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use tx_chat::transcript::metadata::Metadata;
-use tx_core::{Agent, AgentId, CoreError, EngineKind, ListFilter, LlmEngineState, TxCore};
+use tx_core::{
+    Agent, AgentId, CoreError, EngineKind, IdleReason, ListFilter, LlmEngineState, TxCore,
+};
 
 pub const OPERATOR_NAME: &str = "you";
 /// The group walk up the parent chain stops at a hub, as the artifacts plugin's does.
@@ -57,8 +59,7 @@ pub enum NodeState {
     Starting,
     Working,
     Idle,
-    /// Idle on a permission prompt or a question. Nothing produces it until the engines keep
-    /// the idle reason (plan PR 4); [`node_state`] is where it will be read.
+    /// Idle on a permission prompt or a question: the record's idle reason is `waiting`.
     NeedsYou,
     Ended,
 }
@@ -76,12 +77,15 @@ impl NodeState {
     }
 }
 
-/// The hook point for the "needs you" state: once the record says why an agent is idle, an
-/// idle agent waiting on the operator maps to [`NodeState::NeedsYou`] here.
+/// The record's state as the graph draws it: an idle agent waiting on the operator (an
+/// approval, a question) is [`NodeState::NeedsYou`].
 pub fn node_state(agent: &Agent) -> NodeState {
     match agent.state {
         LlmEngineState::Starting => NodeState::Starting,
         LlmEngineState::Working => NodeState::Working,
+        LlmEngineState::Idle if agent.idle_reason == Some(IdleReason::Waiting) => {
+            NodeState::NeedsYou
+        }
         LlmEngineState::Idle => NodeState::Idle,
         LlmEngineState::Ended => NodeState::Ended,
     }

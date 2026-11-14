@@ -1,4 +1,4 @@
- tx-ide  graph  persistent-views   5 agents · ● 2 working · ━ 18 messages / 1h
+ tx-ide  graph  persistent-views   5 agents · ● 2 working · ▲ 1 needs you · ━ 18 messages / 1h
 
   depth 0                              1                                    2                           ┏ you ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ╭ ◇ you ───────────────╮⢀⣀⣀                                                                           ┃ role        operator             ┃
@@ -16,8 +16,8 @@
                             ⡀          ┃                      ┃                                         ┃ context window                   ┃
                             ⡇          ┗━━━━━━━━━━━━━━━━━━━━━━┛                                         ┃ —                                ┃
                             ⠃                                                                           ┃                                  ┃
-                            ⡀          ┏ ○ pv-pr6 ━━━━━━━━━━━━┓                                         ┃ recent                           ┃
-                            ⠧⠄⠠⠤⠄⠠⠤⠄⠠⠄▷┃ idle · 8s            ┃                                         ┃ 20:31 you ━▶ pv-orchest…         ┃
+                            ⡀          ┏ ▲ pv-pr6 ━━━━━━━━━━━━┓                                         ┃ recent                           ┃
+                            ⠧⠄⠠⠤⠄⠠⠤⠄⠠⠄▷┃ needs you · 8s       ┃                                         ┃ 20:31 you ━▶ pv-orchest…         ┃
                                        ┃ ctx ━━━━━━━━━━━━━─── ┃                                         ┃                                  ┃
                                        ┗━━━━━━━━━━━━━━━━━━━━━━┛                                         ┃                                  ┃
                                                                                                         ┃                                  ┃
@@ -26,5 +26,5 @@
                                                                                                         ┃                                  ┃
                                                                                                         ┃                                  ┃
                                                                                                         ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-  ┏┓ selected   ┏┓ working   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
+  ┏┓ selected   ┏┓ working   ┏┓ needs you   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
   enter jump · s send · f fork · a artifacts · x stop · g group: persistent-views · ? keys

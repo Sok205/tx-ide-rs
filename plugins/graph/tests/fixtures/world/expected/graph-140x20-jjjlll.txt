@@ -1,4 +1,4 @@
- tx-ide  graph  all agents   11 agents · ● 4 working · ━ 26 messages / 1h
+ tx-ide  graph  all agents   11 agents · ● 4 working · ▲ 1 needs you · ━ 26 messages / 1h
 
   depth 0                              1                                    2                                    3
   ┏ ● tx-assistant ━━━━━━┓  ⢀⠜    ⠱⡀   ┏ ○ pv-orchestrator ━━━┓             ┏ ● pv-pr4 ━━━━━━━━━━━━┓             ┏ ◐ qa-pr4 ━━━━━━━━━━━━┓
@@ -11,10 +11,10 @@
                                        ┃                      ┃  ⡀          ┃                      ┃
                                        ┗━━━━━━━━━━━━━━━━━━━━━━┛  ⡇          ┗━━━━━━━━━━━━━━━━━━━━━━┛
                                                                  ⠃
-                                                                 ⡀          ┏ ○ pv-pr6 ━━━━━━━━━━━━┓
-                                                                 ⠧⠄⠠⠤⠄⠠⠤⠄⠠⠤▷┃ idle · 8s            ┃
+                                                                 ⡀          ┏ ▲ pv-pr6 ━━━━━━━━━━━━┓
+                                                                 ⠧⠄⠠⠤⠄⠠⠤⠄⠠⠤▷┃ needs you · 8s       ┃
                                                                             ┃ ctx ━━━━━━━━━━━━━─── ┃
                                                                             ┗━━━━━━━━━━━━━━━━━━━━━━┛
-  ┏┓ selected   ┏┓ working   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
+  ┏┓ selected   ┏┓ working   ┏┓ needs you   ┏┓ idle   ⠉⠒⠤ messages   ⠁⠂⠄ lineage only
   qa-pr4  engine claude · definition qa · group persistent-views · parent pv-pr4 · children 0 · messages 0
   enter jump · s send · f fork · a artifacts · x stop · g group: all · ? keys

@@ -41,7 +41,8 @@
    },
    "definition": {
     "agent": "orchestrator"
-   }
+   },
+   "idle_reason": "finished"
   },
   {
    "version": 2,
@@ -121,7 +122,8 @@
    },
    "definition": {
     "agent": "developer"
-   }
+   },
+   "idle_reason": "waiting"
   },
   {
    "version": 2,
