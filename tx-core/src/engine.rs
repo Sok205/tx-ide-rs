@@ -301,14 +301,6 @@ pub trait LlmEngine: Send + Sync {
         Input::line(crate::messaging::build_envelope(sender, text))
     }
 
-    /// What to type so the CLI exits cleanly, closing its transcript; `None`: it has no such
-    /// input, core kills the process. Core waits for the exit either way and kills what is
-    /// still there after its grace period. Pure. The default knows none.
-    fn stop(&self, session: &Agent) -> Option<Input> {
-        let _ = session;
-        None
-    }
-
     /// What to type to abort the running turn, and the state the agent is in once it landed
     /// (`Some(Idle)`: at its prompt; `None`: say nothing, a hook will), since an aborted turn
     /// need not fire the CLI's end-of-turn hook. Core applies the state as it does a hook's.
@@ -791,7 +783,6 @@ mod tests {
             engine.receive_message(&EnvelopeSender::Agent { name: "a" }, "hi"),
             Input::line("<from-agent session=\"a\">hi</from-agent>")
         );
-        assert_eq!(engine.stop(&session), None);
         assert_eq!(engine.interrupt(&session), None);
         assert_eq!(Key::Escape.tmux_name(), "Escape");
         assert_eq!(Key::Enter.tmux_name(), "Enter");

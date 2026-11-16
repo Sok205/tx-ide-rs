@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use tx_core::{
-    AgentId, CoreConfig, CreateOptions, Directories, EngineError, EngineKind, Input, Key,
-    LaunchOptions, LaunchPlan, LaunchRequest, LlmEngine, TxCore, WorkspaceAction,
+    AgentId, CoreConfig, CreateOptions, Directories, EngineError, EngineKind, Input, LaunchOptions,
+    LaunchPlan, LaunchRequest, LlmEngine, TxCore, WorkspaceAction,
 };
 
 /// `None` when tmux is not installed; callers skip.
@@ -230,7 +230,6 @@ pub fn wait_for(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool 
 /// A test engine: runs `sh -c <script>` where the script records its environment and reads
 /// stdin forever (so messages land in a file), and writes a marker file via the workspace.
 /// The `model` option picks a variant: `exit` runs `true` (a program that exits at once),
-/// `tough` ignores the hang-up a closed pane sends (as a CLI busy with its exit hooks might),
 /// `data` names its conversation up front (as Claude's plan does), `refuse` is refused by
 /// `configure`.
 pub struct ShellStub;
@@ -309,12 +308,6 @@ impl LlmEngine for ShellStub {
         Ok(self.plan(request, prompt, "fork", source.id.as_str()))
     }
 
-    /// End of input: `cat` returns and the shell exits, as a CLI's own exit command would.
-    /// The `tough` model ignores it, so core's kill fallback is what ends that one.
-    fn stop(&self, _: &tx_core::Agent) -> Option<Input> {
-        Some(Input::Key(Key::ControlD))
-    }
-
     /// The stub has no turns; what core types is visible in `input.txt`, and it says it is idle
     /// afterwards, as the real engines do.
     fn interrupt(&self, _: &tx_core::Agent) -> Option<(Input, Option<tx_core::LlmEngineState>)> {
@@ -383,13 +376,6 @@ impl ShellStub {
         let script = format!("env > env.txt; echo \"{prompt}\" > prompt.txt; cat > input.txt");
         let (program, args) = match option("model") {
             Some("exit") => ("true", Vec::new()),
-            Some("tough") => (
-                "sh",
-                vec![
-                    "-c".to_owned(),
-                    "trap '' HUP TERM; env > env.txt; sleep 120".to_owned(),
-                ],
-            ),
             _ => ("sh", vec!["-c".to_owned(), script]),
         };
         let plan = LaunchPlan::new(program)

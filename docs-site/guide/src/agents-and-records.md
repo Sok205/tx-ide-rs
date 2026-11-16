@@ -58,8 +58,8 @@ built-in `tx` verb:
   prefix+f forks the agent in the active pane.
 - **respawn** (`tx respawn TARGET`): starts an ended agent again in the same record, worktree and
   conversation (the engine's `resume`).
-- **stop** (`tx stop TARGET`): types the engine's exit command (`/exit`, `/quit`), waits, and
-  kills what is left after a grace period.
+- **stop** (`tx stop TARGET`, `tx kill TARGET`, prefix+X): marks the record ended and kills the
+  agent's tmux session. No engine command is typed and nothing waits.
 
 - **gc** (`tx gc [--older-than 1d] [--dry-run]`): deletes the build output named in
   `worktree.build_outputs` (default `[target]`) in the worktrees of agents ended longer ago than

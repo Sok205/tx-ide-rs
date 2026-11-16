@@ -2,7 +2,6 @@
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use crate::agent::{Agent, AgentId, DefinitionChoice, validate_name};
 use crate::config::{AGENTS_DIR, CoreConfig};
@@ -460,44 +459,6 @@ fn move_state(
     session.idle_reason = idle_reason;
     session.last_activity_at = Some(now());
     Some(event(EventType::StateChanged, session, None, detail))
-}
-
-/// How long `stop` waits for the pane's process to exit on its own: first after the engine's
-/// own stop input, then after `kill-session`, before killing it outright.
-const STOP_WAIT: Duration = Duration::from_secs(10);
-/// How long `stop` waits after `SIGKILL`.
-const KILL_WAIT: Duration = Duration::from_secs(2);
-const EXIT_POLL: Duration = Duration::from_millis(50);
-
-/// Whether a process with `pid` still exists (`kill(pid, 0)`). One we may not signal exists.
-fn process_exists(pid: u32) -> bool {
-    // SAFETY: signal 0 delivers nothing; the call only checks the pid.
-    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-/// Polls until the process is gone or `timeout` has passed; whether it is gone.
-fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while process_exists(pid) {
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(EXIT_POLL);
-    }
-    true
-}
-
-/// `kill-session` closed the pane, but the CLI may still be wrapping up (its exit hooks fire
-/// through `txi hook`). Waits for it, then kills it outright and waits once more, so no late
-/// hook of this run can reach a respawn. Whether it is gone.
-fn wait_or_kill(pid: u32) -> bool {
-    if wait_for_exit(pid, STOP_WAIT) {
-        return true;
-    }
-    // SAFETY: a plain signal to a pid read from the pane moments ago.
-    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-    wait_for_exit(pid, KILL_WAIT)
 }
 
 /// The engine side of a launch: the adapter, the roles composed for it, and how it opens the
@@ -1387,15 +1348,10 @@ impl TxCore {
             .ok_or_else(|| CoreError::NotRunning(id.clone()))
     }
 
-    /// The engine's own stop input (or `kill-session` when it has none), `Stopped`, then a
-    /// wait until the pane's process has really exited: `STOP_WAIT` for the CLI to leave by
-    /// itself, then `kill-session` and `STOP_WAIT` more, then killed outright; so a late hook
-    /// from the old process can never reach a respawn. The record is saved and the session lock
-    /// released before the wait: the process's own exit hooks need that lock, and they find the
-    /// record `Stopped` and are ignored. The create lock is held across the wait instead, which
-    /// is the lock a respawn takes first. The `Stopped` event's detail is empty when the CLI
-    /// left by itself and `killed` when it had to be killed. A record whose session had already
-    /// vanished becomes `Exited` instead (what happened, not what was asked).
+    /// `kill-session` on the agent's tmux session, then the record is `Stopped` and the
+    /// conversation archived. The record is saved before the kill, so the dying process's own
+    /// hooks find it `Stopped` and are ignored. A record whose session had already vanished
+    /// becomes `Exited` instead (what happened, not what was asked).
     pub fn stop_agent(&self, id: &AgentId) -> Result<Agent, CoreError> {
         let _create = self.locks.create().map_err(CoreError::Lock)?;
         let (session, ended) = self.stop_locked(id)?;
@@ -1404,50 +1360,25 @@ impl TxCore {
         Ok(session)
     }
 
-    /// `stop_agent` under the create lock the caller holds, the wait included; the caller
-    /// emits the returned event.
+    /// `stop_agent` under the create lock the caller holds; the caller emits the returned
+    /// event.
     fn stop_locked(&self, id: &AgentId) -> Result<(Agent, Event), CoreError> {
-        let (session, live) = {
+        let session = {
             let _session = self.locks.agent(id).map_err(CoreError::Lock)?;
             let mut session = self.get_agent(id)?;
             if session.state == LlmEngineState::Ended {
                 return Err(CoreError::NotRunning(id.clone()));
             }
             let Some(live) = self.tmux.is_live(id)? else {
-                let (session, exited) = self.mark_exited(session)?;
-                return Ok((session, exited));
+                return self.mark_exited(session);
             };
-            let stop = self
-                .engines
-                .get(session.engine)
-                .and_then(|adapter| adapter.stop(&session));
-            let pid = self.tmux.pane_pid(&live.pane_target)?;
-            match &stop {
-                Some(input) => deliver(&self.tmux, &live.pane_target, input, DELIVERY_PAUSE)?,
-                None => {
-                    self.tmux.kill_session(&live.session_target)?;
-                }
-            }
             mark_ended(&mut session);
             self.save(&mut session)?;
-            (
-                session,
-                pid.map(|pid| (pid, live.session_target, stop.is_some())),
-            )
+            self.tmux.kill_session(&live.session_target)?;
+            session
         };
-        let mut detail = "";
-        if let Some((pid, target, asked_to_leave)) = live {
-            let left = asked_to_leave && wait_for_exit(pid, STOP_WAIT);
-            if !left {
-                detail = "killed";
-                if asked_to_leave {
-                    self.tmux.kill_session(&target)?;
-                }
-                wait_or_kill(pid);
-            }
-            self.archive_conversation(&session);
-        }
-        let stopped = event(EventType::Stopped, &session, None, detail);
+        self.archive_conversation(&session);
+        let stopped = event(EventType::Stopped, &session, None, "");
         Ok((session, stopped))
     }
 

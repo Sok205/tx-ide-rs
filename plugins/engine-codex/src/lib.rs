@@ -162,9 +162,6 @@ pub const CODEX_ONLY_FEATURES: [&str; 3] = ["goals", "tool_suggest", "image_gene
 /// is refused for a server no config layer defines, so it is given a dead URL first.
 pub const TUI_WORKTREES_SERVER: &str = "codex_worktrees";
 const DEAD_URL: &str = "http://127.0.0.1:9/none";
-/// The slash command that exits the CLI cleanly, idle or mid-turn (codex-cli 0.164.0: exit 0
-/// within half a second). Not Ctrl-C: idle it exits at once, but mid-turn it opens a menu.
-pub const QUIT_COMMAND: &str = "/quit";
 pub const DEFAULT_EFFORT: Effort = Effort::High;
 /// The `ext` key this engine owns.
 pub const EXT_KEY: &str = "codex";
@@ -473,10 +470,6 @@ impl LlmEngine for CodexAdapter {
         ];
         let fork_data = without_conversation(engine_data(self, request.session));
         self.plan(request, args, Some(fork_data), prompt)
-    }
-
-    fn stop(&self, _: &Agent) -> Option<Input> {
-        Some(Input::line(QUIT_COMMAND))
     }
 
     /// Escape, as the status line says ("esc to interrupt"); Ctrl-C mid-turn opens a menu. The
@@ -1354,9 +1347,8 @@ mod tests {
     }
 
     #[test]
-    fn stop_is_quit_submitted_and_interrupt_is_escape() {
+    fn interrupt_is_escape() {
         let session = record(serde_json::Value::Null);
-        assert_eq!(adapter().stop(&session), Some(Input::line("/quit")));
         assert_eq!(
             adapter().interrupt(&session),
             Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))
