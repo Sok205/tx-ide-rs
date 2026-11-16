@@ -7,18 +7,20 @@ description: Use when asked to create, change or inspect a tx agent definition, 
 
 An agent gets **exactly** what its definition lists, plus any `--skill` / `--mcp` / `--tool`
 extras given when it was created. tx adds nothing else. The one exception is Claude's named
-baseline, `Skill` and `ToolSearch`, which `tx definitions` and `tx check` always print.
+baseline, `Skill` and `ToolSearch`, which `tx harness ls` and `tx harness check` always print.
 
-## Where the files are
+## Where the files are: the harness
+
+The agents, skills and MCP servers together are the **harness**: two trees of the same layout.
 
 | | Shipped (rewritten by `tx update`) | Yours (tx never writes here) |
 |---|---|---|
-| agents | `$TX_DATA_DIR/definitions/agents/<name>.md` | `$TX_CONFIG_DIR/definitions/agents/<name>.md` |
-| skills | `$TX_DATA_DIR/definitions/skills/<name>/SKILL.md` | `$TX_CONFIG_DIR/definitions/skills/<name>/SKILL.md` |
-| MCP servers | `$TX_DATA_DIR/definitions/mcp.json` | `$TX_CONFIG_DIR/definitions/mcp.json` |
+| agents | `$TX_DATA_DIR/harness/agents/<name>.md` | `$TX_CONFIG_DIR/harness/agents/<name>.md` |
+| skills | `$TX_DATA_DIR/harness/skills/<name>/SKILL.md` | `$TX_CONFIG_DIR/harness/skills/<name>/SKILL.md` |
+| MCP servers | `$TX_DATA_DIR/harness/mcp.json` | `$TX_CONFIG_DIR/harness/mcp.json` |
 
 Yours win by name: an agent, a skill, or a server key inside `mcp.json`. To change a shipped
-definition, **copy it to the same relative path under `$TX_CONFIG_DIR/definitions/`** and edit
+definition, **copy it to the same relative path under `$TX_CONFIG_DIR/harness/`** and edit
 the copy. Never edit `$TX_DATA_DIR`: the next install overwrites it.
 
 ## Formats
@@ -30,7 +32,7 @@ Templates are next to this file: `templates/agent.md`, `templates/SKILL.md`, `te
     - `name`: required, equal to the file name.
     - `description`: required.
     - `tools`: **required**. The built-in tools, in Claude's names; the valid names come from
-      `tx definitions tools`.
+      `tx harness ls tools`.
     - `mcpServers`: keys of `mcp.json`. None listed means no MCP at all.
     - `disallowedTools`: cuts, such as `mcp__<server>__<tool>`, or `mcp__<server>` for the whole
       server.
@@ -48,7 +50,7 @@ Templates are next to this file: `templates/agent.md`, `templates/SKILL.md`, `te
   claude.ai-synced skills (`pdf`, `docx`, …) ship as `SKILL.md` files holding only frontmatter,
   with `metadata.provided-by: claude-bundled` or `claude-synced`. List them in `skills` like any
   skill. A synced skill arrives alone. A bundled one turns on Claude's whole bundle, since Claude
-  cannot enable them one by one, and `tx check` and `tx create` warn about it. Codex has none of
+  cannot enable them one by one, and `tx harness check` and `tx create` warn about it. Codex has none of
   them, so a launch there is refused. Never copy their text into a skill.
 - **MCP servers**, `mcp.json`: Claude's `.mcp.json` format.
   - `{"mcpServers": {"<name>": {...}}}`, with `"type": "stdio"` (`command`, `args`, `env`) or
@@ -60,14 +62,14 @@ Templates are next to this file: `templates/agent.md`, `templates/SKILL.md`, `te
 
 ## Check, list, inspect
 
-- `tx check [NAME]...`: validates everything, or the names given. It prints `path:line: problem`
+- `tx harness check [NAME]...`: validates everything, or the names given. It prints `path:line: problem`
   and exits 1 on any problem. Run it after every edit.
-- `tx check --engine claude|codex [NAME]...`: adds what that engine always carries and no flag
+- `tx harness check --engine claude|codex [NAME]...`: adds what that engine always carries and no flag
   removes. Then, per agent, what it gets that its file does not say: the baseline, writes through
   `Bash`, tools that are one switch on Codex. On Claude it also refuses tool names Claude does
   not know.
-- `tx definitions [agents|skills|mcp]`: names and descriptions.
-- `tx definitions tools`: Claude's built-in tools, the Claude names Codex switches off, and every
+- `tx harness ls [agents|skills|mcp]`: names and descriptions.
+- `tx harness ls tools`: Claude's built-in tools, the Claude names Codex switches off, and every
   MCP server's tools. It starts the servers to ask them.
 
 ## Use and change

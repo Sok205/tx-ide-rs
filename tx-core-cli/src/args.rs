@@ -80,7 +80,7 @@ verbs:
   update                                                            bring this machine up to this tx: run the update steps
                                                                     it has not had yet (<data>/update-version), then each
                                                                     plugin's updater (the IDE's tmux config, keys, shipped
-                                                                    roles and definitions); one line per step, and whether
+                                                                    roles and harness); one line per step, and whether
                                                                     running agents need a respawn. Other verbs warn while
                                                                     one is pending
 

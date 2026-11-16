@@ -94,7 +94,7 @@ to `<state>/profiles/<id>.md`. Roles resolve from `<data>/roles` (the ones tx sh
 `tx update`) and then `<config>/roles` (yours, overriding a shipped role of the same name);
 every directory's `<NAME>.local.md` extends the base. A role may open with frontmatter granting
 **skills** (`skills: [tx-sessions, tx-artifacts]`); each resolves to a `skills/<name>/` directory
-under `<data>/definitions` (the shipped ones) or `<config>/definitions` (yours, which win), which
+under `<data>/harness` (the shipped ones) or `<config>/harness` (yours, which win), which
 the engine links into the worktree (`.claude/skills/` or `.agents/skills/`).
 
 Roles are the prompt text several agents share; the personas are agent definitions (below). The
@@ -106,19 +106,19 @@ the definition's `roles`.
 
 ## Agent definitions
 
-An **agent definition** is `agents/<name>.md` under `<data>/definitions` (shipped) or
-`<config>/definitions` (yours, which win by name): Claude's agent format, reduced to `name`,
+An **agent definition** is `agents/<name>.md` under `<data>/harness` (shipped) or
+`<config>/harness` (yours, which win by name): Claude's agent format, reduced to `name`,
 `description`, `tools` (required: the built-in tools, in Claude's names), `mcpServers`,
 `disallowedTools`, `skills` and `roles`, with the prompt as the body. `roles` names the shared
 prompt layers (such as COMMON) the agent runs on when the launch names none; their text comes
 before the body, and their skill grants join `skills`, each skill once. Tools and MCP servers come
 only from the definition.
 `mcp.json` beside it holds the MCP servers in Claude's `.mcp.json` format, and `skills/` the
-skills. `tx definitions [agents|skills|mcp]` lists them, and `tx definitions tools` the names `tools`
+skills: together, the **harness**. `tx harness ls [agents|skills|mcp]` lists them, and `tx harness ls tools` the names `tools`
 can use: Claude's built-ins (read once per Claude version from a headless launch's `system/init`
 against a dead API address, so no model call; cached under `<cache>/tools/`), the Claude names
-Codex switches off, and each MCP server's tools (asked through `codex app-server`); `tx check` validates them, and
-`tx check --engine claude|codex` adds what that engine adds to each agent or cannot remove.
+Codex switches off, and each MCP server's tools (asked through `codex app-server`); `tx harness check` validates them, and
+`tx harness check --engine claude|codex` adds what that engine adds to each agent or cannot remove.
 
 `tx create NAME --agent A [--skill S]... [--mcp M]... [--tool T]...` runs definition `A`: its
 prompt after any `--role` text, its skills plus the `--skill` extras, its tools plus the `--tool`
@@ -133,7 +133,7 @@ the worker tools and the tx skills), **qa** (verifies one PR in a sandbox and re
 **orchestrator** (runs a multi-team programme, never writes code) and **claude** (plain Claude
 Code); the first three run on COMMON. `definition: null` leaves roles alone with the engine's base
 tools.
-A record from before definitions adopts the default at its next respawn. A secret an MCP server names (`${NAME}`) is taken
+A record from before agent definitions adopts the default at its next respawn. A secret an MCP server names (`${NAME}`) is taken
 from the environment of the `tx` that launches the agent (create or respawn) and set in the
 session; when it is unset the launch is refused, on both engines.
 

@@ -41,7 +41,7 @@ tx ui attach                    # the IDE: the home
 Needs Rust 1.92+, tmux, git, fzf, curl, at least one engine CLI (`claude`, the default engine and
 the assistant's, or `codex`) and `nvim` for views; `install` also needs `jq`. It installs `tx` and
 `txi` with cargo, runs `tx update` (the pending update steps, then each plugin's updater: the IDE's
-tmux config, its keys, and the shipped roles and definitions, under the data directory), links
+tmux config, its keys, and the shipped roles and harness, under the data directory), links
 `~/.config/nvim` and `~/.tmux.conf` to this repository's `config/nvim` and `config/tmux.conf`
 (moving what was there to `<path>.bak.<stamp>`), and writes `~/.config/tx-ide/config.yaml` with every default spelled out, once. It is safe to
 re-run. After rebuilding `tx` by hand, run `tx update`: it runs the update steps a newer tx
@@ -117,7 +117,7 @@ the popup. The graph lists its keys on `?`.
 | `tx show NAME`, `tx where NAME`, `tx attach NAME` | its record as JSON; its tmux socket, session and pane; attach this terminal to it |
 | `tx rename NAME NEW`, `tx tag NAME TAG…` | rename it; replace its tags |
 | `tx gc [--older-than 1d] [--dry-run]` | delete the build output (`worktree.build_outputs`) in the worktrees of agents that ended longer ago than that |
-| `tx definitions`, `tx check` | list and validate the agent definitions, skills and MCP servers |
+| `tx harness ls`, `tx harness check` | list and validate the agent definitions, skills and MCP servers |
 | `tx engines`, `tx plugins` | the enabled engines; every plugin and whether it is on |
 
 Plugins add `ui`, `home`, `pick`, `kill`, `whoami`, `chat`, `doctor`, `assistant`, `artifact`,
@@ -140,11 +140,11 @@ agent format, `name`, `description`, `tools`, `mcpServers`, `disallowedTools`, `
 | `claude` | plain Claude Code: every built-in tool, no prompt of its own |
 
 `tx create NAME --agent qa …` picks one; `--skill`, `--mcp` and `--tool` add to it. The shipped
-definitions, the tx skills (`tx-sessions`, `tx-artifacts`, `tx-diff-review`, `tx-code-tours`,
+agent definitions, the tx skills (`tx-sessions`, `tx-artifacts`, `tx-diff-review`, `tx-code-tours`,
 `tx-mockup`, `tx-agents`) and `mcp.json` live in `config/tx/` and are installed under
-`<data>/definitions`. Yours go in `<config>/definitions/` (`agents/<name>.md`,
+`<data>/harness`. Yours go in `<config>/harness/` (`agents/<name>.md`,
 `skills/<name>/SKILL.md`, `mcp.json`) and win by name, as your roles do in `<config>/roles/`.
-`tx definitions` lists what resolves; `tx check` validates it.
+`tx harness ls` lists what resolves; `tx harness check` validates it.
 
 ## Configuration
 
@@ -183,8 +183,8 @@ Five directories, XDG style (on macOS too), named after the application: `tx-ide
 
 | directory | default | holds |
 |---|---|---|
-| config | `~/.config/tx-ide` | `config.yaml`; your `roles/`, `definitions/` and `layouts/` |
-| data | `~/.local/share/tx-ide` | the agent records with their conversation archives, `log.jsonl`, the agents' `worktrees/`, plugin data, the shipped roles and definitions, the IDE's tmux config |
+| config | `~/.config/tx-ide` | `config.yaml`; your `roles/`, `harness/` and `layouts/` |
+| data | `~/.local/share/tx-ide` | the agent records with their conversation archives, `log.jsonl`, the agents' `worktrees/`, plugin data, the shipped roles and harness, the IDE's tmux config |
 | state | `~/.local/state/tx-ide` | locks, each agent's assembled prompt |
 | cache | `~/.cache/tx-ide` | Claude's built-in tool list, per Claude version |
 | run | `$XDG_RUNTIME_DIR/tx-ide`, else `$TMPDIR/tx-ide.$USER` | `tmux.sock`, tx's own tmux server |
@@ -198,7 +198,7 @@ cargo test --workspace --features fuzz                  # the slow property-base
 cargo run -p tx-core-cli -- help                        # the tx binary
 ```
 
-One Cargo workspace: `tx-core`, the library (records, lifecycle, messaging, definitions, the
+One Cargo workspace: `tx-core`, the library (records, lifecycle, messaging, the harness, the
 plugin host; it never parses arguments or reads the environment); `tx-client`, the tmux and nvim
 layer and the `ide` plugin; one crate per plugin under `plugins/`; and `tx-core-cli`, which builds
 `tx` and `txi` (the entry point the engines' hooks run). The architecture, writing an engine or a
