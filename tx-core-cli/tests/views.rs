@@ -294,7 +294,7 @@ fn prefix_x_closes_a_shell_view_after_confirming() {
     attach_outer_client(&cli, "qa-shell");
     press_prefix_x(&cli, "qa-shell");
     assert!(
-        cli.wait_for(5, || outer_screen(&cli).contains("close shell view")),
+        cli.wait_for(5, || outer_screen(&cli).contains("kill \"qa-shell\"")),
         "no confirmation prompt: {}",
         outer_screen(&cli)
     );
@@ -319,7 +319,7 @@ fn prefix_x_refuses_the_home_view() {
     attach_outer_client(&cli, "home");
     press_prefix_x(&cli, "home");
     assert!(
-        cli.wait_for(5, || outer_screen(&cli).contains("is a view home")),
+        cli.wait_for(5, || outer_screen(&cli).contains("is the home base")),
         "no refusal shown: {}",
         outer_screen(&cli)
     );

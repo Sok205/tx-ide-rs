@@ -86,7 +86,7 @@ The prefix is `C-a`. Each key belongs to a plugin and disappears when that plugi
 | prefix+t | the session picker; Enter nests into the session (`picker`) |
 | prefix+n | new agent: the form, then the agent (`spawn`) |
 | prefix+e | edit the session's name, tags and group (`edit`) |
-| prefix+X | stop an agent or close a view, after a confirmation (`kill`) |
+| prefix+X | `tx kill` the agent or view in the pane, after a confirmation (`kill`) |
 | prefix+f | fork the agent in the pane into a new worktree (`chat`) |
 | prefix+s | refresh labels, then tmux's session tree (`labels`) |
 | prefix+a | the artifacts an agent touched; in an artifact's view, back to the agent (`artifacts`) |

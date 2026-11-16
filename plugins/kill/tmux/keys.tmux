@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # keys: X
-# tx key plugin `kill`: prefix+X confirms, then stops the tx session in the active pane through
+# tx key plugin `kill`: prefix+X confirms, then ends the agent or view in the active pane through
 # `tx kill`, so the record stays honest. Run by `run-shell` from the server's tmux.conf, which
 # `tx ui install` writes; @tx-data names the directory holding bin/tmux-kill-tx-session.
 #
