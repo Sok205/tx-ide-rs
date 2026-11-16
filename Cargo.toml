@@ -3,6 +3,7 @@ resolver = "3"
 members = ["tx-core", "plugins/engine-claude", "plugins/engine-codex", "plugins/chat", "plugins/labels", "plugins/kill", "plugins/picker", "plugins/edit", "plugins/spawn", "plugins/assistant", "plugins/mockup", "plugins/tutor", "plugins/artifacts", "plugins/tour", "plugins/timeline", "plugins/graph", "plugins/home", "plugins/home-themes", "plugins/layouts", "tx-client", "tx-core-cli"]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.92"

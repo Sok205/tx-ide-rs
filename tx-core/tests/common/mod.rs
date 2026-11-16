@@ -373,7 +373,11 @@ impl ShellStub {
     ) -> LaunchPlan {
         let data = tx_core::engine_data(self, request.session);
         let option = |key: &str| data.get(key).and_then(serde_json::Value::as_str);
-        let script = format!("env > env.txt; echo \"{prompt}\" > prompt.txt; cat > input.txt");
+        // Written aside and moved into place: a test polling for the file never reads half of it.
+        let script = format!(
+            "env > env.txt.tmp && mv env.txt.tmp env.txt; \
+             echo \"{prompt}\" > prompt.txt.tmp && mv prompt.txt.tmp prompt.txt; cat > input.txt"
+        );
         let (program, args) = match option("model") {
             Some("exit") => ("true", Vec::new()),
             _ => ("sh", vec!["-c".to_owned(), script]),

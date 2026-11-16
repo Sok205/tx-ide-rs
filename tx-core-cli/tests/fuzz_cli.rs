@@ -128,7 +128,8 @@ impl Cli {
             &self.dir.path().join("capture-shim"),
             &[(
                 "claude",
-                "printf '%s\\n' \"$@\" > args.txt; env > env.txt; cat > input.txt",
+                "printf '%s\\n' \"$@\" > args.txt.tmp && mv args.txt.tmp args.txt; \
+                 env > env.txt.tmp && mv env.txt.tmp env.txt; cat > input.txt",
             )],
         )
     }
