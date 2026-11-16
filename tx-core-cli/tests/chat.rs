@@ -311,11 +311,11 @@ fn fork_pane_usage_exits_2() {
 }
 
 #[test]
-fn ui_install_binds_prefix_f() {
+fn update_binds_prefix_f() {
     require_tmux!();
     use std::os::unix::fs::PermissionsExt;
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let state = cli.state();
     let script = state.join("bin/tmux-fork-tx-session");
     assert_eq!(
@@ -349,7 +349,7 @@ fn ui_install_binds_prefix_f() {
         "prefix+f never bound"
     );
     cli.write_yaml("plugins:\n  chat: { enabled: false }\n");
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     assert!(!state.join("keys/chat.tmux").exists());
     assert!(!state.join("bin/tmux-fork-tx-session").exists());
     assert!(

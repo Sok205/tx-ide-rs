@@ -46,10 +46,21 @@ agents/<id>/archive/        the engine's archived transcripts
 log.jsonl                   one {"ts","actor","type","msg"} line per mutation
 worktrees/<repo-key>/…      the agents' git worktrees; `tx gc` empties their build output
 plugins/<id>/               each plugin's own data (artifacts, home, assistant, tutor, …)
-roles/                      shipped roles and skills, written by `tx ui install`
-bin/ keys/ conf/ nvim/      plugin resources, written by `tx ui install`
-tmux.conf                   the server's config, written by `tx ui install`
+roles/                      shipped roles and skills, written by `tx update`
+bin/ keys/ conf/ nvim/      plugin resources, written by `tx update`
+tmux.conf                   the server's config, written by `tx update`
+update-version              the last update step run, written by `tx update`
 ```
+
+`update-version` says which update steps have run; absent reads 0. When a tx release
+needs something done once per machine (files moved, a setting rewritten, leftovers removed),
+it ships an update step; `tx update` runs each pending step in order and stamps its number after
+each, so a failure leaves the stamp at the last success and a re-run continues from there. Steps
+check before they act, so running one twice (a `config` shared across machines) does no harm. A
+fresh install (an empty `data`, no subdirectory in `config`) is stamped at the latest version
+without running any. While the stamp is behind, every other verb prints
+`tx: N update steps pending: run tx update` on stderr once and carries on; when a
+step says so, `tx update` also asks you to respawn the running agents.
 
 `log.jsonl` is a notification trail, not the record: each line is at most 512 bytes and written
 with a single append, so `tail -f` never sees a torn line. On an event, re-read the agent with

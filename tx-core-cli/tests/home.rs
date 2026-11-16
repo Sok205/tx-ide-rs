@@ -40,11 +40,11 @@ fn clients(cli: &Cli) -> Vec<String> {
     clients
 }
 
-/// `ui install`, then a server started from its conf with every fragment loaded. Whatever the
+/// `tx update`, then a server started from its conf with every fragment loaded. Whatever the
 /// server runs (the floor's TUI, a warm it spawns) sees the suite's Claude config directory.
 fn installed_server(cli: &Cli, yaml: &str) {
     cli.write_yaml(yaml);
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let started = Command::new("tmux")
         .arg("-S")
         .arg(cli.sock())
@@ -67,7 +67,7 @@ fn installed_server(cli: &Cli, yaml: &str) {
 const PLAIN_HOME: &str = "plugins:\n  assistant: { enabled: false }\n  home-themes: { enabled: false }\n  layouts: { enabled: false }\n";
 
 #[test]
-fn ui_install_binds_prefix_m_only() {
+fn update_binds_prefix_m_only() {
     require_tmux!();
     let cli = Cli::new();
     installed_server(&cli, PLAIN_HOME);
@@ -86,7 +86,7 @@ fn ui_install_binds_prefix_m_only() {
     );
 
     cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     assert!(
         !cli.tmux_out(&["list-keys", "-T", "prefix", "m"])
             .contains("_home-open")

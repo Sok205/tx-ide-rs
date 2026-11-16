@@ -91,7 +91,7 @@ with git's message. The worktree is detached; the agent makes its own branch. It
 A **role** is a Markdown file, `<NAME>.md`, whose text becomes part of the agent's system prompt.
 A **profile** is the list of roles an agent was launched with, resolved into one text and written
 to `<state>/profiles/<id>.md`. Roles resolve from `<data>/roles` (the ones tx ships, written by
-`tx ui install`) and then `<config>/roles` (yours, overriding a shipped role of the same name);
+`tx update`) and then `<config>/roles` (yours, overriding a shipped role of the same name);
 every directory's `<NAME>.local.md` extends the base. A role may open with frontmatter granting
 **skills** (`skills: [tx-sessions, tx-artifacts]`); each resolves to a `skills/<name>/` directory
 under `<data>/definitions` (the shipped ones) or `<config>/definitions` (yours, which win), which

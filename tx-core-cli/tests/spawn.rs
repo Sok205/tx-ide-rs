@@ -29,7 +29,7 @@ fn answers(cwd: &str) -> String {
 fn new_agent_creates_the_session_the_form_describes() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let path = cli.shim_path(&[("claude", "exec sleep 60"), ("nvim", fake_nvim())]);
     let cwd = cli.repository("proj");
     let answers = answers(cwd.to_str().unwrap());
@@ -72,7 +72,7 @@ fn new_agent_creates_the_session_the_form_describes() {
 fn new_agent_form_takes_its_project_from_cwd() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let recorded = cli.state().join("recorded-spec.json");
     let path = cli.shim_path(&[("nvim", "cp \"$TX_NEW_AGENT_SPEC\" \"$RECORDED_SPEC\"")]);
     let repository = cli.repository("proj");
@@ -106,7 +106,7 @@ fn new_agent_form_takes_its_project_from_cwd() {
 fn a_cancelled_form_creates_nothing() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let path = cli.shim_path(&[("nvim", fake_nvim())]);
     let output = cli.run(&["_new-agent", "%0", "client-0"], &[("PATH", &path)], "");
     assert_eq!(output.status.code(), Some(0));
@@ -145,7 +145,7 @@ fn disabled_spawn_hides_the_verb_and_the_key() {
     let cli = Cli::new();
     cli.write_yaml("plugins:\n  spawn: { enabled: false }\n");
     cli.fails(&["_new-agent", "%0", "c"], 2);
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     assert!(!cli.state().join("keys/spawn.tmux").exists());
     // The roles are the core's, not the plugin's: still installed.
     assert!(cli.state().join("roles/COMMON.md").exists());

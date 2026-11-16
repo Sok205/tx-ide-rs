@@ -1,4 +1,4 @@
-//! The ide plugin through the binary: `ui install` and `ui attach`.
+//! The ide plugin through the binary: its updater (`tx update`) and `ui attach`.
 
 mod common;
 
@@ -33,7 +33,7 @@ fn expected_conf(cli: &Cli) -> String {
     let state = cli.state();
     let state = state.display();
     format!(
-        "# tx-core server config, written by `tx ui install`. Re-run to update.\n\
+        "# tx-core server config, written by `tx update`. Re-run to update.\n\
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
          set -g detach-on-destroy on\n\
@@ -106,15 +106,28 @@ fn start_server(cli: &Cli) {
     );
 }
 
+/// What `tx update` prints when no update step is pending and only `ide` prints: the ide
+/// updater's lines, each prefixed with the plugin id.
+fn updated(ide_lines: &[&str]) -> String {
+    let mut out = format!(
+        "update steps are at {}: nothing pending\n",
+        tx_core::updates::latest()
+    );
+    for line in ide_lines {
+        out.push_str(&format!("ide: {line}\n"));
+    }
+    out
+}
+
 fn config_disabling(id: &str) -> String {
     format!("plugins:\n  {id}: {{ enabled: false }}\n")
 }
 
 #[test]
-fn ui_install_materialises_resources() {
+fn update_materialises_resources() {
     let cli = Cli::new();
-    let out = cli.ok(&["ui", "install"]);
-    assert_eq!(out, format!("{}\n", cli.conf().display()));
+    let out = cli.ok(&["update"]);
+    assert_eq!(out, updated(&[&cli.conf().display().to_string()]));
     let state = cli.state();
     for script in [
         "tmux-kill-tx-session",
@@ -184,9 +197,9 @@ fn ui_install_materialises_resources() {
 }
 
 #[test]
-fn ui_install_deletes_files_no_plugin_provides() {
+fn update_deletes_files_no_plugin_provides() {
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let stale = [
         cli.state().join("bin/old-script"),
         cli.state().join("keys/old.tmux"),
@@ -196,7 +209,7 @@ fn ui_install_deletes_files_no_plugin_provides() {
     for path in &stale {
         std::fs::write(path, "x").unwrap();
     }
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     for path in &stale {
         assert!(!path.exists(), "{path:?}");
     }
@@ -206,13 +219,13 @@ fn ui_install_deletes_files_no_plugin_provides() {
 #[test]
 fn prune_removes_a_symlink_but_never_follows_it() {
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let victim = cli.dir.path().join("victim-dir");
     std::fs::create_dir_all(&victim).unwrap();
     std::fs::write(victim.join("precious"), "x").unwrap();
     let link = cli.state().join("bin/link");
     std::os::unix::fs::symlink(&victim, &link).unwrap();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     assert!(victim.join("precious").is_file());
     assert!(link.symlink_metadata().is_err(), "link is gone");
 }
@@ -220,18 +233,18 @@ fn prune_removes_a_symlink_but_never_follows_it() {
 #[test]
 fn a_symlinked_kind_directory_is_refused() {
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let victim = cli.dir.path().join("victim-dir");
     std::fs::create_dir_all(&victim).unwrap();
     std::fs::write(victim.join("precious"), "x").unwrap();
     let keys = cli.state().join("keys");
     std::fs::remove_dir_all(&keys).unwrap();
     std::os::unix::fs::symlink(&victim, &keys).unwrap();
-    let stderr = cli.fails(&["ui", "install"], 1);
+    let stderr = cli.fails(&["update"], 1);
     assert_eq!(
         stderr,
         format!(
-            "tx ui install: {} is a symlink; refusing to prune\n",
+            "tx: update: ide: {} is a symlink; refusing to prune\n",
             keys.display()
         )
     );
@@ -240,26 +253,22 @@ fn a_symlinked_kind_directory_is_refused() {
 }
 
 #[test]
-fn ui_install_takes_no_arguments() {
+fn ui_install_is_gone() {
     let cli = Cli::new();
-    for args in [
-        &["ui", "install", "--poc", "/tmp"][..],
-        &["ui", "install", "x"][..],
-    ] {
-        assert!(
-            cli.fails(args, 2)
-                .starts_with("usage: tx ui install | attach")
-        );
-    }
+    assert!(
+        cli.fails(&["ui", "install"], 2)
+            .starts_with("usage: tx ui attach | view")
+    );
+    cli.fails(&["update", "x"], 2);
     let conf = std::fs::read_to_string(cli.conf()).unwrap_or_default();
     assert!(!conf.contains("@tx-bin"), "{conf:?}");
 }
 
 #[test]
-fn ui_install_fragment_loads() {
+fn update_fragment_loads() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     start_server(&cli);
     let bound = |table: &str, key: &str| cli.tmux_out(&["list-keys", "-T", table, key]);
     assert!(bound("prefix", "t").contains("pick"));
@@ -298,7 +307,7 @@ fn ui_install_fragment_loads() {
 fn fragments_do_nothing_outside_an_installed_server() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let other = cli.outer_sock();
     let on_other = |args: &[&str]| {
         Command::new("tmux")
@@ -344,11 +353,14 @@ fn fragments_do_nothing_outside_an_installed_server() {
 fn disabling_kill_removes_its_key_on_reload() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     start_server(&cli);
     cli.write_yaml(&config_disabling("kill"));
-    let out = cli.ok(&["ui", "install"]);
-    assert_eq!(out, format!("{}\nreloaded\n", cli.conf().display()));
+    let out = cli.ok(&["update"]);
+    assert_eq!(
+        out,
+        updated(&[&cli.conf().display().to_string(), "reloaded"])
+    );
     let kill = cli.tmux_out(&["list-keys", "-T", "prefix", "X"]);
     assert!(!kill.contains("tmux-kill-tx-session"), "{kill:?}");
     assert!(!cli.state().join("keys/kill.tmux").exists());
@@ -378,14 +390,14 @@ fn disabling_kill_removes_its_key_on_reload() {
 fn disabling_labels_unsets_border_format_on_reload() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     start_server(&cli);
     assert!(
         cli.tmux_out(&["show-hooks", "-g", "after-new-window"])
             .contains("@tx-view")
     );
     cli.write_yaml(&config_disabling("labels"));
-    let out = cli.ok(&["ui", "install"]);
+    let out = cli.ok(&["update"]);
     assert!(out.contains("reloaded"), "{out:?}");
     assert!(!out.contains("legacy"), "{out:?}");
     let format = cli.tmux_out(&["show-option", "-gv", "pane-border-format"]);
@@ -406,9 +418,9 @@ fn disabling_labels_unsets_border_format_on_reload() {
 fn legacy_hint_when_no_installed_file() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     start_server(&cli);
-    let fresh = cli.ok(&["ui", "install"]);
+    let fresh = cli.ok(&["update"]);
     assert!(!fresh.contains("legacy"), "{fresh:?}");
     std::fs::remove_file(cli.state().join("keys/.installed")).unwrap();
     assert!(
@@ -416,13 +428,14 @@ fn legacy_hint_when_no_installed_file() {
             .status
             .success()
     );
-    let out = cli.ok(&["ui", "install"]);
+    let out = cli.ok(&["update"]);
     assert_eq!(
         out,
-        format!(
-            "{}\nreloaded\nlegacy bindings may remain; restart the server to drop them\n",
-            cli.conf().display()
-        )
+        updated(&[
+            &cli.conf().display().to_string(),
+            "reloaded",
+            "legacy bindings may remain; restart the server to drop them",
+        ])
     );
     assert!(cli.state().join("keys/.installed").is_file());
 }
@@ -431,15 +444,18 @@ fn legacy_hint_when_no_installed_file() {
 fn no_legacy_hint_when_the_server_never_loaded_an_install_conf() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     start_server(&cli);
     std::fs::remove_file(cli.state().join("keys/.installed")).unwrap();
     assert!(
         cli.tmux(&["set-option", "-gu", "@tx-bin"]).status.success(),
         "unset @tx-bin"
     );
-    let out = cli.ok(&["ui", "install"]);
-    assert_eq!(out, format!("{}\nreloaded\n", cli.conf().display()));
+    let out = cli.ok(&["update"]);
+    assert_eq!(
+        out,
+        updated(&[&cli.conf().display().to_string(), "reloaded"])
+    );
     assert!(cli.state().join("keys/.installed").is_file());
 }
 
@@ -447,7 +463,7 @@ fn no_legacy_hint_when_the_server_never_loaded_an_install_conf() {
 fn reload_unbinds_a_key_a_fragment_stopped_declaring() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     start_server(&cli);
     assert!(
         cli.tmux(&["bind-key", "F12", "display-message", "bogus"])
@@ -462,7 +478,7 @@ fn reload_unbinds_a_key_a_fragment_stopped_declaring() {
     let text = installed(&cli);
     assert!(text.contains("kill\tkeys=X\t"), "{text:?}");
     std::fs::write(&path, text.replace("kill\tkeys=X\t", "kill\tkeys=X F12\t")).unwrap();
-    let out = cli.ok(&["ui", "install"]);
+    let out = cli.ok(&["update"]);
     assert!(out.contains("reloaded"), "{out:?}");
     let f12 = cli.tmux_out(&["list-keys", "-T", "prefix", "F12"]);
     assert!(f12.is_empty(), "{f12:?}");
@@ -481,8 +497,8 @@ fn reload_unbinds_a_key_a_fragment_stopped_declaring() {
 fn no_reload_and_no_hint_without_a_server() {
     let cli = Cli::new();
     assert_eq!(
-        cli.ok(&["ui", "install"]),
-        format!("{}\n", cli.conf().display())
+        cli.ok(&["update"]),
+        updated(&[&cli.conf().display().to_string()])
     );
 }
 
@@ -512,12 +528,12 @@ fn resource_verb_prints_bytes_and_fails_on_unknown() {
 }
 
 #[test]
-fn ui_install_refuses_unsafe_paths() {
+fn update_refuses_unsafe_paths() {
     let cli = Cli::new();
     let state = cli.dir.path().join("with space");
     let output = Command::new(env!("CARGO_BIN_EXE_tx"))
         .args(common::directory_flags(&state))
-        .args(["ui", "install"])
+        .args(["update"])
         .env_remove("TMUX")
         .output()
         .unwrap();
@@ -525,7 +541,7 @@ fn ui_install_refuses_unsafe_paths() {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         format!(
-            "tx ui install: path contains unsafe characters: {}\n",
+            "tx: update: ide: path contains unsafe characters: {}\n",
             state.display()
         )
     );
@@ -639,7 +655,7 @@ fn ui_attach_inside_the_core_switches_the_client() {
 fn ui_attach_lands_on_the_home_tui_and_the_assistant_comes_up_behind_it() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     // The outer pane's tty drops a typed line over 1024 bytes, which a full PATH is: type a
     // short script path instead.
     let script = cli.dir.path().join("attach.sh");
@@ -654,7 +670,7 @@ fn ui_attach_lands_on_the_home_tui_and_the_assistant_comes_up_behind_it() {
     )
     .unwrap();
     cli.in_outer_pane(&format!("sh {}", script.display()));
-    // `ui install` ran just before; under the other suites' load the attach can take a while.
+    // `tx update` ran just before; under the other suites' load the attach can take a while.
     assert!(
         cli.wait_for(15, || cli.tmux_out(&[
             "list-clients",
@@ -730,7 +746,7 @@ fn ui_attach_without_the_roles_installed_shows_the_failed_assistant() {
         home_pane(&cli)
     );
     // With the roles installed, the next attach's install warms again and the failure clears.
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     cli.ok(&["_home-install", "home"]);
     assert!(
         cli.wait_for(30, || {
@@ -749,7 +765,7 @@ fn ui_attach_installs_the_floor_on_an_existing_shell_home() {
     require_tmux!();
     let cli = Cli::new();
     cli.write_yaml(&config_disabling("assistant"));
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     assert!(
         cli.tmux(&["new-session", "-d", "-s", "home", "sh"])
             .status
@@ -846,7 +862,7 @@ fn ui_attach_with_home_disabled_after_it_was_enabled_repairs_the_pane() {
     let pane = cli.tmux_out(&["display-message", "-p", "-t", "=home:", "#{pane_id}"]);
     let pane_format = |format: &str| cli.tmux_out(&["display-message", "-p", "-t", &pane, format]);
     cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     assert!(
         Command::new("kill")
             .arg(pane_format("#{pane_pid}"))

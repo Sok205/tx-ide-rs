@@ -50,7 +50,7 @@ removes the global hooks older tx versions installed; prefix+f forks the agent i
 through `_fork-pane` (a popup asks for the name). Its library holds the transcript readers the
 timeline and the home use.
 
-**`ide`** (in `tx-client`): `ui install`, `ui attach` and `ui view open | ls | close`. It publishes
+**`ide`** (in `tx-client`): its updater (run by `tx update`), `ui attach` and `ui view open | ls | close`. It publishes
 the theme and status line, the navigation keys (`C-h`/`C-j`/`C-k`/`C-l` across nested sessions,
 `C-u`/`C-d` to page an agent's scrollback), helper scripts and the nvim runtime every nvim view
 gets.

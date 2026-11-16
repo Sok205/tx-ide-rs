@@ -40,12 +40,13 @@ tx ui attach                    # the IDE: the home
 
 Needs Rust 1.92+, tmux, git, fzf, curl, at least one engine CLI (`claude`, the default engine and
 the assistant's, or `codex`) and `nvim` for views; `install` also needs `jq`. It installs `tx` and
-`txi` with cargo, runs `tx ui install` (the IDE's tmux config, its keys, and the shipped roles and
-definitions, under the data directory), links `~/.config/nvim` and `~/.tmux.conf` to this
-repository's `config/nvim` and `config/tmux.conf` (moving what was there to `<path>.bak.<stamp>`),
-and writes `~/.config/tx-ide/config.yaml` with every default spelled out, once. It is safe to
-re-run. After rebuilding `tx` by hand, run `tx ui install` again: the tmux config names the
-binary's path.
+`txi` with cargo, runs `tx update` (the pending update steps, then each plugin's updater: the IDE's
+tmux config, its keys, and the shipped roles and definitions, under the data directory), links
+`~/.config/nvim` and `~/.tmux.conf` to this repository's `config/nvim` and `config/tmux.conf`
+(moving what was there to `<path>.bak.<stamp>`), and writes `~/.config/tx-ide/config.yaml` with every default spelled out, once. It is safe to
+re-run. After rebuilding `tx` by hand, run `tx update`: it runs the update steps a newer tx
+needs, such as moving files (the last one run is in `<data>/update-version`; other verbs warn
+while one is pending), then reinstalls the tmux config, which names the binary's path.
 
 Coming from the previous `tx` (removed on 2026-11-02; its last tree is commit `7607347`),
 `install` also switches the machine once: the old install stays runnable as `tx-old`, its hook

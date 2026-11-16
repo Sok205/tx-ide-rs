@@ -1,5 +1,6 @@
-//! The plugin host. One trait, [`Plugin`]; a [`Registry`] with four slots (engines, event
-//! sinks, verbs, resources); a [`PluginConfig`] the front end fills from its own config format.
+//! The plugin host. One trait, [`Plugin`]; a [`Registry`] with five slots (engines, event
+//! sinks, verbs, updaters, resources); a [`PluginConfig`] the front end fills from its own
+//! config format.
 //! Core never parses arguments or reads the environment: a [`Verb`] receives argv already split.
 //! A resource is a named static blob the core stores and lists but never reads.
 
@@ -14,6 +15,7 @@ use crate::core::TxCore;
 use crate::engine::LlmEngine;
 use crate::error::CoreError;
 use crate::events::EventSink;
+use crate::updates::Outcome;
 
 pub trait Plugin: Send + Sync {
     /// `[a-z0-9-]+`, unique across the manifest; the key in the front end's config and in
@@ -27,6 +29,7 @@ pub struct Registry {
     engines: Vec<Box<dyn LlmEngine>>,
     sinks: Vec<Box<dyn EventSink>>,
     verbs: Vec<Arc<dyn Verb>>,
+    updaters: Vec<Arc<dyn Updater>>,
     resources: BTreeMap<&'static str, &'static [u8]>,
     settings: Value,
     config: CoreConfig,
@@ -43,6 +46,11 @@ impl Registry {
 
     pub fn verb(&mut self, verb: Arc<dyn Verb>) {
         self.verbs.push(verb);
+    }
+
+    /// What `tx update` runs for this plugin, after the core's own update steps.
+    pub fn updater(&mut self, updater: Arc<dyn Updater>) {
+        self.updaters.push(updater);
     }
 
     /// Publishes a named static blob; the core stores and lists it, never reads it. `name` is
@@ -86,6 +94,13 @@ pub trait Verb: Send + Sync {
     fn usage(&self) -> &'static str;
     /// Returns the exit code. Usage mistakes: write to `io.stderr`, return `Ok(2)`.
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError>;
+}
+
+/// A plugin's part of `tx update`: brings the files it owns up to this build (generated
+/// config, materialised resources, its own one-shot steps). Runs on every `tx update`, so it
+/// must be idempotent. What it did goes to `io.stdout`, one line per change.
+pub trait Updater: Send + Sync {
+    fn update(&self, core: &TxCore, io: &mut VerbIo<'_>) -> Result<Outcome, VerbError>;
 }
 
 pub struct VerbIo<'a> {
@@ -187,6 +202,8 @@ fn validate_resource_name(name: &str) -> Result<(), PluginError> {
 pub(crate) struct Host {
     /// name → (plugin id, verb)
     verbs: BTreeMap<String, (String, Arc<dyn Verb>)>,
+    /// (plugin id, updater), manifest order.
+    updaters: Vec<(String, Arc<dyn Updater>)>,
     /// Manifest order, then name order within a plugin.
     resources: Vec<Resource>,
     status: Vec<(String, PluginStatus)>,
@@ -246,6 +263,7 @@ fn load(
             engines: Vec::new(),
             sinks: Vec::new(),
             verbs: Vec::new(),
+            updaters: Vec::new(),
             resources: BTreeMap::new(),
             settings: cfg.settings.get(id).cloned().unwrap_or(Value::Null),
             config: config.clone(),
@@ -330,6 +348,9 @@ impl TxCore {
             for verb in registry.verbs {
                 insert_verb(&mut self.host.verbs, cfg, &loaded.id, verb)?;
             }
+            for updater in registry.updaters {
+                self.host.updaters.push((loaded.id.clone(), updater));
+            }
             for (name, bytes) in registry.resources {
                 if self.host.resources.iter().any(|r| r.name == name) {
                     return Err(PluginError::DuplicateResource(name.to_owned()));
@@ -356,6 +377,11 @@ impl TxCore {
             .values()
             .map(|(_, verb)| Arc::clone(verb))
             .collect()
+    }
+
+    /// The active plugins' updaters with their plugin id, in manifest order.
+    pub fn updaters(&self) -> Vec<(String, Arc<dyn Updater>)> {
+        self.host.updaters.clone()
     }
 
     /// Resources of active plugins whose name starts with `prefix`, in manifest order then name

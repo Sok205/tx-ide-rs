@@ -4,7 +4,7 @@
 # unhook: after-new-window
 # tx key plugin `labels`: prefix+s lists sessions with their names and tags (choose-tree), and
 # each pane border carries the nested session's label. Run by `run-shell` from the server's
-# tmux.conf, which `tx ui install` writes. The border's look (style, lines, indicators) is the
+# tmux.conf, which `tx update` writes. The border's look (style, lines, indicators) is the
 # `ide` plugin's; this fragment owns only the format and the hook that turns borders on in views.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles multi-command

@@ -45,12 +45,13 @@ You need Rust 1.92 or newer, tmux, git, jq, fzf and curl, at least one engine CL
 ```sh
 git clone <this-repo> ~/tx-ide-rs
 ~/tx-ide-rs/install --dry-run   # print every change, change nothing
-~/tx-ide-rs/install             # cargo install tx and txi, tx ui install, config links
+~/tx-ide-rs/install             # cargo install tx and txi, tx update, config links
 tx ui attach                    # the IDE: lands on the home screen
 ```
 
-The install script is idempotent; a second run finds nothing to do. Re-run `tx ui install` after
-you rebuild `tx`, since the tmux configuration names the binary's path.
+The install script is idempotent; a second run finds nothing to do. Run `tx update` after you
+rebuild `tx`: it runs the pending update steps (see [Files](files.md)), then each plugin's
+updater, which rewrites the tmux configuration: it names the binary's path.
 
 Once attached, the tmux prefix is `C-a`. The home screen lists your projects, their agents and
 their views; `n` starts a new agent, Enter goes into one, `?` shows every key.
@@ -61,7 +62,7 @@ their views; `n` starts a new agent, Enter goes into one, `?` shows every key.
 - [Agents and records](agents-and-records.md): what an agent is on disk, how its state moves, worktrees,
   roles and engines.
 - [Messaging](messaging.md): how text reaches an agent, and the envelopes that say who sent it.
-- [The tmux layer and views](tmux-and-views.md): tx's own server, `ui install`, views and keys.
+- [The tmux layer and views](tmux-and-views.md): tx's own server, `tx update`, views and keys.
 - [Startup and the home](home.md): what happens between `tx ui attach` and the first screen.
 - [Plugins catalogue](plugins.md): one paragraph per bundled plugin.
 - [Files and directories](files.md): the five XDG directories and what lives where.

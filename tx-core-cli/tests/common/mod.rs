@@ -63,7 +63,7 @@ pub struct Cli {
     pub dir: tempfile::TempDir,
 }
 
-/// Stand-ins for the roles `ui install` writes: COMMON, which the stand-in default definition
+/// Stand-ins for the roles `tx update` writes: COMMON, which the stand-in default definition
 /// runs on, and REVIEWER, a role of the operator's own for `--role`.
 pub const STAND_IN_ROLES: [&str; 2] = ["COMMON", "REVIEWER"];
 
@@ -73,7 +73,7 @@ impl Cli {
             .prefix("tx")
             .tempdir_in("/tmp")
             .unwrap();
-        // A real install has the default roles (`ui install` writes them); a test that never
+        // A real install has the default roles (`tx update` writes them); a test that never
         // runs it finds stand-ins here, outside the state dir, below any role it installs.
         let roles = dir.path().join("default-roles");
         std::fs::create_dir_all(&roles).unwrap();
@@ -81,7 +81,7 @@ impl Cli {
             std::fs::write(roles.join(format!("{role}.md")), "stand-in role\n").unwrap();
         }
         // Likewise the default agent definition (`agent.definition: developer`), which a real
-        // install ships under `<data>/definitions`; `ui install` replaces this stand-in.
+        // install ships under `<data>/definitions`; `tx update` replaces this stand-in.
         stand_in_definition(&dir.path().join("state"));
         Self { dir }
     }

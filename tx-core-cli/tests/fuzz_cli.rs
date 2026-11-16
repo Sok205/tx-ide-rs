@@ -26,7 +26,7 @@ impl Cli {
             .tempdir_in("/tmp")
             .unwrap();
         let path = shim_path_in(&dir.path().join("shim"), &[("claude", "exec sleep 30")]);
-        // Stand-ins for the roles `ui install` would write.
+        // Stand-ins for the roles `tx update` would write.
         let roles = dir.path().join("default-roles");
         std::fs::create_dir_all(&roles).unwrap();
         for role in common::STAND_IN_ROLES {

@@ -1,5 +1,6 @@
-//! `ui install`, `ui attach` and `ui view`: compose the core's server config from plugin
-//! resources, enter the IDE's server, and open, list or close views from a shell.
+//! The `ide` plugin's updater, `ui attach` and `ui view`: compose the core's server config from
+//! plugin resources (on `tx update`), enter the IDE's server, and open, list or close views from
+//! a shell.
 
 use std::collections::HashSet;
 use std::io;
@@ -8,7 +9,8 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use tx_core::{Resource, TxCore, Verb, VerbError, VerbIo};
+use tx_core::updates::Outcome;
+use tx_core::{Resource, TxCore, Updater, Verb, VerbError, VerbIo};
 
 use crate::tmux::{Ui, UiError};
 use crate::view_verb;
@@ -18,7 +20,7 @@ const HOME_SESSION: &str = "home";
 const INSTALLED: &str = "keys/.installed";
 const IDE_FRAGMENT: &str = "ide";
 const LEGACY_HINT: &str = "legacy bindings may remain; restart the server to drop them";
-/// The resource kinds `ui install` materialises under the data dir.
+/// The resource kinds the updater materialises under the data dir.
 const KINDS: [&str; 6] = [
     "bin",
     "keys",
@@ -47,7 +49,7 @@ fn conf_text(exe: &Path, data: &Path, arguments: &[String], others: &[&str]) -> 
     let data = data.display();
     let arguments = arguments.join(" ");
     let mut text = format!(
-        "# tx-core server config, written by `tx ui install`. Re-run to update.\n\
+        "# tx-core server config, written by `tx update`. Re-run to update.\n\
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
          set -g detach-on-destroy on\n\
@@ -161,10 +163,7 @@ fn fail(io: &mut VerbIo<'_>, message: &str) -> Result<i32, VerbError> {
 }
 
 fn usage(io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
-    let _ = writeln!(
-        io.stderr,
-        "usage: tx ui install | attach | view <open|ls|close> …"
-    );
+    let _ = writeln!(io.stderr, "usage: tx ui attach | view <open|ls|close> …");
     Ok(2)
 }
 
@@ -176,13 +175,12 @@ impl Verb for UiVerb {
     }
 
     fn usage(&self) -> &'static str {
-        "ui install | attach | view <open|ls|close>   write the tmux config from plugin resources; enter the IDE's server; manage views"
+        "ui attach | view <open|ls|close>   enter the IDE's server; manage views"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
         match argv {
             [sub] if sub == "attach" => attach(core, io),
-            [sub] if sub == "install" => install(core, io),
             [sub, rest @ ..] if sub == "view" => view_verb::run(core, io, rest),
             _ => usage(io),
         }
@@ -287,7 +285,18 @@ fn prune(dir: &Path, keep: &HashSet<PathBuf>) -> io::Result<()> {
     Ok(())
 }
 
-fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
+/// The `ide` plugin's part of `tx update`: writes every resource the IDE's server needs and the
+/// server config, and reloads a running server.
+pub struct IdeUpdater;
+
+impl Updater for IdeUpdater {
+    fn update(&self, core: &TxCore, io: &mut VerbIo<'_>) -> Result<Outcome, VerbError> {
+        install(core, io)?;
+        Ok(Outcome::default())
+    }
+}
+
+fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
     let exe = std::env::current_exe()
         .and_then(|exe| exe.canonicalize())
         .map_err(|e| VerbError::Failed(format!("cannot resolve the tx binary: {e}")))?;
@@ -298,24 +307,18 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
         .chain(arguments.iter().map(Path::new))
         .find(|path| is_unsafe_path(path))
     {
-        return fail(
-            io,
-            &format!(
-                "tx ui install: path contains unsafe characters: {}",
-                path.display()
-            ),
-        );
+        return Err(VerbError::Failed(format!(
+            "path contains unsafe characters: {}",
+            path.display()
+        )));
     }
     for kind in KINDS {
         let dir = kind_dir(data, kind);
         if dir.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
-            return fail(
-                io,
-                &format!(
-                    "tx ui install: {} is a symlink; refusing to prune",
-                    dir.display()
-                ),
-            );
+            return Err(VerbError::Failed(format!(
+                "{} is a symlink; refusing to prune",
+                dir.display()
+            )));
         }
     }
     let previous = std::fs::read_to_string(data.join(INSTALLED))
@@ -379,7 +382,7 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<i32, VerbError> {
     io.stdout
         .write_all(out.as_bytes())
         .map_err(|e| VerbError::Failed(format!("write: {e}")))?;
-    Ok(0)
+    Ok(())
 }
 
 /// Hands `home` to the `home` plugin's floor (`_home-install`) when the plugin is active: the
@@ -530,7 +533,7 @@ mod tests {
                 &words(&["--data-dir", "/s/data", "--run-dir", "/r"]),
                 &["kill", "labels"]
             ),
-            "# tx-core server config, written by `tx ui install`. Re-run to update.\n\
+            "# tx-core server config, written by `tx update`. Re-run to update.\n\
              set -s exit-empty on\n\
              set -g history-limit 50000\n\
              set -g detach-on-destroy on\n\

@@ -3,7 +3,7 @@
 # tx key plugin `home`: prefix+m opens the tx-ide home (sessions, history, the assistant) in a
 # popup on the firing client. The home is also the floor of the `home` view's pane, where
 # `tx ui attach` lands; the popup is the same screen from anywhere else. Run by `run-shell` from
-# the server's tmux.conf, which `tx ui install` writes.
+# the server's tmux.conf, which `tx update` writes.
 #
 # The bind runs in the background (`run-shell -b`) and swallows its output, so a failing home
 # never drops the client into a run-shell view. The home learns the firing pane and client from

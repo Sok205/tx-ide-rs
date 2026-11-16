@@ -471,14 +471,14 @@ fn artifact_open_starts_the_server_when_none_runs() {
 
 // ----- prefix+a ---------------------------------------------------------------------------
 
-/// The operator's setup for prefix+a: `ui install`ed server, an agent `a`, an outer terminal on
-/// `home`, whose pane nest-attaches `a`. Returns (a's id, artifact id).
+/// The operator's setup for prefix+a: a server set up by `tx update`, an agent `a`, an outer
+/// terminal on `home`, whose pane nest-attaches `a`. Returns (a's id, artifact id).
 fn operator(cli: &Cli) -> (String, String) {
     fake_editor(cli);
     // The menu would pop up on this first attach and take the keys.
     let yaml = std::fs::read_to_string(cli.state().join("config.yaml")).unwrap();
     cli.write_yaml(&format!("{yaml}  home: {{ enabled: false }}\n"));
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let path = cli.fake_claude_path();
     let cwd = cli.repository("a");
     let output = cli.run(

@@ -22,7 +22,7 @@ reads the environment.
 <data>/agents/<id>/agent.json  the record (version 2); atomic temp-file + rename writes, mode 0600
 <data>/agents/<id>/archive/    the engine's archive of the agent's conversations
 <data>/log.jsonl            one {"ts","actor","type","msg"} line per mutation, ≤ 512 bytes, O_APPEND
-<data>/tmux.conf            written once if absent; `ui install` replaces it
+<data>/tmux.conf            written once if absent; `tx update` replaces it
 <data>/plugins/<id>/        a plugin's own data (CoreConfig::plugin_data_dir)
 <state>/profiles/<id>.md    the combined role text handed to the engine
 <state>/locks/              create.lock, <id>.lock  (std::fs::File::lock)

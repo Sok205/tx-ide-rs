@@ -86,7 +86,7 @@ impl Sandbox {
         repository_at(&self.path().join("work"))
     }
 
-    /// Stand-ins for the roles `ui install` writes, where it writes them for `application`, so
+    /// Stand-ins for the roles `tx update` writes, where it writes them for `application`, so
     /// a `create` without `--role` (the default definition's `roles`) resolves.
     fn install_default_roles(&self, application: &str) {
         let roles = self

@@ -26,6 +26,7 @@ pub mod store;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod tmux;
+pub mod updates;
 pub mod worktree;
 
 pub use agent::{Agent, AgentId, DefinitionChoice, RecordError, validate_name};
@@ -53,7 +54,8 @@ pub use messaging::DELIVERY_PAUSE;
 pub use messaging::{EnvelopeSender, build_envelope};
 pub use mirror::{mirror_file, mirror_file_exact, mirror_tree};
 pub use plugin::{
-    Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Verb, VerbError, VerbIo,
+    Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Updater, Verb, VerbError,
+    VerbIo,
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError, SkillProvider};
 pub use state::{IdleReason, LlmEngineChange, LlmEngineHook, LlmEngineState, state_label};
