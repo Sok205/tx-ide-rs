@@ -55,8 +55,7 @@ verbs:
                                                                     view this runs in, else as you from NAME
   where TARGET                                                      socket, session target, pane target
   attach TARGET                                                     attach the terminal to the session
-  stop TARGET                                                       exit the agent (its engine's own way, else kill);
-                                                                    waits for its process to be gone
+  stop TARGET                                                       mark the agent ended and kill its tmux session
   interrupt TARGET                                                  abort the agent's running turn
   respawn TARGET                                                    start an ended agent again: same record, worktree
                                                                     and conversation; prints its id and name
