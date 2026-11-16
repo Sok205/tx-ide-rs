@@ -204,3 +204,5 @@ layer and the `ide` plugin; one crate per plugin under `plugins/`; and `tx-core-
 `tx` and `txi` (the entry point the engines' hooks run). The architecture, writing an engine or a
 plugin, and every file are in the guide; it and the API docs are built from `docs-site/` (see
 `docs-site/README.md`).
+
+Branches, pull requests and releases are in [CONTRIBUTING.md](CONTRIBUTING.md).

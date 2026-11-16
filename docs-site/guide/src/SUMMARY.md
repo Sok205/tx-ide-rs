@@ -10,3 +10,4 @@
 - [Plugins catalogue](plugins.md)
 - [Files and directories](files.md)
 - [Developing](developing.md)
+- [Branches and releases](releasing.md)
