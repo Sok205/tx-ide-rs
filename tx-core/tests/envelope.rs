@@ -37,7 +37,10 @@ impl LlmEngine for Shout {
     }
 
     fn start(&self, _: &LaunchRequest<'_>, _: &str) -> Result<LaunchPlan, EngineError> {
-        Ok(LaunchPlan::new("sh").args(["-c", "env > env.txt; cat > input.txt"]))
+        Ok(LaunchPlan::new("sh").args([
+            "-c",
+            "env > env.txt.tmp && mv env.txt.tmp env.txt; cat > input.txt",
+        ]))
     }
 
     fn resume(&self, request: &LaunchRequest<'_>) -> Result<LaunchPlan, EngineError> {

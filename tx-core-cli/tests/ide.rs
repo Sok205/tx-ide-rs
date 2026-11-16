@@ -747,7 +747,13 @@ fn ui_attach_without_the_roles_installed_shows_the_failed_assistant() {
     );
     // With the roles installed, the next attach's install warms again and the failure clears.
     cli.ok(&["update"]);
-    cli.ok(&["_home-install", "home"]);
+    // tmux gives the respawned floor, and the assistant it warms, this command's PATH.
+    let installed = cli.run(&["_home-install", "home"], &[("PATH", &path)], "");
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
     assert!(
         cli.wait_for(30, || {
             let screen = home_pane(&cli);

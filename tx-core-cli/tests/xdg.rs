@@ -130,7 +130,10 @@ impl Sandbox {
         let work = self.repository();
         let path = shim_path_in(
             &self.path().join("probe-shim"),
-            &[("claude", "env > env.txt; exec sleep 30")],
+            &[(
+                "claude",
+                "env > env.txt.tmp && mv env.txt.tmp env.txt; exec sleep 30",
+            )],
         );
         let mut environment = environment.to_vec();
         environment.push(("PATH", path.as_str()));

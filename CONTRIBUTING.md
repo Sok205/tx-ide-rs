@@ -51,6 +51,13 @@ pushes). It fails unless the PR body contains one of `close`, `closes`, `closed`
 **issue** in this repository (a pull request number does not count). If it fails, edit the PR
 description to add the line; the check reruns on the edit.
 
+### The `test` check
+
+The `ci` workflow (`.github/workflows/ci.yml`) runs `cargo test --workspace --locked` on macOS
+(`macos-latest`; tx targets macOS only for now) on every PR into `develop` or `main` and on every
+push to them, with tmux, fzf and Neovim from Homebrew so no test skips itself for a missing tool. A newer push to the same branch cancels the
+run it supersedes.
+
 ## Versioning
 
 tx-ide follows [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`. There is one
@@ -73,8 +80,9 @@ A release is a merge of `develop` into `main`, tagged.
 1. **Bump the version.** On a branch off `develop` (for example `chore/release-0.2.0`), change
    `version` under `[workspace.package]` in the root `Cargo.toml`, run `cargo check --workspace`
    so `Cargo.lock` follows, and open a PR into `develop` that `Refs` the release issue.
-2. **Open a PR from `develop` into `main`** and merge it with a **merge commit** (not squash or
-   rebase), so `main`'s history shows each release as one merge.
+2. **Open a PR from `develop` into `main`.** Merge it only when both checks are green: `test`
+   (the whole suite passes on GitHub) and `issue-link`. Merge with a **merge commit** (not squash
+   or rebase), so `main`'s history shows each release as one merge.
 3. **Tag the merge commit on `main`** with an annotated tag and push it:
 
    ```sh

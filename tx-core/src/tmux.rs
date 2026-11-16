@@ -615,7 +615,10 @@ mod tests {
             "sh",
             &[
                 "-c".into(),
-                format!("echo \"$TX_A|$TX_B\" > {}; sleep 30", out.display()),
+                format!(
+                    "echo \"$TX_A|$TX_B\" > {0}.tmp && mv {0}.tmp {0}; sleep 30",
+                    out.display()
+                ),
             ],
             &[
                 ("TX_A".into(), "1".into()),

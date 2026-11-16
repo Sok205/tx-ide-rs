@@ -29,7 +29,8 @@ change bumps the minor number and everything else the patch number.
 ## A release
 
 1. A PR into `develop` bumps the workspace version.
-2. A PR from `develop` into `main` is merged with a merge commit.
+2. A PR from `develop` into `main` is merged with a merge commit, once its `test` (the whole
+   suite, on GitHub's macOS runner) and `issue-link` checks are green.
 3. That commit is tagged and the tag pushed:
    `git tag -a vX.Y.Z -m "tx-ide X.Y.Z"` then `git push origin vX.Y.Z`.
 
