@@ -107,8 +107,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     match &invocation.verb {
         Verb::Definitions { kind } => {
             let directories = core_config(&invocation.global)?.directories;
-            tx_core_cli::definitions::list(&directories, *kind, &mut std::io::stdout().lock())
-                .map_err(Failure::Definition)?;
+            tx_core_cli::harness::list(&directories, *kind, &mut std::io::stdout().lock())
+                .map_err(Failure::Harness)?;
             return Ok(ExitCode::SUCCESS);
         }
         Verb::Check { engine, names } => {
@@ -117,14 +117,14 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 config.profile_dirs.clone(),
                 config.skill_dirs.clone(),
             );
-            let clean = tx_core_cli::definitions::check(
+            let clean = tx_core_cli::harness::check(
                 &config.directories,
                 &profiles,
                 *engine,
                 names,
                 &mut std::io::stdout().lock(),
             )
-            .map_err(Failure::Definition)?;
+            .map_err(Failure::Harness)?;
             return Ok(if clean {
                 ExitCode::SUCCESS
             } else {
@@ -190,21 +190,18 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             if let Some(choice) = &definition {
                 // Claude turns its bundled skills on all at once: say so before the launch.
                 if engine.unwrap_or(defaults.engine) == tx_core::EngineKind::Claude
-                    && let Ok(agent) = tx_core::definitions::Definitions::new(
-                        core.config().directories.definition_roots(),
-                    )
-                    .agent(&choice.agent)
+                    && let Ok(agent) =
+                        tx_core::harness::Harness::new(core.config().directories.harness_roots())
+                            .agent(&choice.agent)
                 {
                     let skills: Vec<String> = agent
                         .skills
                         .into_iter()
                         .chain(choice.skills.clone())
                         .collect();
-                    if let Some(warning) = tx_core_cli::definitions::bundle_warning(
-                        &core.config().directories,
-                        &skills,
-                    )
-                    .map_err(Failure::Definition)?
+                    if let Some(warning) =
+                        tx_core_cli::harness::bundle_warning(&core.config().directories, &skills)
+                            .map_err(Failure::Harness)?
                     {
                         eprintln!("tx: warning: {warning}");
                     }

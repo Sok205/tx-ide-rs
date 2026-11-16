@@ -94,7 +94,7 @@ pub const FORCED: [&str; 6] = [
 
 /// What one agent definition gets on Claude that its file does not say: the baseline it does not
 /// list, and writes through `Bash` when `Edit`/`Write` are left out.
-pub fn definition_notes(agent: &tx_core::definitions::AgentDefinition) -> Vec<String> {
+pub fn definition_notes(agent: &tx_core::harness::AgentDefinition) -> Vec<String> {
     let lists = |tool: &str| agent.tools.iter().any(|listed| listed == tool);
     let mut notes = Vec::new();
     let added: Vec<&str> = BASELINE_TOOLS
@@ -1307,7 +1307,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let servers = std::collections::BTreeMap::from([(
             "probe".to_owned(),
-            tx_core::definitions::McpServer::Stdio {
+            tx_core::harness::McpServer::Stdio {
                 command: "python3".into(),
                 args: vec!["probe.py".into()],
                 env: std::collections::BTreeMap::new(),

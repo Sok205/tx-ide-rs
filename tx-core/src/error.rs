@@ -4,8 +4,8 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::agent::AgentId;
-use crate::definitions::DefinitionError;
 use crate::engine::{EngineError, EngineKind};
+use crate::harness::HarnessError;
 use crate::profile::RoleError;
 use crate::store::StoreError;
 use crate::tmux::TmuxError;
@@ -55,7 +55,7 @@ pub enum CoreError {
     #[error(transparent)]
     Profile(#[from] RoleError),
     #[error(transparent)]
-    Definition(#[from] DefinitionError),
+    Harness(#[from] HarnessError),
     /// An MCP server names a secret the caller's environment does not hold; launching anyway
     /// would drop the server without a word (Codex) or send an empty secret.
     #[error("MCP server {server:?} needs ${variable}, which is not set")]

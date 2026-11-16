@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tx_core::Directories;
-use tx_core::definitions::{Definitions, McpServer};
+use tx_core::harness::{Harness, McpServer};
 
 const CODEX_BIN: &str = "codex";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -197,7 +197,7 @@ pub fn list(directories: &Directories, out: &mut dyn Write) -> Result<(), String
             writeln!(out, "{name}\t{}", switch.join(" ")).ok();
         }
     }
-    let servers: BTreeMap<String, McpServer> = Definitions::new(directories.definition_roots())
+    let servers: BTreeMap<String, McpServer> = Harness::new(directories.harness_roots())
         .mcp_servers()
         .map_err(|error| error.to_string())?
         .into_iter()

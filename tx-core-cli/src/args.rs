@@ -218,7 +218,7 @@ pub enum Verb {
     },
     /// `definitions [agents|skills|mcp]`: list them, every kind or one.
     Definitions {
-        kind: Option<DefinitionKind>,
+        kind: Option<HarnessKind>,
     },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
     Plugin {
@@ -230,7 +230,7 @@ pub enum Verb {
 
 /// What `tx definitions` lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DefinitionKind {
+pub enum HarnessKind {
     Agents,
     Skills,
     Mcp,
@@ -238,19 +238,15 @@ pub enum DefinitionKind {
     Tools,
 }
 
-impl DefinitionKind {
-    pub const ALL: [DefinitionKind; 3] = [
-        DefinitionKind::Agents,
-        DefinitionKind::Skills,
-        DefinitionKind::Mcp,
-    ];
+impl HarnessKind {
+    pub const ALL: [HarnessKind; 3] = [HarnessKind::Agents, HarnessKind::Skills, HarnessKind::Mcp];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            DefinitionKind::Agents => "agents",
-            DefinitionKind::Skills => "skills",
-            DefinitionKind::Mcp => "mcp",
-            DefinitionKind::Tools => "tools",
+            HarnessKind::Agents => "agents",
+            HarnessKind::Skills => "skills",
+            HarnessKind::Mcp => "mcp",
+            HarnessKind::Tools => "tools",
         }
     }
 }
@@ -489,9 +485,9 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             kind: match cursor.next() {
                 None => None,
                 Some(text) => Some(
-                    DefinitionKind::ALL
+                    HarnessKind::ALL
                         .into_iter()
-                        .chain([DefinitionKind::Tools])
+                        .chain([HarnessKind::Tools])
                         .find(|kind| kind.as_str() == text)
                         .ok_or_else(|| {
                             usage(format!(
@@ -1119,7 +1115,7 @@ mod tests {
         assert_eq!(
             parse_str("definitions mcp").unwrap().verb,
             Verb::Definitions {
-                kind: Some(DefinitionKind::Mcp)
+                kind: Some(HarnessKind::Mcp)
             }
         );
         assert_eq!(

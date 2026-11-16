@@ -27,7 +27,7 @@ const KINDS: [&str; 6] = [
     "conf",
     NVIM_RESOURCE,
     ROLES_RESOURCE,
-    tx_core::config::SHIPPED_DEFINITIONS_DIR,
+    tx_core::config::SHIPPED_HARNESS_DIR,
 ];
 /// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
 /// view's runtimepath by `views::open`.

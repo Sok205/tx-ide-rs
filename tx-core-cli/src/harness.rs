@@ -3,11 +3,11 @@
 
 use std::io::Write;
 
-use tx_core::definitions::{DefinitionError, Definitions, McpServer, read_agent, read_skill};
+use tx_core::harness::{Harness, HarnessError, McpServer, read_agent, read_skill};
 use tx_core::profile::Profiles;
 use tx_core::{Directories, EngineKind, SkillProvider};
 
-use crate::args::DefinitionKind;
+use crate::args::HarnessKind;
 
 /// The one line saying what Claude adds to every agent's tools, shown wherever agents are.
 fn baseline_line() -> String {
@@ -22,20 +22,20 @@ fn baseline_line() -> String {
 /// agent or skill that does not read is listed as invalid; a broken `mcp.json` fails the listing.
 pub fn list(
     directories: &Directories,
-    kind: Option<DefinitionKind>,
+    kind: Option<HarnessKind>,
     out: &mut dyn Write,
-) -> Result<(), DefinitionError> {
-    let definitions = Definitions::new(directories.definition_roots());
+) -> Result<(), HarnessError> {
+    let harness = Harness::new(directories.harness_roots());
     let kinds = match kind {
         Some(kind) => vec![kind],
-        None => DefinitionKind::ALL.to_vec(),
+        None => HarnessKind::ALL.to_vec(),
     };
-    if kind == Some(DefinitionKind::Tools) {
+    if kind == Some(HarnessKind::Tools) {
         return crate::tools::list(directories, out)
-            .map_err(|message| DefinitionError::new(&directories.cache, None, message));
+            .map_err(|message| HarnessError::new(&directories.cache, None, message));
     }
     for (index, kind) in kinds.iter().enumerate() {
-        let rows = rows(&definitions, *kind)?;
+        let rows = rows(&harness, *kind)?;
         if kinds.len() > 1 {
             if index > 0 {
                 writeln!(out).ok();
@@ -45,19 +45,16 @@ pub fn list(
         for (name, description) in rows {
             writeln!(out, "{name}\t{description}").ok();
         }
-        if *kind == DefinitionKind::Agents {
+        if *kind == HarnessKind::Agents {
             writeln!(out, "{}", baseline_line()).ok();
         }
     }
     Ok(())
 }
 
-fn rows(
-    definitions: &Definitions,
-    kind: DefinitionKind,
-) -> Result<Vec<(String, String)>, DefinitionError> {
+fn rows(harness: &Harness, kind: HarnessKind) -> Result<Vec<(String, String)>, HarnessError> {
     Ok(match kind {
-        DefinitionKind::Agents => definitions
+        HarnessKind::Agents => harness
             .agent_files()?
             .into_iter()
             .map(|(name, path)| {
@@ -65,7 +62,7 @@ fn rows(
                 (name, described(description))
             })
             .collect(),
-        DefinitionKind::Skills => definitions
+        HarnessKind::Skills => harness
             .skill_directories()?
             .into_iter()
             .map(|(name, directory)| {
@@ -73,7 +70,7 @@ fn rows(
                 (name, described(description))
             })
             .collect(),
-        DefinitionKind::Mcp => definitions
+        HarnessKind::Mcp => harness
             .mcp_servers()?
             .into_iter()
             .map(|(name, (server, _))| {
@@ -86,12 +83,12 @@ fn rows(
                 (name, description)
             })
             .collect(),
-        DefinitionKind::Tools => unreachable!("listed by crate::tools"),
+        HarnessKind::Tools => unreachable!("listed by crate::tools"),
     })
 }
 
 /// The description on one line; a file that does not read is still listed, pointing at `check`.
-fn described(description: Result<String, DefinitionError>) -> String {
+fn described(description: Result<String, HarnessError>) -> String {
     match description {
         Ok(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
         Err(_) => INVALID.to_owned(),
@@ -104,8 +101,8 @@ const INVALID: &str = "(invalid: see `tx check`)";
 fn provided_skills(
     directories: &Directories,
     skills: &[String],
-) -> Result<Vec<(String, SkillProvider)>, DefinitionError> {
-    let directories = Definitions::new(directories.definition_roots()).skill_directories()?;
+) -> Result<Vec<(String, SkillProvider)>, HarnessError> {
+    let directories = Harness::new(directories.harness_roots()).skill_directories()?;
     Ok(skills
         .iter()
         .filter_map(|name| {
@@ -120,7 +117,7 @@ fn provided_skills(
 pub fn bundle_warning(
     directories: &Directories,
     skills: &[String],
-) -> Result<Option<String>, DefinitionError> {
+) -> Result<Option<String>, HarnessError> {
     let listed: Vec<String> = provided_skills(directories, skills)?
         .into_iter()
         .filter(|(_, provider)| *provider == SkillProvider::ClaudeBundled)
@@ -129,7 +126,7 @@ pub fn bundle_warning(
     if listed.is_empty() {
         return Ok(None);
     }
-    let all: Vec<String> = Definitions::new(directories.definition_roots())
+    let all: Vec<String> = Harness::new(directories.harness_roots())
         .skill_directories()?
         .into_iter()
         .filter(|(_, directory)| {
@@ -156,8 +153,8 @@ pub fn check(
     engine: Option<EngineKind>,
     names: &[String],
     out: &mut dyn Write,
-) -> Result<bool, DefinitionError> {
-    let report = Definitions::new(directories.definition_roots()).check(names, profiles)?;
+) -> Result<bool, HarnessError> {
+    let report = Harness::new(directories.harness_roots()).check(names, profiles)?;
     let mut engine_problems = 0;
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
@@ -190,7 +187,7 @@ pub fn check(
         // Claude drops a `tools` name it does not know without a word: refuse it here.
         if engine == EngineKind::Claude {
             let built_ins = crate::tools::claude_built_ins(directories)
-                .map_err(|message| DefinitionError::new(&directories.cache, None, message))?;
+                .map_err(|message| HarnessError::new(&directories.cache, None, message))?;
             for agent in &report.agent_definitions {
                 let unknown: Vec<&str> = agent
                     .tools

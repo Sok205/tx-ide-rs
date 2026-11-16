@@ -25,9 +25,9 @@ pub const WORKTREES_DIR: &str = "worktrees";
 pub const ARCHIVE_DIR: &str = "archive";
 /// Under the data directory: the definitions tx ships (`agents/`, `skills/`, `mcp.json`), written
 /// by `tx update`. Not `<data>/agents/`, which holds the agent records.
-pub const SHIPPED_DEFINITIONS_DIR: &str = "definitions";
+pub const SHIPPED_HARNESS_DIR: &str = "definitions";
 /// Under the config directory: the user's own definitions, in the same layout; they win by name.
-pub const USER_DEFINITIONS_DIR: &str = "definitions";
+pub const USER_HARNESS_DIR: &str = "definitions";
 
 /// The five directories tx keeps its files in, resolved by the front end (XDG, `TX_APPNAME`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,10 +70,10 @@ impl Directories {
 
     /// The definition layers, lowest first: the shipped `<data>/definitions/`, then the user's
     /// `<config>/definitions/`, which wins by name.
-    pub fn definition_roots(&self) -> [PathBuf; 2] {
+    pub fn harness_roots(&self) -> [PathBuf; 2] {
         [
-            self.data.join(SHIPPED_DEFINITIONS_DIR),
-            self.config.join(USER_DEFINITIONS_DIR),
+            self.data.join(SHIPPED_HARNESS_DIR),
+            self.config.join(USER_HARNESS_DIR),
         ]
     }
 

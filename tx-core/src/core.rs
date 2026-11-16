@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 
 use crate::agent::{Agent, AgentId, DefinitionChoice, validate_name};
 use crate::config::{AGENTS_DIR, CoreConfig};
-use crate::definitions::Definitions;
 use crate::engine::{
     Conversation, EngineError, EngineKind, EngineRegistry, Input, LaunchRequest, LlmEngine,
     apply_workspace,
 };
 use crate::error::CoreError;
 use crate::events::{Event, EventLog, EventSink, EventType, now};
+use crate::harness::Harness;
 use crate::locks::Locks;
 use crate::messaging::{DELIVERY_PAUSE, EnvelopeSender, build_envelope, deliver};
 use crate::profile::{Profile, Profiles, ResolvedProfile};
@@ -341,7 +341,7 @@ pub struct TxCore {
     events: EventLog,
     engines: EngineRegistry,
     profiles: Profiles,
-    definitions: Definitions,
+    harness: Harness,
     worktrees: WorktreeManager,
     locks: Locks,
     sinks: Vec<Box<dyn EventSink>>,
@@ -522,7 +522,7 @@ impl TxCore {
             events: EventLog::new(directories.data.join(LOG_FILE)),
             engines: EngineRegistry::new(),
             profiles: Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone()),
-            definitions: Definitions::new(config.directories.definition_roots()),
+            harness: Harness::new(config.directories.harness_roots()),
             worktrees: WorktreeManager::new(config.worktrees_dir()),
             locks: Locks::new(directories.state.join(LOCKS_DIR)),
             sinks: Vec::new(),
@@ -1024,11 +1024,11 @@ impl TxCore {
         let resolved = match definition {
             Some(choice) if roles.is_empty() => self
                 .profiles
-                .resolve(&self.definitions.agent(&choice.agent)?.roles)?,
+                .resolve(&self.harness.agent(&choice.agent)?.roles)?,
             _ => self.profiles.resolve(roles)?,
         };
         Ok(match definition {
-            Some(choice) => self.definitions.apply(resolved, choice)?,
+            Some(choice) => self.harness.apply(resolved, choice)?,
             None => resolved,
         })
     }
