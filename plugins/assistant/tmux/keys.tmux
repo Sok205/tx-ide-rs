@@ -5,7 +5,7 @@
 # typed text) and `tx assistant ask --from-buffer --pane <firing pane>` reads it, warms the
 # assistant and delivers it as the operator typing in that pane's session, behind the focus
 # envelope (run-shell expands `#{pane_id}` against the client that pressed the key). Run by
-# `run-shell` from the server's tmux.conf, which `tx ui install` writes.
+# `run-shell` from the server's tmux.conf, which `tx update` writes.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the `{ }`
 # block. Anything the user re-binds later in their own tmux.conf wins, since tmux is

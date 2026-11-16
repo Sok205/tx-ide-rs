@@ -15,7 +15,7 @@ never touched. Tests that need tmux skip themselves when it is not on `PATH`. Th
 enables every clippy lint group at warn level and the check runs with `-D warnings`, so a clean
 build means no clippy warnings at all.
 
-After rebuilding, run `tx ui install` again (or the `install` script) before trying the IDE: the
+After rebuilding, run `tx update` (or the `install` script) before trying the IDE: the
 server's configuration names the `tx` binary by path.
 
 ## Property tests and fuzzing
@@ -75,12 +75,16 @@ impl Plugin for NotesPlugin {
 }
 ```
 
+A plugin that keeps files of its own up to date (generated config, materialised resources)
+registers an `Updater` with `r.updater(…)`: `tx update` runs every active plugin's updater after
+the core's update steps. It runs on every `tx update`, so it must be idempotent.
+
 Wire it in with three edits: add `plugins/<id>` to `members` in the root `Cargo.toml`, add
 `tx-<id> = { path = "../plugins/<id>" }` to `tx-core-cli/Cargo.toml`, and add one line to
 `MANIFEST` in `tx-core-cli/src/plugins.rs`. A verb may not take a name from `RESERVED` there
 (the built-ins such as `create`, `send`, `stop`).
 
-**A key** is a `keys/<id>.tmux` resource: a script `ui install` runs from the server's config. A
+**A key** is a `keys/<id>.tmux` resource: a script the server's config (written by `tx update`) runs. A
 comment near its top declares the prefix keys it binds, `# keys: <key>` (`none` for root-table
 binds only); if it sets global options or hooks it also declares `# unset: …` and `# unhook: …`
 so that disabling the plugin undoes them. It finds `tx` and its flags through the server options
@@ -92,8 +96,8 @@ disabled plugin publishes nothing (`plugins/kill/tests/resources.rs` is the temp
 `tx-core-cli/tests/<id>.rs` that drives the real binary through the `tests/common` harness: one
 temporary directory for all five directories, a private server, and `shim_path` for stand-in
 executables such as a `claude` that only sleeps. A plugin that publishes resources must also be
-listed in `tests/ide.rs::ui_install_materialises_resources`; a new key means extending
-`expected_conf`, `start_server`, `ui_install_fragment_loads` and
+listed in `tests/ide.rs::update_materialises_resources`; a new key means extending
+`expected_conf`, `start_server`, `update_fragment_loads` and
 `fragments_do_nothing_outside_an_installed_server` in the same file.
 
 Finally, follow the rule from [Architecture](architecture.md): act on other plugins through `tx`

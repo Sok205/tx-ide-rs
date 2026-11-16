@@ -1,9 +1,9 @@
 //! What the core ships, listed by `TxCore::resources` (plugin id [`PLUGIN_ID`]) ahead of every
 //! plugin's; a plugin that registers a resource of the same name is refused as a duplicate.
-//! - The roles: `agents/…` resources from `tx-core/agents/`, which `tx ui install` writes under
+//! - The roles: `agents/…` resources from `tx-core/agents/`, which `tx update` writes under
 //!   `<data>/roles/`, so a role is not tied to the plugin that first needed it.
 //! - The definitions: `definitions/…` resources from the repo's `config/tx/` (`skills/`,
-//!   `mcp.json`, later `agents/`), which `tx ui install` writes under `<data>/definitions/`.
+//!   `mcp.json`, later `agents/`), which `tx update` writes under `<data>/definitions/`.
 
 /// The `plugin` field of every shipped role resource.
 pub const PLUGIN_ID: &str = "tx-core";

@@ -24,9 +24,10 @@ tmux -S "$socket" capture-pane -p -t "$pane"
 The shipped roles allow raw tmux for inspection, moving between panes and scrolling only. Anything
 that creates, ends or changes an agent or a view goes through `tx`, or the records go stale.
 
-## `tx ui install`: composing the configuration
+## `tx update`: composing the configuration
 
-The `ide` plugin (in `tx-client`) owns `tx ui install`. It materializes the core's roles and
+The `ide` plugin (in `tx-client`) registers an updater, which `tx update` runs after the core's
+update steps. It materializes the core's roles and
 every active plugin's resources under the data directory (`bin/` and `keys/` executable, `conf/`,
 `roles/`, `definitions/` and the nvim runtime plain) and writes `<data>/tmux.conf`. That file sets three server
 options, `@tx-bin` (the `tx` binary), `@tx-data` and `@tx-arguments` (the flags every `tx` a key
@@ -35,15 +36,15 @@ navigation, paging, pane-border look) and then every other active plugin's `keys
 
 Files under those directories that no active plugin provides are deleted, so the installed tree
 always matches the enabled plugins and `tx` needs nothing from the source tree at run time.
-Because paths are spliced into tmux config lines, `ui install` refuses a binary or data path
+Because paths are spliced into tmux config lines, `tx update` refuses a binary or data path
 containing whitespace, quotes, `$`, `#`, `;`, a backslash or a backtick.
 
 **Reconciliation.** Each key fragment declares, in a comment near its top, the prefix keys it
 binds (`# keys: m`) and any global options or hooks it sets (`# unset: …`, `# unhook: …`).
-`ui install` records these in `<data>/keys/.installed`. On a running server it compares the
+`tx update` records these in `<data>/keys/.installed`. On a running server it compares the
 previous record with the new one, unbinds keys, clears options and removes hooks that a now
 disabled plugin declared, re-sources the configuration and prints `reloaded`. Disabling a plugin
-in `plugins.yaml` and re-running `ui install` therefore removes its keys live. A server set up
+in `plugins.yaml` and re-running `tx update` therefore removes its keys live. A server set up
 before `.installed` existed gets a hint to restart.
 
 ## Views

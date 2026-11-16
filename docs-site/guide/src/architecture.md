@@ -23,7 +23,8 @@ point downwards.
   transcript readers, `tour` uses `tx-artifacts`' store.
 - **`tx-client`** is the code the key plugins share: the socket-bound tmux helper, the views
   store, the row renderer, the modal editor, the fzf prompt and the colour palette. It is also a
-  plugin itself, `ide`, which owns `tx ui install | attach | view`.
+  plugin itself, `ide`, which owns `tx ui attach | view` and the updater that writes the IDE's
+  server config on `tx update`.
 - **`tx-core-cli`** builds the binaries. `tx` is a thin CLI over the library that registers the
   bundled plugins; `txi` is the internal entry point.
 
@@ -51,16 +52,19 @@ fragments read those words from the server option `@tx-arguments`.
 Everything but the core is a plugin: a type implementing
 [`Plugin`](../internal/tx_core/plugin/trait.Plugin.html), which has an `id` and a `register`
 method. `register` receives a [`Registry`](../internal/tx_core/plugin/struct.Registry.html) and
-fills any of four slots:
+fills any of five slots:
 
 - **verbs**: named commands with `name`, `usage` and `run(core, io, argv)`. `tx help` lists them;
   names starting with `_` are internal (called by key bindings and hooks).
 - **engines**: an [`LlmEngine`](../internal/tx_core/engine/trait.LlmEngine.html) adapter for a
   coding-agent CLI.
 - **event sinks**: receivers of the core's events.
+- **updaters**: what `tx update` runs for the plugin after the core's update steps, to bring the
+  files it owns up to this build. Each must be idempotent.
 - **resources**: named static blobs the core stores and lists but never reads. By convention the
   name is `<kind>/<file>`: `keys/<id>.tmux` (a key-binding fragment), `conf/<file>` (tmux config),
-  `bin/<file>` (a helper script), `agents/<file>` (a role or skill). `tx ui install` writes them
+  `bin/<file>` (a helper script), `agents/<file>` (a role or skill). The `ide` plugin's updater
+  (`tx update`) writes them
   under the data directory.
 
 `tx` links its plugins through a compiled-in list, `MANIFEST` in `tx-core-cli/src/plugins.rs`, and

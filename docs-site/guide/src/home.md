@@ -139,5 +139,5 @@ prefix+m runs `_home-open`: the same TUI in an 80% popup. There, `attach` is a `
 (the floor stays in its pane), and other choices run once the popup has closed.
 
 With the `home` plugin disabled in `plugins.yaml`, `_home-install` does not exist: `ui attach`
-leaves `home` as a plain shell, prefix+m is unbound after `ui install`, and nothing starts the
+leaves `home` as a plain shell, prefix+m is unbound after `tx update`, and nothing starts the
 assistant until prefix+/ or `tx assistant warm`.

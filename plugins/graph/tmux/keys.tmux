@@ -4,7 +4,7 @@
 # screen (`_graph-open`); q detaches it while the resident (its log position and transcript reads)
 # stays warm. Enter (show the agent: its pane, else nested into this pane when the picker would
 # nest there, else the client switched) and a (its artifacts) close the popup and happen on the
-# terminal. Run by `run-shell` from the server's tmux.conf, which `tx ui install` writes.
+# terminal. Run by `run-shell` from the server's tmux.conf, which `tx update` writes.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the quoting.
 # Anything the user re-binds later in their own tmux.conf wins, since tmux is last-write-wins.

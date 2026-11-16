@@ -11,7 +11,7 @@ baseline, `Skill` and `ToolSearch`, which `tx definitions` and `tx check` always
 
 ## Where the files are
 
-| | Shipped (rewritten by `tx ui install`) | Yours (tx never writes here) |
+| | Shipped (rewritten by `tx update`) | Yours (tx never writes here) |
 |---|---|---|
 | agents | `$TX_DATA_DIR/definitions/agents/<name>.md` | `$TX_CONFIG_DIR/definitions/agents/<name>.md` |
 | skills | `$TX_DATA_DIR/definitions/skills/<name>/SKILL.md` | `$TX_CONFIG_DIR/definitions/skills/<name>/SKILL.md` |
