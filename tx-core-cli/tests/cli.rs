@@ -52,10 +52,10 @@ fn usage_errors_exit_2_without_touching_state() {
                 .contains(&format!("unknown verb {retired:?}"))
         );
     }
-    // Nothing beyond the harness's stand-in definition.
+    // Nothing beyond the harness's stand-in definition and the update stamp.
     assert_eq!(
         std::fs::read_dir(cli.state()).unwrap().count(),
-        1,
+        2,
         "usage errors touched the state dir"
     );
     assert!(cli.ok(&["help"]).starts_with("usage: tx"));

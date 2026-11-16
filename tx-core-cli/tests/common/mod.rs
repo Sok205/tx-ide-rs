@@ -83,6 +83,13 @@ impl Cli {
         // Likewise the default agent definition (`agent.definition: developer`), which a real
         // install ships under `<data>/harness`; `tx update` replaces this stand-in.
         stand_in_definition(&dir.path().join("state"));
+        // That stand-in makes the directories look used: stamp them up to date, as `tx update`
+        // would, so no verb warns of a pending update step.
+        std::fs::write(
+            dir.path().join("state").join(tx_core::updates::STAMP_FILE),
+            format!("{}\n", tx_core::updates::latest()),
+        )
+        .unwrap();
         Self { dir }
     }
     /// `--profile-dir` for the stand-in default roles, then the state dir's own roles, which win.

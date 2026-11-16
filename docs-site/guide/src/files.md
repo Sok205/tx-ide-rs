@@ -62,6 +62,8 @@ fresh install (an empty `data`, no subdirectory in `config`) is stamped at the l
 without running any. While the stamp is behind, every other verb prints
 `tx: N update steps pending: run tx update` on stderr once and carries on; when a
 step says so, `tx update` also asks you to respawn the running agents.
+Step 1 moves `config/definitions/` to `config/harness/` (it stops when both exist, for you to
+merge them) and removes `data/definitions/`; respawn the running agents after it.
 
 `log.jsonl` is a notification trail, not the record: each line is at most 512 bytes and written
 with a single append, so `tail -f` never sees a torn line. On an event, re-read the agent with
