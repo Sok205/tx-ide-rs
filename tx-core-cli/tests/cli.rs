@@ -149,7 +149,10 @@ fn agent_session_round_trip() {
     let cli = Cli::new();
     let repository = cli.repository("w");
     // The agent writes its environment's greeting, then captures what is typed at it.
-    let path = cli.shim_path(&[("claude", "echo $GREETING > env.txt; exec cat > input.txt")]);
+    let path = cli.shim_path(&[(
+        "claude",
+        "echo $GREETING > env.txt.tmp && mv env.txt.tmp env.txt; exec cat > input.txt",
+    )]);
     let output = cli.run(
         &[
             "create",
@@ -332,7 +335,10 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
     require_tmux!();
     let cli = Cli::new();
     let repository = cli.repository("w");
-    let path = cli.shim_path(&[("claude", "env > env.txt; exec cat > input.txt")]);
+    let path = cli.shim_path(&[(
+        "claude",
+        "env > env.txt.tmp && mv env.txt.tmp env.txt; exec cat > input.txt",
+    )]);
     // `tx` with relative directory flags, run from the temp dir.
     let relative = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_tx"))
