@@ -140,6 +140,8 @@ fn draw_axis(app: &App, buffer: &mut Buffer) {
     draw_now_column(app, buffer, day_row, rule_row + 1, true);
 }
 
+/// On the present column, the working marker `▸` one column to its right; arrows draw after
+/// it, so a fresh message or spawn at now stays visible.
 fn draw_now_column(app: &App, buffer: &mut Buffer, top: u16, bottom: u16, label: bool) {
     let column = app.column_of(app.now);
     if !app.on_canvas(column) {
@@ -355,7 +357,8 @@ fn draw_lane(app: &App, buffer: &mut Buffer, y: u16, index: usize) {
     }
 }
 
-/// Peer messages, lane to lane: `•` where it left, a dotted line, `▾`/`▴` where it arrived —
+/// Peer messages and spawns, lane to lane: `•` where it left, a dotted line, `▾`/`▴` where it
+/// arrived —
 /// small glyphs, plain weight, so the arrows sit under the bars rather than over them. The
 /// selected message is amber and bold; a bar the line crosses keeps its heavy horizontal (`┿`).
 fn draw_message_arrows(app: &App, buffer: &mut Buffer, lane_row: &[Option<u16>]) {

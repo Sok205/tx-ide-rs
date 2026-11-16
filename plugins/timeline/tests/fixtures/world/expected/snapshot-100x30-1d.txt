@@ -4,10 +4,10 @@
 SCRATCH (1)                                                    ┊                                  ┃
 × scratch@Oct10 claude              ━╌╌×                       ┊                                  ┃
 BETA (1)                                                       ┊                                  ┃
-○ reviewer claude                                  ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌━━╌╌╌╌╌╌╌╌╌┃
+○ reviewer claude                                  ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌▾━╌╌╌╌╌╌╌╌╌┃
 INFRA (2)                                                      ┊                                  ┃
-× infra claude                                                 ┊                 ━×               ┃
-× infra-child ?                                                ┊                 ━×               ┃
+× infra claude                                                 ┊                 •×               ┃
+× infra-child ?                                                ┊                 ▾×               ┃
 TX-SYSTEM (1)                                                  ┊                                  ┃
 ○ tx-assistant claude                                          ┊                    ━╌╌╌╌╌╌╌╌╌╌╌╌╌┃
 ALPHA (2)                                                      ┊                                  ┃
