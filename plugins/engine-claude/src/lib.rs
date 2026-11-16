@@ -125,9 +125,6 @@ pub const DISALLOWED_TOOLS_FLAG: &str = "--disallowedTools";
 pub const MCP_CONFIG_FLAG: &str = "--mcp-config";
 pub const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
 pub const SETTINGS_FLAG: &str = "--settings";
-/// The slash command that exits the CLI cleanly: its `SessionEnd` hook fires and the
-/// transcript closes.
-pub const EXIT_COMMAND: &str = "/exit";
 /// The hooks wired per launch; each runs `<hook_command> <Event>`, so `on_hook` sees Claude's
 /// own event names.
 pub const HOOK_EVENTS: [&str; 9] = [
@@ -553,10 +550,6 @@ impl LlmEngine for ClaudeAdapter {
             Some(self.named_after(request.session)),
             prompt,
         )
-    }
-
-    fn stop(&self, _: &Agent) -> Option<Input> {
-        Some(Input::line(EXIT_COMMAND))
     }
 
     /// Escape; Claude's `Stop` hook does not run for an interrupted turn, so the engine says
@@ -1590,10 +1583,9 @@ mod tests {
     }
 
     #[test]
-    fn stop_is_exit_submitted_and_interrupt_is_escape() {
+    fn interrupt_is_escape() {
         let (dir, _) = profile("", &[]);
         let session = record(dir.path(), serde_json::Value::Null);
-        assert_eq!(adapter().stop(&session), Some(Input::line("/exit")));
         assert_eq!(
             adapter().interrupt(&session),
             Some((Input::Key(Key::Escape), Some(LlmEngineState::Idle)))

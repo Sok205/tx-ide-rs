@@ -19,15 +19,6 @@ fn stub_env(cwd: &std::path::Path, key: &str) -> Option<String> {
         .find_map(|line| line.strip_prefix(&format!("{key}=")).map(str::to_owned))
 }
 
-fn process_exists(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .output()
-        .unwrap()
-        .status
-        .success()
-}
-
 #[test]
 fn rename_updates_tmux_and_record() {
     require_tmux!();
@@ -171,7 +162,7 @@ fn refresh_all_returns_only_changed_records() {
 }
 
 #[test]
-fn stop_asks_the_engine_and_keeps_the_record() {
+fn stop_kills_the_session_and_keeps_the_record() {
     require_tmux!();
     let h = Harness::new();
     let core = h.open_with_engine();
@@ -185,7 +176,7 @@ fn stop_asks_the_engine_and_keeps_the_record() {
     let session = core.stop_agent(&id).unwrap();
     assert!(
         started.elapsed() < Duration::from_secs(5),
-        "the stub left on the engine's stop input, no grace period: {:?}",
+        "kill-session, no grace period: {:?}",
         started.elapsed()
     );
     assert_eq!(session.state, LlmEngineState::Ended);
@@ -195,7 +186,7 @@ fn stop_asks_the_engine_and_keeps_the_record() {
         .into_iter()
         .find(|line| line["type"] == "stopped")
         .unwrap();
-    assert_eq!(stopped["msg"], "", "left by itself, not killed");
+    assert_eq!(stopped["msg"], "");
     assert_eq!(core.get_agent(&id).unwrap().state, LlmEngineState::Ended);
     assert!(matches!(
         core.stop_agent(&id).unwrap_err(),
@@ -218,44 +209,6 @@ fn stop_asks_the_engine_and_keeps_the_record() {
         .map(|l| l["type"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(types, ["created", "created", "stopped", "exited"]);
-}
-
-#[test]
-fn stop_waits_for_an_agent_that_survives_the_pane_and_then_kills_it() {
-    require_tmux!();
-    let h = Harness::new();
-    let core = h.open_with_engine();
-    let mut opts = agent("tough", &h.repository("t"));
-    // Ignores the hang-up the closed pane sends, as a CLI busy with its exit hooks might.
-    opts.launch = LaunchOptions::agent(STUB_KIND)
-        .initial_prompt("start")
-        .option("model", "tough");
-    let id = core.create_agent(opts).unwrap();
-    let pid: u32 = h
-        .tmux_ok(&["list-panes", "-t", "tough", "-F", "#{pane_pid}"])
-        .trim()
-        .parse()
-        .unwrap();
-    assert!(process_exists(pid));
-    let started = std::time::Instant::now();
-    let session = core.stop_agent(&id).unwrap();
-    let waited = started.elapsed();
-    assert_eq!(session.state, LlmEngineState::Ended);
-    assert!(
-        !process_exists(pid),
-        "the process is gone once stop returns"
-    );
-    assert!(
-        waited >= Duration::from_secs(20) && waited < Duration::from_secs(26),
-        "stop waited {waited:?}: the grace period after the engine's stop input, kill-session, \
-         the grace period again, then the kill"
-    );
-    let stopped = h
-        .log_lines()
-        .into_iter()
-        .find(|line| line["type"] == "stopped")
-        .unwrap();
-    assert_eq!(stopped["msg"], "killed");
 }
 
 #[test]

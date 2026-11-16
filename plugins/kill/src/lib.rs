@@ -1,7 +1,7 @@
-//! tx-core plugin `kill`: prefix+X confirms, then stops the session in the active pane: an
-//! agent through `tx kill` so the record stays honest, a view through `tx ui view close`.
-//! `tx kill <name>` also closes a view by name, under the views guard (never an agent's tmux
-//! session behind core's back). Publishes `keys/kill.tmux` and its helper script.
+//! tx-core plugin `kill`: prefix+X confirms, then runs `tx kill` on the session in the active
+//! pane. `tx kill <name>` kills an agent's tmux session through core (the record is marked
+//! ended first), or a view's under the views guard (never an agent's tmux session behind core's
+//! back). Publishes `keys/kill.tmux` and its helper script.
 
 use std::sync::Arc;
 
