@@ -23,6 +23,10 @@ const POPUP_LOCK: &str = "popup.lock";
 const DEFAULT_SNAPSHOT_COLUMNS: u16 = 120;
 const DEFAULT_SNAPSHOT_ROWS: u16 = 40;
 const RESIDENT_WINDOW: &str = "30m";
+/// The inside of prefix+T's popup (`tmux/keys.tmux`: 118×30 less its border): the resident's
+/// window is exactly this, or the popup clips its right columns (now, `▸`) and its footer.
+const POPUP_INSIDE_COLUMNS: &str = "116";
+const POPUP_INSIDE_ROWS: &str = "28";
 
 const USAGE: &str = "\
 usage: tx timeline [--days N] [--last DURATION] [--snapshot [--cols N] [--rows N]] [--now EPOCH]
@@ -205,32 +209,40 @@ fn resident_argv(core: &TxCore) -> Result<Vec<String>, VerbError> {
     Ok(words)
 }
 
-/// Starts the resident view unless it is running, sized for the popup. Callers hold the popup
-/// lock.
+/// Starts the resident view unless it is running, and sizes its window to the popup's inside
+/// on every attach (a resident started by an older build keeps a stale size otherwise). Callers
+/// hold the popup lock.
 fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
-    if ui.has_session(POPUP_SESSION) {
-        return Ok(());
+    if !ui.has_session(POPUP_SESSION) {
+        let argv = resident_argv(core)?;
+        views::open(
+            ui,
+            &ViewRequest {
+                name: POPUP_SESSION,
+                kind: ViewKind::Timeline,
+                program: &argv[0],
+                arguments: &argv[1..],
+                working_directory: &core.config().directories.data,
+                tags: &[],
+                parent_id: None,
+                bound: None,
+            },
+        )
+        .map_err(failed)?;
+        ui.set_session_option(POPUP_SESSION, "status", "off")
+            .map_err(failed)?;
     }
-    let argv = resident_argv(core)?;
-    views::open(
-        ui,
-        &ViewRequest {
-            name: POPUP_SESSION,
-            kind: ViewKind::Timeline,
-            program: &argv[0],
-            arguments: &argv[1..],
-            working_directory: &core.config().directories.data,
-            tags: &[],
-            parent_id: None,
-            bound: None,
-        },
-    )
-    .map_err(failed)?;
     let window = format!("={POPUP_SESSION}:");
-    ui.run(&["resize-window", "-t", &window, "-x", "118", "-y", "30"])
-        .map_err(failed)?;
-    ui.set_session_option(POPUP_SESSION, "status", "off")
-        .map_err(failed)?;
+    ui.run(&[
+        "resize-window",
+        "-t",
+        &window,
+        "-x",
+        POPUP_INSIDE_COLUMNS,
+        "-y",
+        POPUP_INSIDE_ROWS,
+    ])
+    .map_err(failed)?;
     Ok(())
 }
 
