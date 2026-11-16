@@ -1,9 +1,9 @@
 //! The tx client: the code shared by the key plugins (the socket-bound tmux helper, the picker
 //! renderer and palette, the modal editor, the `views` store) and the plugin `ide`, the
 //! nested-tmux workspace layer. Views are the non-LLM tmux sessions on the core's private server
-//! (`views`); `ui install` composes the server's config from the resources every active plugin
-//! publishes, and `ide` publishes the IDE's own: theme, base keys, helper scripts, and the
-//! nvim runtime (`nvim/`) that every nvim view gets on its runtimepath.
+//! (`views`). The plugin's updater (run by `tx update`) composes the server's config from the
+//! resources every active plugin publishes, and `ide` publishes the IDE's own: theme, base keys,
+//! helper scripts, and the nvim runtime (`nvim/`) that every nvim view gets on its runtimepath.
 
 pub mod editor;
 pub mod install;
@@ -30,6 +30,7 @@ impl Plugin for IdePlugin {
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(install::UiVerb));
+        r.updater(Arc::new(install::IdeUpdater));
         r.verb(Arc::new(install::ResourceVerb));
         r.resource("conf/tmux.conf", include_bytes!("../conf/tmux.conf"))?;
         r.resource("keys/ide.tmux", include_bytes!("../tmux/keys.tmux"))?;

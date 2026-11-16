@@ -14,7 +14,7 @@ use crate::plugins;
 /// Renames all five directories at once, as `NVIM_APPNAME` does for nvim.
 pub const APPNAME_ENV: &str = "TX_APPNAME";
 pub const DEFAULT_APPNAME: &str = "tx-ide";
-/// Under the data dir the roles plugins ship (written by `ui install`); under the config dir
+/// Under the data dir the roles plugins ship (written by `tx update`); under the config dir
 /// the user's own.
 pub const ROLES_DIR: &str = "roles";
 /// Under each definition root: the skills, the shipped ones and then the user's.
@@ -33,6 +33,8 @@ pub enum Failure {
     Environment(String),
     /// A definition file that cannot be read where a listing needs it.
     Definition(tx_core::definitions::DefinitionError),
+    /// An update step, or the stamp it keeps, failed.
+    Update(tx_core::updates::UpdateError),
 }
 
 impl From<CoreError> for Failure {
@@ -50,6 +52,7 @@ impl std::fmt::Display for Failure {
             Failure::Verb(error) => error.fmt(f),
             Failure::Environment(text) => f.write_str(text),
             Failure::Definition(error) => error.fmt(f),
+            Failure::Update(error) => error.fmt(f),
         }
     }
 }
@@ -178,7 +181,7 @@ pub fn absolute(path: PathBuf) -> PathBuf {
         .unwrap_or(path)
 }
 
-/// Without `--profile-dir`: the roles `ui install` materialises, then the user's own, which
+/// Without `--profile-dir`: the roles `tx update` materialises, then the user's own, which
 /// override them.
 fn default_profile_dirs(directories: &Directories) -> Vec<PathBuf> {
     vec![

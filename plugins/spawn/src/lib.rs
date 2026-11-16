@@ -274,10 +274,7 @@ impl Verb for NewAgent {
         }
         let agents = match agent_names(core.config().directories.definition_roots()) {
             Ok(agents) if agents.is_empty() => {
-                ui.display_status(
-                    client,
-                    "prefix+n: no agent definitions (run `tx ui install`)",
-                );
+                ui.display_status(client, "prefix+n: no agent definitions (run `tx update`)");
                 return Ok(1);
             }
             Ok(agents) => agents,

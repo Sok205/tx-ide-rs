@@ -76,6 +76,12 @@ verbs:
                                                                     --engine: also what ENGINE adds to each agent and what
                                                                     it carries that no flag removes
   plugins                                                           id and active|disabled per plugin
+  update                                                            bring this machine up to this tx: run the update steps
+                                                                    it has not had yet (<data>/update-version), then each
+                                                                    plugin's updater (the IDE's tmux config, keys, shipped
+                                                                    roles and definitions); one line per step, and whether
+                                                                    running agents need a respawn. Other verbs warn while
+                                                                    one is pending
 
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
@@ -85,8 +91,8 @@ else the XDG variable, else the XDG default:
   state   $XDG_STATE_HOME/<app>, ~/.local/state/<app>       locks, profiles
   cache   $XDG_CACHE_HOME/<app>, ~/.cache/<app>
   run     $XDG_RUNTIME_DIR/<app>, $TMPDIR/<app>.<user>      tmux.sock
-Roles resolve from --profile-dir, else <data>/roles (written by `ui install`), then <config>/roles;
-skills from --skill-dir, else <data>/definitions/skills (written by `ui install`), then
+Roles resolve from --profile-dir, else <data>/roles (written by `tx update`), then <config>/roles;
+skills from --skill-dir, else <data>/definitions/skills (written by `tx update`), then
 <config>/definitions/skills.
 The config file is <config>/config.yaml (--config FILE overrides); every key is optional:
   agent:                        defaults for create; a flag given replaces its key
@@ -202,6 +208,8 @@ pub enum Verb {
     },
     Engines,
     Plugins,
+    /// `update`: the pending update steps, then every plugin's updater.
+    Update,
     /// `check [--engine E] [NAME]...`: validate the definitions, all of them or those named;
     /// with an engine, also what it adds or cannot remove.
     Check {
@@ -404,6 +412,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         Some("help" | "--help" | "-h") => Verb::Help,
         Some("engines") => Verb::Engines,
         Some("plugins") => Verb::Plugins,
+        Some("update") => Verb::Update,
         Some("create") => parse_create(&mut cursor)?,
         Some("fork") => parse_fork(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
@@ -1091,6 +1100,8 @@ mod tests {
             assert!(parse_str(bad).is_err(), "{bad}");
         }
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
+        assert_eq!(parse_str("update").unwrap().verb, Verb::Update);
+        assert!(parse_str("update now").is_err());
         assert_eq!(
             parse_str("check pm linear").unwrap().verb,
             Verb::Check {

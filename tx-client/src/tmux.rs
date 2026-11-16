@@ -57,7 +57,7 @@ pub struct Location {
 pub struct Ui {
     socket: PathBuf,
     conf: PathBuf,
-    /// `<data>/nvim`, what `ui install` materialises the `nvim/` resources into.
+    /// `<data>/nvim`, what `tx update` materialises the `nvim/` resources into.
     nvim_runtime: PathBuf,
 }
 

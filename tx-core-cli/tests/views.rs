@@ -216,11 +216,11 @@ fn kill_closes_a_view_by_name() {
     assert!(!has_session(&cli, "s"));
 }
 
-/// `ui install`, then a server started from its conf so the kill script finds `@tx-bin` and
+/// `tx update`, then a server started from its conf so the kill script finds `@tx-bin` and
 /// `@tx-arguments`.
 fn installed_server(cli: &Cli) {
     cli.write_yaml("plugins:\n  assistant: { enabled: false }\n");
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let started = Command::new("tmux")
         .arg("-S")
         .arg(cli.sock())

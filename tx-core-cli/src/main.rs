@@ -96,6 +96,13 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             "unknown verb {name:?}"
         ))));
     }
+    // `update` runs its steps before anything opens the core; the internal `_…` verbs run from
+    // tmux hooks, where a warning is noise.
+    match &invocation.verb {
+        Verb::Update => return tx_core_cli::update::run(&invocation.global),
+        Verb::Plugin { name, .. } if name.starts_with('_') => {}
+        _ => tx_core_cli::update::warn_if_behind(&core_config(&invocation.global)?.directories),
+    }
     // The definitions are files under two roots: no core to open, nothing created.
     match &invocation.verb {
         Verb::Definitions { kind } => {
@@ -129,7 +136,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     let core = open(&invocation.global)?;
     let mut out = std::io::stdout().lock();
     match invocation.verb {
-        Verb::Help | Verb::Definitions { .. } | Verb::Check { .. } => unreachable!(),
+        Verb::Help | Verb::Update | Verb::Definitions { .. } | Verb::Check { .. } => {
+            unreachable!()
+        }
         Verb::Engines => {
             for kind in core.engine_kinds() {
                 writeln!(out, "{kind}").ok();

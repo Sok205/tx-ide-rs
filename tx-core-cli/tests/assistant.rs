@@ -8,7 +8,7 @@ use common::{Cli, cwd_of, state_of};
 fn warm_creates_once_and_reuses() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let path = cli.fake_claude_path();
     let env = [("PATH", path.as_str())];
     let first = cli.run(&["assistant", "warm"], &env, "");
@@ -41,7 +41,7 @@ fn warm_creates_once_and_reuses() {
 fn warm_respawns_a_vanished_assistant_in_place() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let path = cli.fake_claude_path();
     let env = [("PATH", path.as_str())];
     assert_eq!(
@@ -77,7 +77,7 @@ fn warm_respawns_a_vanished_assistant_in_place() {
 fn two_concurrent_warms_make_one_assistant() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let path = cli.fake_claude_path();
     let env = [("PATH", path.as_str())];
     let barrier = std::sync::Barrier::new(2);
@@ -120,7 +120,7 @@ fn a_failed_warm_leaves_its_reason_in_the_plugin_dir() {
         reason.contains("unknown role \"TX-ASSISTANT\""),
         "{reason:?}"
     );
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let output = cli.run(&["assistant", "warm"], &env, "");
     assert_eq!(
         output.status.code(),
@@ -151,7 +151,7 @@ fn a_failed_ask_leaves_its_reason_like_warm() {
 fn ensure_home_seeds_claude_trust_on_every_warm() {
     require_tmux!();
     let cli = Cli::new();
-    cli.ok(&["ui", "install"]);
+    cli.ok(&["update"]);
     let path = cli.fake_claude_path();
     let config_file = cli.claude_config_dir().join(".claude.json");
     std::fs::write(&config_file, r#"{"projects":{}}"#).unwrap();

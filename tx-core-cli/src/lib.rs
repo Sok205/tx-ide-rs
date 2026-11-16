@@ -8,3 +8,4 @@ pub mod gc;
 pub mod plugins;
 pub mod setup;
 pub mod tools;
+pub mod update;
