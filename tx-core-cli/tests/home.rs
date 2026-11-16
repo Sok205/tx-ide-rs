@@ -250,6 +250,18 @@ fn client_on(cli: &Cli, session: &str) -> String {
 }
 
 /// The outer terminal attached to `home`.
+/// `_home-install home` run with `path` as its PATH. tmux starts a pane with the PATH of the
+/// client that asked for it, not the server's global one, so the floor's TUI, and the assistant
+/// it warms, find `claude` on this PATH only if the install itself runs with it.
+fn install_home_with_path(cli: &Cli, path: &str) {
+    let output = cli.run(&["_home-install", "home"], &[("PATH", path)], "");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn attach_home(cli: &Cli) {
     let sock = cli.sock().display().to_string();
     cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =home"));
@@ -485,8 +497,8 @@ fn the_first_open_warms_the_assistant_once_and_the_header_follows() {
             .success()
     );
     hand_made_home(&cli, "sh");
-    cli.ok(&["_home-install", "home"]);
-    cli.ok(&["_home-install", "home"]);
+    install_home_with_path(&cli, &path);
+    install_home_with_path(&cli, &path);
     attach_home(&cli);
     // Starting the assistant (a repository, its worktree, the agent) can take over ten seconds
     // while the other suites load the machine.
@@ -536,7 +548,7 @@ fn ask_nests_into_the_assistant_at_once() {
             .success()
     );
     hand_made_home(&cli, "sh");
-    cli.ok(&["_home-install", "home"]);
+    install_home_with_path(&cli, &path);
     attach_home(&cli);
     assert!(
         cli.wait_for(30, || screen(&cli)
