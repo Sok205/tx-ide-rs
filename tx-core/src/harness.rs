@@ -1,8 +1,8 @@
-//! Definitions: agents (`agents/<name>.md`, Claude's agent format, reduced), skills
+//! The harness: agents (`agents/<name>.md`, Claude's agent format, reduced), skills
 //! (`skills/<name>/SKILL.md`, the Agent Skills standard) and MCP servers (`mcp.json`, Claude's
 //! `.mcp.json` format), read from layered roots. A later root wins by name: an agent, a skill, or
 //! a server key inside `mcp.json`. The roots are `Directories::harness_roots`: the shipped
-//! `<data>/definitions/`, then the user's `<config>/definitions/`.
+//! `<data>/harness/`, then the user's `<config>/harness/`.
 
 use std::collections::BTreeMap;
 use std::fmt;

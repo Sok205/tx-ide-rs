@@ -2,14 +2,14 @@
 //! plugin's; a plugin that registers a resource of the same name is refused as a duplicate.
 //! - The roles: `agents/…` resources from `tx-core/agents/`, which `tx update` writes under
 //!   `<data>/roles/`, so a role is not tied to the plugin that first needed it.
-//! - The definitions: `definitions/…` resources from the repo's `config/tx/` (`skills/`,
-//!   `mcp.json`, later `agents/`), which `tx update` writes under `<data>/definitions/`.
+//! - The harness: `harness/…` resources from the repo's `config/tx/` (`skills/`,
+//!   `mcp.json`, later `agents/`), which `tx update` writes under `<data>/harness/`.
 
 /// The `plugin` field of every shipped role resource.
 pub const PLUGIN_ID: &str = "tx-core";
 
 /// Every file of `tx-core/agents/`, named `agents/<path>`, then every file of `config/tx/`, named
-/// `definitions/<path>`.
+/// `harness/<path>`.
 pub const SHIPPED: &[(&str, &[u8])] = &[
     ("agents/COMMON.md", include_bytes!("../agents/COMMON.md")),
     (
@@ -21,191 +21,191 @@ pub const SHIPPED: &[(&str, &[u8])] = &[
         include_bytes!("../agents/TX-ASSISTANT.md"),
     ),
     (
-        "definitions/agents/claude.md",
+        "harness/agents/claude.md",
         include_bytes!("../../config/tx/agents/claude.md"),
     ),
     (
-        "definitions/agents/developer.md",
+        "harness/agents/developer.md",
         include_bytes!("../../config/tx/agents/developer.md"),
     ),
     (
-        "definitions/agents/layout-author.md",
+        "harness/agents/layout-author.md",
         include_bytes!("../../config/tx/agents/layout-author.md"),
     ),
     (
-        "definitions/agents/orchestrator.md",
+        "harness/agents/orchestrator.md",
         include_bytes!("../../config/tx/agents/orchestrator.md"),
     ),
     (
-        "definitions/agents/qa.md",
+        "harness/agents/qa.md",
         include_bytes!("../../config/tx/agents/qa.md"),
     ),
     (
-        "definitions/mcp.json",
+        "harness/mcp.json",
         include_bytes!("../../config/tx/mcp.json"),
     ),
     (
-        "definitions/skills/batch/SKILL.md",
+        "harness/skills/batch/SKILL.md",
         include_bytes!("../../config/tx/skills/batch/SKILL.md"),
     ),
     (
-        "definitions/skills/built-in-browser/SKILL.md",
+        "harness/skills/built-in-browser/SKILL.md",
         include_bytes!("../../config/tx/skills/built-in-browser/SKILL.md"),
     ),
     (
-        "definitions/skills/chrome-browser/SKILL.md",
+        "harness/skills/chrome-browser/SKILL.md",
         include_bytes!("../../config/tx/skills/chrome-browser/SKILL.md"),
     ),
     (
-        "definitions/skills/claude-api/SKILL.md",
+        "harness/skills/claude-api/SKILL.md",
         include_bytes!("../../config/tx/skills/claude-api/SKILL.md"),
     ),
     (
-        "definitions/skills/code-review/SKILL.md",
+        "harness/skills/code-review/SKILL.md",
         include_bytes!("../../config/tx/skills/code-review/SKILL.md"),
     ),
     (
-        "definitions/skills/computer-use/SKILL.md",
+        "harness/skills/computer-use/SKILL.md",
         include_bytes!("../../config/tx/skills/computer-use/SKILL.md"),
     ),
     (
-        "definitions/skills/dataviz/SKILL.md",
+        "harness/skills/dataviz/SKILL.md",
         include_bytes!("../../config/tx/skills/dataviz/SKILL.md"),
     ),
     (
-        "definitions/skills/debug/SKILL.md",
+        "harness/skills/debug/SKILL.md",
         include_bytes!("../../config/tx/skills/debug/SKILL.md"),
     ),
     (
-        "definitions/skills/deep-research/SKILL.md",
+        "harness/skills/deep-research/SKILL.md",
         include_bytes!("../../config/tx/skills/deep-research/SKILL.md"),
     ),
     (
-        "definitions/skills/docs/SKILL.md",
+        "harness/skills/docs/SKILL.md",
         include_bytes!("../../config/tx/skills/docs/SKILL.md"),
     ),
     (
-        "definitions/skills/doctor/SKILL.md",
+        "harness/skills/doctor/SKILL.md",
         include_bytes!("../../config/tx/skills/doctor/SKILL.md"),
     ),
     (
-        "definitions/skills/docx/SKILL.md",
+        "harness/skills/docx/SKILL.md",
         include_bytes!("../../config/tx/skills/docx/SKILL.md"),
     ),
     (
-        "definitions/skills/fewer-permission-prompts/SKILL.md",
+        "harness/skills/fewer-permission-prompts/SKILL.md",
         include_bytes!("../../config/tx/skills/fewer-permission-prompts/SKILL.md"),
     ),
     (
-        "definitions/skills/google-workspace/SKILL.md",
+        "harness/skills/google-workspace/SKILL.md",
         include_bytes!("../../config/tx/skills/google-workspace/SKILL.md"),
     ),
     (
-        "definitions/skills/import-memory/SKILL.md",
+        "harness/skills/import-memory/SKILL.md",
         include_bytes!("../../config/tx/skills/import-memory/SKILL.md"),
     ),
     (
-        "definitions/skills/init/SKILL.md",
+        "harness/skills/init/SKILL.md",
         include_bytes!("../../config/tx/skills/init/SKILL.md"),
     ),
     (
-        "definitions/skills/keybindings-help/SKILL.md",
+        "harness/skills/keybindings-help/SKILL.md",
         include_bytes!("../../config/tx/skills/keybindings-help/SKILL.md"),
     ),
     (
-        "definitions/skills/loop/SKILL.md",
+        "harness/skills/loop/SKILL.md",
         include_bytes!("../../config/tx/skills/loop/SKILL.md"),
     ),
     (
-        "definitions/skills/morning/SKILL.md",
+        "harness/skills/morning/SKILL.md",
         include_bytes!("../../config/tx/skills/morning/SKILL.md"),
     ),
     (
-        "definitions/skills/pdf/SKILL.md",
+        "harness/skills/pdf/SKILL.md",
         include_bytes!("../../config/tx/skills/pdf/SKILL.md"),
     ),
     (
-        "definitions/skills/plugin-authoring/SKILL.md",
+        "harness/skills/plugin-authoring/SKILL.md",
         include_bytes!("../../config/tx/skills/plugin-authoring/SKILL.md"),
     ),
     (
-        "definitions/skills/pptx/SKILL.md",
+        "harness/skills/pptx/SKILL.md",
         include_bytes!("../../config/tx/skills/pptx/SKILL.md"),
     ),
     (
-        "definitions/skills/run-skill-generator/SKILL.md",
+        "harness/skills/run-skill-generator/SKILL.md",
         include_bytes!("../../config/tx/skills/run-skill-generator/SKILL.md"),
     ),
     (
-        "definitions/skills/run/SKILL.md",
+        "harness/skills/run/SKILL.md",
         include_bytes!("../../config/tx/skills/run/SKILL.md"),
     ),
     (
-        "definitions/skills/security-review/SKILL.md",
+        "harness/skills/security-review/SKILL.md",
         include_bytes!("../../config/tx/skills/security-review/SKILL.md"),
     ),
     (
-        "definitions/skills/simplify/SKILL.md",
+        "harness/skills/simplify/SKILL.md",
         include_bytes!("../../config/tx/skills/simplify/SKILL.md"),
     ),
     (
-        "definitions/skills/skill-creator/SKILL.md",
+        "harness/skills/skill-creator/SKILL.md",
         include_bytes!("../../config/tx/skills/skill-creator/SKILL.md"),
     ),
     (
-        "definitions/skills/tx-agents/SKILL.md",
+        "harness/skills/tx-agents/SKILL.md",
         include_bytes!("../../config/tx/skills/tx-agents/SKILL.md"),
     ),
     (
-        "definitions/skills/tx-agents/templates/SKILL.md",
+        "harness/skills/tx-agents/templates/SKILL.md",
         include_bytes!("../../config/tx/skills/tx-agents/templates/SKILL.md"),
     ),
     (
-        "definitions/skills/tx-agents/templates/agent.md",
+        "harness/skills/tx-agents/templates/agent.md",
         include_bytes!("../../config/tx/skills/tx-agents/templates/agent.md"),
     ),
     (
-        "definitions/skills/tx-agents/templates/mcp.json",
+        "harness/skills/tx-agents/templates/mcp.json",
         include_bytes!("../../config/tx/skills/tx-agents/templates/mcp.json"),
     ),
     (
-        "definitions/skills/tx-artifacts/SKILL.md",
+        "harness/skills/tx-artifacts/SKILL.md",
         include_bytes!("../../config/tx/skills/tx-artifacts/SKILL.md"),
     ),
     (
-        "definitions/skills/tx-code-tours/SKILL.md",
+        "harness/skills/tx-code-tours/SKILL.md",
         include_bytes!("../../config/tx/skills/tx-code-tours/SKILL.md"),
     ),
     (
-        "definitions/skills/tx-code-tours/scripts/apply_tour.py",
+        "harness/skills/tx-code-tours/scripts/apply_tour.py",
         include_bytes!("../../config/tx/skills/tx-code-tours/scripts/apply_tour.py"),
     ),
     (
-        "definitions/skills/tx-diff-review/SKILL.md",
+        "harness/skills/tx-diff-review/SKILL.md",
         include_bytes!("../../config/tx/skills/tx-diff-review/SKILL.md"),
     ),
     (
-        "definitions/skills/tx-mockup/SKILL.md",
+        "harness/skills/tx-mockup/SKILL.md",
         include_bytes!("../../config/tx/skills/tx-mockup/SKILL.md"),
     ),
     (
-        "definitions/skills/tx-sessions/SKILL.md",
+        "harness/skills/tx-sessions/SKILL.md",
         include_bytes!("../../config/tx/skills/tx-sessions/SKILL.md"),
     ),
     (
-        "definitions/skills/update-config/SKILL.md",
+        "harness/skills/update-config/SKILL.md",
         include_bytes!("../../config/tx/skills/update-config/SKILL.md"),
     ),
     (
-        "definitions/skills/verify/SKILL.md",
+        "harness/skills/verify/SKILL.md",
         include_bytes!("../../config/tx/skills/verify/SKILL.md"),
     ),
     (
-        "definitions/skills/workflow-authoring/SKILL.md",
+        "harness/skills/workflow-authoring/SKILL.md",
         include_bytes!("../../config/tx/skills/workflow-authoring/SKILL.md"),
     ),
     (
-        "definitions/skills/xlsx/SKILL.md",
+        "harness/skills/xlsx/SKILL.md",
         include_bytes!("../../config/tx/skills/xlsx/SKILL.md"),
     ),
 ];

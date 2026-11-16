@@ -160,11 +160,11 @@ fn update_materialises_resources() {
     assert!(state.join("conf/tmux.conf").is_file());
     for role in [
         "roles/COMMON.md",
-        "definitions/agents/developer.md",
-        "definitions/agents/layout-author.md",
+        "harness/agents/developer.md",
+        "harness/agents/layout-author.md",
         "roles/TX-ASSISTANT.md",
-        "definitions/skills/tx-sessions/SKILL.md",
-        "definitions/mcp.json",
+        "harness/skills/tx-sessions/SKILL.md",
+        "harness/mcp.json",
     ] {
         let path = state.join(role);
         assert!(path.is_file(), "{path:?}");

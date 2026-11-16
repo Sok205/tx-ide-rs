@@ -185,7 +185,7 @@ fn a_launch_without_roles_runs_its_definitions_roles() {
     std::fs::create_dir_all(&roles).unwrap();
     std::fs::write(roles.join("COMMON.md"), "Shared.\n").unwrap();
     std::fs::write(roles.join("dev.md"), "Dev.\n").unwrap();
-    let definition = h.data_dir().join("definitions/agents/pm.md");
+    let definition = h.data_dir().join("harness/agents/pm.md");
     std::fs::create_dir_all(definition.parent().unwrap()).unwrap();
     std::fs::write(
         &definition,
@@ -239,7 +239,7 @@ fn a_launch_without_roles_runs_its_definitions_roles() {
 fn a_launch_without_a_definition_runs_the_configured_default() {
     require_tmux!();
     let h = Harness::new();
-    let agents = h.data_dir().join("definitions/agents");
+    let agents = h.data_dir().join("harness/agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
         agents.join("pm.md"),
