@@ -1,5 +1,5 @@
-//! `tx definitions` and `tx check`: list and validate the agent, skill and MCP definitions. Both
-//! read only the definition roots, never the core's state.
+//! `tx harness ls` and `tx harness check`: list and validate the harness: the agent, skill and MCP
+//! definitions. Both read only the harness roots, never the core's state.
 
 use std::io::Write;
 
@@ -87,7 +87,7 @@ fn rows(harness: &Harness, kind: HarnessKind) -> Result<Vec<(String, String)>, H
     })
 }
 
-/// The description on one line; a file that does not read is still listed, pointing at `check`.
+/// The description on one line; a file that does not read is still listed, pointing at `harness check`.
 fn described(description: Result<String, HarnessError>) -> String {
     match description {
         Ok(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
@@ -95,7 +95,7 @@ fn described(description: Result<String, HarnessError>) -> String {
     }
 }
 
-const INVALID: &str = "(invalid: see `tx check`)";
+const INVALID: &str = "(invalid: see `tx harness check`)";
 
 /// The engine-provided skills among `skills`, by name, from their reference `SKILL.md`.
 fn provided_skills(

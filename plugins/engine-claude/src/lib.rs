@@ -80,7 +80,7 @@ pub const SETTING_SOURCES_FLAG: &str = "--setting-sources";
 /// claude.ai skill sync) nor the project's `.claude` and CLAUDE.md.
 pub const SETTING_SOURCES: &str = "";
 /// What every launch carries that no flag removes (Claude Code 2.1.317, measured in the request
-/// bodies): reported by `tx check --engine claude`, never silently accepted.
+/// bodies): reported by `tx harness check --engine claude`, never silently accepted.
 pub const FORCED: [&str; 6] = [
     "the tools EndConversation, advisor and DeferredToolPlaceholder",
     "Claude Code's built-in plugins (cc-plugin-agents-md, telemetry, privacy)",
@@ -118,7 +118,7 @@ pub const INTERACTIVE_TOOLS: [&str; 3] = ["AskUserQuestion", "EnterPlanMode", "E
 pub const BASE_TOOLS: [&str; 4] = ["Bash", "Read", "Edit", "Write"];
 /// The one implicit part of every launch's `--tools`: `Skill`, without which the granted skills
 /// are not listed to the model, and `ToolSearch`, which keeps MCP tool schemas deferred instead of
-/// loaded up front. `tx definitions` and `tx check` show it; nothing else is ever added.
+/// loaded up front. `tx harness ls` and `tx harness check` show it; nothing else is ever added.
 pub const BASELINE_TOOLS: [&str; 2] = ["Skill", "ToolSearch"];
 pub const DISALLOWED_TOOLS_FLAG: &str = "--disallowedTools";
 /// Takes the agent's MCP servers as inline JSON, in Claude's `.mcp.json` format.
@@ -679,7 +679,7 @@ pub fn tools(profile: &Profile) -> String {
 /// [`HOOK_EVENTS`] entry is wired to `hook_command` (no hooks when it is empty).
 /// The operator's `claude_settings` come first, so tx's own keys win. Claude's bundled skills
 /// are all off (`disableBundledSkills`) unless the agent lists one, which turns the whole bundle
-/// on: Claude cannot turn them on one by one, and `tx check` / `tx create` say so. The built-in
+/// on: Claude cannot turn them on one by one, and `tx harness check` / `tx create` say so. The built-in
 /// `plugin-authoring` plugin is off unless listed.
 pub fn launch_settings(
     claude_settings: &serde_json::Map<String, Value>,

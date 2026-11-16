@@ -4,7 +4,7 @@
 //! `_new-agent` then creates the agent session and reports on the firing client's status line.
 //!
 //! The project is the firing pane's directory (the poc has no projects config). The agents are
-//! the agent definitions (`tx definitions agents`), the configured default (`agent.definition`)
+//! the agent definitions (`tx harness ls agents`), the configured default (`agent.definition`)
 //! preselected; each brings its own prompt, tools, skills and roles.
 
 use std::fs;
@@ -86,7 +86,7 @@ pub struct Reply {
     pub cwd: String,
 }
 
-/// The agent definitions offered: every winning `agents/<name>.md` under the definition roots,
+/// The agent definitions offered: every winning `agents/<name>.md` under the harness roots,
 /// sorted.
 pub fn agent_names(roots: impl IntoIterator<Item = PathBuf>) -> Result<Vec<String>, HarnessError> {
     Ok(Harness::new(roots).agent_files()?.into_keys().collect())

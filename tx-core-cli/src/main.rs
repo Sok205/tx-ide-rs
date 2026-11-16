@@ -103,15 +103,15 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         Verb::Plugin { name, .. } if name.starts_with('_') => {}
         _ => tx_core_cli::update::warn_if_behind(&core_config(&invocation.global)?.directories),
     }
-    // The definitions are files under two roots: no core to open, nothing created.
+    // The harness is files under two roots: no core to open, nothing created.
     match &invocation.verb {
-        Verb::Definitions { kind } => {
+        Verb::HarnessList { kind } => {
             let directories = core_config(&invocation.global)?.directories;
             tx_core_cli::harness::list(&directories, *kind, &mut std::io::stdout().lock())
                 .map_err(Failure::Harness)?;
             return Ok(ExitCode::SUCCESS);
         }
-        Verb::Check { engine, names } => {
+        Verb::HarnessCheck { engine, names } => {
             let config = core_config(&invocation.global)?;
             let profiles = tx_core::profile::Profiles::new(
                 config.profile_dirs.clone(),
@@ -136,7 +136,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     let core = open(&invocation.global)?;
     let mut out = std::io::stdout().lock();
     match invocation.verb {
-        Verb::Help | Verb::Update | Verb::Definitions { .. } | Verb::Check { .. } => {
+        Verb::Help | Verb::Update | Verb::HarnessList { .. } | Verb::HarnessCheck { .. } => {
             unreachable!()
         }
         Verb::Engines => {

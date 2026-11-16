@@ -17,7 +17,7 @@ pub const DEFAULT_APPNAME: &str = "tx-ide";
 /// Under the data dir the roles plugins ship (written by `tx update`); under the config dir
 /// the user's own.
 pub const ROLES_DIR: &str = "roles";
-/// Under each definition root: the skills, the shipped ones and then the user's.
+/// Under each harness root: the skills, the shipped ones and then the user's.
 pub const SKILLS_DIR: &str = "skills";
 /// The internal binary the wired hooks run; installed next to `tx`.
 pub const TXI: &str = "txi";
@@ -190,7 +190,7 @@ fn default_profile_dirs(directories: &Directories) -> Vec<PathBuf> {
     ]
 }
 
-/// Without `--skill-dir`: `skills/` under each definition root, the shipped ones and then the
+/// Without `--skill-dir`: `skills/` under each harness root, the shipped ones and then the
 /// user's.
 fn default_skill_dirs(directories: &Directories) -> Vec<PathBuf> {
     directories

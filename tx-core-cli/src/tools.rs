@@ -1,4 +1,4 @@
-//! `tx definitions tools`: the names an agent definition's `tools` and `disallowedTools` can use.
+//! `tx harness ls tools`: the names an agent definition's `tools` and `disallowedTools` can use.
 //! Read from the engines, never hard-coded where an engine can tell:
 //! - Claude's built-in tools from `tx_engine_claude::probe` (no model call, no login), cached per
 //!   Claude version under `<cache>/tools/`;
@@ -168,7 +168,7 @@ fn server_tools(name: &str, message: &Value) -> ServerTools {
     Ok(tools)
 }
 
-/// The rows of `tx definitions tools`: Claude's built-ins, the baseline, the Codex switches, then
+/// The rows of `tx harness ls tools`: Claude's built-ins, the baseline, the Codex switches, then
 /// each MCP server's tools.
 pub fn list(directories: &Directories, out: &mut dyn Write) -> Result<(), String> {
     let claude = claude_built_ins(directories)?;

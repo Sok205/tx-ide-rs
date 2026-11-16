@@ -93,7 +93,7 @@ pub const BUILT_IN_SWITCHES: [(&[&str], &[&str]); 6] = [
     (&["ScheduleWakeup"], &[DISABLE_FLAG, "sleep_tool"]),
 ];
 /// What every launch carries that no switch removes (codex-cli 0.166.0): reported by
-/// `tx check --engine codex`, never silently accepted.
+/// `tx harness check --engine codex`, never silently accepted.
 pub const FORCED: [&str; 5] = [
     "the tools exec and wait, through which every other tool runs (the model's code mode)",
     "apply_patch (include_apply_patch_tool=false leaves it) and clock__curr_time",

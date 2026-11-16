@@ -449,7 +449,7 @@ fn entries(directory: &Path) -> Result<Vec<PathBuf>, HarnessError> {
     Ok(paths)
 }
 
-/// The definition roots, lowest first.
+/// The harness: its roots, lowest first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Harness {
     roots: Vec<PathBuf>,
