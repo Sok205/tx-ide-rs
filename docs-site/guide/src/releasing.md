@@ -34,7 +34,8 @@ change bumps the minor number and everything else the patch number.
    `git tag -a vX.Y.Z -m "tx-ide X.Y.Z"` then `git push origin vX.Y.Z`.
 
 A hotfix branches off `main`, merges back into `main` by PR, is tagged, and `main` is then merged
-into `develop`.
+into `develop`. Its issue is closed by hand: GitHub auto-closes issues only for PRs
+merged into the default branch, `develop`.
 
 This site is built and deployed by `docs-site.yml` on every push to `main`, so what you are reading
 is republished with each release.

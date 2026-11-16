@@ -57,8 +57,8 @@ tx-ide follows [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`. T
 version for the whole workspace, `version` under `[workspace.package]` in the root `Cargo.toml`;
 every crate inherits it with `version.workspace = true`.
 
-- **PATCH** (`0.1.0` → `0.1.1`): bug fixes only, nothing a user must change.
-- **MINOR** (`0.1.1` → `0.2.0`): new features that keep existing use working.
+- **PATCH** (`1.4.1` → `1.4.2`): bug fixes only, nothing a user must change.
+- **MINOR** (`1.4.2` → `1.5.0`): new features that keep existing use working.
 - **MAJOR** (`1.4.2` → `2.0.0`): a breaking change to the command line, the on-disk records,
   configuration, definitions or the plugin API.
 
@@ -95,6 +95,8 @@ A fix that cannot wait for the next release:
 
 1. Branch off `main` as `fix/<short-description>`, fix it and bump **PATCH** in the root
    `Cargo.toml`.
-2. Open a PR into `main` (with `Closes #N`) and merge it.
+2. Open a PR into `main` referencing the issue and merge it. GitHub only auto-closes issues for
+   PRs merged into the default branch (`develop`), so `Closes #N` here does not close the issue:
+   close it by hand once the fix is tagged.
 3. Tag the result on `main` as above (`v0.2.1`).
 4. Merge `main` back into `develop` through a PR, so `develop` has the fix and the new version.
