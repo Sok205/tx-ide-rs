@@ -41,18 +41,18 @@ fn expected_conf(cli: &Cli) -> String {
          set -g @tx-data \"{state}\"\n\
          set -g @tx-arguments \"{arguments}\"\n\
          source-file \"{state}/conf/tmux.conf\"\n\
-         run-shell \"{state}/keys/ide.tmux\"\n\
-         run-shell \"{state}/keys/chat.tmux\"\n\
-         run-shell \"{state}/keys/labels.tmux\"\n\
-         run-shell \"{state}/keys/kill.tmux\"\n\
-         run-shell \"{state}/keys/picker.tmux\"\n\
-         run-shell \"{state}/keys/edit.tmux\"\n\
-         run-shell \"{state}/keys/spawn.tmux\"\n\
-         run-shell \"{state}/keys/assistant.tmux\"\n\
-         run-shell \"{state}/keys/artifacts.tmux\"\n\
-         run-shell \"{state}/keys/timeline.tmux\"\n\
-         run-shell \"{state}/keys/graph.tmux\"\n\
-         run-shell \"{state}/keys/home.tmux\"\n",
+         run-shell \"/usr/bin/env bash {state}/keys/ide.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/chat.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/labels.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/kill.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/picker.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/edit.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/spawn.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/assistant.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/artifacts.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/timeline.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/graph.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/home.tmux\"\n",
         exe().display(),
         arguments = cli.arguments(),
     )
@@ -670,7 +670,11 @@ fn ui_attach_lands_on_the_home_tui_and_the_assistant_comes_up_behind_it() {
     )
     .unwrap();
     cli.in_outer_pane(&format!("sh {}", script.display()));
-    // `tx update` ran just before; under the other suites' load the attach can take a while.
+    // `tx update` ran just before and wrote the key fragments as new executable files. The server
+    // config runs each one through its interpreter: run directly, the first run of a new file is
+    // assessed by macOS one file at a time for the whole machine (370 ms alone, seconds when many
+    // run at once), the `home` session only appears after the twelve runs, and the attach would
+    // wait for it for 20 to 30 s while the other suites write their own fragments.
     assert!(
         cli.wait_for(15, || cli.tmux_out(&[
             "list-clients",

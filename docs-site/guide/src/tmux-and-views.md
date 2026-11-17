@@ -33,6 +33,11 @@ every active plugin's resources under the data directory (`bin/` and `keys/` exe
 options, `@tx-bin` (the `tx` binary), `@tx-data` and `@tx-arguments` (the flags every `tx` a key
 runs must carry), sources `conf/tmux.conf` (theme and status line), runs `keys/ide.tmux` (pane
 navigation, paging, pane-border look) and then every other active plugin's `keys/<id>.tmux`.
+Each fragment is run through the interpreter its first line names (`#!/usr/bin/env bash` gives
+`run-shell "/usr/bin/env bash <data>/keys/ide.tmux"`), never executed as a file: on macOS the first
+direct run of a freshly written executable is assessed by the system one file at a time, so the
+twelve fragments of a first server start after `tx update` cost seconds; through an interpreter
+they cost milliseconds. A fragment without a `#!` first line is run as a file.
 
 Files under those directories that no active plugin provides are deleted, so the installed tree
 always matches the enabled plugins and `tx` needs nothing from the source tree at run time.

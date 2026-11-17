@@ -45,7 +45,12 @@ const HOME_INSTALL_VERB: &str = "_home-install";
 /// paths). `detach-on-destroy on` detaches the clients of an ending session: a client nested in a
 /// view's pane goes, and the pane falls back to a shell. The terminal is kept in tmux by its own
 /// `no-detach-on-destroy` flag, which `ui attach` sets.
-fn conf_text(exe: &Path, data: &Path, arguments: &[String], others: &[&str]) -> String {
+///
+/// `fragments` are `(id, text)` pairs in the order they are run. Each runs through the
+/// interpreter its first line names, never as an executable file: on macOS the first direct run
+/// of a freshly written executable is assessed by the system one file at a time, 0.4 s alone and
+/// seconds when many run at once, while the same file run by an interpreter is not.
+fn conf_text(exe: &Path, data: &Path, arguments: &[String], fragments: &[(&str, &str)]) -> String {
     let data = data.display();
     let arguments = arguments.join(" ");
     let mut text = format!(
@@ -56,12 +61,19 @@ fn conf_text(exe: &Path, data: &Path, arguments: &[String], others: &[&str]) -> 
          set -g @tx-bin \"{}\"\n\
          set -g @tx-data \"{data}\"\n\
          set -g @tx-arguments \"{arguments}\"\n\
-         source-file \"{data}/conf/tmux.conf\"\n\
-         run-shell \"{data}/keys/{IDE_FRAGMENT}.tmux\"\n",
+         source-file \"{data}/conf/tmux.conf\"\n",
         exe.display(),
     );
-    for id in others {
-        text.push_str(&format!("run-shell \"{data}/keys/{id}.tmux\"\n"));
+    for (id, fragment) in fragments {
+        let interpreter = fragment
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("#!"))
+            .map(|words| format!("{} ", words.trim()))
+            .unwrap_or_default();
+        text.push_str(&format!(
+            "run-shell \"{interpreter}{data}/keys/{id}.tmux\"\n"
+        ));
     }
     text
 }
@@ -330,21 +342,25 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
         .collect();
     materialise(data, &resources)?;
 
-    let fragments: Vec<(String, Declared)> = resources
+    let texts: Vec<(&str, String)> = resources
         .iter()
         .filter_map(|r| {
             let id = r.name.strip_prefix("keys/")?.strip_suffix(".tmux")?;
-            let text = String::from_utf8_lossy(r.bytes);
-            Some((id.to_owned(), parse_declarations(&text)))
+            Some((id, String::from_utf8_lossy(r.bytes).into_owned()))
         })
         .collect();
-    let others: Vec<&str> = fragments
+    let fragments: Vec<(String, Declared)> = texts
         .iter()
-        .map(|(id, _)| id.as_str())
-        .filter(|id| *id != IDE_FRAGMENT)
+        .map(|(id, text)| ((*id).to_owned(), parse_declarations(text)))
         .collect();
+    let mut run_order: Vec<(&str, &str)> = texts
+        .iter()
+        .map(|(id, text)| (*id, text.as_str()))
+        .collect();
+    run_order.sort_by_key(|(id, _)| *id != IDE_FRAGMENT);
     let conf = core.config().tmux_conf_path();
-    std::fs::write(&conf, conf_text(&exe, data, &arguments, &others)).map_err(io_failed(&conf))?;
+    std::fs::write(&conf, conf_text(&exe, data, &arguments, &run_order))
+        .map_err(io_failed(&conf))?;
     let installed = data.join(INSTALLED);
     let write_installed =
         || std::fs::write(&installed, render_installed(&fragments)).map_err(io_failed(&installed));
@@ -531,7 +547,11 @@ mod tests {
                 Path::new("/opt/tx"),
                 Path::new("/s/data"),
                 &words(&["--data-dir", "/s/data", "--run-dir", "/r"]),
-                &["kill", "labels"]
+                &[
+                    ("ide", "#!/usr/bin/env bash\n# keys: none\n"),
+                    ("kill", "#!/bin/sh\n"),
+                    ("labels", "# no interpreter line\n"),
+                ]
             ),
             "# tx-core server config, written by `tx update`. Re-run to update.\n\
              set -s exit-empty on\n\
@@ -541,10 +561,26 @@ mod tests {
              set -g @tx-data \"/s/data\"\n\
              set -g @tx-arguments \"--data-dir /s/data --run-dir /r\"\n\
              source-file \"/s/data/conf/tmux.conf\"\n\
-             run-shell \"/s/data/keys/ide.tmux\"\n\
-             run-shell \"/s/data/keys/kill.tmux\"\n\
+             run-shell \"/usr/bin/env bash /s/data/keys/ide.tmux\"\n\
+             run-shell \"/bin/sh /s/data/keys/kill.tmux\"\n\
              run-shell \"/s/data/keys/labels.tmux\"\n"
         );
+    }
+
+    #[test]
+    fn a_fragment_runs_through_the_interpreter_of_its_first_line() {
+        let line = |text| {
+            let conf = conf_text(Path::new("/x"), Path::new("/d"), &[], &[("a", text)]);
+            conf.lines().last().unwrap().to_owned()
+        };
+        assert_eq!(
+            line("#!/usr/bin/env bash\necho"),
+            "run-shell \"/usr/bin/env bash /d/keys/a.tmux\""
+        );
+        assert_eq!(line("#!/bin/sh\n"), "run-shell \"/bin/sh /d/keys/a.tmux\"");
+        assert_eq!(line("#!/bin/sh"), "run-shell \"/bin/sh /d/keys/a.tmux\"");
+        assert_eq!(line("echo\n#!/bin/sh\n"), "run-shell \"/d/keys/a.tmux\"");
+        assert_eq!(line(""), "run-shell \"/d/keys/a.tmux\"");
     }
 
     #[test]
