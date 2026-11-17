@@ -1948,6 +1948,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1967,6 +1968,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "tempfile",
  "thiserror 2.0.21",
  "tx-core",
 ]

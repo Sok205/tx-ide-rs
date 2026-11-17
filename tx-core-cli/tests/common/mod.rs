@@ -1,10 +1,126 @@
 //! Shared harness for the CLI suites: one temp dir under /tmp holding all five directories (short socket path), helpers
 //! that run `tx` against it, and a kill-server on drop so no private server outlives its test.
+//! The plugins that ship as bundles run as bundles here: every sandbox names one plugin root
+//! linked from this build, [`shipped`], and then its own `<config>/plugins`.
 #![allow(dead_code)]
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::OnceLock;
+
+use tx_core::plugin::Manifest;
+
+/// The plugin root every sandbox shares: `<target>/<profile>/tx-shipped/<id>/` for each
+/// `plugins/<id>/plugin.yaml` of the workspace, holding links to the manifest, to every resource
+/// and to every program a `bin` names (the script `plugins/<id>/bin/<name>` when there is one,
+/// else the program `<target>/<profile>/<name>`). Links, so a sandbox pays nothing to have them.
+///
+/// Cargo builds another package's program only for that package's own tests, so the first call
+/// in a test process builds every program of the workspace, in the profile and target directory
+/// the test itself was built in. Both steps hold a lock: other test processes link the same
+/// directory.
+pub fn shipped() -> &'static Path {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(link_shipped)
+}
+
+fn link_shipped() -> PathBuf {
+    let binaries = Path::new(env!("CARGO_BIN_EXE_tx")).parent().unwrap();
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let lock = std::fs::File::create(binaries.join("tx-shipped.lock")).unwrap();
+    lock.lock().unwrap();
+
+    let mut build = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    build
+        .args(["build", "--workspace", "--bins", "--target-dir"])
+        .arg(binaries.parent().unwrap())
+        .current_dir(workspace);
+    match binaries.file_name().unwrap().to_str().unwrap() {
+        "debug" => {}
+        "release" => {
+            build.arg("--release");
+        }
+        profile => {
+            build.args(["--profile", profile]);
+        }
+    }
+    let output = build.output().unwrap();
+    assert!(
+        output.status.success(),
+        "cargo build --workspace --bins: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let root = binaries.join("tx-shipped");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut ids = Vec::new();
+    for entry in std::fs::read_dir(workspace.join("plugins")).unwrap() {
+        let source = entry.unwrap().path();
+        let file = source.join("plugin.yaml");
+        if !file.is_file() {
+            continue;
+        }
+        let manifest = Manifest::read(&file).unwrap_or_else(|error| panic!("{error}"));
+        let bundle = root.join(&manifest.id);
+        link(&file, &bundle.join("plugin.yaml"));
+        for resource in &manifest.resources {
+            link(&source.join(resource), &bundle.join(resource));
+        }
+        for bin in manifest.bins() {
+            let script = source.join("bin").join(bin);
+            let program = if script.is_file() {
+                script
+            } else {
+                binaries.join(bin)
+            };
+            link(&program, &bundle.join("bin").join(bin));
+        }
+        ids.push(manifest.id);
+    }
+    // A bundle whose manifest is gone (another branch was built here before).
+    for entry in std::fs::read_dir(&root).unwrap() {
+        let entry = entry.unwrap();
+        if !ids.contains(&entry.file_name().to_string_lossy().into_owned()) {
+            std::fs::remove_dir_all(entry.path()).unwrap();
+        }
+    }
+    root
+}
+
+/// Makes `link` a symbolic link to `target`, in one step and only when it is not one already:
+/// a test process running next to this one may be reading it.
+fn link(target: &Path, link: &Path) {
+    if std::fs::read_link(link).is_ok_and(|current| current == target) {
+        return;
+    }
+    let directory = link.parent().unwrap();
+    std::fs::create_dir_all(directory).unwrap();
+    let temporary = directory.join(format!(".link-{}", std::process::id()));
+    let _ = std::fs::remove_file(&temporary);
+    std::os::unix::fs::symlink(target, &temporary).unwrap();
+    std::fs::rename(&temporary, link).unwrap();
+}
+
+/// `--plugin-dir DIR` for each of `dirs`.
+pub fn plugin_flags(dirs: &[PathBuf]) -> Vec<std::ffi::OsString> {
+    dirs.iter()
+        .flat_map(|dir| ["--plugin-dir".into(), dir.clone().into_os_string()])
+        .collect()
+}
+
+/// Writes a plugin of a test's own into the plugin root `root`: `<root>/<id>/plugin.yaml` with
+/// `manifest`, and each of `programs` (a name and the body of a `#!/bin/sh` script) under its
+/// `bin/`. Its directory.
+pub fn write_plugin(root: &Path, id: &str, manifest: &str, programs: &[(&str, &str)]) -> PathBuf {
+    let directory = root.join(id);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("plugin.yaml"), manifest).unwrap();
+    if !programs.is_empty() {
+        shim_path_in(&directory.join("bin"), programs);
+    }
+    directory
+}
 
 /// Whether `tx help` lists `verb` on a line of its own: after the indent, the line is the verb
 /// or starts with the verb and a space. A bare substring would match flags and prose.
@@ -61,6 +177,8 @@ pub fn directory_environment(dir: &std::path::Path) -> Vec<(&'static str, std::p
 
 pub struct Cli {
     pub dir: tempfile::TempDir,
+    /// The plugin roots every `tx` of this sandbox is given, in order.
+    pub plugin_dirs: Vec<PathBuf>,
 }
 
 /// Stand-ins for the roles `tx update` writes: COMMON, which the stand-in default definition
@@ -68,7 +186,19 @@ pub struct Cli {
 pub const STAND_IN_ROLES: [&str; 2] = ["COMMON", "REVIEWER"];
 
 impl Cli {
+    /// A sandbox whose plugin roots are the shared [`shipped`] one and then its own
+    /// `<config>/plugins`: a plugin that has a bundle runs as its own program.
     pub fn new() -> Self {
+        let mut cli = Self::compiled_in();
+        cli.plugin_dirs.insert(0, shipped().to_path_buf());
+        cli
+    }
+    /// A sandbox with only its own `<config>/plugins` as a root: no bundle is installed, so
+    /// every plugin runs compiled into `tx`.
+    pub fn compiled_in() -> Self {
+        // Not a root here, but its build replaces the binaries: no sandbox of this process
+        // runs `tx` before it is over.
+        shipped();
         let dir = tempfile::Builder::new()
             .prefix("tx")
             .tempdir_in("/tmp")
@@ -83,7 +213,16 @@ impl Cli {
         // Likewise the default agent definition (`agent.definition: developer`), which a real
         // install ships under `<data>/definitions`; `tx update` replaces this stand-in.
         stand_in_definition(&dir.path().join("state"));
-        Self { dir }
+        let plugin_dirs = vec![dir.path().join("state").join("plugins")];
+        Self { dir, plugin_dirs }
+    }
+    /// The sandbox's own plugin root, `<config>/plugins`: where a test writes a plugin.
+    pub fn plugins_dir(&self) -> PathBuf {
+        self.state().join("plugins")
+    }
+    /// A plugin of this sandbox's own: see [`write_plugin`].
+    pub fn plugin(&self, id: &str, manifest: &str, programs: &[(&str, &str)]) -> PathBuf {
+        write_plugin(&self.plugins_dir(), id, manifest, programs)
     }
     /// `--profile-dir` for the stand-in default roles, then the state dir's own roles, which win.
     pub fn role_flags(&self) -> Vec<std::ffi::OsString> {
@@ -97,10 +236,12 @@ impl Cli {
     pub fn state(&self) -> PathBuf {
         self.dir.path().join("state")
     }
-    /// The directory flags, space-separated, as a shell command line carries them.
+    /// The directory flags and the plugin roots, space-separated, as a shell command line
+    /// carries them: what `CoreConfig::cli_arguments` gives a core of this sandbox.
     pub fn arguments(&self) -> String {
         directory_flags(&self.state())
             .iter()
+            .chain(&plugin_flags(&self.plugin_dirs))
             .map(|word| word.to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join(" ")
@@ -113,6 +254,7 @@ impl Cli {
         let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .args(directory_flags(&self.state()))
+            .args(plugin_flags(&self.plugin_dirs))
             .args(self.role_flags())
             .args(args)
             .env_remove("TMUX")
@@ -139,13 +281,22 @@ impl Cli {
             .unwrap();
         child.wait_with_output().unwrap()
     }
+    /// The plugin roots as one value, the way a session carries them (`TX_PLUGIN_PATH`).
+    pub fn plugin_path(&self) -> String {
+        self.plugin_dirs
+            .iter()
+            .map(|dir| dir.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(":")
+    }
     /// `txi` (the internal binary the wired hooks run) against this state dir, the way a hook
-    /// inside a session runs it: the exported `TX_*_DIR`, no flags.
+    /// inside a session runs it: the exported `TX_*_DIR` and `TX_PLUGIN_PATH`, no flags.
     pub fn txi(&self, args: &[&str], env: &[(&str, &str)], stdin: &str) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_txi"));
         command
             .args(args)
             .envs(directory_environment(&self.state()))
+            .env("TX_PLUGIN_PATH", self.plugin_path())
             .env_remove("TX_TMUX_SOCKET")
             .env_remove("TMUX")
             .env_remove("TX_SESSION_ID")

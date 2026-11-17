@@ -17,8 +17,9 @@
 //! Every key is optional; a missing or empty file is every default. An unknown key, a bad value
 //! or malformed YAML is a usage error naming the file.
 //!
-//! In `plugins:`, no entry enables a plugin; an id no linked plugin has is a usage error. A
-//! retired id is skipped, so a file written for an older tx keeps loading.
+//! In `plugins:`, no entry enables a plugin. An entry that names no plugin is ignored at run
+//! time, whatever its id, so a file written for another set of plugins keeps loading;
+//! `tx plugins` lists it as `missing`.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -115,7 +116,8 @@ pub fn parse(text: &str, path: &Path) -> Result<Config, UsageError> {
     serde_norway::from_str(text).map_err(|error| UsageError(format!("{}: {error}", path.display())))
 }
 
-/// Ids of plugins this binary no longer links; `config.yaml` entries for them are ignored.
+/// Ids of plugins that no longer exist. Their `config.yaml` entries are ignored like any entry
+/// that names no plugin; the list only lets a check say why.
 /// `hooks`: agent state moved into core and the engine adapters (`txi hook`).
 /// `history`: the transcript mirror; core archives conversations through the engines.
 /// `menu`: renamed `home`; an old `menu` entry no longer configures anything.
@@ -135,37 +137,55 @@ fn yes() -> bool {
     true
 }
 
-/// `known` are the manifest's ids: any other key is refused, even an empty entry. `path` only
-/// names the file in errors.
-pub fn plugin_config(
-    entries: BTreeMap<String, Entry>,
+/// The entries as core's activation reads them: every id of the file, on or off, with its
+/// settings (`Null` without any).
+pub fn entries(plugins: &BTreeMap<String, Entry>) -> BTreeMap<String, tx_core::plugin::Entry> {
+    plugins
+        .iter()
+        .map(|(id, entry)| {
+            let entry = tx_core::plugin::Entry {
+                enabled: entry.enabled,
+                settings: entry.settings.clone().unwrap_or_default(),
+            };
+            (id.clone(), entry)
+        })
+        .collect()
+}
+
+/// What the entries say of the plugins linked into the program, `known`: which are off and
+/// their settings. An entry for any other id is not theirs and is left out.
+pub fn linked_config(
+    plugins: &BTreeMap<String, Entry>,
     known: &[&str],
     reserved: &[&str],
-    path: &Path,
-) -> Result<PluginConfig, UsageError> {
+) -> PluginConfig {
     let mut cfg = PluginConfig {
         reserved: reserved.iter().map(|s| (*s).to_owned()).collect(),
         ..Default::default()
     };
-    for (id, entry) in entries {
-        if RETIRED.contains(&id.as_str()) {
-            continue;
-        }
+    for (id, entry) in plugins {
         if !known.contains(&id.as_str()) {
-            return Err(UsageError(format!(
-                "{}: no plugin named {id:?} (known: {})",
-                path.display(),
-                known.join(", ")
-            )));
+            continue;
         }
         if !entry.enabled {
             cfg.disabled.insert(id.clone());
         }
-        if let Some(settings) = entry.settings {
-            cfg.settings.insert(id, settings);
+        if let Some(settings) = &entry.settings {
+            cfg.settings.insert(id.clone(), settings.clone());
         }
     }
-    Ok(cfg)
+    cfg
+}
+
+/// [`linked_config`], in the shape its first callers took it: nothing is refused any more, so
+/// the result is always `Ok` and `path`, which named the file in the error, is not read.
+pub fn plugin_config(
+    entries: BTreeMap<String, Entry>,
+    known: &[&str],
+    reserved: &[&str],
+    _path: &Path,
+) -> Result<PluginConfig, UsageError> {
+    Ok(linked_config(&entries, known, reserved))
 }
 
 #[cfg(test)]
@@ -316,23 +336,44 @@ mod tests {
     }
 
     #[test]
-    fn an_id_outside_the_manifest_is_refused_even_with_an_empty_entry() {
-        let error = parse_plugins("plugins:\n  engine-cloud: {}\n").unwrap_err();
-        assert!(error.0.contains("engine-cloud"), "{error}");
-        assert!(
-            error.0.contains("engine-codex"),
-            "names the known ids: {error}"
-        );
+    fn an_entry_that_names_no_linked_plugin_is_left_out() {
+        let cfg = parse_plugins(
+            "plugins:\n  engine-cloud: {}\n  pikcer:\n    enabled: false\n    settings: { key: t }\n  labels: { enabled: false }\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.disabled, BTreeSet::from(["labels".to_owned()]));
+        assert!(cfg.settings.is_empty());
     }
 
     #[test]
-    fn a_retired_id_is_skipped_with_its_settings() {
+    fn a_retired_id_is_left_out_like_any_other() {
         let cfg = parse_plugins(
             "plugins:\n  hooks:\n    enabled: false\n    settings: { stuck_after_seconds: 600 }\n  menu: { enabled: false }\n",
         )
         .unwrap();
         assert!(cfg.disabled.is_empty());
         assert!(cfg.settings.is_empty());
+    }
+
+    #[test]
+    fn the_activation_gets_every_entry_of_the_file() {
+        let config = parse_text(
+            "plugins:\n  hello:\n    settings: { greeting: hi }\n  pikcer: { enabled: false }\n  labels: {}\n",
+        )
+        .unwrap();
+        let entries = entries(&config.plugins);
+        let seen: Vec<(&str, bool, &serde_json::Value)> = entries
+            .iter()
+            .map(|(id, entry)| (id.as_str(), entry.enabled, &entry.settings))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("hello", true, &serde_json::json!({"greeting": "hi"})),
+                ("labels", true, &serde_json::Value::Null),
+                ("pikcer", false, &serde_json::Value::Null),
+            ]
+        );
     }
 
     #[test]

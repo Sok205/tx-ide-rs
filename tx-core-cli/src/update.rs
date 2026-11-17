@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use tx_core::Directories;
 use tx_core::updates::{self, Applied};
 
-use crate::args::Global;
+use crate::args::{Global, UsageError};
 use crate::setup::{Failure, core_config, open_with};
 
 const RESPAWN: &str = "respawn running agents to pick this up";
@@ -15,8 +15,14 @@ const RESPAWN: &str = "respawn running agents to pick this up";
 /// The core's update steps first: opening the core creates `<data>/agents`, which would make a
 /// fresh install look used. A failed step stops there. Then every active plugin's updater, in
 /// manifest order, its output prefixed with its plugin id; a failed updater is named and the
-/// others still run, since they are independent. Exit 1 on any failure.
-pub fn run(global: &Global) -> Result<ExitCode, Failure> {
+/// others still run, since they are independent. Exit 1 on any failure. `arguments` are the
+/// words after `update`: it takes none.
+pub fn run(global: &Global, arguments: &[String]) -> Result<ExitCode, Failure> {
+    if let Some(argument) = arguments.first() {
+        return Err(Failure::Usage(UsageError(format!(
+            "unexpected argument {argument:?}"
+        ))));
+    }
     let config = core_config(global)?;
     let mut out = std::io::stdout().lock();
     let mut respawn = false;

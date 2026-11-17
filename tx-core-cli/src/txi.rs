@@ -19,6 +19,10 @@ txi is tx's internal entry point; people use tx.
 ";
 
 fn main() -> ExitCode {
+    // First thing: `tx` is the binary installed next to this one.
+    if let Ok(exe) = std::env::current_exe() {
+        tx_plugin::sdk::set_tx_bin(exe.with_file_name(tx_core_cli::setup::TX));
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         // Extra arguments are ignored, not refused: a hook must never fail over its own

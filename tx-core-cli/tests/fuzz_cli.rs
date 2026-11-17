@@ -43,6 +43,11 @@ impl Cli {
         let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .args(directory_flags(&self.state()))
+            // The shipped bundles, then the sandbox's own plugins: as every other suite.
+            .args(common::plugin_flags(&[
+                common::shipped().to_path_buf(),
+                self.state().join("plugins"),
+            ]))
             .arg("--profile-dir")
             .arg(self.dir.path().join("default-roles"))
             .arg("--profile-dir")
@@ -253,6 +258,7 @@ fn token_pool() -> Vec<String> {
         "--socket",
         "--profile-dir",
         "--skill-dir",
+        "--plugin-dir",
         "--env",
         "--parent",
         "--tag",

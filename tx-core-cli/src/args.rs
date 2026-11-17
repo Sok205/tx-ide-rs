@@ -9,7 +9,8 @@ use tx_plugin::args::{env_pair, parse_global};
 
 pub const USAGE: &str = "\
 usage: tx [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR] [--run-dir DIR] [--socket PATH]
-           [--config FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
+           [--config FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--plugin-dir DIR]... [--env KEY=VALUE]...
+           <verb> ...
 
 verbs:
   create NAME --cwd DIR --prompt T [--engine ENGINE] [--role R]... [--option KEY=VALUE]... [--model M]
@@ -76,7 +77,12 @@ verbs:
                                                                     skills, MCP servers); path:line per problem, exit 1;
                                                                     --engine: also what ENGINE adds to each agent and what
                                                                     it carries that no flag removes
-  plugins                                                           id and active|disabled per plugin
+  plugins [--json]                                                  id and status per plugin, and why for one in error:
+                                                                    active | disabled | error | missing (an entry of the
+                                                                    config file that names no plugin); --json: one array
+                                                                    of {id, status, detail, origin, directory, description,
+                                                                    tier, requires, needs, verbs, engine}, origin being
+                                                                    shipped, user or built-in
   update                                                            bring this machine up to this tx: run the update steps
                                                                     it has not had yet (<data>/update-version), then each
                                                                     plugin's updater (the IDE's tmux config, keys, shipped
@@ -94,7 +100,10 @@ else the XDG variable, else the XDG default:
   run     $XDG_RUNTIME_DIR/<app>, $TMPDIR/<app>.<user>      tmux.sock
 Roles resolve from --profile-dir, else <data>/roles (written by `tx update`), then <config>/roles;
 skills from --skill-dir, else <data>/definitions/skills (written by `tx update`), then
-<config>/definitions/skills.
+<config>/definitions/skills; plugins are the directories under --plugin-dir, else <data>/shipped
+(written by `tx update`), then <config>/plugins (your own).
+A flag left out is read from its variable: $TX_PROFILE_PATH, $TX_SKILL_PATH, $TX_PLUGIN_PATH
+(colon-separated), $TX_CONFIG_FILE, $TX_SESSION_ENV (a JSON object, for --env).
 The config file is <config>/config.yaml (--config FILE overrides); every key is optional:
   agent:                        defaults for create; a flag given replaces its key
     engine: claude              claude | codex
@@ -185,9 +194,15 @@ pub enum Verb {
         dry_run: bool,
     },
     Engines,
-    Plugins,
-    /// `update`: the pending update steps, then every plugin's updater.
-    Update,
+    /// `plugins [--json]`: every plugin and its status.
+    Plugins {
+        json: bool,
+    },
+    /// `update`: the pending update steps, then every plugin's updater. Its arguments are
+    /// `update`'s own to read.
+    Update {
+        arguments: Vec<String>,
+    },
     /// `check [--engine E] [NAME]...`: validate the definitions, all of them or those named;
     /// with an engine, also what it adds or cannot remove.
     Check {
@@ -335,8 +350,16 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         None => return Err(usage("missing verb")),
         Some("help" | "--help" | "-h") => Verb::Help,
         Some("engines") => Verb::Engines,
-        Some("plugins") => Verb::Plugins,
-        Some("update") => Verb::Update,
+        Some("plugins") => {
+            let json = cursor.peek() == Some("--json");
+            if json {
+                cursor.next();
+            }
+            Verb::Plugins { json }
+        }
+        Some("update") => Verb::Update {
+            arguments: cursor.rest(),
+        },
         Some("create") => parse_create(&mut cursor)?,
         Some("fork") => parse_fork(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
@@ -615,7 +638,23 @@ mod tests {
                 argv: vec!["a".into(), "b".into()]
             }
         );
-        assert_eq!(parse_str("plugins").unwrap().verb, Verb::Plugins);
+        assert_eq!(
+            parse_str("plugins").unwrap().verb,
+            Verb::Plugins { json: false }
+        );
+        assert_eq!(
+            parse_str("plugins --json").unwrap().verb,
+            Verb::Plugins { json: true }
+        );
+        for bad in ["plugins --yaml", "plugins --json x", "plugins x"] {
+            assert!(
+                parse_str(bad)
+                    .unwrap_err()
+                    .0
+                    .contains("unexpected argument"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
@@ -649,8 +688,14 @@ mod tests {
             ]
         );
         assert!(matches!(inv.verb, Verb::Ls { .. }));
+        let inv = parse_str("--plugin-dir /shipped --plugin-dir /mine ls").unwrap();
+        assert_eq!(
+            inv.global.plugin_dirs,
+            [PathBuf::from("/shipped"), PathBuf::from("/mine")]
+        );
         let inv = parse_str("ls").unwrap();
         assert!(inv.global.state_dir.is_none() && inv.global.env.is_empty());
+        assert!(inv.global.plugin_dirs.is_empty());
     }
 
     #[test]
@@ -1024,8 +1069,17 @@ mod tests {
             assert!(parse_str(bad).is_err(), "{bad}");
         }
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
-        assert_eq!(parse_str("update").unwrap().verb, Verb::Update);
-        assert!(parse_str("update now").is_err());
+        assert_eq!(
+            parse_str("update").unwrap().verb,
+            Verb::Update { arguments: vec![] }
+        );
+        // `update` reads its own arguments.
+        assert_eq!(
+            parse_str("update --bundles b now").unwrap().verb,
+            Verb::Update {
+                arguments: vec!["--bundles".into(), "b".into(), "now".into()]
+            }
+        );
         assert_eq!(
             parse_str("check pm linear").unwrap().verb,
             Verb::Check {

@@ -81,6 +81,8 @@ stopped one in place under a lock. It runs in a worktree of its own small reposi
 **`mockup`**: `mockup start --project DIR | show | wait | stop`. An agent writes a JSON screen
 description; a ratatui viewer renders it in a per-agent `mockup-<agent>` view, and `show`
 switches the operator there and back. Used while brainstorming, through the `tx-mockup` skill.
+It ships as a bundle (`plugins/mockup/plugin.yaml`): where the bundle is installed its verbs run
+as the program `tx-mockup`, elsewhere compiled into `tx`.
 No key.
 
 **`tutor`**: `tutor start [LANG]` scaffolds a practice project from a lesson pack and opens a

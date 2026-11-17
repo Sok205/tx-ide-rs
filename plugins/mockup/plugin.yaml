@@ -1,0 +1,15 @@
+api: 1
+id: mockup
+description: Ratatui mockups for brainstorming, shown in a per-agent view.
+tier: extra
+requires: [ide]
+
+verbs:
+  - name: mockup
+    usage: "mockup start --project DIR [--for S] | show [--for S] | wait [--for S] | stop [--for S]   ratatui mockups for brainstorming"
+    bin: tx-mockup
+    args: [mockup]
+  - name: _mockup-view
+    usage: "_mockup-view <session_dir> <view>   the viewer (internal)"
+    bin: tx-mockup
+    args: [_mockup-view]

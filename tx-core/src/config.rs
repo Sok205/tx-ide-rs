@@ -28,6 +28,11 @@ pub const ARCHIVE_DIR: &str = "archive";
 pub const SHIPPED_DEFINITIONS_DIR: &str = "definitions";
 /// Under the config directory: the user's own definitions, in the same layout; they win by name.
 pub const USER_DEFINITIONS_DIR: &str = "definitions";
+/// Under the data directory: the plugins tx ships, one directory each, written by `tx update`.
+pub const SHIPPED_PLUGINS_DIR: &str = "shipped";
+/// Under the config directory: the user's own plugins, one directory each; tx never writes there.
+/// Not `<data>/plugins/<id>`, which is a plugin's data.
+pub const USER_PLUGINS_DIR: &str = "plugins";
 
 /// The five directories tx keeps its files in, resolved by the front end (XDG, `TX_APPNAME`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -203,6 +208,9 @@ pub struct CoreConfig {
     pub skill_dirs: Vec<PathBuf>,
     /// The argv prefix the hooks an engine wires run (`[tx, "chat", "hook"]`). Empty: none.
     pub hook_command: Vec<String>,
+    /// The plugin roots, in order, when the caller names them; `None`: the two defaults of
+    /// [`Self::plugin_roots`].
+    pub plugin_dirs: Option<Vec<PathBuf>>,
 }
 
 impl CoreConfig {
@@ -216,6 +224,7 @@ impl CoreConfig {
             profile_dirs: Vec::new(),
             skill_dirs: Vec::new(),
             hook_command: Vec::new(),
+            plugin_dirs: None,
         }
     }
 
@@ -275,6 +284,27 @@ impl CoreConfig {
         self
     }
 
+    /// Names the plugin roots, replacing both defaults.
+    pub fn plugin_dirs<I, P>(mut self, dirs: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.plugin_dirs = Some(dirs.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Where plugins are installed, in order: the roots the caller named, else `<data>/shipped`
+    /// (written by `tx update`) and then `<config>/plugins` (the user's own).
+    pub fn plugin_roots(&self) -> Vec<PathBuf> {
+        self.plugin_dirs.clone().unwrap_or_else(|| {
+            vec![
+                self.directories.data.join(SHIPPED_PLUGINS_DIR),
+                self.directories.config.join(USER_PLUGINS_DIR),
+            ]
+        })
+    }
+
     pub fn socket_path(&self) -> PathBuf {
         self.tmux_socket
             .clone()
@@ -308,7 +338,7 @@ impl CoreConfig {
     }
 
     /// The flags a re-invocation of `tx` / `txi` needs to open this same core: the five
-    /// directories, and the socket when it is overridden.
+    /// directories, the socket when it is overridden, and the plugin roots when they are named.
     pub fn cli_arguments(&self) -> Vec<String> {
         let mut arguments = Vec::new();
         for (flag, directory) in self.directories.flags() {
@@ -318,6 +348,10 @@ impl CoreConfig {
         if let Some(socket) = &self.tmux_socket {
             arguments.push("--socket".to_owned());
             arguments.push(socket.to_string_lossy().into_owned());
+        }
+        for root in self.plugin_dirs.iter().flatten() {
+            arguments.push("--plugin-dir".to_owned());
+            arguments.push(root.to_string_lossy().into_owned());
         }
         arguments
     }
@@ -400,6 +434,33 @@ mod tests {
         );
         let config = config.tmux_socket("/s.sock");
         assert_eq!(config.cli_arguments()[10..], ["--socket", "/s.sock"]);
+        let config = config.plugin_dirs(["/p/shipped", "/p/mine"]);
+        assert_eq!(
+            config.cli_arguments()[10..],
+            [
+                "--socket",
+                "/s.sock",
+                "--plugin-dir",
+                "/p/shipped",
+                "--plugin-dir",
+                "/p/mine"
+            ]
+        );
+    }
+
+    #[test]
+    fn plugin_roots_are_the_named_ones_else_shipped_then_the_users_own() {
+        let config = CoreConfig::new(Directories::under("/r"));
+        assert_eq!(config.plugin_dirs, None);
+        assert_eq!(
+            config.plugin_roots(),
+            [
+                PathBuf::from("/r/data/shipped"),
+                PathBuf::from("/r/config/plugins")
+            ]
+        );
+        let config = config.plugin_dirs(["/only"]);
+        assert_eq!(config.plugin_roots(), [PathBuf::from("/only")]);
     }
 
     #[test]

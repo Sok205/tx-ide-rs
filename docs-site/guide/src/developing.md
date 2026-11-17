@@ -15,6 +15,17 @@ never touched. Tests that need tmux skip themselves when it is not on `PATH`. Th
 enables every clippy lint group at warn level and the check runs with `-D warnings`, so a clean
 build means no clippy warnings at all.
 
+The CLI suites (`tx-core-cli/tests`) run the plugins that ship as bundles the way an install
+does, as their own programs. Cargo builds another package's program only for that package's own
+tests, so the harness (`tests/common/mod.rs`, `shipped()`) runs `cargo build --workspace --bins`
+once per test process, in the profile and target directory of the test itself, and links one
+plugin root under the target directory, `<target>/<profile>/tx-shipped/<id>/`, for every
+`plugins/<id>/plugin.yaml`: the manifest, each resource and each program. Every sandbox is given
+that root and then its own `<config>/plugins` with `--plugin-dir`; they are links, so a sandbox
+pays nothing for them. `Cli::compiled_in()` is a sandbox without the shared root, where every
+plugin runs compiled into `tx`. A test's own plugin is a directory it writes under its
+`<config>/plugins/` (`Cli::plugin`).
+
 After rebuilding, run `tx update` (or the `install` script) before trying the IDE: the
 server's configuration names the `tx` binary by path.
 
@@ -90,6 +101,12 @@ binds only); if it sets global options or hooks it also declares `# unset: …` 
 so that disabling the plugin undoes them. It finds `tx` and its flags through the server options
 `@tx-bin` and `@tx-arguments`, as every bundled fragment does. Helper scripts go in as
 `bin/<file>` resources.
+
+A plugin that ships as a bundle also has a `plugin.yaml`, a program (`src/main.rs`, a `[[bin]]`
+named `tx-<id>`, `tx_plugin::sdk::main`) and a `tests/bundle.rs` calling
+`tx_plugin::testing::check_bundle`; `plugins/mockup` is the template and
+[Writing plugins](writing-plugins.md) the reference. It stays in `MANIFEST` until every plugin
+has moved: it runs compiled in wherever its bundle is not installed.
 
 **Tests.** Give the plugin a `tests/resources.rs` that checks what it publishes, and that a
 disabled plugin publishes nothing (`plugins/kill/tests/resources.rs` is the template). Add a

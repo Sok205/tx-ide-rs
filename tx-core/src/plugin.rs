@@ -3,6 +3,11 @@
 //! config format.
 //! Core never parses arguments or reads the environment: a [`Verb`] receives argv already split.
 //! A resource is a named static blob the core stores and lists but never reads.
+//!
+//! A plugin reaches a core in one of two ways. Linked into the process, it is handed to
+//! [`TxCore::plug`]. Installed on disk as a directory with a [`Manifest`], it runs as its own
+//! program: the [`Index`] finds it, the [`Activation`] says whether it is on, and
+//! [`TxCore::plug_external`] puts a proxy for each of its verbs into the core.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
@@ -16,6 +21,17 @@ use crate::engine::LlmEngine;
 use crate::error::CoreError;
 use crate::events::EventSink;
 use crate::updates::Outcome;
+
+pub mod external;
+pub mod index;
+pub mod manifest;
+
+pub use external::{ExecContext, Launcher};
+pub use index::{Activation, ActiveVerb, Entry, Index, Installed, PluginState, Problem};
+pub use manifest::{
+    EngineMethod, Events, Manifest, ManifestEngine, ManifestError, ManifestInterrupt,
+    ManifestOnEvent, ManifestProgram, ManifestVerb, PLUGIN_API, Tier,
+};
 
 pub trait Plugin: Send + Sync {
     /// `[a-z0-9-]+`, unique across the manifest; the key in the front end's config and in
@@ -36,6 +52,21 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// An empty registry holding `settings` for the plugin about to fill it. For a caller that
+    /// runs [`Plugin::register`] itself, to look at or serve what one plugin contributes without
+    /// plugging it into a core.
+    pub fn new(settings: Value, config: CoreConfig) -> Self {
+        Self {
+            engines: Vec::new(),
+            sinks: Vec::new(),
+            verbs: Vec::new(),
+            updaters: Vec::new(),
+            resources: BTreeMap::new(),
+            settings,
+            config,
+        }
+    }
+
     pub fn engine(&mut self, adapter: Box<dyn LlmEngine>) {
         self.engines.push(adapter);
     }
@@ -77,6 +108,26 @@ impl Registry {
     pub fn config(&self) -> &CoreConfig {
         &self.config
     }
+
+    /// The engines registered so far.
+    pub fn engines(&self) -> &[Box<dyn LlmEngine>] {
+        &self.engines
+    }
+
+    /// The event sinks registered so far.
+    pub fn sinks(&self) -> &[Box<dyn EventSink>] {
+        &self.sinks
+    }
+
+    /// The verbs registered so far.
+    pub fn verbs(&self) -> &[Arc<dyn Verb>] {
+        &self.verbs
+    }
+
+    /// The updaters registered so far.
+    pub fn updaters(&self) -> &[Arc<dyn Updater>] {
+        &self.updaters
+    }
 }
 
 /// A named static blob published by a plugin, listed by [`TxCore::resources`].
@@ -87,11 +138,13 @@ pub struct Resource {
     pub bytes: &'static [u8],
 }
 
-/// A command a front end can dispatch to. `argv` is everything after the verb name.
+/// A command a front end can dispatch to. `argv` is everything after the verb name. The name
+/// and the usage are borrowed from the verb: a linked plugin's are constants, a proxy's come
+/// from a manifest.
 pub trait Verb: Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
     /// One usage line, shown under the front end's own verbs.
-    fn usage(&self) -> &'static str;
+    fn usage(&self) -> &str;
     /// Returns the exit code. Usage mistakes: write to `io.stderr`, return `Ok(2)`.
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError>;
 }
@@ -101,6 +154,14 @@ pub trait Verb: Send + Sync {
 /// must be idempotent. What it did goes to `io.stdout`, one line per change.
 pub trait Updater: Send + Sync {
     fn update(&self, core: &TxCore, io: &mut VerbIo<'_>) -> Result<Outcome, VerbError>;
+
+    /// The plugin stopped being active (it was disabled, or left the installed set): take back
+    /// what `update` generated outside the plugin's own data. Called with the plugin registered
+    /// whether or not it is enabled, and possibly more than once, so it must be safe to repeat.
+    /// The default has nothing to take back.
+    fn retire(&self, _core: &TxCore, _io: &mut VerbIo<'_>) -> Result<Outcome, VerbError> {
+        Ok(Outcome::default())
+    }
 }
 
 pub struct VerbIo<'a> {
@@ -127,17 +188,24 @@ pub struct PluginConfig {
     pub reserved: BTreeSet<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PluginStatus {
     Active,
+    /// The config says `enabled: false`.
     Disabled,
+    /// Installed, and it cannot load: why.
+    Error(String),
+    /// An entry of the config that names no plugin.
+    Missing,
 }
 
 impl PluginStatus {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             PluginStatus::Active => "active",
             PluginStatus::Disabled => "disabled",
+            PluginStatus::Error(_) => "error",
+            PluginStatus::Missing => "missing",
         }
     }
 }
@@ -259,15 +327,10 @@ fn load(
             });
             continue;
         }
-        let mut registry = Registry {
-            engines: Vec::new(),
-            sinks: Vec::new(),
-            verbs: Vec::new(),
-            updaters: Vec::new(),
-            resources: BTreeMap::new(),
-            settings: cfg.settings.get(id).cloned().unwrap_or(Value::Null),
-            config: config.clone(),
-        };
+        let mut registry = Registry::new(
+            cfg.settings.get(id).cloned().unwrap_or(Value::Null),
+            config.clone(),
+        );
         plugin.register(&mut registry)?;
         loaded.push(Loaded {
             id: id.to_owned(),
@@ -366,6 +429,25 @@ impl TxCore {
         Ok(())
     }
 
+    /// Brings in the plugins that run as their own programs, after [`Self::plug`] registered
+    /// the ones linked into this process (`hosted_ids`, which are left alone here). Each step
+    /// lives with the proxies it creates: the installed plugins join [`Self::plugin_status`],
+    /// then every verb of an active plugin becomes a [`Verb`] that starts the plugin's program.
+    /// Where such a verb and one registered in-process have the same name, the activation's
+    /// owner is the one [`Self::verb`] answers, as the front end would run it.
+    pub fn plug_external(
+        &mut self,
+        index: &Index,
+        activation: &Activation,
+        context: ExecContext,
+        hosted_ids: &[&str],
+    ) -> Result<(), PluginError> {
+        let context = Arc::new(context);
+        external::list(self, activation, hosted_ids);
+        external::plug_verbs(self, index, activation, &context, hosted_ids);
+        Ok(())
+    }
+
     pub fn verb(&self, name: &str) -> Option<Arc<dyn Verb>> {
         self.host.verbs.get(name).map(|(_, verb)| Arc::clone(verb))
     }
@@ -403,7 +485,8 @@ impl TxCore {
             .collect()
     }
 
-    /// Manifest order.
+    /// The plugins linked into this process in manifest order, then the installed ones that
+    /// run as their own programs in plugin order.
     pub fn plugin_status(&self) -> &[(String, PluginStatus)] {
         &self.host.status
     }

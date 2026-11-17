@@ -22,6 +22,8 @@ pub struct Global {
     pub socket: Option<PathBuf>,
     pub profile_dirs: Vec<PathBuf>,
     pub skill_dirs: Vec<PathBuf>,
+    /// The plugin roots, in order; empty: `$TX_PLUGIN_PATH`, else the two defaults.
+    pub plugin_dirs: Vec<PathBuf>,
     pub env: Vec<(String, String)>,
     pub config: Option<PathBuf>,
 }
@@ -54,6 +56,7 @@ pub fn parse_global(arguments: &[String]) -> Result<(Global, usize), UsageError>
             "--socket" => global.socket = Some(value()?.into()),
             "--profile-dir" => global.profile_dirs.push(value()?.into()),
             "--skill-dir" => global.skill_dirs.push(value()?.into()),
+            "--plugin-dir" => global.plugin_dirs.push(value()?.into()),
             "--env" => global.env.push(env_pair(value()?)?),
             "--config" => global.config = Some(value()?.into()),
             _ => break,
@@ -74,12 +77,16 @@ mod tests {
     #[test]
     fn the_index_is_the_first_word_after_the_flags() {
         let (global, index) = parse_global(&words(
-            "--data-dir /d --env A=1 --skill-dir /s --env B=2 ls --data-dir x",
+            "--data-dir /d --env A=1 --skill-dir /s --plugin-dir /p1 --env B=2 --plugin-dir /p2 ls --data-dir x",
         ))
         .unwrap();
-        assert_eq!(index, 8);
+        assert_eq!(index, 12);
         assert_eq!(global.data_dir, Some(PathBuf::from("/d")));
         assert_eq!(global.skill_dirs, [PathBuf::from("/s")]);
+        assert_eq!(
+            global.plugin_dirs,
+            [PathBuf::from("/p1"), PathBuf::from("/p2")]
+        );
         assert_eq!(
             global.env,
             [
@@ -97,7 +104,13 @@ mod tests {
 
     #[test]
     fn a_flag_without_its_value_is_a_usage_error() {
-        for flag in ["--config-dir", "--profile-dir", "--env", "--config"] {
+        for flag in [
+            "--config-dir",
+            "--profile-dir",
+            "--plugin-dir",
+            "--env",
+            "--config",
+        ] {
             assert_eq!(
                 parse_global(&words(flag)).unwrap_err(),
                 UsageError(format!("{flag} needs a value"))

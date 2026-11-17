@@ -1,20 +1,29 @@
 //! `tx`: the thin CLI over tx-core. Exit 0 on success, 1 on a core error (`tx: <error>` on
 //! stderr), 2 on misuse (the usage line on stderr). `attach` replaces the process with tmux.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
 
 use tx_client::tmux::Ui;
+use tx_core::plugin::external::TRACE_VERB;
 use tx_core::{
     AgentId, CoreError, CreateOptions, ForkOptions, IdleReason, ListFilter, SendOptions, Sender,
     TxCore,
 };
-use tx_core_cli::args::{self, Invocation, Verb};
+use tx_core_cli::args::{self, Global, Invocation, Verb};
 
-use tx_core_cli::setup::{Failure, config_file, core_config, load_config, open, preview_verbs};
+use tx_core_cli::setup::{
+    Failure, Installation, config_file, core_config, linked, load_config, open,
+};
 
 fn main() -> ExitCode {
+    // First thing: the plugin programs and the sessions this run starts are told which `tx`
+    // this is.
+    if let Ok(exe) = std::env::current_exe() {
+        tx_plugin::sdk::set_tx_bin(exe);
+    }
     let args: Result<Vec<String>, args::UsageError> = std::env::args_os()
         .skip(1)
         .map(|arg| {
@@ -67,40 +76,120 @@ fn sender_from_env(core: &TxCore, via: Option<String>) -> Result<Sender, CoreErr
     Ok(Sender::User { via: view.or(via) })
 }
 
-fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
-    if invocation.verb == Verb::Help {
-        print!("{}", args::USAGE);
-        if let Ok(config) = core_config(&invocation.global) {
-            println!(
-                "Config file here: {}",
-                config_file(&invocation.global, &config).display()
-            );
-        }
-        // A broken config.yaml still gets the built-in usage.
-        if let Ok(verbs) = preview_verbs(&invocation.global)
-            && !verbs.is_empty()
-        {
-            println!("\nplugin verbs:");
-            for verb in verbs {
-                println!("  {}", verb.usage());
-            }
-        }
-        return Ok(ExitCode::SUCCESS);
+/// `tx help`: the built-in usage, the config file this run would read, then one line per plugin
+/// verb, installed or compiled in, by verb name. A `config.yaml` that cannot be read still gets
+/// the built-in usage.
+fn help(global: &Global) {
+    print!("{}", args::USAGE);
+    let Ok(config) = core_config(global) else {
+        return;
+    };
+    println!(
+        "Config file here: {}",
+        config_file(global, &config).display()
+    );
+    let Ok(installation) = Installation::read_with(global, config) else {
+        return;
+    };
+    let Ok(compiled_in) = installation.preview_verbs(&linked()) else {
+        return;
+    };
+    let mut usages: BTreeMap<&str, &str> = compiled_in
+        .iter()
+        .map(|verb| (verb.name(), verb.usage()))
+        .collect();
+    for (name, verb) in &installation.activation.verbs {
+        usages.insert(name, &verb.usage);
     }
-    if let Verb::Plugin { name, .. } = &invocation.verb
-        && !preview_verbs(&invocation.global)?
-            .iter()
-            .any(|verb| verb.name() == name)
+    if !usages.is_empty() {
+        println!("\nplugin verbs:");
+        for usage in usages.values() {
+            println!("  {usage}");
+        }
+    }
+}
+
+/// A verb that is not built in. When an active installed plugin has it, `tx` becomes that
+/// plugin's program: its standard streams, terminal, signals and exit code are the plugin's own,
+/// and neither a plugin nor the core is set up here. Otherwise it is a compiled-in plugin's, run
+/// in-process.
+fn plugin_verb(global: &Global, name: &str, argv: &[String]) -> Result<ExitCode, Failure> {
+    let installation = Installation::read(global)?;
+    // The internal `_…` verbs run from tmux hooks, where a warning is noise.
+    let warn_if_behind = || {
+        if !name.starts_with('_') {
+            tx_core_cli::update::warn_if_behind(&installation.config.directories);
+        }
+    };
+    if let Some(verb) = installation.activation.verbs.get(name) {
+        warn_if_behind();
+        installation.cache();
+        let error = installation
+            .launcher(global, &verb.plugin)
+            .command(TRACE_VERB, &verb.program, &verb.args)
+            .args(argv)
+            .exec();
+        eprintln!("tx: {name}: cannot run {}: {error}", verb.program.display());
+        return Ok(ExitCode::from(1));
+    }
+    let linked = linked();
+    if !installation
+        .preview_verbs(&linked)?
+        .iter()
+        .any(|verb| verb.name() == name)
     {
         return Err(Failure::Usage(args::UsageError(format!(
             "unknown verb {name:?}"
         ))));
     }
-    // `update` runs its steps before anything opens the core; the internal `_…` verbs run from
-    // tmux hooks, where a warning is noise.
+    warn_if_behind();
+    let core = installation.open(global, linked)?;
+    let verb = core.verb(name).expect("checked by preview_verbs");
+    let (mut stdin, mut stdout, mut stderr) = (
+        std::io::stdin().lock(),
+        std::io::stdout().lock(),
+        std::io::stderr().lock(),
+    );
+    let mut io = tx_core::VerbIo {
+        stdin: &mut stdin,
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
+    let code = verb.run(&core, &mut io, argv).map_err(Failure::Verb)?;
+    Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
+}
+
+/// `tx plugins [--json]`: every plugin and its status. The index and `config.yaml` say it all,
+/// so no core is opened.
+fn plugins(global: &Global, json: bool) -> Result<ExitCode, Failure> {
+    let installation = Installation::read(global)?;
+    tx_core_cli::update::warn_if_behind(&installation.config.directories);
+    installation.cache();
+    let rows = tx_core_cli::plugins::rows(&installation);
+    let mut out = std::io::stdout().lock();
+    if json {
+        let rows = rows.iter().map(|row| row.json()).collect();
+        writeln!(out, "{}", serde_json::Value::Array(rows)).ok();
+    } else {
+        for row in rows {
+            writeln!(out, "{}", row.line()).ok();
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     match &invocation.verb {
-        Verb::Update => return tx_core_cli::update::run(&invocation.global),
-        Verb::Plugin { name, .. } if name.starts_with('_') => {}
+        Verb::Help => {
+            help(&invocation.global);
+            return Ok(ExitCode::SUCCESS);
+        }
+        // `update` runs its steps before anything opens the core.
+        Verb::Update { arguments } => {
+            return tx_core_cli::update::run(&invocation.global, arguments);
+        }
+        Verb::Plugin { name, argv } => return plugin_verb(&invocation.global, name, argv),
+        Verb::Plugins { json } => return plugins(&invocation.global, *json),
         _ => tx_core_cli::update::warn_if_behind(&core_config(&invocation.global)?.directories),
     }
     // The definitions are files under two roots: no core to open, nothing created.
@@ -136,34 +225,18 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     let core = open(&invocation.global)?;
     let mut out = std::io::stdout().lock();
     match invocation.verb {
-        Verb::Help | Verb::Update | Verb::Definitions { .. } | Verb::Check { .. } => {
+        Verb::Help
+        | Verb::Update { .. }
+        | Verb::Plugin { .. }
+        | Verb::Plugins { .. }
+        | Verb::Definitions { .. }
+        | Verb::Check { .. } => {
             unreachable!()
         }
         Verb::Engines => {
             for kind in core.engine_kinds() {
                 writeln!(out, "{kind}").ok();
             }
-        }
-        Verb::Plugins => {
-            for (id, status) in core.plugin_status() {
-                writeln!(out, "{id}\t{}", status.as_str()).ok();
-            }
-        }
-        Verb::Plugin { name, argv } => {
-            let verb = core.verb(&name).expect("checked by preview_verbs");
-            drop(out);
-            let (mut stdin, mut stdout, mut stderr) = (
-                std::io::stdin().lock(),
-                std::io::stdout().lock(),
-                std::io::stderr().lock(),
-            );
-            let mut io = tx_core::VerbIo {
-                stdin: &mut stdin,
-                stdout: &mut stdout,
-                stderr: &mut stderr,
-            };
-            let code = verb.run(&core, &mut io, &argv).map_err(Failure::Verb)?;
-            return Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)));
         }
         Verb::Create {
             name,

@@ -1,8 +1,11 @@
-//! `tx mockup`: the session dir, the `mockup-<agent>` view, switching and the viewer.
+//! `tx mockup`: the session dir, the `mockup-<agent>` view, switching and the viewer. The
+//! plugin ships as a bundle, so here its verbs run as the program `tx-mockup`; a sandbox
+//! without the bundle runs it compiled into `tx`, as before.
 
 mod common;
 
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use common::{Cli, lists_verb};
 
@@ -166,14 +169,293 @@ fn no_agent_exits_2() {
     );
 }
 
+/// Switched off, the plugin has no verb, as a bundle and compiled in alike.
 #[test]
 fn disabled_plugin_hides_verb() {
+    for cli in [Cli::new(), Cli::compiled_in()] {
+        cli.write_yaml("plugins:\n  mockup: { enabled: false }\n");
+        let stderr = cli.fails(&["mockup", "stop", "--for", "a"], 2);
+        assert!(stderr.contains("unknown verb \"mockup\""), "{stderr}");
+        let help = cli.ok(&["help"]);
+        assert!(!lists_verb(&help, "mockup"), "{help}");
+        let listing = cli.ok(&["plugins"]);
+        let rows: Vec<&str> = listing
+            .lines()
+            .filter(|row| row.starts_with("mockup\t"))
+            .collect();
+        assert_eq!(rows, ["mockup\tdisabled"]);
+    }
+}
+
+/// The program of the bundle, where the build left it.
+fn tx_mockup() -> PathBuf {
+    Path::new(env!("CARGO_BIN_EXE_tx")).with_file_name("tx-mockup")
+}
+
+/// The bundle every sandbox shares, and its program as `tx` runs it.
+fn bundle() -> PathBuf {
+    common::shipped().join("mockup")
+}
+
+/// The one row of `mockup` in `tx plugins --json`.
+fn row(cli: &Cli) -> serde_json::Value {
+    let rows: serde_json::Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let found: Vec<&serde_json::Value> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == "mockup")
+        .collect();
+    assert_eq!(found.len(), 1, "{rows}");
+    found[0].clone()
+}
+
+/// The command line the view's pane was started with.
+fn viewer_command(cli: &Cli) -> String {
+    cli.tmux_out(&[
+        "display-message",
+        "-p",
+        "-t",
+        "=mockup-a:",
+        "#{pane_start_command}",
+    ])
+}
+
+/// `tx mockup show --for a` with every plugin program it starts traced into `<dir>/trace`: the
+/// output of the command, and the trace.
+fn traced_show(cli: &Cli) -> (Output, String) {
+    let trace = cli.dir.path().join("trace");
+    let output = cli.run(
+        &["mockup", "show", "--for", "a"],
+        &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+        "",
+    );
+    (output, std::fs::read_to_string(&trace).unwrap_or_default())
+}
+
+#[test]
+fn the_bundle_is_the_shipped_plugin_and_its_verbs_are_its_program() {
+    require_tmux!();
     let cli = Cli::new();
-    cli.write_yaml("plugins:\n  mockup: { enabled: false }\n");
-    let stderr = cli.fails(&["mockup", "stop", "--for", "a"], 2);
-    assert!(stderr.contains("unknown verb \"mockup\""), "{stderr}");
+    assert_eq!(
+        row(&cli),
+        serde_json::json!({
+            "id": "mockup", "status": "active", "detail": null, "origin": "shipped",
+            "directory": bundle(),
+            "description": "Ratatui mockups for brainstorming, shown in a per-agent view.",
+            "tier": "extra", "requires": ["ide"], "needs": [],
+            "verbs": ["mockup", "_mockup-view"], "engine": null,
+        })
+    );
     let help = cli.ok(&["help"]);
-    assert!(!lists_verb(&help, "mockup"), "{help}");
+    assert_eq!(
+        help.lines()
+            .filter(|line| line.starts_with("  mockup "))
+            .count(),
+        1,
+        "{help}"
+    );
+    cli.create("a");
+    start(&cli);
+    let (output, trace) = traced_show(&cli);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "mockup ready in view mockup-a\n"
+    );
+    let program = bundle().join("bin/tx-mockup");
+    assert_eq!(
+        trace,
+        format!("verb\tmockup\t{}\n", program.display()),
+        "one plugin program was started: tx became it"
+    );
+    // The viewer is the plugin's own verb, so the view runs the plugin's program, on this core
+    // and these plugin roots.
+    let command = viewer_command(&cli);
+    assert!(
+        command.contains(&format!("{} --config-dir ", program.display())),
+        "{command}"
+    );
+    assert!(
+        command.contains(&format!("{} _mockup-view ", cli.arguments())),
+        "{command}"
+    );
+    // A compiled-in verb starts no plugin program.
+    let trace_file = cli.dir.path().join("trace");
+    std::fs::remove_file(&trace_file).unwrap();
+    let output = cli.run(
+        &["layout", "ls"],
+        &[("TX_PLUGIN_TRACE", trace_file.to_str().unwrap())],
+        "",
+    );
+    assert!(output.status.success());
+    assert!(!trace_file.exists());
+}
+
+#[test]
+fn without_the_bundle_the_plugin_runs_compiled_into_tx() {
+    require_tmux!();
+    let cli = Cli::compiled_in();
+    let row = row(&cli);
+    assert_eq!(row["origin"], "built-in");
+    assert_eq!(row["status"], "active");
+    assert!(lists_verb(&cli.ok(&["help"]), "mockup"));
+    cli.create("a");
+    let json = start(&cli);
+    assert_eq!(json["view"], "mockup-a");
+    let (output, trace) = traced_show(&cli);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "mockup ready in view mockup-a\n"
+    );
+    assert_eq!(trace, "", "no plugin program was started");
+    let command = viewer_command(&cli);
+    assert!(
+        command.contains(&format!(
+            "{} {} _mockup-view ",
+            env!("CARGO_BIN_EXE_tx"),
+            cli.arguments()
+        )),
+        "{command}"
+    );
+    cli.ok(&["mockup", "stop", "--for", "a"]);
+    assert!(!has_view(&cli));
+}
+
+#[test]
+fn a_directory_of_the_users_with_the_same_id_is_in_error_and_the_shipped_one_runs() {
+    require_tmux!();
+    let cli = Cli::new();
+    let manifest = std::fs::read_to_string(bundle().join("plugin.yaml")).unwrap();
+    cli.plugin("mockup", &manifest, &[]);
+    let listing = cli.ok(&["plugins"]);
+    let rows: Vec<&str> = listing
+        .lines()
+        .filter(|row| row.starts_with("mockup\t"))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            "mockup\tactive".to_owned(),
+            format!("mockup\terror\talso installed in {}", bundle().display())
+        ]
+    );
+    cli.create("a");
+    start(&cli);
+    let (output, trace) = traced_show(&cli);
+    assert!(output.status.success());
+    assert_eq!(
+        trace,
+        format!(
+            "verb\tmockup\t{}\n",
+            bundle().join("bin/tx-mockup").display()
+        )
+    );
+}
+
+/// The round the `tx-mockup` skill describes, run by the agent itself: no `--for`, and `tx` is
+/// the one its session is told about. As a bundle and compiled in.
+#[test]
+fn the_round_works_from_inside_an_agents_session() {
+    require_tmux!();
+    for cli in [Cli::new(), Cli::compiled_in()] {
+        let checkout = cli.repository("a");
+        let path = cli.shim_path(&[(
+            "claude",
+            "\"$TX_BIN\" mockup start --project \"$PWD\" > start.out 2> start.err; \
+             \"$TX_BIN\" mockup show > show.out 2> show.err; echo done > round.done; exec sleep 60",
+        )]);
+        let output = cli.run(
+            &[
+                "create",
+                "a",
+                "--cwd",
+                checkout.to_str().unwrap(),
+                "--engine",
+                "claude",
+                "--prompt",
+                "start",
+            ],
+            &[("PATH", path.as_str())],
+            "",
+        );
+        assert!(output.status.success(), "{output:?}");
+        let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let worktree = common::cwd_of(&cli, "a");
+        assert!(
+            cli.wait_for(10, || worktree.join("round.done").exists()),
+            "the agent never finished the round"
+        );
+        let read = |name: &str| std::fs::read_to_string(worktree.join(name)).unwrap();
+        assert_eq!(read("start.err"), "");
+        let started: serde_json::Value = serde_json::from_str(read("start.out").trim()).unwrap();
+        assert_eq!(started["view"], "mockup-a");
+        let session_dir = worktree.join(".superpowers/mockup").join(&id);
+        assert_eq!(
+            started["content_dir"],
+            session_dir.join("content").to_str().unwrap()
+        );
+        assert_eq!(read("show.err"), "");
+        assert_eq!(read("show.out"), "mockup ready in view mockup-a\n");
+        assert!(has_view(&cli));
+        let views = cli.ok(&["ui", "view", "ls"]);
+        assert!(views.contains("mockup-a"), "{views}");
+    }
+}
+
+/// `tx-mockup` resolves the core itself, so it runs without `tx` in front for its own verbs,
+/// and only for those.
+#[test]
+fn the_program_runs_directly_for_its_own_verbs_only() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.create("a");
+    start(&cli);
+    let direct = |args: &[&str]| {
+        Command::new(tx_mockup())
+            .args(common::directory_flags(&cli.state()))
+            .args(common::plugin_flags(&cli.plugin_dirs))
+            .args(args)
+            .env_remove("TMUX")
+            .env_remove("TX_SESSION_ID")
+            .env_remove("TX_BIN")
+            .output()
+            .unwrap()
+    };
+    let output = direct(&["mockup", "show", "--for", "a"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        cli.ok(&["mockup", "show", "--for", "a"]),
+        "as `tx mockup show`"
+    );
+    // What goes wrong in tx reads as `tx` words it, to the byte.
+    let output = direct(&["mockup", "show", "--for", "nobody"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        cli.fails(&["mockup", "show", "--for", "nobody"], 1)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "tx: no session \"nobody\"\n"
+    );
+    // Another plugin's verb is not this program's, though the core knows it.
+    let output = direct(&["kill", "x"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "tx-mockup: not a verb of this plugin: kill\n"
+    );
+    assert!(output.stdout.is_empty());
+    let output = Command::new(tx_mockup())
+        .arg("--tx-probe")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
 }
 
 fn client_sessions(cli: &Cli) -> Vec<String> {
