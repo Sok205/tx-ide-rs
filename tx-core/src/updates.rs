@@ -9,7 +9,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::config::Directories;
+use crate::config::{Directories, SHIPPED_PLUGINS_DIR};
 
 /// Under the data directory: the last update step applied, one integer and a newline.
 pub const STAMP_FILE: &str = "update-version";
@@ -85,9 +85,12 @@ fn read_stamp(directories: &Directories) -> Result<Option<u32>, UpdateError> {
 }
 
 /// Nothing to update: `<data>` is absent or empty, and `<config>` holds no subdirectory (a lone
-/// `config.yaml` is the operator's settings, not tx's files).
+/// `config.yaml` is the operator's settings, not tx's files). `<data>/shipped` does not count:
+/// `tx setup` and `tx update` lay the shipped plugins out there before any step runs.
 pub fn is_fresh(directories: &Directories) -> Result<bool, UpdateError> {
-    let data_empty = entries(&directories.data)?.is_empty();
+    let data_empty = entries(&directories.data)?
+        .iter()
+        .all(|path| path.ends_with(SHIPPED_PLUGINS_DIR));
     let config_has_directory = entries(&directories.config)?
         .iter()
         .any(|path| path.is_dir());
@@ -375,6 +378,18 @@ mod tests {
         std::fs::write(directories.config.join("config.yaml"), "").unwrap();
         assert!(is_fresh(&directories).unwrap());
         assert_eq!(behind_of(&directories, TWO).unwrap(), None);
+        assert!(collect(&directories, TWO).is_empty());
+        assert_eq!(stamp(&directories), "2\n");
+        assert!(!directories.data.join("first").exists());
+    }
+
+    #[test]
+    fn shipped_plugins_laid_out_first_leave_the_install_fresh() {
+        let (_root, directories) = layout();
+        let shipped = directories.data.join(SHIPPED_PLUGINS_DIR);
+        std::fs::create_dir_all(shipped.join("mockup")).unwrap();
+        std::fs::write(shipped.join(".selection"), "{}").unwrap();
+        assert!(is_fresh(&directories).unwrap());
         assert!(collect(&directories, TWO).is_empty());
         assert_eq!(stamp(&directories), "2\n");
         assert!(!directories.data.join("first").exists());

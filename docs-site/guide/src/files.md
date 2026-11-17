@@ -66,20 +66,63 @@ log.jsonl                   one {"ts","actor","type","msg"} line per mutation
 worktrees/<repo-key>/…      the agents' git worktrees; `tx gc` empties their build output
 plugins/<id>/               each plugin's own data (artifacts, home, assistant, tutor, …)
 shipped/<id>/               the plugins tx ships, each a directory with a `plugin.yaml`: the
-                            first plugin root, written by `tx update`
-roles/                      shipped roles and skills, written by `tx update`
-bin/ keys/ conf/ nvim/      plugin resources, written by `tx update`
-tmux.conf                   the server's config, written by `tx update`
+                            first plugin root, written by `tx update --bundles`
+shipped/.selection          which plugins are laid out there, when the installer chose
+shipped/.stamp              the tx and the build they were laid out from
+roles/ definitions/         core's roles, and its agent definitions, skills and MCP servers
+bin/ keys/ conf/ nvim/      helper scripts, key fragments, the theme, the nvim runtime
+                            (these six: the published resources, written by `tx update`)
+tmux.conf                   the server's config, composed by the `ide` updater on `tx update`
 update-version              the last update step run, written by `tx update`
 ```
+
+**The shipped plugins.** `tx update --bundles DIR --binaries DIR [--link]` lays them out from a
+checkout: `DIR` holds one `<id>/plugin.yaml` per plugin (the checkout's `plugins/`), and
+`--binaries` is where the built programs are (`target/release`). For each plugin it installs the
+manifest, every resource the manifest lists and every program a `bin` names: the bundle's own
+`bin/<name>` when that file is there (a script), else `<binaries>/<name>`. A program found in
+neither stops the update before anything is written, and names the package to build. The plugins
+are the ids under `plugins` in `.selection` (`{"preset": "full", "plugins": ["mockup", …]}`,
+`"preset": null` for an explicit list); without that file, every bundle of `DIR`. `tx update`
+only reads it.
+
+Each file goes in through a temporary file and a rename, so a program that is running keeps the
+file it started from, and a file that did not change is left alone. A file a plugin no longer
+names is removed; so is the directory of a plugin that is no longer selected, after the plugin
+was retired (below). With `--link` the files are symbolic links to their sources, for a checkout
+you develop in: a rebuild is live at once. Without it, every program just copied is run once with
+`--tx-probe`, all at the same time: on macOS the first run of a new program file is slow, and this
+pays for it during the update instead of on the first key; a shipped program answers
+`--tx-probe` by exiting 0. Last, `.stamp` records `{"tx_version", "api", "bundles", "binaries",
+"linked"}`: the shipped plugins link the same core as `tx`, so they must come from its build.
+
+**The published resources.** On every run `tx update` writes the six directories `bin`, `keys`,
+`conf`, `nvim`, `roles` and `definitions` itself, so an install without the `ide` plugin has its
+roles and definitions too. The sources, in order: core's own roles and definitions, then every
+active plugin's resources in plugin order (a plugin's `agents/…` lands under `roles/`). A later
+source replaces an earlier one of the same name, so a plugin of your own can replace a shipped
+role. `bin/` and `keys/` files are executable. A file in those directories that no source
+accounts for is removed (only `keys/.installed`, the `ide` updater's record, stays), so keep
+nothing of your own there; a symbolic link is removed itself and never followed, and when one of
+the six directories is itself a symbolic link `tx update` refuses, publishes nothing and runs no
+updater.
+
+**Updaters and retiring.** After that, each active plugin's updater runs: for an installed
+plugin, its `update` program, whose lines are shown as `<id>: <line>`; the line
+`tx-update: respawn-agents` asks for the respawn message instead; a program that does not exit 0
+is named (`tx: update: <id>: exit <n>`), the others still run, and `tx update` exits 1. What an
+updater generated would outlive its plugin, so the same program is run with
+`TX_PLUGIN_RETIRE=1` to take it back: for an installed plugin that is disabled, on every
+`tx update`, and for a shipped plugin that left the selection, before its directory is removed.
+A plugin you delete by hand gets no retire: disable it and run `tx update` first.
 
 `update-version` says which update steps have run; absent reads 0. When a tx release
 needs something done once per machine (files moved, a setting rewritten, leftovers removed),
 it ships an update step; `tx update` runs each pending step in order and stamps its number after
 each, so a failure leaves the stamp at the last success and a re-run continues from there. Steps
 check before they act, so running one twice (a `config` shared across machines) does no harm. A
-fresh install (an empty `data`, no subdirectory in `config`) is stamped at the latest version
-without running any. While the stamp is behind, every other verb prints
+fresh install (a `data` that is empty apart from `shipped/`, no subdirectory in `config`) is
+stamped at the latest version without running any. While the stamp is behind, every other verb prints
 `tx: N update steps pending: run tx update` on stderr once and carries on; when a
 step says so, `tx update` also asks you to respawn the running agents.
 

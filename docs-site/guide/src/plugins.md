@@ -50,8 +50,13 @@ removes the global hooks older tx versions installed; prefix+f forks the agent i
 through `_fork-pane` (a popup asks for the name). Its library holds the transcript readers the
 timeline and the home use.
 
-**`ide`** (in `tx-client`): its updater (run by `tx update`), `ui attach` and `ui view open | ls | close`. It publishes
-the theme and status line, the navigation keys (`C-h`/`C-j`/`C-k`/`C-l` across nested sessions,
+**`ide`** (in `tx-client`): its updater (run by `tx update`), `ui attach` and `ui view open | ls | close`.
+The updater composes the server config, `<data>/tmux.conf`: it runs the key fragments
+`tx update` published under `<data>/keys` (`ide`'s first, the others by name), names the `tx`
+binary (`@tx-bin`, and `TX_BIN` in the server's environment, which a plugin program started from
+a key runs tx with), and reloads a running server, unbinding what a fragment that is gone had
+declared. It no longer writes resources: `tx update` publishes them itself, the `ide`'s like
+every plugin's. It publishes the theme and status line, the navigation keys (`C-h`/`C-j`/`C-k`/`C-l` across nested sessions,
 `C-u`/`C-d` to page an agent's scrollback), helper scripts and the nvim runtime every nvim view
 gets.
 

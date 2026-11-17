@@ -1,48 +1,38 @@
 //! The `ide` plugin's updater, `ui attach` and `ui view`: compose the core's server config from
-//! plugin resources (on `tx update`), enter the IDE's server, and open, list or close views from
-//! a shell.
+//! the key fragments `tx update` published (on `tx update`), enter the IDE's server, and open,
+//! list or close views from a shell.
 
-use std::collections::HashSet;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Stdio;
 
 use tx_core::updates::Outcome;
-use tx_core::{Resource, TxCore, Updater, Verb, VerbError, VerbIo};
+use tx_core::{TxCore, Updater, Verb, VerbError, VerbIo};
+use tx_plugin::bundle::KEYS_INSTALLED;
 
 use crate::tmux::{Ui, UiError};
 use crate::view_verb;
 use crate::views::{self, ViewKind, ViewRequest};
 
 const HOME_SESSION: &str = "home";
-const INSTALLED: &str = "keys/.installed";
 const IDE_FRAGMENT: &str = "ide";
+/// Under the data directory: the key fragments `tx update` published, `<id>.tmux` each.
+const KEYS_DIR: &str = "keys";
+const FRAGMENT_EXTENSION: &str = "tmux";
 const LEGACY_HINT: &str = "legacy bindings may remain; restart the server to drop them";
-/// The resource kinds the updater materialises under the data dir.
-const KINDS: [&str; 6] = [
-    "bin",
-    "keys",
-    "conf",
-    NVIM_RESOURCE,
-    ROLES_RESOURCE,
-    tx_core::config::SHIPPED_DEFINITIONS_DIR,
-];
 /// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
 /// view's runtimepath by `views::open`.
 pub const NVIM_RESOURCE: &str = "nvim";
-/// The core (and any plugin) ships roles as `agents/…` resources; they are installed under
-/// `<data>/roles/`, since `<data>/agents/` holds agent records.
-const ROLES_RESOURCE: &str = "agents";
-const ROLES_DIR: &str = "roles";
 /// The home plugin's verb that puts the home TUI into the view's pane; absent when the plugin
 /// is disabled.
 const HOME_INSTALL_VERB: &str = "_home-install";
 
 /// `@tx-data` locates `bin/` and `keys/`; `@tx-arguments` is what every `tx` a key fragment
 /// runs carries (the core's `cli_arguments()`, words split by spaces: `install` refuses unsafe
-/// paths). `detach-on-destroy on` detaches the clients of an ending session: a client nested in a
+/// paths). `TX_BIN` in the server's environment is the same `tx` as `@tx-bin`: what a plugin
+/// program started from a key, a popup or a pane builds its command lines with.
+/// `detach-on-destroy on` detaches the clients of an ending session: a client nested in a
 /// view's pane goes, and the pane falls back to a shell. The terminal is kept in tmux by its own
 /// `no-detach-on-destroy` flag, which `ui attach` sets.
 ///
@@ -52,17 +42,18 @@ const HOME_INSTALL_VERB: &str = "_home-install";
 /// seconds when many run at once, while the same file run by an interpreter is not.
 fn conf_text(exe: &Path, data: &Path, arguments: &[String], fragments: &[(&str, &str)]) -> String {
     let data = data.display();
+    let exe = exe.display();
     let arguments = arguments.join(" ");
     let mut text = format!(
         "# tx-core server config, written by `tx update`. Re-run to update.\n\
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
          set -g detach-on-destroy on\n\
-         set -g @tx-bin \"{}\"\n\
+         set -g @tx-bin \"{exe}\"\n\
          set -g @tx-data \"{data}\"\n\
          set -g @tx-arguments \"{arguments}\"\n\
+         set-environment -g TX_BIN \"{exe}\"\n\
          source-file \"{data}/conf/tmux.conf\"\n",
-        exe.display(),
     );
     for (id, fragment) in fragments {
         let interpreter = fragment
@@ -233,72 +224,38 @@ fn io_failed(path: &Path) -> impl FnOnce(io::Error) -> VerbError {
     move |e| VerbError::Failed(format!("{}: {e}", path.display()))
 }
 
-/// Where a resource is installed: `<data>/<name>`, but `agents/…` under `<data>/roles/`.
-fn install_path(data: &Path, name: &str) -> PathBuf {
-    match name.strip_prefix(&format!("{ROLES_RESOURCE}/")) {
-        Some(role) => data.join(ROLES_DIR).join(role),
-        None => data.join(name),
-    }
-}
-
-/// The directory a resource kind installs into; never with a trailing slash, so a symlink there
-/// is seen as one.
-fn kind_dir(data: &Path, kind: &str) -> PathBuf {
-    if kind == ROLES_RESOURCE {
-        data.join(ROLES_DIR)
-    } else {
-        data.join(kind)
-    }
-}
-
-/// Writes every `bin/`, `keys/`, `conf/`, `nvim/`, `agents/` and `definitions/` resource under
-/// `data` and deletes files in those directories that no resource accounts for. `bin/` and
-/// `keys/` files are executable: scripts, and fragments that `run-shell` executes.
-fn materialise(data: &Path, resources: &[Resource]) -> Result<(), VerbError> {
-    let mut keep: HashSet<PathBuf> = HashSet::from([data.join(INSTALLED)]);
-    for resource in resources {
-        let path = install_path(data, &resource.name);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(io_failed(parent))?;
-        }
-        if path.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
-            std::fs::remove_file(&path).map_err(io_failed(&path))?;
-        }
-        std::fs::write(&path, resource.bytes).map_err(io_failed(&path))?;
-        let executable = resource.name.starts_with("bin/") || resource.name.starts_with("keys/");
-        let mode = if executable { 0o755 } else { 0o644 };
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
-            .map_err(io_failed(&path))?;
-        keep.insert(path);
-    }
-    for kind in KINDS {
-        let dir = kind_dir(data, kind);
-        prune(&dir, &keep).map_err(io_failed(&dir))?;
-    }
-    Ok(())
-}
-
-fn prune(dir: &Path, keep: &HashSet<PathBuf>) -> io::Result<()> {
-    let entries = match std::fs::read_dir(dir) {
+/// The key fragments `tx update` published under `<data>/keys`, as `(id, text)` pairs in the
+/// order the server config runs them: `ide` first, the others by name.
+fn published_fragments(data: &Path) -> Result<Vec<(String, String)>, VerbError> {
+    let directory = data.join(KEYS_DIR);
+    let entries = match std::fs::read_dir(&directory) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(io_failed(&directory)(error)),
     };
+    let mut fragments = Vec::new();
     for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        // `file_type` does not follow symlinks: a link is removed itself, never entered.
-        if entry.file_type()?.is_dir() {
-            prune(&path, keep)?;
-        } else if !keep.contains(&path) {
-            std::fs::remove_file(&path)?;
+        let path = entry.map_err(io_failed(&directory))?.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == FRAGMENT_EXTENSION)
+            && let Some(id) = path.file_stem()
+        {
+            let text = std::fs::read(&path).map_err(io_failed(&path))?;
+            fragments.push((
+                id.to_string_lossy().into_owned(),
+                String::from_utf8_lossy(&text).into_owned(),
+            ));
         }
     }
-    Ok(())
+    fragments.sort_by(|(one, _), (other, _)| {
+        (one != IDE_FRAGMENT, one).cmp(&(other != IDE_FRAGMENT, other))
+    });
+    Ok(fragments)
 }
 
-/// The `ide` plugin's part of `tx update`: writes every resource the IDE's server needs and the
-/// server config, and reloads a running server.
+/// The `ide` plugin's part of `tx update`: composes the server config from the key fragments
+/// `tx update` published, and reloads a running server.
 pub struct IdeUpdater;
 
 impl Updater for IdeUpdater {
@@ -309,8 +266,9 @@ impl Updater for IdeUpdater {
 }
 
 fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
-    let exe = std::env::current_exe()
-        .and_then(|exe| exe.canonicalize())
+    // Canonical: the config holds one spelling of the binary, whatever way `tx` was invoked.
+    let exe = tx_plugin::sdk::tx_bin()
+        .canonicalize()
         .map_err(|e| VerbError::Failed(format!("cannot resolve the tx binary: {e}")))?;
     let config = core.config();
     let data = &config.directories.data;
@@ -324,44 +282,22 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
             path.display()
         )));
     }
-    for kind in KINDS {
-        let dir = kind_dir(data, kind);
-        if dir.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
-            return Err(VerbError::Failed(format!(
-                "{} is a symlink; refusing to prune",
-                dir.display()
-            )));
-        }
-    }
-    let previous = std::fs::read_to_string(data.join(INSTALLED))
+    let previous = std::fs::read_to_string(data.join(KEYS_INSTALLED))
         .ok()
         .map(|text| parse_installed(&text));
-    let resources: Vec<Resource> = KINDS
-        .into_iter()
-        .flat_map(|kind| core.resources(&format!("{kind}/")))
-        .collect();
-    materialise(data, &resources)?;
-
-    let texts: Vec<(&str, String)> = resources
-        .iter()
-        .filter_map(|r| {
-            let id = r.name.strip_prefix("keys/")?.strip_suffix(".tmux")?;
-            Some((id, String::from_utf8_lossy(r.bytes).into_owned()))
-        })
-        .collect();
+    let texts = published_fragments(data)?;
     let fragments: Vec<(String, Declared)> = texts
         .iter()
-        .map(|(id, text)| ((*id).to_owned(), parse_declarations(text)))
+        .map(|(id, text)| (id.clone(), parse_declarations(text)))
         .collect();
-    let mut run_order: Vec<(&str, &str)> = texts
+    let run_order: Vec<(&str, &str)> = texts
         .iter()
-        .map(|(id, text)| (*id, text.as_str()))
+        .map(|(id, text)| (id.as_str(), text.as_str()))
         .collect();
-    run_order.sort_by_key(|(id, _)| *id != IDE_FRAGMENT);
     let conf = core.config().tmux_conf_path();
     std::fs::write(&conf, conf_text(&exe, data, &arguments, &run_order))
         .map_err(io_failed(&conf))?;
-    let installed = data.join(INSTALLED);
+    let installed = data.join(KEYS_INSTALLED);
     let write_installed =
         || std::fs::write(&installed, render_installed(&fragments)).map_err(io_failed(&installed));
 
@@ -560,6 +496,7 @@ mod tests {
              set -g @tx-bin \"/opt/tx\"\n\
              set -g @tx-data \"/s/data\"\n\
              set -g @tx-arguments \"--data-dir /s/data --run-dir /r\"\n\
+             set-environment -g TX_BIN \"/opt/tx\"\n\
              source-file \"/s/data/conf/tmux.conf\"\n\
              run-shell \"/usr/bin/env bash /s/data/keys/ide.tmux\"\n\
              run-shell \"/bin/sh /s/data/keys/kill.tmux\"\n\
@@ -584,21 +521,29 @@ mod tests {
     }
 
     #[test]
-    fn shipped_roles_install_under_roles() {
-        let data = Path::new("/d");
+    fn the_fragments_are_the_published_files_ide_first_then_by_name() {
+        let data = tempfile::tempdir().unwrap();
+        assert!(published_fragments(data.path()).unwrap().is_empty());
+        let keys = data.path().join(KEYS_DIR);
+        std::fs::create_dir_all(&keys).unwrap();
+        for (name, text) in [
+            ("kill.tmux", "# keys: X\n"),
+            ("ide.tmux", "#!/usr/bin/env bash\n"),
+            ("artifacts.tmux", "# keys: a\n"),
+            // Not fragments: the updater's own record, a file left half written, a stray one.
+            (".installed", "ide\tkeys=\tunset=\tunhook=\n"),
+            (".kill.tmux.123.tmp", "half\n"),
+            ("notes.txt", "x\n"),
+        ] {
+            std::fs::write(keys.join(name), text).unwrap();
+        }
         assert_eq!(
-            install_path(data, "agents/skills/x/SKILL.md"),
-            Path::new("/d/roles/skills/x/SKILL.md")
-        );
-        assert_eq!(kind_dir(data, "agents"), Path::new("/d/roles"));
-        assert_eq!(kind_dir(data, "keys"), Path::new("/d/keys"));
-        assert_eq!(
-            install_path(data, "definitions/skills/x/SKILL.md"),
-            Path::new("/d/definitions/skills/x/SKILL.md")
-        );
-        assert_eq!(
-            install_path(data, "bin/tmux-nav"),
-            Path::new("/d/bin/tmux-nav")
+            published_fragments(data.path()).unwrap(),
+            [
+                ("ide".to_owned(), "#!/usr/bin/env bash\n".to_owned()),
+                ("artifacts".to_owned(), "# keys: a\n".to_owned()),
+                ("kill".to_owned(), "# keys: X\n".to_owned()),
+            ]
         );
     }
 

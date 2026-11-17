@@ -40,13 +40,18 @@ tx ui attach                    # the IDE: the home
 
 Needs Rust 1.92+, tmux, git, fzf, curl, at least one engine CLI (`claude`, the default engine and
 the assistant's, or `codex`) and `nvim` for views; `install` also needs `jq`. It installs `tx` and
-`txi` with cargo, runs `tx update` (the pending update steps, then each plugin's updater: the IDE's
-tmux config, its keys, and the shipped roles and definitions, under the data directory), links
+`txi` with cargo, runs `tx update` (the pending update steps; then the shipped roles and
+definitions and every plugin's keys and scripts, published under the data directory; then each
+plugin's updater: the IDE's tmux config), links
 `~/.config/nvim` and `~/.tmux.conf` to this repository's `config/nvim` and `config/tmux.conf`
 (moving what was there to `<path>.bak.<stamp>`), and writes `~/.config/tx-ide/config.yaml` with every default spelled out, once. It is safe to
 re-run. After rebuilding `tx` by hand, run `tx update`: it runs the update steps a newer tx
 needs, such as moving files (the last one run is in `<data>/update-version`; other verbs warn
-while one is pending), then reinstalls the tmux config, which names the binary's path.
+while one is pending), publishes the roles, definitions and plugin resources again, then
+reinstalls the tmux config, which names the binary's path. The plugins that run as their own
+programs come from the same build: `tx update --bundles plugins --binaries target/release` lays
+them out under `<data>/shipped` (with `--link` they are links into the checkout and the build,
+so a rebuild is live).
 
 Coming from the previous `tx` (removed on 2026-11-02; its last tree is commit `7607347`),
 `install` also switches the machine once: the old install stays runnable as `tx-old`, its hook
@@ -118,6 +123,7 @@ the popup. The graph lists its keys on `?`.
 | `tx rename NAME NEW`, `tx tag NAME TAG…` | rename it; replace its tags |
 | `tx gc [--older-than 1d] [--dry-run]` | delete the build output (`worktree.build_outputs`) in the worktrees of agents that ended longer ago than that |
 | `tx definitions`, `tx check` | list and validate the agent definitions, skills and MCP servers |
+| `tx update [--bundles DIR --binaries DIR [--link]]` | bring this machine up to this tx: lay the shipped plugins out from a checkout's `plugins/` and its build (with `--bundles`), run the pending update steps, publish the roles, definitions and plugin resources under the data directory, run each plugin's updater |
 | `tx engines`, `tx plugins` | the enabled engines; every plugin and whether it is on |
 
 Plugins add `ui`, `home`, `pick`, `kill`, `whoami`, `chat`, `doctor`, `assistant`, `artifact`,

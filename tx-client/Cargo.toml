@@ -8,6 +8,7 @@ description = "The tx client: shared UI code for the key plugins (tmux helper, p
 
 [dependencies]
 tx-core.workspace = true
+tx-plugin.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libc = "0.2"

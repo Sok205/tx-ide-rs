@@ -37,23 +37,24 @@ fn expected_conf(cli: &Cli) -> String {
          set -s exit-empty on\n\
          set -g history-limit 50000\n\
          set -g detach-on-destroy on\n\
-         set -g @tx-bin \"{}\"\n\
+         set -g @tx-bin \"{exe}\"\n\
          set -g @tx-data \"{state}\"\n\
          set -g @tx-arguments \"{arguments}\"\n\
+         set-environment -g TX_BIN \"{exe}\"\n\
          source-file \"{state}/conf/tmux.conf\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/ide.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/chat.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/labels.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/kill.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/picker.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/edit.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/spawn.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/assistant.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/artifacts.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/timeline.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/assistant.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/chat.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/edit.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/graph.tmux\"\n\
-         run-shell \"/usr/bin/env bash {state}/keys/home.tmux\"\n",
-        exe().display(),
+         run-shell \"/usr/bin/env bash {state}/keys/home.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/kill.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/labels.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/picker.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/spawn.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/timeline.tmux\"\n",
+        exe = exe().display(),
         arguments = cli.arguments(),
     )
 }
@@ -230,24 +231,39 @@ fn prune_removes_a_symlink_but_never_follows_it() {
     assert!(link.symlink_metadata().is_err(), "link is gone");
 }
 
+/// `tx update` itself refuses, before a byte is written and before the updaters: none of them
+/// runs on resources that were not published.
 #[test]
 fn a_symlinked_kind_directory_is_refused() {
     let cli = Cli::new();
     cli.ok(&["update"]);
+    std::fs::remove_file(cli.conf()).unwrap();
     let victim = cli.dir.path().join("victim-dir");
     std::fs::create_dir_all(&victim).unwrap();
     std::fs::write(victim.join("precious"), "x").unwrap();
     let keys = cli.state().join("keys");
     std::fs::remove_dir_all(&keys).unwrap();
     std::os::unix::fs::symlink(&victim, &keys).unwrap();
-    let stderr = cli.fails(&["update"], 1);
+    let output = cli.run(&["update"], &[], "");
+    assert_eq!(output.status.code(), Some(1));
     assert_eq!(
-        stderr,
+        String::from_utf8_lossy(&output.stderr),
         format!(
-            "tx: update: ide: {} is a symlink; refusing to prune\n",
+            "tx: update: {} is a symlink; refusing to prune\n",
             keys.display()
         )
     );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!(
+            "update steps are at {}: nothing pending\n",
+            tx_core::updates::latest()
+        ),
+        "no updater ran"
+    );
+    // Opening the core wrote its default config: not the IDE's.
+    let conf = std::fs::read_to_string(cli.conf()).unwrap_or_default();
+    assert!(!conf.contains("@tx-bin"), "{conf:?}");
     assert!(victim.join("precious").is_file());
     assert_eq!(std::fs::read_dir(&victim).unwrap().count(), 1);
 }
@@ -295,6 +311,11 @@ fn update_fragment_loads() {
     assert_eq!(
         cli.tmux_out(&["show-option", "-gv", "@tx-arguments"]),
         cli.arguments()
+    );
+    // What a plugin program started by a key, a popup or a pane runs `tx` with.
+    assert_eq!(
+        cli.tmux_out(&["show-environment", "-g", "TX_BIN"]),
+        format!("TX_BIN={}", exe().display())
     );
     assert!(bound("prefix", "n").contains("tmux-new-agent"));
     assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
@@ -384,6 +405,54 @@ fn disabling_kill_removes_its_key_on_reload() {
         cli.tmux_out(&["list-keys", "-T", "prefix", "e"])
             .contains("tmux-edit-tx-session")
     );
+}
+
+/// A key fragment an installed plugin publishes is run like a shipped one, and its key goes
+/// when the plugin is disabled.
+#[test]
+fn an_installed_plugins_key_is_bound_and_unbound_on_reload() {
+    require_tmux!();
+    let cli = Cli::new();
+    let hello = cli.plugin(
+        "hello",
+        "api: 1\nid: hello\ndescription: A key.\nresources:\n  - keys/hello.tmux\n",
+        &[],
+    );
+    std::fs::create_dir_all(hello.join("keys")).unwrap();
+    std::fs::write(
+        hello.join("keys/hello.tmux"),
+        "#!/usr/bin/env bash\n# keys: H\ntmux bind H display-message hello\n",
+    )
+    .unwrap();
+    cli.ok(&["update"]);
+    let line = format!(
+        "run-shell \"/usr/bin/env bash {}/keys/hello.tmux\"\n",
+        cli.state().display()
+    );
+    assert!(std::fs::read_to_string(cli.conf()).unwrap().contains(&line));
+    assert!(installed(&cli).contains("hello\tkeys=H\t"));
+    start_server(&cli);
+    let bound = || cli.tmux_out(&["list-keys", "-T", "prefix", "H"]);
+    assert!(
+        cli.wait_for(5, || bound().contains("display-message hello")),
+        "{:?}",
+        bound()
+    );
+
+    cli.write_yaml(&config_disabling("hello"));
+    let out = cli.ok(&["update"]);
+    assert_eq!(
+        out,
+        updated(&[&cli.conf().display().to_string(), "reloaded"])
+    );
+    assert!(!bound().contains("display-message hello"), "{:?}", bound());
+    assert!(!cli.state().join("keys/hello.tmux").exists());
+    assert!(
+        !std::fs::read_to_string(cli.conf())
+            .unwrap()
+            .contains("hello")
+    );
+    assert!(!installed(&cli).contains("hello"));
 }
 
 #[test]
@@ -547,8 +616,9 @@ fn update_refuses_unsafe_paths() {
     );
     let conf = std::fs::read_to_string(state.join("tmux.conf")).unwrap_or_default();
     assert!(!conf.contains("@tx-bin"), "{conf:?}");
-    assert!(!state.join("bin").exists());
-    assert!(!state.join("keys").exists());
+    // The resources are `tx update`'s own to publish, and no path of theirs goes into a config.
+    assert!(state.join("roles/COMMON.md").is_file());
+    assert!(!state.join("keys/.installed").exists());
 }
 
 fn attach_command(cli: &Cli) -> String {
