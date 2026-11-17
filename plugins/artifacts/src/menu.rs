@@ -281,7 +281,7 @@ impl Nav<'_> {
                 &width.to_string(),
                 &height.to_string(),
                 &listing.title,
-                &self.tx_command(&[PICK_VERB, session, client])?,
+                &self.tx_command(&[PICK_VERB, session, client]),
             )
             .map_err(failed)?;
         Ok(0)
@@ -343,7 +343,7 @@ impl Nav<'_> {
             mode.name(),
             target.kind,
             &target.id,
-        ])?;
+        ]);
         tm::run_shell_background(&self.ui, &format!("{command} || true")).map_err(failed)?;
         Ok(0)
     }
@@ -408,11 +408,10 @@ impl Nav<'_> {
     }
 
     /// `<tx> <cli_arguments> argv…`, shell-quoted: `run-shell` and the popup run in the
-    /// server's environment, which knows neither the directories nor the socket.
-    fn tx_command(&self, argv: &[&str]) -> Result<String, VerbError> {
-        let exe =
-            std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
-        let mut words = vec![shell_quote(&exe.to_string_lossy())];
+    /// server's environment, which knows neither the directories nor the socket. It starts with
+    /// `tx`, not with this program: tmux runs it later.
+    fn tx_command(&self, argv: &[&str]) -> String {
+        let mut words = vec![shell_quote(&tx_plugin::sdk::tx_bin().to_string_lossy())];
         words.extend(
             self.core
                 .config()
@@ -421,7 +420,7 @@ impl Nav<'_> {
                 .map(|word| shell_quote(word)),
         );
         words.extend(argv.iter().map(|word| shell_quote(word)));
-        Ok(words.join(" "))
+        words.join(" ")
     }
 
     pub fn go_artifact(

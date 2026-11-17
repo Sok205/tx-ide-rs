@@ -1,0 +1,32 @@
+api: 1
+id: artifacts
+description: Durable versioned artifacts, effort groups, and the prefix+a menu.
+tier: core
+needs: [git, nvim]
+settings: { editor: nvim }
+
+verbs:
+  - name: artifact
+    usage: "artifact create|modify|group|ls|show|diff|open|path|archive|unarchive|close|doctor   durable versioned artifacts (tx artifact help)"
+    bin: tx-artifacts
+    args: [artifact]
+  - name: group
+    usage: "group <session> [<group> | --clear]   read or set a session's effort-group override"
+    bin: tx-artifacts
+    args: [group]
+  - name: _artifact-menu
+    usage: "_artifact-menu <session> <client>   prefix+a: the artifacts picker, or back from a view (internal)"
+    bin: tx-artifacts
+    args: [_artifact-menu]
+  - name: _artifact-pick
+    usage: "_artifact-pick <session> <client>   the picker inside prefix+a's popup (internal)"
+    bin: tx-artifacts
+    args: [_artifact-pick]
+  - name: _artifact-go
+    usage: "_artifact-go <session> <client> attach|focus|popup artifact|session|view <id>   show a view (internal)"
+    bin: tx-artifacts
+    args: [_artifact-go]
+
+resources:
+  - keys/artifacts.tmux
+  - bin/tmux-artifact-menu

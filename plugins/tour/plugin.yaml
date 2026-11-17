@@ -1,0 +1,12 @@
+api: 1
+id: tour
+description: Code tours, artifacts of kind `tour` opened as nvim views of their stops.
+tier: extra
+requires: [artifacts, ide]
+needs: [nvim]
+
+verbs:
+  - name: tour
+    usage: "tour create <stops.lua> --title T [--cwd W] | open <id> [--tag T]"
+    bin: tx-tour
+    args: [tour]

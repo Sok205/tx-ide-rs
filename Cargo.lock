@@ -1749,6 +1749,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tx-client",
  "tx-core",
+ "tx-plugin",
  "uuid",
 ]
 
@@ -2008,6 +2009,7 @@ dependencies = [
  "tx-artifacts",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]

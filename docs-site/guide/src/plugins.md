@@ -97,12 +97,17 @@ No key.
 **`artifacts`**: `artifact create | modify | ls | show | diff | open | path | archive | close | …`
 keeps durable, versioned deliverables under `<data>/plugins/artifacts/`. A `document` opens in an
 editor view, a `diff` in a diffview view (rebuilt in a temporary worktree when the original is
-gone), any other kind through the verb named after it. `group` reads or sets a session's effort
-group. prefix+a lists the artifacts an agent touched, plus its parent and children.
+gone). Any other kind is opened by the plugin whose verb is named after it, as `<kind> open <id>`:
+a `tour` by `tour`, run as that plugin's program where it is a bundle. `group` reads or sets a
+session's effort group. prefix+a lists the artifacts an agent touched, plus its parent and
+children. Tier `core`. It ships as a bundle (`plugins/artifacts/plugin.yaml`): where the bundle is
+installed its verbs run as the program `tx-artifacts`, elsewhere compiled into `tx`.
 
 **`tour`**: `tour create <stops.lua> --title T` registers a code tour as an artifact of kind
 `tour`; `tour open <id>` starts a `tour` view, nvim in the worktree walking the stops as
-diagnostics and a quickfix list. No key.
+diagnostics and a quickfix list; `artifact open` and prefix+a run it for a tour. No key. Tier
+`extra`. It ships as a bundle (`plugins/tour/plugin.yaml`): where the bundle is installed its verb
+runs as the program `tx-tour`, elsewhere compiled into `tx`.
 
 **`timeline`**: `timeline` draws swimlanes of session activity from the transcripts' turn
 markers; `timeline health` prints, per agent record, what the timeline can read for it; prefix+T opens a resident timeline view in a popup
