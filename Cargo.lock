@@ -1810,9 +1810,7 @@ dependencies = [
 name = "tx-core-cli"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
- "serde_norway",
  "shlex",
  "tempfile",
  "thiserror 2.0.21",
@@ -1832,6 +1830,7 @@ dependencies = [
  "tx-layouts",
  "tx-mockup",
  "tx-picker",
+ "tx-plugin",
  "tx-spawn",
  "tx-timeline",
  "tx-tour",
@@ -1958,6 +1957,17 @@ dependencies = [
  "libc",
  "tempfile",
  "tx-client",
+ "tx-core",
+]
+
+[[package]]
+name = "tx-plugin"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "thiserror 2.0.21",
  "tx-core",
 ]
 

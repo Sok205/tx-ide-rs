@@ -20,6 +20,7 @@ path = "src/txi.rs"
 shlex = "2"
 tx-core.workspace = true
 tx-client.workspace = true
+tx-plugin.workspace = true
 tx-engine-claude = { path = "../plugins/engine-claude" }
 tx-engine-codex = { path = "../plugins/engine-codex" }
 tx-chat = { path = "../plugins/chat" }
@@ -38,9 +39,7 @@ tx-graph = { path = "../plugins/graph" }
 tx-home = { path = "../plugins/home" }
 tx-home-themes = { path = "../plugins/home-themes" }
 tx-layouts = { path = "../plugins/layouts" }
-serde.workspace = true
 serde_json.workspace = true
-serde_norway.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 
