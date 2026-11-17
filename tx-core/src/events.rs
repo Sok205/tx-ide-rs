@@ -2,14 +2,18 @@
 //! operation log (`<data>/log.jsonl`, one compact JSON line
 //! `{"ts","actor","type","id","name","msg"}` per event, appended with a single write on an
 //! `O_APPEND` descriptor so concurrent writers never tear a line) and then to every in-process
-//! [`EventSink`].
+//! [`EventSink`]. A plugin program that is a sink gets the whole event as its JSON form,
+//! `{"ts","type","id","name","actor","detail"}` (see [`Event`]'s `Serialize`).
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Number, Value, json};
 
 use crate::agent::AgentId;
@@ -75,6 +79,19 @@ impl EventType {
     }
 }
 
+impl FromStr for EventType {
+    type Err = String;
+
+    /// One of the names [`EventType::as_str`] gives.
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        EventType::ALL
+            .iter()
+            .copied()
+            .find(|type_| type_.as_str() == name)
+            .ok_or_else(|| format!("unknown event type {name:?}"))
+    }
+}
+
 /// One thing that happened to one session. Handed to in-process sinks and written to the log.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -105,6 +122,64 @@ impl Event {
             actor,
             detail: detail.into(),
         }
+    }
+}
+
+/// The JSON form of an [`Event`], what an `on-event` program reads: `type` is the type's name,
+/// `actor` is `""` for the user or core, `detail` is whole (the log's cap does not apply).
+#[derive(Serialize)]
+struct EventLine<'a> {
+    ts: f64,
+    #[serde(rename = "type")]
+    type_: &'a str,
+    id: &'a str,
+    name: &'a str,
+    actor: &'a str,
+    detail: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedEventLine {
+    ts: f64,
+    #[serde(rename = "type")]
+    type_: String,
+    id: AgentId,
+    name: String,
+    actor: String,
+    detail: String,
+}
+
+impl Serialize for Event {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        EventLine {
+            ts: self.ts,
+            type_: self.type_.as_str(),
+            id: self.id.as_str(),
+            name: &self.name,
+            actor: self.actor.as_ref().map_or("", AgentId::as_str),
+            detail: &self.detail,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Event {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let line = OwnedEventLine::deserialize(deserializer)?;
+        let actor = if line.actor.is_empty() {
+            None
+        } else {
+            Some(AgentId::try_from(line.actor).map_err(D::Error::custom)?)
+        };
+        Ok(Self {
+            ts: line.ts,
+            type_: line.type_.parse().map_err(D::Error::custom)?,
+            id: line.id,
+            name: line.name,
+            actor,
+            detail: line.detail,
+        })
     }
 }
 
@@ -409,6 +484,54 @@ mod tests {
                 "archive-failed"
             ]
         );
+    }
+
+    #[test]
+    fn every_event_type_parses_back_from_its_name() {
+        for type_ in EventType::ALL {
+            assert_eq!(type_.as_str().parse::<EventType>(), Ok(*type_));
+        }
+        assert_eq!(
+            "nope".parse::<EventType>(),
+            Err("unknown event type \"nope\"".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_json_form_has_six_fields_the_detail_whole_and_an_empty_actor_for_none() {
+        let detail = "x".repeat(2 * PIPE_BUF);
+        let mut event = Event::new(
+            EventType::MessageSent,
+            "a1".parse().unwrap(),
+            "worker",
+            None,
+            detail.clone(),
+        );
+        event.ts = 1.5;
+        let line = serde_json::to_string(&event).unwrap();
+        assert_eq!(
+            line,
+            format!(
+                r#"{{"ts":1.5,"type":"message-sent","id":"a1","name":"worker","actor":"","detail":"{detail}"}}"#
+            )
+        );
+        assert_eq!(serde_json::from_str::<Event>(&line).unwrap(), event);
+
+        event.actor = Some("b2".parse().unwrap());
+        let line = serde_json::to_string(&event).unwrap();
+        assert_eq!(parse(line.as_bytes())["actor"], "b2");
+        assert_eq!(serde_json::from_str::<Event>(&line).unwrap(), event);
+    }
+
+    #[test]
+    fn a_json_line_that_is_not_an_event_is_refused() {
+        let refused = |line: &str| serde_json::from_str::<Event>(line).unwrap_err().to_string();
+        let good = r#"{"ts":1.0,"type":"renamed","id":"a1","name":"n","actor":"","detail":""}"#;
+        assert!(serde_json::from_str::<Event>(good).is_ok());
+        assert!(refused(&good.replace("renamed", "moved")).contains("unknown event type"));
+        assert!(!refused(&good.replace(r#""actor":"""#, r#""actor":"no way""#)).is_empty());
+        assert!(refused(&good.replace(r#","detail":"""#, "")).contains("detail"));
+        assert!(refused(&good.replace('}', r#","more":1}"#)).contains("more"));
     }
 
     #[test]

@@ -8,7 +8,7 @@
 //! [`TxCore::plug`]. Installed on disk as a directory with a [`Manifest`], it runs as its own
 //! program: the [`Index`] finds it, the [`Activation`] says whether it is on, and
 //! [`TxCore::plug_external`] puts a proxy for each of its verbs and for its engine into the
-//! core.
+//! core, and subscribes its `on-event` program as an [`ExecSink`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
@@ -26,6 +26,7 @@ use crate::updates::Outcome;
 pub mod external;
 pub mod index;
 pub mod manifest;
+pub mod sink;
 
 pub use external::{ExecContext, Launcher};
 pub use index::{Activation, ActiveVerb, Entry, Index, Installed, PluginState, Problem};
@@ -33,6 +34,7 @@ pub use manifest::{
     EngineMethod, Events, Manifest, ManifestEngine, ManifestError, ManifestInterrupt,
     ManifestOnEvent, ManifestProgram, ManifestVerb, PLUGIN_API, Tier,
 };
+pub use sink::{ExecSink, TRACE_SINK};
 
 pub trait Plugin: Send + Sync {
     /// `[a-z0-9-]+`, unique across the manifest; the key in the front end's config and in
@@ -434,7 +436,8 @@ impl TxCore {
     /// the ones linked into this process (`hosted_ids`, which are left alone here). Each step
     /// lives with the proxies it creates: the installed plugins join [`Self::plugin_status`],
     /// then every verb of an active plugin becomes a [`Verb`] that starts the plugin's program,
-    /// and the engine of each becomes an [`external::ProcessEngine`] that asks it.
+    /// and the engine of each becomes an [`external::ProcessEngine`] that asks it, and the
+    /// `on-event` program of each an [`ExecSink`], after the sinks registered in-process.
     /// Where such a verb and one registered in-process have the same name, the activation's
     /// owner is the one [`Self::verb`] answers, as the front end would run it. An engine is not
     /// settled so: one linked into the process that already has the kind or the `ext` key of an
@@ -450,6 +453,7 @@ impl TxCore {
         external::list(self, activation, hosted_ids);
         external::plug_verbs(self, index, activation, &context, hosted_ids);
         external::plug_engines(self, index, activation, &context, hosted_ids)?;
+        sink::plug_sinks(self, index, activation, &context, hosted_ids);
         Ok(())
     }
 

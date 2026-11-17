@@ -11,11 +11,12 @@
 //! [`tx_bin`].
 
 use std::ffi::OsString;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::OnceLock;
 
-use tx_core::{Plugin, VerbIo};
+use tx_core::{Event, Plugin, VerbIo};
 
 use crate::args::{Global, parse_global};
 use crate::setup::{Failure, Installation, process_environment};
@@ -33,6 +34,7 @@ const PROBE: &str = "--tx-probe";
 const UPDATE: &str = "--tx-update";
 const ENGINE: &str = "--tx-engine";
 const HOOK: &str = "--tx-hook";
+const EVENT: &str = "--tx-event";
 
 static TX_BIN: OnceLock<PathBuf> = OnceLock::new();
 
@@ -83,6 +85,9 @@ pub fn tx_bin() -> PathBuf {
 ///   its manifest names this program under `hook:` (see [`crate::engine::hook`]). It exits 0
 ///   for a hook that is not tx's and 1, never more, when it fails: a hook must not block the
 ///   agent.
+/// - `--tx-event`: one event, the JSON line an `on-event` program reads, is read from standard
+///   input and handed to every sink the active hosted plugins register, in hosting order. No
+///   core is opened. A line that is not an event is `<program>: --tx-event: <error>`, exit 2.
 /// - `--tx-probe`: exit 0 at once.
 /// - anything else: `<program>: not a verb of this plugin: <first>`, exit 2.
 ///
@@ -129,6 +134,7 @@ fn run(program: &str, arguments: &[String], hosted: Vec<Box<dyn Plugin>>) -> u8 
             let event = arguments.get(first + 1).cloned().unwrap_or_default();
             return hook_exit(crate::engine::hook_hosted(&global, hosted, event));
         }
+        Some(EVENT) => event(program, &global, &hosted, &mut std::io::stdin().lock()),
         Some(UPDATE) => {
             let retire = std::env::var_os(RETIRE_ENV).is_some_and(|value| value == "1");
             update(&global, hosted, retire)
@@ -199,6 +205,33 @@ fn verb(
     };
     let code = verb.run(&core, &mut io, argv).map_err(Failure::Verb)?;
     Ok(u8::try_from(code).unwrap_or(1))
+}
+
+/// `--tx-event`: the event on `input` goes to every sink the active hosted plugins register.
+fn event(
+    program: &str,
+    global: &Global,
+    hosted: &[Box<dyn Plugin>],
+    input: &mut dyn BufRead,
+) -> Result<u8, Failure> {
+    let mut line = String::new();
+    let parsed = input
+        .read_line(&mut line)
+        .map_err(|error| error.to_string())
+        .and_then(|_| serde_json::from_str::<Event>(&line).map_err(|error| error.to_string()));
+    let event = match parsed {
+        Ok(event) => event,
+        Err(error) => {
+            eprintln!("{program}: {EVENT}: {error}");
+            return Ok(2);
+        }
+    };
+    for registry in Installation::read(global)?.registries(hosted)? {
+        for sink in registry.sinks() {
+            sink.on_event(&event);
+        }
+    }
+    Ok(0)
 }
 
 /// `--tx-update`: every updater the hosted plugins registered, with no input; what each says
@@ -313,6 +346,18 @@ mod tests {
                 registry.settings().clone(),
             )));
             registry.updater(Arc::new(HostedUpdater(Arc::clone(&self.0))));
+            let seen = Arc::clone(&self.0);
+            let settings = registry.settings().clone();
+            registry.sink(Box::new(move |event: &Event| {
+                seen.lock().unwrap().push(format!(
+                    "event {} {} {} {:?} {} settings {settings}",
+                    event.type_.as_str(),
+                    event.id,
+                    event.name,
+                    event.actor.as_ref().map_or("", |actor| actor.as_str()),
+                    event.detail,
+                ));
+            }));
             Ok(())
         }
     }
@@ -429,7 +474,6 @@ mod tests {
             &["ls"],
             // The plugin of these tests registers no engine to serve.
             &["--tx-engine"],
-            &["--tx-event"],
             &["--nope"],
             &[],
         ] {
@@ -445,6 +489,47 @@ mod tests {
             run("tx-hosted", &["--data-dir".to_owned()], sandbox.hosted()),
             2
         );
+    }
+
+    /// `--tx-event` for the program `tx-hosted` with `line` as its input: its exit code.
+    fn event_entry(sandbox: &Sandbox, line: &str) -> u8 {
+        let mut input = std::io::Cursor::new(line.as_bytes().to_vec());
+        event(
+            "tx-hosted",
+            &sandbox.global(),
+            &sandbox.hosted(),
+            &mut input,
+        )
+        .unwrap()
+    }
+
+    const RENAMED: &str =
+        r#"{"ts":1.5,"type":"renamed","id":"a1","name":"worker","actor":"","detail":"old"}"#;
+
+    #[test]
+    fn an_event_goes_to_the_sinks_of_the_active_hosted_plugins() {
+        let sandbox = Sandbox::new();
+        sandbox.install("hosted", "hosted");
+        sandbox.write_yaml("plugins:\n  hosted:\n    settings: { greeting: hi }\n");
+        assert_eq!(event_entry(&sandbox, &format!("{RENAMED}\n")), 0);
+        assert_eq!(
+            sandbox.seen(),
+            [r#"event renamed a1 worker "" old settings {"greeting":"hi"}"#]
+        );
+        sandbox.write_yaml("plugins:\n  hosted: { enabled: false }\n");
+        assert_eq!(event_entry(&sandbox, RENAMED), 0);
+        assert!(sandbox.seen().is_empty(), "a disabled plugin has no sink");
+    }
+
+    #[test]
+    fn a_line_that_is_not_an_event_is_the_programs_misuse() {
+        let sandbox = Sandbox::new();
+        sandbox.install("hosted", "hosted");
+        for line in ["", "{}", "not json", &RENAMED.replace("renamed", "moved")] {
+            assert_eq!(event_entry(&sandbox, line), 2, "{line:?}");
+        }
+        assert!(sandbox.seen().is_empty());
+        assert!(!sandbox.dir.path().join("home").exists());
     }
 
     #[test]

@@ -562,26 +562,33 @@ impl Installation {
         self.open_plugged(global, hosted, &cfg)
     }
 
-    /// What the first of `hosted` that registers an engine registers: `register` runs for each
-    /// that is active in this installation, with the settings `config.yaml` gives its id, as
-    /// [`Self::open_hosted`] has it run. No core is opened: this is how a plugin program gets
-    /// at its engine to serve it. `None`: none of them registers one.
+    /// One [`Registry`] per plugin of `hosted` that is active in this installation, in hosting
+    /// order: `register` run with the settings `config.yaml` gives its id, as
+    /// [`Self::open_hosted`] has it run. No core is opened: this is how a plugin program gets at
+    /// its engine to serve it, or at its sinks to hand them an event.
+    pub fn registries(&self, hosted: &[Box<dyn Plugin>]) -> Result<Vec<Registry>, Failure> {
+        hosted
+            .iter()
+            .filter(|plugin| self.activation.is_active(plugin.id()))
+            .map(|plugin| {
+                let settings = self
+                    .entries
+                    .get(plugin.id())
+                    .map_or(serde_json::Value::Null, |entry| entry.settings.clone());
+                let mut registry = Registry::new(settings, self.config.clone());
+                plugin.register(&mut registry).map_err(Failure::Plugin)?;
+                Ok(registry)
+            })
+            .collect()
+    }
+
+    /// The first of [`Self::registries`] that holds an engine. `None`: none of `hosted`
+    /// registers one.
     pub fn engine_registry(&self, hosted: &[Box<dyn Plugin>]) -> Result<Option<Registry>, Failure> {
-        for plugin in hosted {
-            if !self.activation.is_active(plugin.id()) {
-                continue;
-            }
-            let settings = self
-                .entries
-                .get(plugin.id())
-                .map_or(serde_json::Value::Null, |entry| entry.settings.clone());
-            let mut registry = Registry::new(settings, self.config.clone());
-            plugin.register(&mut registry).map_err(Failure::Plugin)?;
-            if !registry.engines().is_empty() {
-                return Ok(Some(registry));
-            }
-        }
-        Ok(None)
+        Ok(self
+            .registries(hosted)?
+            .into_iter()
+            .find(|registry| !registry.engines().is_empty()))
     }
 
     /// Notes in the trace that this program runs as the hook entry of an engine. Nothing of tx

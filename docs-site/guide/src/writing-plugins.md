@@ -108,6 +108,11 @@ When `TX_PLUGIN_TRACE` names a file, whoever starts a plugin program first appen
 `<role>\t<plugin id>\t<program>` to it (the role of a verb is `verb`), and the sessions a traced
 command launches are traced too. It is how the number of processes behind a command is counted.
 
+Every program a `bin` names, a script included, is also started once with `--tx-probe` as its
+only argument when `tx update` installs a copy of it, and must then exit 0 at once, having done
+nothing. A program on the Rust SDK does so by itself; a script has to look at its first argument
+(`[ "$1" = --tx-probe ] && exit 0`). A sink script is usually the first place this matters.
+
 ## The manifest: `plugin.yaml`, api 1
 
 Every key not listed here is an error. A manifest written for an `api` this tx does not support
@@ -153,9 +158,9 @@ resources:                   # files it publishes; the name is the path inside t
   - bin/tmux-kill-tx-session
 ```
 
-This version reads and checks every section, and acts on `verbs` and on `engine` (see [An
-engine](#an-engine)). The `on-event`, `update` and `resources` sections are checked and not used
-yet: until they are, a sink, an updater or a resource comes from a plugin compiled into `tx`. `tier`, `requires`,
+This version reads, checks and acts on every section: `verbs` (above), `engine` (see [An
+engine](#an-engine)), `on-event` (see [An event sink](#an-event-sink-on-event)), and `update` and
+`resources`, which `tx update` runs and publishes (see [Files](files.md)). `tier`, `requires`,
 `needs` and `settings` are for the installer and `tx check`; nothing is refused at run time
 because of them.
 
@@ -421,6 +426,69 @@ and `tx engines` never do, unless `ls` or `show` finds an agent exited and has i
 `TX_PLUGIN_TRACE` each start is a line `engine\t<plugin id>\t<program>`; an engine's own hook
 entry writes `hook\t<plugin id>\t<program>`.
 
+## An event sink: `on-event`
+
+A plugin that wants to know what happens to the agents names a program under `on-event`. It is
+run **once per event** of a type it lists (`events: all` for every one), by the process that
+emitted the event (`tx`, `txi`, a plugin program), after the record is saved, every lock released
+and the line of `<data>/log.jsonl` written. The program gets the environment of [Running a
+verb](#running-a-verb), and on standard input one JSON line, then end of input:
+
+```json
+{"ts":1794950000.123,"type":"renamed","id":"…","name":"a1","actor":"","detail":"a"}
+```
+
+| field | value |
+|---|---|
+| `ts` | seconds since the epoch, a float |
+| `type` | one of the event types of the manifest's rules |
+| `id`, `name` | the agent the event is about, its name after the event |
+| `actor` | the sending agent's id for `message-sent`; `""` for the user or core |
+| `detail` | what happened, whole: the old name, the tags, the state change `idle → working`, … It is for people, not a contract. `log.jsonl` cuts a line at 512 bytes; the sink's line is never cut |
+
+- **Output.** Standard output is discarded; standard error is the emitting process's, so a line
+  a sink prints there is seen where the command ran.
+- **Order.** The emitting process waits for the program before it runs the next sink or emits
+  the next event: one process's events reach a sink in the order it emitted them, and the sinks
+  run in plugin order. Events of different processes are not ordered against each other; `ts`
+  and `log.jsonl` are what orders them.
+- **Timeout.** `timeout` (1 to 30 seconds, default 5, under the 10 seconds a Claude hook may take)
+  bounds the wait. The program is started in a process group of its own; past the timeout the
+  whole group is killed and the command prints
+  `tx: plugin <id>: on-event timed out after <n>s`. A program that ends in time is left alone,
+  whatever it started.
+- **Never a failure.** The exit code is ignored. A program that cannot be started is
+  `tx: plugin <id>: on-event cannot run <path>: <error>`, and the command still succeeds.
+- **At most once.** A process killed between the log line and the sink has logged the event and
+  not delivered it. A consumer that must miss nothing, or that runs for long, follows
+  `log.jsonl` from an offset of its own instead.
+- **Cost.** Nothing while no active plugin declares `on-event`; otherwise one process per event
+  per sink (about 1 ms for a compiled program, 3.5 ms for a shell script). A sink that runs
+  `"$TX_BIN"` to act causes events of its own, which reach it too.
+
+With `TX_PLUGIN_TRACE` each start is a line `sink\t<plugin id>\t<program>`. An
+example, a log of every event:
+
+```yaml
+api: 1
+id: log-events
+description: Appends every event to a file.
+on-event:
+  events: all
+  bin: sink
+```
+
+```sh
+#!/bin/sh
+[ "$1" = --tx-probe ] && exit 0
+mkdir -p "$TX_PLUGIN_DATA_DIR"
+cat >> "$TX_PLUGIN_DATA_DIR/events.jsonl"
+```
+
+On the Rust SDK a plugin keeps its in-process sink (`registry.sink(Box::new(…))`) and names its
+program with `args: [--tx-event]`: the program reads the line and hands the event to the sinks
+the hosted plugins register.
+
 ## A plugin in Rust: the SDK
 
 A plugin crate keeps the in-process API: its `impl Plugin` with `register`, its `Verb`s
@@ -450,13 +518,14 @@ verbs:
 | `--tx-engine` | serves the engine a hosted plugin registers, on standard input and output (the protocol of [An engine](#an-engine)); opens no core |
 | `--tx-hook <Event>` | the hook entry of the hosted engine: what `txi hook` does, with the engine in the process; exits 0 or 1, never 2 |
 | `--tx-update` | opens the core and runs the registered updaters; prints `tx-update: respawn-agents` when one asks. With `TX_PLUGIN_RETIRE=1` it runs `Updater::retire` instead, whether or not the plugin is enabled |
+| `--tx-event` | reads one event, the line of [An event sink](#an-event-sink-on-event), on standard input and hands it to every sink the hosted plugins register; opens no core. A line that is not an event: `tx-mockup: --tx-event: <error>`, exit 2 |
 | `--tx-probe` | exits 0 at once |
 | anything else | `tx-mockup: not a verb of this plugin: x`, exit 2 |
 
 - A program may host several plugins. Each is registered only when it is active in this
   installation, with the settings `config.yaml` gives its id.
-- The core such a program opens holds the hosted plugins in-process and a proxy for every other
-  active plugin's verb and engine, so `core.verb("layout")` and `core.create_agent(…)` answer in
+- The core such a program opens holds the hosted plugins in-process, a proxy for every other
+  active plugin's verb and engine, and a sink for every other active plugin's `on-event`, so `core.verb("layout")` and `core.create_agent(…)` answer in
   a plugin as they do in `tx`.
 - An engine written in Rust keeps its `LlmEngine`, registered by its plugin
   (`registry.engine(Box::new(…))`). Its manifest names the program twice, as the protocol server

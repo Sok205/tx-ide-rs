@@ -61,7 +61,8 @@ the child opens the same core. Inside tmux, key fragments read those words from 
 Everything but the core is a plugin, and a plugin reaches `tx` in one of two ways.
 
 **A directory with a manifest.** `<root>/<id>/plugin.yaml` plus the files it names is a plugin:
-its verbs, and its engine if it has one, are programs under `bin/`, in any language. The roots are `<data>/shipped/` (the
+its verbs, its engine and its event sink, if it has them, are programs under `bin/`, in any
+language. The roots are `<data>/shipped/` (the
 plugins tx ships, written by `tx update`) and then `<config>/plugins/` (your own, which tx never
 writes); `--plugin-dir`, repeatable, or `TX_PLUGIN_PATH` replaces both. `tx` finds the installed
 plugins through an index it caches in `<cache>/plugins-index.json` and trusts while every
@@ -80,15 +81,20 @@ listed in `MANIFEST` in `tx-core-cli/src/plugins.rs`. `register` receives a
   names starting with `_` are internal (called by key bindings and hooks).
 - **engines**: an [`LlmEngine`](../internal/tx_core/engine/trait.LlmEngine.html) adapter for a
   coding-agent CLI.
-- **event sinks**: receivers of the core's events.
+- **event sinks**: receivers of the core's events, called in the process that emitted them. An
+  installed plugin's counterpart is its `on-event` program ([Event sinks](#event-sinks)).
 - **updaters**: what `tx update` runs for the plugin after the core's update steps, to bring the
   files it owns up to this build. Each must be idempotent; its `retire` takes back what it
-  generated once the plugin stops being active.
+  generated once the plugin stops being active. For an installed plugin the updater is a
+  program, its manifest's `update`: `tx update` runs it, and runs it again with
+  `TX_PLUGIN_RETIRE=1` to retire a plugin that is disabled or left the shipped selection.
 - **resources**: named static blobs the core stores and lists but never reads. By convention the
   name is `<kind>/<file>`: `keys/<id>.tmux` (a key-binding fragment), `conf/<file>` (tmux config),
-  `bin/<file>` (a helper script), `agents/<file>` (a role or skill). The `ide` plugin's updater
-  (`tx update`) writes them
-  under the data directory.
+  `bin/<file>` (a helper script), `agents/<file>` (a role or skill). `tx update` itself
+  publishes every active plugin's resources, in plugin order, into `bin`, `keys`, `conf`, `nvim`,
+  `roles` and `definitions` under the data directory, whether a plugin is compiled in or
+  installed (an installed one lists them under `resources` in its manifest); see
+  [Files](files.md).
 
 The two ways are one API. A plugin crate keeps its `Plugin`, its verbs and its updater, and gains
 a manifest and a three-line program that hosts it (`tx_plugin::sdk::main`): the plugin runs
@@ -199,3 +205,19 @@ and never per refresh tick, since the program is kept:
 
 Until the shipped engines move, `claude` and `codex` are linked into `tx`; an engine plugin of
 your own, and the stand-in engine of the tests, run this way today.
+
+## Event sinks
+
+Every operation that changes an agent emits events: core appends each to `<data>/log.jsonl`,
+then hands it to every sink subscribed in the process, once the record is saved and every lock
+released. A sink registered in-process is a function call. The `on-event` program of an active
+installed plugin is subscribed in every core opened through `tx-plugin`, after the in-process
+ones, as an [`ExecSink`](../internal/tx_core/plugin/sink/struct.ExecSink.html): for each event of
+a type it lists, it starts the program, writes the event as one JSON line (the detail whole,
+where the log cuts its line at 512 bytes) and waits for it, up to the manifest's timeout. So the
+process that emitted the event is the one that runs the sinks, one at a time, in plugin order:
+there is no daemon to deliver to, and no sink costs anything while no plugin declares one. A
+sink cannot fail or veto the operation; one past its timeout is killed with its process group and
+named on stderr. Delivery is at most once; a consumer that must miss nothing follows
+`log.jsonl` instead ([Writing plugins](writing-plugins.md#an-event-sink-on-event) is the
+reference).
