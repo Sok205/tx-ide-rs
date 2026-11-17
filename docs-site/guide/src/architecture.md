@@ -27,6 +27,9 @@ point downwards.
   server config on `tx update`.
 - **`tx-core-cli`** builds the binaries. `tx` is a thin CLI over the library that registers the
   bundled plugins; `txi` is the internal entry point.
+- **`tx-plugin`** is what any program that runs as tx shares with it, so a plugin program can
+  depend on it without linking the other plugins: the global flags, the directory resolution,
+  the `config.yaml` reader and opening the core; it depends on `tx-core` alone.
 
 ## The library never reads the environment
 
