@@ -43,12 +43,15 @@ impl Cli {
     /// A `claude` that writes its argv one per line to `argv/<pid>`, then stays alive.
     fn argv_path(&self) -> String {
         let dir = self.dir.path().join("argv");
+        let staging = self.dir.path().join("argv.tmp");
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
         self.shim_path(&[(
             "claude",
             &format!(
-                "printf '%s\\n' \"$@\" > '{}/'$$\nexec sleep 60",
-                dir.display()
+                "printf '%s\\n' \"$@\" > '{1}/'$$ && mv '{1}/'$$ '{0}/'$$\nexec sleep 60",
+                dir.display(),
+                staging.display()
             ),
         )])
     }
