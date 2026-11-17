@@ -196,6 +196,41 @@ enabled, and they cost a plugin only the verb, not its place:
 
 The plugin stays `active`, and `tx plugins` shows what it lost next to its status.
 
+### Checking a plugin
+
+`tx check --plugins [ID…]` checks the installed plugins (all, or those named) and nothing else;
+plain `tx check` checks the definitions and then the plugins. It opens no core, starts no
+plugin program and writes nothing, not even the index. One line per finding, `path: message` with
+the path of the plugin's `plugin.yaml` unless said otherwise, in plugin order; the exit code is 1
+when any problem was printed. A clean run ends `ok: <n> plugins` (after the definitions' counts,
+for plain `tx check`).
+
+Problems:
+
+- a manifest that does not read: `path:line: <the parser's message>` (an unknown key, a bad
+  `tier`), `path: <the rule broken>` (3.4's rules, among them an `id` that is not the directory's
+  name), and `path: api 2 is not supported (this tx: 1)`;
+- `<directory>: plugin "<id>" is also installed in <the first directory>`;
+- a verb or engine that is lost to a clash, in the words `tx plugins` shows: `verb "<name>" is a
+  built-in`, `verb "<name>" is already "<id>"'s`, `engine kind "<kind>" is already "<id>"'s`,
+  `ext key "<key>" is already "<id>"'s`; the later plugin in plugin order gets the line;
+- `bin/<name> is missing` or `is not executable` (for every program the manifest names), and
+  `resource <name> is missing`;
+- `requires "<id>", which is not installed` (or `is disabled`, or `does not load`: that plugin has
+  a line of its own). A plugin that `tx` still has compiled in counts as installed;
+- in `config.yaml`: `agent.engine "<kind>" is not an active engine (active: …)`;
+- `<data>/shipped: plugins are from tx <a>, this is tx <b>: run install --upgrade`, or `no
+  shipped plugins are installed: run install` for an install that has data.
+
+Warnings, printed and not counted:
+
+- `warning: needs <program>, which is not on PATH`;
+- in `config.yaml`, `warning: plugins.<id>: no such plugin`, with the reason for the three ids
+  that no longer exist (`hooks`, `history`, `menu`);
+- `warning: <resource> replaces "<id>"'s`: your plugin publishes a resource name that core
+  (`tx-core`, for the roles and definitions it ships) or an earlier plugin already publishes. The
+  later one wins, which is how you override a role; the warning only says you did.
+
 ## The index
 
 Reading every manifest on every run would cost more than the rest of `tx`, so the scan of the

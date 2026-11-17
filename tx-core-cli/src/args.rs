@@ -73,22 +73,29 @@ verbs:
                                                                     the shipped ones (<data>/definitions). tools (only
                                                                     when asked): the names `tools` can use, from the
                                                                     engines, and each MCP server's tools
-  check [--engine ENGINE] [NAME]...                                 validate the definitions, all or those named (agents,
-                                                                    skills, MCP servers); path:line per problem, exit 1;
+  check [--engine ENGINE | --plugins] [NAME|ID]...                  validate the definitions (agents, skills, MCP servers),
+                                                                    all or those named, and with no name the installed
+                                                                    plugins too; path:line per problem, exit 1;
                                                                     --engine: also what ENGINE adds to each agent and what
-                                                                    it carries that no flag removes
+                                                                    it carries that no flag removes; --plugins [ID]...:
+                                                                    only the plugins, all or those named (manifests, bins,
+                                                                    resources, clashes, requires, the config, the shipped
+                                                                    stamp), warnings apart
   plugins [--json]                                                  id and status per plugin, and why for one in error:
                                                                     active | disabled | error | missing (an entry of the
                                                                     config file that names no plugin); --json: one array
                                                                     of {id, status, detail, origin, directory, description,
                                                                     tier, requires, needs, verbs, engine}, origin being
                                                                     shipped, user or built-in
-  update                                                            bring this machine up to this tx: run the update steps
+  update [--bundles DIR --binaries DIR [--link]]                    bring this machine up to this tx: run the update steps
                                                                     it has not had yet (<data>/update-version), then each
                                                                     plugin's updater (the IDE's tmux config, keys, shipped
                                                                     roles and definitions); one line per step, and whether
                                                                     running agents need a respawn. Other verbs warn while
-                                                                    one is pending
+                                                                    one is pending. --bundles, --binaries: lay the shipped
+                                                                    plugins of DIR out under <data>/shipped, their programs
+                                                                    taken from DIR/<id>/bin or the binaries DIR; --link:
+                                                                    as links, not copies
 
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
@@ -204,10 +211,12 @@ pub enum Verb {
     Update {
         arguments: Vec<String>,
     },
-    /// `check [--engine E] [NAME]...`: validate the definitions, all of them or those named;
-    /// with an engine, also what it adds or cannot remove.
+    /// `check [--engine E | --plugins] [NAME]...`: validate the definitions, all of them or those
+    /// named, and with no name the plugins too; with an engine, also what it adds or cannot
+    /// remove. With `--plugins`, only the plugins, and `names` are plugin ids.
     Check {
         engine: Option<EngineKind>,
+        plugins: bool,
         names: Vec<String>,
     },
     /// `definitions [agents|skills|mcp]`: list them, every kind or one.
@@ -420,19 +429,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             target: target(&mut cursor, "respawn")?,
         },
         Some("gc") => parse_gc(&mut cursor)?,
-        Some("check") => {
-            let engine = match cursor.peek() {
-                Some("--engine") => {
-                    cursor.next();
-                    Some(engine_kind(cursor.value("--engine")?)?)
-                }
-                _ => None,
-            };
-            Verb::Check {
-                engine,
-                names: cursor.rest(),
-            }
-        }
+        Some("check") => parse_check(&mut cursor)?,
         Some("definitions") => Verb::Definitions {
             kind: match cursor.next() {
                 None => None,
@@ -465,6 +462,33 @@ fn target(cursor: &mut Cursor<'_>, verb: &str) -> Result<String, UsageError> {
         .next()
         .map(str::to_owned)
         .ok_or_else(|| usage(format!("{verb} needs a session id or name")))
+}
+
+/// `check [--engine E | --plugins] [NAME]...`.
+fn parse_check(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
+    let mut engine = None;
+    let mut plugins = false;
+    loop {
+        match cursor.peek() {
+            Some("--engine") => {
+                cursor.next();
+                engine = Some(engine_kind(cursor.value("--engine")?)?);
+            }
+            Some("--plugins") => {
+                cursor.next();
+                plugins = true;
+            }
+            _ => break,
+        }
+    }
+    if plugins && engine.is_some() {
+        return Err(usage("--plugins takes no --engine"));
+    }
+    Ok(Verb::Check {
+        engine,
+        plugins,
+        names: cursor.rest(),
+    })
 }
 
 fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
@@ -1085,6 +1109,7 @@ mod tests {
             parse_str("check pm linear").unwrap().verb,
             Verb::Check {
                 engine: None,
+                plugins: false,
                 names: vec!["pm".into(), "linear".into()]
             }
         );
@@ -1092,9 +1117,36 @@ mod tests {
             parse_str("check --engine codex pm").unwrap().verb,
             Verb::Check {
                 engine: Some(EngineKind::CODEX),
+                plugins: false,
                 names: vec!["pm".into()]
             }
         );
+        assert_eq!(
+            parse_str("check --plugins mockup nope").unwrap().verb,
+            Verb::Check {
+                engine: None,
+                plugins: true,
+                names: vec!["mockup".into(), "nope".into()]
+            }
+        );
+        assert_eq!(
+            parse_str("check --plugins").unwrap().verb,
+            Verb::Check {
+                engine: None,
+                plugins: true,
+                names: vec![]
+            }
+        );
+        for bad in [
+            "check --plugins --engine claude",
+            "check --engine claude --plugins",
+        ] {
+            assert_eq!(
+                parse_str(bad).unwrap_err().0,
+                "--plugins takes no --engine",
+                "{bad}"
+            );
+        }
         assert_eq!(
             parse_str("definitions mcp").unwrap().verb,
             Verb::Definitions {

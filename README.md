@@ -122,7 +122,7 @@ the popup. The graph lists its keys on `?`.
 | `tx show NAME`, `tx where NAME`, `tx attach NAME` | its record as JSON; its tmux socket, session and pane; attach this terminal to it |
 | `tx rename NAME NEW`, `tx tag NAME TAG…` | rename it; replace its tags |
 | `tx gc [--older-than 1d] [--dry-run]` | delete the build output (`worktree.build_outputs`) in the worktrees of agents that ended longer ago than that |
-| `tx definitions`, `tx check` | list and validate the agent definitions, skills and MCP servers |
+| `tx definitions`, `tx check [--plugins [ID…]]` | list and validate the agent definitions, skills and MCP servers; `tx check` then validates the installed plugins (manifests, programs, resources, clashes, `requires`, the config, the shipped stamp), and `--plugins` checks only those |
 | `tx update [--bundles DIR --binaries DIR [--link]]` | bring this machine up to this tx: lay the shipped plugins out from a checkout's `plugins/` and its build (with `--bundles`), run the pending update steps, publish the roles, definitions and plugin resources under the data directory, run each plugin's updater |
 | `tx engines`, `tx plugins` | the enabled engines; every plugin and whether it is on |
 

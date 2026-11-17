@@ -178,6 +178,59 @@ fn plugins(global: &Global, json: bool) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `tx check`: the definitions, the plugins, or one of the two. Neither opens a core, and
+/// nothing is written, the plugin index included.
+fn check(
+    global: &args::Global,
+    engine: Option<tx_core::EngineKind>,
+    plugins_only: bool,
+    names: &[String],
+) -> Result<ExitCode, Failure> {
+    let config = core_config(global)?;
+    let mut out = std::io::stdout().lock();
+    let mut clean = true;
+    let mut summary = None;
+    if !plugins_only {
+        let profiles =
+            tx_core::profile::Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone());
+        let checked = tx_core_cli::definitions::check(
+            &config.directories,
+            &profiles,
+            engine,
+            names,
+            &mut out,
+        )
+        .map_err(Failure::Definition)?;
+        clean = checked.clean;
+        summary = Some(checked.summary);
+    }
+    let mut closing = summary.clone();
+    if plugins_only || (engine.is_none() && names.is_empty()) {
+        let ids = if plugins_only { names } else { &[] };
+        let installation = tx_core_cli::setup::Installation::read_with(global, config)?;
+        if let Some(id) = tx_core_cli::check::unknown(&installation, ids) {
+            eprintln!("tx check: no plugin {id:?}");
+            return Ok(ExitCode::from(1));
+        }
+        let file = tx_core_cli::setup::config_file(global, &installation.config);
+        let report = tx_core_cli::check::plugins(&installation, &linked(), &file, ids, &mut out)?;
+        clean &= report.problems == 0;
+        let loaded = format!("{} plugins", report.loaded);
+        closing = Some(match summary {
+            Some(summary) => format!("{summary}, {loaded}"),
+            None => loaded,
+        });
+    }
+    if clean && let Some(closing) = closing {
+        writeln!(out, "ok: {closing}").ok();
+    }
+    Ok(if clean {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
+}
+
 fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     match &invocation.verb {
         Verb::Help => {
@@ -200,26 +253,11 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 .map_err(Failure::Definition)?;
             return Ok(ExitCode::SUCCESS);
         }
-        Verb::Check { engine, names } => {
-            let config = core_config(&invocation.global)?;
-            let profiles = tx_core::profile::Profiles::new(
-                config.profile_dirs.clone(),
-                config.skill_dirs.clone(),
-            );
-            let clean = tx_core_cli::definitions::check(
-                &config.directories,
-                &profiles,
-                *engine,
-                names,
-                &mut std::io::stdout().lock(),
-            )
-            .map_err(Failure::Definition)?;
-            return Ok(if clean {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            });
-        }
+        Verb::Check {
+            engine,
+            plugins,
+            names,
+        } => return check(&invocation.global, *engine, *plugins, names),
         _ => {}
     }
     let core = open(&invocation.global)?;

@@ -146,8 +146,16 @@ pub fn bundle_warning(
     )))
 }
 
-/// Prints `path:line: message` per problem and returns whether there were none; on success, one
-/// line saying what was checked. With an engine, it also prints what that engine carries on
+/// What [`check`] found: whether there were no problems, and what was checked, for the caller to
+/// close with `ok: <summary>` (and more, when it checked more).
+pub struct Checked {
+    pub clean: bool,
+    /// `<a> agents, <s> skills, <m> MCP servers`.
+    pub summary: String,
+}
+
+/// Prints `path:line: message` per problem and returns whether there were none, with what was
+/// checked; the caller prints the closing line. With an engine, it also prints what that engine carries on
 /// every launch that no flag removes, then per agent what it gets that its file does not say.
 /// The Claude baseline is shown unless the engine is Codex, which has none. Of an engine other
 /// than those two, tx knows nothing to add.
@@ -157,7 +165,7 @@ pub fn check(
     engine: Option<EngineKind>,
     names: &[String],
     out: &mut dyn Write,
-) -> Result<bool, DefinitionError> {
+) -> Result<Checked, DefinitionError> {
     let report = Definitions::new(directories.definition_roots()).check(names, profiles)?;
     let mut engine_problems = 0;
     for problem in &report.problems {
@@ -259,13 +267,11 @@ pub fn check(
         }
     }
     let clean = report.problems.is_empty() && engine_problems == 0;
-    if clean {
-        writeln!(
-            out,
-            "ok: {} agents, {} skills, {} MCP servers",
+    Ok(Checked {
+        clean,
+        summary: format!(
+            "{} agents, {} skills, {} MCP servers",
             report.agents, report.skills, report.servers
-        )
-        .ok();
-    }
-    Ok(clean)
+        ),
+    })
 }
