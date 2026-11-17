@@ -61,7 +61,7 @@ the child opens the same core. Inside tmux, key fragments read those words from 
 Everything but the core is a plugin, and a plugin reaches `tx` in one of two ways.
 
 **A directory with a manifest.** `<root>/<id>/plugin.yaml` plus the files it names is a plugin:
-its verbs are programs under `bin/`, in any language. The roots are `<data>/shipped/` (the
+its verbs, and its engine if it has one, are programs under `bin/`, in any language. The roots are `<data>/shipped/` (the
 plugins tx ships, written by `tx update`) and then `<config>/plugins/` (your own, which tx never
 writes); `--plugin-dir`, repeatable, or `TX_PLUGIN_PATH` replaces both. `tx` finds the installed
 plugins through an index it caches in `<cache>/plugins-index.json` and trusts while every
@@ -113,8 +113,8 @@ it is ignored and listed as `missing`. `tx plugins` prints one row per plugin, `
 order (root order, then id), then the compiled-in ones, then the missing entries;
 `tx plugins --json` adds where each comes from (`shipped`, `user` or `built-in`) and what its
 manifest declares. Plugin order also settles a clash: a verb two plugins declare stays with the
-first, and a verb named like a built-in is never a plugin's; the plugin that lost one stays
-active and its row says so. Plugins keep per-agent data in the record's `ext.<id>` object through
+first, as does an engine kind or the `ext` key of an engine, and a verb named like a built-in is
+never a plugin's; the plugin that lost one stays active and its row says so. Plugins keep per-agent data in the record's `ext.<id>` object through
 `TxCore::update_ext`; core never reads it.
 
 ## Plugins act through `tx`, not through each other
@@ -150,8 +150,52 @@ it wires the engine CLI's own hook mechanism to run `txi hook <Event>` (Claude t
 `--settings`, Codex through `-c hooks.<Event>=…`). `txi` opens the same core from the `TX_*_DIR`
 variables every session carries and hands the payload to `TxCore::hook`, which is how agent state
 moves (see [Agents and records](agents-and-records.md)). A hook must never fail the agent: anything that is
-not tx's (a call outside a session, an unknown id) exits 0.
+not tx's (a call outside a session, an unknown id) exits 0. When the agent's engine runs as its
+own program, `txi` starts it before it takes the agent's lock (next section).
 
 The hook command is `txi`, next to the `tx` that launched the agent. `tx` names itself when it
 starts and `txi` names its sibling; a plugin program that launches an agent is told through
 `TX_BIN`, which every session and every plugin program carries.
+
+## An engine that is its own program
+
+The `engine` section of a manifest names a program that speaks the engine protocol: one JSON
+request per line on its standard input, one response per line on its standard output ([Writing
+plugins](writing-plugins.md#an-engine) is the reference). In every core opened through
+`tx-plugin`, the engine of an active installed plugin is registered as a proxy,
+[`ProcessEngine`](../internal/tx_core/plugin/external/struct.ProcessEngine.html), next to the
+engines linked into the process, and the rest of core cannot tell the two apart. Engine kinds are
+open names: `tx engines` lists the ones an active engine provides, and a launch on any other fails
+as `engine X is not enabled`.
+
+The proxy starts the program on the first call that needs it and keeps it for the life of the
+process. A command that launches or stops an agent starts one program and asks it for every call
+(`configure`, `start`, `archive`). `tx send`, `tx interrupt`, `tx ls`, `tx show`, `tx where`,
+`tx rename` and `tx tag` start none: the default envelope, the manifest's fixed answer to
+`interrupt` and the record itself answer them. Reading a conversation never starts an engine: it
+is two reserved keys of the engine's data.
+
+Hooks are the hot path (Claude fires two around every tool call), and there are two ways through
+it:
+
+- An engine whose manifest has `hook:` wires **its own program** as the hook command
+  (`<plugin>/bin/<program> --tx-hook <Event>`). That program hosts the engine: it opens the core
+  and applies the hook in-process. One process per hook, and no protocol.
+- An engine without one gets `txi hook <Event>`, and `txi` reaches it through the protocol. `txi`
+  **starts the engine's program before it takes the agent's session lock**: it reads the record
+  without the lock and calls `LlmEngine::warm`. The lock is then held for one exchange with a
+  running program, not for the start of a process, which every other hook of the session would
+  wait for.
+
+`tx respawn` warms the same way before core resumes the agent. Off the hook path the program can
+still start while the agent's lock is held. It happens at most once per command, never per hook
+and never per refresh tick, since the program is kept:
+
+- when an agent is found exited (by `tx ls`, `tx show`, `tx create` or a screen that refreshes),
+  or a session that had already vanished is stopped, and its engine lists `archive`;
+- when a plugin respawns an agent in-process instead of running `tx respawn`;
+- on `tx interrupt` and `tx send`, for an engine whose manifest lists the `interrupt` or the
+  `receive_message` method. No shipped engine does.
+
+Until the shipped engines move, `claude` and `codex` are linked into `tx`; an engine plugin of
+your own, and the stand-in engine of the tests, run this way today.

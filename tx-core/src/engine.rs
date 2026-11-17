@@ -15,6 +15,8 @@ use crate::error::CoreError;
 use crate::profile::Profile;
 use crate::state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 
+pub mod wire;
+
 /// An adapter could not honor a request, or a workspace action could not be applied.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -68,8 +70,10 @@ impl<'a> LaunchRequest<'a> {
 
 /// One thing core types into an engine's pane: a line of text, submitted with `Enter` when
 /// `submit` says so, or a single key. What an engine answers for a message, a stop and an
-/// interrupt; core only knows how to type it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// interrupt; core only knows how to type it. On the wire: `{"text": {"text", "submit"}}` or
+/// `{"key": …}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Input {
     Text { text: String, submit: bool },
     Key(Key),
@@ -85,12 +89,14 @@ impl Input {
     }
 }
 
-/// A key core can press in a pane, by tmux's name for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A key core can press in a pane, by tmux's name for it, which is also how it is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Key {
     Escape,
     Enter,
+    #[serde(rename = "C-c")]
     ControlC,
+    #[serde(rename = "C-d")]
     ControlD,
 }
 
@@ -124,8 +130,10 @@ fn shell_quote(text: &str) -> String {
 }
 
 /// Filesystem preparation core performs before starting the process. Relative paths resolve
-/// against the session's `cwd`; a path that escapes `cwd` is refused.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// against the session's `cwd`; a path that escapes `cwd` is refused. On the wire:
+/// `{"write": {"path", "content"}}` or `{"symlink": {"src", "dst"}}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum WorkspaceAction {
     /// Writes `content` to `path`, creating parents, overwriting.
@@ -140,17 +148,21 @@ pub enum WorkspaceAction {
 pub const ENGINE_ARGS_OPTION: &str = "args";
 
 /// How to start the engine: `program args…`, extra environment, workspace preparation, and the
-/// engine data known before the process starts.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// engine data known before the process starts. On the wire only `program` is required.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct LaunchPlan {
     pub program: String,
+    #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
     pub env: Vec<(String, String)>,
+    #[serde(default)]
     pub workspace: Vec<WorkspaceAction>,
     /// The complete value core stores under `ext[ext_key]` before the process starts (Claude:
     /// its id and transcript path are known up front). `None`: the record's data stays as it
     /// is, and anything new arrives by hook (Codex).
+    #[serde(default)]
     pub engine_data: Option<serde_json::Value>,
 }
 
@@ -194,44 +206,84 @@ impl LaunchPlan {
     }
 }
 
+/// The key of every engine's data that holds the engine's own id of the session's current
+/// conversation. Reserved: an engine that records a conversation spells it so.
+pub const CONVERSATION_ID_KEY: &str = "conversation_id";
+/// The key of every engine's data that holds where the CLI keeps the live transcript of the
+/// current conversation. Reserved, as [`CONVERSATION_ID_KEY`] is.
+pub const TRANSCRIPT_PATH_KEY: &str = "transcript_path";
+
 /// The conversation a record's engine data names: the engine's own id for it and where the CLI
 /// keeps its live transcript. Readers (the timeline, `chat ls`) ask for it through
-/// [`crate::TxCore::conversation`]; only the engine knows how its data spells it.
+/// [`crate::TxCore::conversation`]: it is the two reserved keys of the engine's data, so
+/// reading it never starts an engine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Conversation {
     pub id: String,
     pub transcript_path: PathBuf,
 }
 
-/// The engines tx knows, a closed set: a record names its engine with one of these, and each
-/// engine plugin declares the kind it provides. Serialized as its lowercase name (`"claude"`,
-/// `"codex"`), which is also how `--engine` spells it. A new engine is a new variant.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum EngineKind {
-    Claude,
-    Codex,
+/// The longest name an [`EngineKind`] holds.
+const MAX_KIND_BYTES: usize = 31;
+
+/// The kind of an engine: the name a record, `--engine` and `config.yaml` call it by, and the
+/// one its plugin declares. The set is open: any `[a-z0-9-]{1,31}` is a kind, and whether an
+/// active engine provides it is only known at launch. The name is held inline, so a kind is
+/// `Copy`, a constant, a pattern, and a map key ordered by name. It is written as the plain name
+/// (`"claude"`), which is also how `--engine` spells it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EngineKind {
+    /// The name, then zeros. First, so that the derived order is the order of the names.
+    bytes: [u8; MAX_KIND_BYTES],
+    length: u8,
 }
 
 impl EngineKind {
-    /// Every kind, in listing order.
-    pub const ALL: [EngineKind; 2] = [EngineKind::Claude, EngineKind::Codex];
+    /// The kind the Claude engine provides.
+    pub const CLAUDE: EngineKind = EngineKind::constant("claude");
+    /// The kind the Codex engine provides.
+    pub const CODEX: EngineKind = EngineKind::constant("codex");
 
-    /// The lowercase name: `"claude"`, `"codex"`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            EngineKind::Claude => "claude",
-            EngineKind::Codex => "codex",
+    /// `None` unless `name` is `[a-z0-9-]{1,31}`.
+    const fn new(name: &str) -> Option<Self> {
+        let name = name.as_bytes();
+        if name.is_empty() || name.len() > MAX_KIND_BYTES {
+            return None;
+        }
+        let mut bytes = [0; MAX_KIND_BYTES];
+        let mut index = 0;
+        while index < name.len() {
+            let byte = name[index];
+            if !(byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-') {
+                return None;
+            }
+            bytes[index] = byte;
+            index += 1;
+        }
+        Some(Self {
+            bytes,
+            length: name.len() as u8,
+        })
+    }
+
+    /// A kind named in the source; one that is not a kind fails the build that uses it.
+    const fn constant(name: &str) -> Self {
+        match Self::new(name) {
+            Some(kind) => kind,
+            None => panic!("an engine kind must match [a-z0-9-]{{1,31}}"),
         }
     }
 
-    /// `"claude, codex"`: the names an error lists.
-    pub fn names() -> String {
-        Self::ALL
-            .iter()
-            .map(|kind| kind.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
+    /// The name: `"claude"`, `"codex"`.
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..usize::from(self.length)])
+            .expect("an engine kind is ASCII")
+    }
+}
+
+impl fmt::Debug for EngineKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
     }
 }
 
@@ -244,12 +296,37 @@ impl fmt::Display for EngineKind {
 impl FromStr for EngineKind {
     type Err = CoreError;
 
-    /// `InvalidEngineKind` unless `text` is a kind's lowercase name.
+    /// `InvalidEngineKind` unless `text` is `[a-z0-9-]{1,31}`. Syntax only: a kind no engine
+    /// provides parses, and is refused when something is launched with it.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|kind| kind.as_str() == text)
-            .ok_or_else(|| CoreError::InvalidEngineKind(text.to_owned()))
+        Self::new(text).ok_or_else(|| CoreError::InvalidEngineKind(text.to_owned()))
+    }
+}
+
+impl Serialize for EngineKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for EngineKind {
+    /// Through a visitor, so that the refusal of a name carries its place in the document.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Name;
+
+        impl serde::de::Visitor<'_> for Name {
+            type Value = EngineKind;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine kind")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<EngineKind, E> {
+                text.parse().map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(Name)
     }
 }
 
@@ -261,9 +338,11 @@ pub trait LlmEngine: Send + Sync {
     /// key.
     fn kind(&self) -> EngineKind;
 
-    /// The `ext` key this engine owns. Core stores engine data under it and never reads it.
-    /// `[a-z0-9-]+`, unique among engines and plugin ids.
-    fn ext_key(&self) -> &'static str;
+    /// The `ext` key this engine owns. Core stores engine data under it and reads none of it;
+    /// two of its keys are reserved for the conversation ([`CONVERSATION_ID_KEY`],
+    /// [`TRANSCRIPT_PATH_KEY`]). `[a-z0-9-]+`, unique among engines and plugin ids. Borrowed
+    /// from the engine: a linked one's is a constant, a proxy's comes from a manifest.
+    fn ext_key(&self) -> &str;
 
     /// Validates the caller's launch options and merges them into this session's engine data.
     /// `options` is a JSON object (`{"model": "fable", "effort": "high"}`); each engine owns the
@@ -350,18 +429,32 @@ pub trait LlmEngine: Send + Sync {
 
     /// The conversation this session's engine data names, for readers (the timeline, `chat
     /// ls`). `None` while it is not known yet (a Codex agent before its first `SessionStart`).
-    /// Pure. The default knows none.
+    /// Pure. The default reads the two reserved keys of the engine's data, and is `None` until
+    /// both are strings.
     fn conversation(&self, session: &Agent) -> Option<Conversation> {
-        let _ = session;
-        None
+        let data = data_under(self.ext_key(), session);
+        Some(Conversation {
+            id: data.get(CONVERSATION_ID_KEY)?.as_str()?.to_owned(),
+            transcript_path: PathBuf::from(data.get(TRANSCRIPT_PATH_KEY)?.as_str()?),
+        })
     }
+
+    /// Start whatever the next call needs. Called before a session lock is taken, so that an
+    /// engine that runs as its own program is not started while one is held. The default has
+    /// nothing to start.
+    fn warm(&self) {}
 }
 
 /// This engine's data in a record: `ext[ext_key]`, `Null` when absent. A non-object value (a
 /// hand-edited record) counts as absent, so adapters can rely on `.get(..)` seeing an object.
 pub fn engine_data<'a>(engine: &dyn LlmEngine, session: &'a Agent) -> &'a serde_json::Value {
+    data_under(engine.ext_key(), session)
+}
+
+/// `ext[ext_key]` of a record when it is an object, else `Null`.
+fn data_under<'a>(ext_key: &str, session: &'a Agent) -> &'a serde_json::Value {
     const NULL: serde_json::Value = serde_json::Value::Null;
-    match session.ext.get(engine.ext_key()) {
+    match session.ext.get(ext_key) {
         Some(value @ serde_json::Value::Object(_)) => value,
         _ => &NULL,
     }
@@ -524,7 +617,7 @@ mod tests {
             self.0
         }
 
-        fn ext_key(&self) -> &'static str {
+        fn ext_key(&self) -> &str {
             self.0.as_str()
         }
 
@@ -575,46 +668,93 @@ mod tests {
     fn registry_refuses_a_duplicate_kind_and_lists_kinds_sorted() {
         let mut registry = EngineRegistry::new();
         registry
-            .register(Box::new(Stub(EngineKind::Codex)))
+            .register(Box::new(Stub(EngineKind::CODEX)))
             .unwrap();
-        assert!(registry.get(EngineKind::Claude).is_none());
+        assert!(registry.get(EngineKind::CLAUDE).is_none());
         registry
-            .register(Box::new(Stub(EngineKind::Claude)))
+            .register(Box::new(Stub(EngineKind::CLAUDE)))
             .unwrap();
         let error = registry
-            .register(Box::new(Keyed(EngineKind::Codex, "other")))
+            .register(Box::new(Keyed(EngineKind::CODEX, "other")))
             .unwrap_err();
         assert!(
-            matches!(&error, CoreError::EngineTaken(EngineKind::Codex)),
+            matches!(&error, CoreError::EngineTaken(EngineKind::CODEX)),
             "{error:?}"
         );
-        assert_eq!(registry.kinds(), EngineKind::ALL);
+        assert_eq!(registry.kinds(), [EngineKind::CLAUDE, EngineKind::CODEX]);
         assert_eq!(
-            registry.get(EngineKind::Claude).unwrap().kind(),
-            EngineKind::Claude
+            registry.get(EngineKind::CLAUDE).unwrap().kind(),
+            EngineKind::CLAUDE
         );
         assert!(EngineRegistry::default().kinds().is_empty());
     }
 
     #[test]
-    fn engine_kind_names_round_trip_and_an_unknown_one_is_refused() {
-        for kind in EngineKind::ALL {
-            assert_eq!(kind.as_str().parse::<EngineKind>().unwrap(), kind);
-            assert_eq!(kind.to_string(), kind.as_str());
+    fn any_name_of_the_grammar_is_a_kind_and_nothing_else_is() {
+        let longest = "a".repeat(31);
+        for name in ["claude", "codex", "fake", "a", "7", "-", "gpt-5", &longest] {
+            let kind: EngineKind = name.parse().unwrap();
+            assert_eq!(kind.as_str(), name);
+            assert_eq!(kind.to_string(), name);
+            assert_eq!(format!("{kind:?}"), format!("{name:?}"));
             let json = serde_json::to_string(&kind).unwrap();
-            assert_eq!(json, format!("{:?}", kind.as_str()));
+            assert_eq!(json, format!("{name:?}"));
             assert_eq!(serde_json::from_str::<EngineKind>(&json).unwrap(), kind);
         }
-        assert_eq!(EngineKind::names(), "claude, codex");
-        for bad in ["", "Claude", "kodex", " codex"] {
+        let too_long = "a".repeat(32);
+        for bad in [
+            "", "Claude", "a_b", " codex", "codex ", "a.b", "ä", &too_long,
+        ] {
             let error = bad.parse::<EngineKind>().unwrap_err();
             assert!(
                 matches!(&error, CoreError::InvalidEngineKind(text) if text == bad),
                 "{bad:?}: {error:?}"
             );
-            assert!(error.to_string().contains("claude, codex"), "{error}");
-            assert!(serde_json::from_str::<EngineKind>(&format!("{bad:?}")).is_err());
+            assert_eq!(
+                error.to_string(),
+                format!("engine kind {bad:?} must match [a-z0-9-]{{1,31}}")
+            );
+            let refused = serde_json::from_str::<EngineKind>(&format!("{bad:?}")).unwrap_err();
+            assert!(
+                refused.to_string().starts_with(&error.to_string()),
+                "{refused}"
+            );
         }
+        assert!(serde_json::from_str::<EngineKind>("7").is_err());
+    }
+
+    #[test]
+    fn the_constants_are_their_names_and_stand_in_patterns() {
+        assert_eq!(EngineKind::CLAUDE.as_str(), "claude");
+        assert_eq!(EngineKind::CODEX.as_str(), "codex");
+        assert_eq!("claude".parse::<EngineKind>().unwrap(), EngineKind::CLAUDE);
+        let named = |kind: EngineKind| match kind {
+            EngineKind::CLAUDE => "the claude one",
+            EngineKind::CODEX => "the codex one",
+            _ => "another",
+        };
+        assert_eq!(named("claude".parse().unwrap()), "the claude one");
+        assert_eq!(named(EngineKind::CODEX), "the codex one");
+        assert_eq!(named("fake".parse().unwrap()), "another");
+        let refused: Result<(), CoreError> = Err(CoreError::EngineDisabled(EngineKind::CODEX));
+        assert!(matches!(
+            refused,
+            Err(CoreError::EngineDisabled(EngineKind::CODEX))
+        ));
+        assert_eq!(std::mem::size_of::<EngineKind>(), 32);
+    }
+
+    #[test]
+    fn kinds_are_ordered_by_name() {
+        let names = [
+            "b", "ab", "a", "a-", "a0", "fake", "codex", "claude", "claude-2",
+        ];
+        let mut kinds: Vec<EngineKind> = names.iter().map(|name| name.parse().unwrap()).collect();
+        kinds.sort();
+        let mut sorted = names.to_vec();
+        sorted.sort_unstable();
+        let ordered: Vec<&str> = kinds.iter().map(EngineKind::as_str).collect();
+        assert_eq!(ordered, sorted);
     }
 
     /// An engine of the kind owning an arbitrary ext key.
@@ -663,10 +803,10 @@ mod tests {
     fn registry_refuses_a_taken_or_invalid_ext_key() {
         let mut registry = EngineRegistry::new();
         registry
-            .register(Box::new(Keyed(EngineKind::Claude, "one-1")))
+            .register(Box::new(Keyed(EngineKind::CLAUDE, "one-1")))
             .unwrap();
         let error = registry
-            .register(Box::new(Keyed(EngineKind::Codex, "one-1")))
+            .register(Box::new(Keyed(EngineKind::CODEX, "one-1")))
             .unwrap_err();
         assert!(
             matches!(&error, CoreError::ExtKeyTaken(key) if key == "one-1"),
@@ -674,21 +814,21 @@ mod tests {
         );
         for bad in ["", "Claude", "a_b", "a.b", "a/b", "ä"] {
             let error = registry
-                .register(Box::new(Keyed(EngineKind::Codex, bad)))
+                .register(Box::new(Keyed(EngineKind::CODEX, bad)))
                 .unwrap_err();
             assert!(
                 matches!(&error, CoreError::InvalidExtKey(key) if key == bad),
                 "{bad:?}: {error:?}"
             );
         }
-        assert_eq!(registry.kinds(), [EngineKind::Claude]);
+        assert_eq!(registry.kinds(), [EngineKind::CLAUDE]);
     }
 
     fn record(cwd: &Path) -> Agent {
         Agent {
             id: AgentId::mint(),
             name: "n".into(),
-            engine: EngineKind::Claude,
+            engine: EngineKind::CLAUDE,
             working_directory: cwd.to_owned(),
             roles: Vec::new(),
             definition: None,
@@ -706,7 +846,7 @@ mod tests {
 
     #[test]
     fn configure_sees_the_current_data_and_returns_the_merged_object() {
-        let engine = Stub(EngineKind::Claude);
+        let engine = Stub(EngineKind::CLAUDE);
         let mut session = record(Path::new("/tmp"));
         session
             .ext
@@ -722,13 +862,47 @@ mod tests {
 
     #[test]
     fn engine_data_is_the_object_under_the_key_or_null() {
-        let engine = Keyed(EngineKind::Claude, "e");
+        let engine = Keyed(EngineKind::CLAUDE, "e");
         let mut session = record(Path::new("/tmp"));
         assert_eq!(engine_data(&engine, &session), &serde_json::Value::Null);
         session.ext.insert("e".into(), serde_json::json!("text"));
         assert_eq!(engine_data(&engine, &session), &serde_json::Value::Null);
         session.ext.insert("e".into(), serde_json::json!({"k": 1}));
         assert_eq!(engine_data(&engine, &session), &serde_json::json!({"k": 1}));
+    }
+
+    /// Without a `conversation` of its own, an engine's conversation is the two reserved keys
+    /// of its data: known once both are strings.
+    #[test]
+    fn the_default_conversation_is_the_two_reserved_keys_of_the_engines_data() {
+        let engine = Keyed(EngineKind::CLAUDE, "e");
+        let mut session = record(Path::new("/tmp"));
+        assert_eq!(engine.conversation(&session), None);
+        for partial in [
+            serde_json::json!({"conversation_id": "c-1"}),
+            serde_json::json!({"transcript_path": "/t/c-1.jsonl"}),
+            serde_json::json!({"conversation_id": 7, "transcript_path": "/t/c-1.jsonl"}),
+            serde_json::json!("c-1"),
+        ] {
+            session.ext.insert("e".into(), partial);
+            assert_eq!(engine.conversation(&session), None);
+        }
+        session.ext.insert(
+            "e".into(),
+            serde_json::json!({"conversation_id": "c-1", "transcript_path": "/t/c-1.jsonl", "model": "m"}),
+        );
+        assert_eq!(
+            engine.conversation(&session),
+            Some(Conversation {
+                id: "c-1".into(),
+                transcript_path: "/t/c-1.jsonl".into()
+            })
+        );
+        // Another engine's data is not this one's.
+        let other = Keyed(EngineKind::CODEX, "other");
+        assert_eq!(other.conversation(&session), None);
+        // Nothing to start, by default.
+        engine.warm();
     }
 
     #[test]
@@ -750,13 +924,13 @@ mod tests {
         assert_eq!(request.session.id, session.id);
         assert_eq!(request.hook_command, &hooks);
         let profile_file = dir.path().join("p.md").display().to_string();
-        let plan = Stub(EngineKind::Claude).start(&request, "go").unwrap();
+        let plan = Stub(EngineKind::CLAUDE).start(&request, "go").unwrap();
         assert_eq!(plan.program, "claude");
         assert_eq!(plan.args, [profile_file.clone(), "go".to_owned()]);
         assert!(plan.env.is_empty() && plan.workspace.is_empty() && plan.engine_data.is_none());
-        let plan = Stub(EngineKind::Claude).resume(&request).unwrap();
+        let plan = Stub(EngineKind::CLAUDE).resume(&request).unwrap();
         assert_eq!(plan.args, [profile_file.clone(), String::new()]);
-        let plan = Stub(EngineKind::Claude)
+        let plan = Stub(EngineKind::CLAUDE)
             .fork(&request, &source, "branch")
             .unwrap();
         assert_eq!(
@@ -770,7 +944,7 @@ mod tests {
     #[test]
     fn input_defaults_are_the_envelope_submitted_and_no_stop_or_interrupt() {
         use crate::messaging::EnvelopeSender;
-        let engine = Stub(EngineKind::Claude);
+        let engine = Stub(EngineKind::CLAUDE);
         let session = record(Path::new("/tmp"));
         assert_eq!(
             engine.receive_message(&EnvelopeSender::User { via: None }, "hi"),

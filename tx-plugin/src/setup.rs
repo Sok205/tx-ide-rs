@@ -6,8 +6,9 @@ use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tx_core::plugin::external::TRACE_HOOK;
 use tx_core::plugin::{Activation, Entry, ExecContext, Index, Launcher};
-use tx_core::{CoreConfig, CoreError, Directories, Plugin, PluginConfig, TxCore};
+use tx_core::{CoreConfig, CoreError, Directories, Plugin, PluginConfig, Registry, TxCore};
 
 use crate::args::{self, Global};
 use crate::config::Config;
@@ -561,6 +562,45 @@ impl Installation {
         self.open_plugged(global, hosted, &cfg)
     }
 
+    /// What the first of `hosted` that registers an engine registers: `register` runs for each
+    /// that is active in this installation, with the settings `config.yaml` gives its id, as
+    /// [`Self::open_hosted`] has it run. No core is opened: this is how a plugin program gets
+    /// at its engine to serve it. `None`: none of them registers one.
+    pub fn engine_registry(&self, hosted: &[Box<dyn Plugin>]) -> Result<Option<Registry>, Failure> {
+        for plugin in hosted {
+            if !self.activation.is_active(plugin.id()) {
+                continue;
+            }
+            let settings = self
+                .entries
+                .get(plugin.id())
+                .map_or(serde_json::Value::Null, |entry| entry.settings.clone());
+            let mut registry = Registry::new(settings, self.config.clone());
+            plugin.register(&mut registry).map_err(Failure::Plugin)?;
+            if !registry.engines().is_empty() {
+                return Ok(Some(registry));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Notes in the trace that this program runs as the hook entry of an engine. Nothing of tx
+    /// starts a hook (the engine's CLI does), so the entry writes its own line. The plugin it
+    /// names is the one of `hosted` that the activation gave an engine kind.
+    pub fn trace_hook(&self, global: &Global, hosted: &[Box<dyn Plugin>]) {
+        let engine = hosted.iter().map(|plugin| plugin.id()).find(|id| {
+            self.activation
+                .engines
+                .values()
+                .any(|engine| engine.plugin == *id)
+        });
+        if let Some(plugin) = engine
+            && let Ok(program) = std::env::current_exe()
+        {
+            exec_context(global, &self.config).trace(TRACE_HOOK, plugin, &program);
+        }
+    }
+
     /// The settings `config.yaml` gives each of `plugins`; none of them is switched off here.
     fn hosted_config(&self, plugins: &[Box<dyn Plugin>]) -> PluginConfig {
         PluginConfig {
@@ -580,8 +620,8 @@ impl Installation {
     }
 
     /// Opens the core with `plugins` registered in-process and every other active installed
-    /// plugin behind proxies. Records this build skips (those naming an engine it does not
-    /// know) are skipped by every read; this names each on stderr, once per invocation.
+    /// plugin behind proxies. Records every read skips (those whose engine is not the name of
+    /// an engine kind) are named on stderr here, once per invocation.
     fn open_plugged(
         self,
         global: &Global,

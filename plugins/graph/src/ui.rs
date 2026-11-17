@@ -474,7 +474,10 @@ fn draw_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         vec![
             fact(
                 "engine",
-                node.engine.map_or("—", |engine| engine.as_str()).to_owned(),
+                node.engine
+                    .as_ref()
+                    .map_or("—", |engine| engine.as_str())
+                    .to_owned(),
             ),
             fact(
                 "definition",

@@ -67,7 +67,7 @@ verbs:
                                                                     minutes); size freed per worktree, then the total.
                                                                     Worktree, branch, record and conversation stay, so
                                                                     respawn works. --dry-run: the same, nothing deleted
-  engines                                                           the engines whose plugin is enabled (claude, codex)
+  engines                                                           the kinds of the active engines, one per line
   definitions [agents|skills|mcp|tools]                             name and description of each definition, every kind
                                                                     or one; yours (<config>/definitions) win by name over
                                                                     the shipped ones (<data>/definitions). tools (only
@@ -106,7 +106,7 @@ A flag left out is read from its variable: $TX_PROFILE_PATH, $TX_SKILL_PATH, $TX
 (colon-separated), $TX_CONFIG_FILE, $TX_SESSION_ENV (a JSON object, for --env).
 The config file is <config>/config.yaml (--config FILE overrides); every key is optional:
   agent:                        defaults for create; a flag given replaces its key
-    engine: claude              claude | codex
+    engine: claude              an engine kind (see `engines`)
     roles: []                   empty: the definition's `roles`; any --role replaces the list
     definition: developer       the agent definition without --agent (null: roles alone)
     model: claude-opus-5-5      null: the engine's own default
@@ -129,8 +129,9 @@ pub enum Verb {
         engine: Option<EngineKind>,
         /// Empty: the config file's `agent.roles`, or with `--agent` the definition's `roles:`.
         roles: Vec<String>,
-        /// `--agent A` and its `--skill`/`--mcp`/`--tool` extras.
-        definition: Option<tx_core::DefinitionChoice>,
+        /// `--agent A` and its `--skill`/`--mcp`/`--tool` extras. Boxed: it is the one large
+        /// field, and most invocations have none.
+        definition: Option<Box<tx_core::DefinitionChoice>>,
         /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
         /// a repeated key is settled by the engine's options object, last one wins.
         options: Vec<(String, String)>,
@@ -258,8 +259,8 @@ fn usage(text: impl Into<String>) -> UsageError {
     UsageError(text.into())
 }
 
-/// `--engine ENGINE`: one of the kinds this build knows; anything else is a misuse that names
-/// them.
+/// `--engine ENGINE`: the name of an engine kind; anything that cannot be one is a misuse.
+/// Whether an active engine provides the kind is settled when something is launched with it.
 fn engine_kind(text: &str) -> Result<EngineKind, UsageError> {
     text.parse()
         .map_err(|error: CoreError| usage(format!("--engine: {error}")))
@@ -506,7 +507,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
     let prompt = prompt.ok_or_else(|| usage("create needs --prompt T"))?;
     let definition = match agent {
-        Some(agent) => Some(tx_core::DefinitionChoice { agent, ..extras }),
+        Some(agent) => Some(Box::new(tx_core::DefinitionChoice { agent, ..extras })),
         None if extras == tx_core::DefinitionChoice::default() => None,
         None => return Err(usage("--skill, --mcp and --tool extend an --agent")),
     };
@@ -724,7 +725,7 @@ mod tests {
         assert_eq!(parent.as_deref(), Some("p-1"));
         assert_eq!(tags, ["a", "b"]);
         assert_eq!(env, [("K".to_owned(), "V".to_owned())]);
-        assert_eq!(engine, Some(EngineKind::Claude));
+        assert_eq!(engine, Some(EngineKind::CLAUDE));
         assert_eq!(roles, ["dev", "ops"]);
         assert_eq!(
             options,
@@ -781,12 +782,12 @@ mod tests {
         };
         assert_eq!(
             definition,
-            Some(tx_core::DefinitionChoice {
+            Some(Box::new(tx_core::DefinitionChoice {
                 agent: "pm".into(),
                 skills: vec!["s1".into(), "s2".into()],
                 mcp_servers: vec!["probe".into()],
                 tools: vec!["WebFetch".into()],
-            })
+            }))
         );
         assert_eq!(
             parse_str("create w --cwd /w --prompt go --skill s")
@@ -1090,7 +1091,7 @@ mod tests {
         assert_eq!(
             parse_str("check --engine codex pm").unwrap().verb,
             Verb::Check {
-                engine: Some(EngineKind::Codex),
+                engine: Some(EngineKind::CODEX),
                 names: vec!["pm".into()]
             }
         );

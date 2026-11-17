@@ -35,10 +35,12 @@ pub enum CoreError {
     StillRunning(AgentId),
     #[error("worktree {} is gone; a respawn never recreates one", .0.display())]
     WorktreeMissing(PathBuf),
-    /// The record's or request's engine kind has no adapter registered: its plugin is disabled.
-    #[error("engine {0} is disabled")]
+    /// The record's or request's engine kind has no engine registered: no active plugin
+    /// provides it.
+    #[error("engine {0} is not enabled")]
     EngineDisabled(EngineKind),
-    #[error("no engine named {0:?} (known: {known})", known = EngineKind::names())]
+    /// Not the name of an engine kind, whichever engines are installed.
+    #[error("engine kind {0:?} must match [a-z0-9-]{{1,31}}")]
     InvalidEngineKind(String),
     #[error("an agent needs an initial prompt")]
     PromptRequired,

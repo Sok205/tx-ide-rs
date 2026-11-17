@@ -27,7 +27,7 @@ impl LlmEngine for Stub {
         self.0
     }
 
-    fn ext_key(&self) -> &'static str {
+    fn ext_key(&self) -> &str {
         self.0.as_str()
     }
 
@@ -764,15 +764,15 @@ proptest! {
 #[test]
 fn registry_is_keyed_by_kind_in_any_order() {
     for order in [
-        vec![EngineKind::Claude, EngineKind::Codex],
-        vec![EngineKind::Codex, EngineKind::Claude],
+        vec![EngineKind::CLAUDE, EngineKind::CODEX],
+        vec![EngineKind::CODEX, EngineKind::CLAUDE],
     ] {
         let mut registry = EngineRegistry::new();
         for kind in &order {
             registry.register(stub(*kind)).unwrap();
         }
-        assert_eq!(registry.kinds(), EngineKind::ALL);
-        for kind in EngineKind::ALL {
+        assert_eq!(registry.kinds(), [EngineKind::CLAUDE, EngineKind::CODEX]);
+        for kind in [EngineKind::CLAUDE, EngineKind::CODEX] {
             assert_eq!(registry.get(kind).unwrap().kind(), kind);
             let error = registry.register(stub(kind)).unwrap_err();
             assert!(
@@ -780,37 +780,52 @@ fn registry_is_keyed_by_kind_in_any_order() {
                 "{error:?}"
             );
         }
-        assert_eq!(registry.kinds(), EngineKind::ALL);
+        assert_eq!(registry.kinds(), [EngineKind::CLAUDE, EngineKind::CODEX]);
     }
     let mut registry = EngineRegistry::new();
     assert!(registry.kinds().is_empty());
-    registry.register(stub(EngineKind::Codex)).unwrap();
-    assert_eq!(registry.kinds(), [EngineKind::Codex]);
-    assert!(registry.get(EngineKind::Claude).is_none());
+    registry.register(stub(EngineKind::CODEX)).unwrap();
+    assert_eq!(registry.kinds(), [EngineKind::CODEX]);
+    assert!(registry.get(EngineKind::CLAUDE).is_none());
 }
 
-// The kind's name is its only spelling: `EngineKind::from_str` and serde agree, and anything
-// else, including case variants and padding, is refused without a panic.
+// A kind is its name and the set is open: `EngineKind::from_str` and serde agree, every name of
+// the grammar `[a-z0-9-]{1,31}` round-trips, and anything else, including case variants, padding
+// and a name one byte too long, is refused without a panic. Kinds order as their names do.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
     #[test]
-    fn engine_kind_parses_exactly_its_lowercase_names(text in "[A-Za-z _\\-]{0,8}|claude|codex") {
-        let known = EngineKind::ALL.into_iter().find(|kind| kind.as_str() == text);
+    fn engine_kind_parses_exactly_the_names_of_its_grammar(
+        text in "[A-Za-z0-9 _\\-]{0,8}|[a-z0-9-]{1,31}|[a-z0-9-]{32,40}|claude|codex"
+    ) {
+        let valid = (1..=31).contains(&text.len())
+            && text
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
         let parsed = text.parse::<EngineKind>();
-        match known {
-            Some(kind) => {
-                prop_assert_eq!(parsed.unwrap(), kind);
-                prop_assert_eq!(serde_json::from_str::<EngineKind>(&format!("{:?}", text)).unwrap(), kind);
-                prop_assert_eq!(serde_json::to_string(&kind).unwrap(), format!("{:?}", text));
-            }
-            None => {
-                let refused = matches!(parsed, Err(CoreError::InvalidEngineKind(ref t)) if *t == text);
-                prop_assert!(refused, "{:?}", text);
-                let quoted = format!("{text:?}");
-                prop_assert!(serde_json::from_str::<EngineKind>(&quoted).is_err());
-            }
+        let quoted = format!("{text:?}");
+        if valid {
+            let kind = parsed.unwrap();
+            prop_assert_eq!(kind.as_str(), text.as_str());
+            prop_assert_eq!(kind.to_string(), text.as_str());
+            prop_assert_eq!(serde_json::from_str::<EngineKind>(&quoted).unwrap(), kind);
+            prop_assert_eq!(serde_json::to_string(&kind).unwrap(), quoted);
+        } else {
+            let refused = matches!(parsed, Err(CoreError::InvalidEngineKind(ref t)) if *t == text);
+            prop_assert!(refused, "{:?}", text);
+            prop_assert!(serde_json::from_str::<EngineKind>(&quoted).is_err());
         }
+    }
+
+    #[test]
+    fn engine_kinds_order_as_their_names_do(first in "[a-z0-9-]{1,31}", second in "[a-z0-9-]{1,31}") {
+        let (one, other) = (
+            first.parse::<EngineKind>().unwrap(),
+            second.parse::<EngineKind>().unwrap(),
+        );
+        prop_assert_eq!(one.cmp(&other), first.cmp(&second));
+        prop_assert_eq!(one == other, first == second);
     }
 }
 
@@ -834,7 +849,7 @@ fn core_accepts_a_plan_with_empty_program() {
     let session = Agent {
         id: AgentId::mint(),
         name: "s".into(),
-        engine: EngineKind::Claude,
+        engine: EngineKind::CLAUDE,
         working_directory: dir.path().to_owned(),
         roles: Vec::new(),
         definition: None,
@@ -850,9 +865,9 @@ fn core_accepts_a_plan_with_empty_program() {
     };
     let request = LaunchRequest::new(&session, &profile);
     let mut registry = EngineRegistry::new();
-    registry.register(stub(EngineKind::Claude)).unwrap();
+    registry.register(stub(EngineKind::CLAUDE)).unwrap();
     let plan = registry
-        .get(EngineKind::Claude)
+        .get(EngineKind::CLAUDE)
         .unwrap()
         .start(&request, "")
         .unwrap();

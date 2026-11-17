@@ -1,7 +1,7 @@
 //! Which plugins are installed, and which of them are on. [`Index`] is the scan of the plugin
 //! roots, cached in `<cache>/plugins-index.json` and trusted while every file it read still
 //! looks the same. [`Activation`] is the index met with the front end's `plugins:` entries: who
-//! is active, and which verb is whose.
+//! is active, and which verb and which engine kind is whose.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::PluginStatus;
-use super::manifest::{BIN_DIR, MANIFEST_FILE, Manifest};
+use super::manifest::{BIN_DIR, MANIFEST_FILE, Manifest, ManifestEngine};
 use crate::config::CoreConfig;
+use crate::engine::EngineKind;
 
 /// Under the cache directory: the scan of the plugin roots.
 pub const INDEX_FILE: &str = "plugins-index.json";
@@ -249,6 +250,15 @@ pub struct ActiveVerb {
     pub usage: String,
 }
 
+/// The engine of an active plugin, as the activation gave it to that plugin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveEngine {
+    /// The id of the plugin it belongs to.
+    pub plugin: String,
+    /// The `ext` key the engine owns.
+    pub ext_key: String,
+}
+
 /// Something an active plugin declares and does not get. The plugin stays active; the wording
 /// here is the one every front end prints.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -261,13 +271,30 @@ pub enum Problem {
         verb: String,
         owner: String,
     },
+    /// The kind of its engine is already the kind of `owner`'s, a plugin earlier in plugin
+    /// order.
+    TakenEngineKind {
+        plugin: String,
+        kind: EngineKind,
+        owner: String,
+    },
+    /// The `ext` key of its engine is already the key of `owner`'s engine, a plugin earlier in
+    /// plugin order.
+    TakenExtKey {
+        plugin: String,
+        key: String,
+        owner: String,
+    },
 }
 
 impl Problem {
     /// The plugin that lost something.
     pub fn plugin(&self) -> &str {
         match self {
-            Problem::BuiltInVerb { plugin, .. } | Problem::TakenVerb { plugin, .. } => plugin,
+            Problem::BuiltInVerb { plugin, .. }
+            | Problem::TakenVerb { plugin, .. }
+            | Problem::TakenEngineKind { plugin, .. }
+            | Problem::TakenExtKey { plugin, .. } => plugin,
         }
     }
 }
@@ -279,18 +306,27 @@ impl fmt::Display for Problem {
             Problem::TakenVerb { verb, owner, .. } => {
                 write!(f, "verb {verb:?} is already {owner:?}'s")
             }
+            Problem::TakenEngineKind { kind, owner, .. } => {
+                write!(f, "engine kind {kind:?} is already {owner:?}'s")
+            }
+            Problem::TakenExtKey { key, owner, .. } => {
+                write!(f, "ext key {key:?} is already {owner:?}'s")
+            }
         }
     }
 }
 
-/// The index met with the config: every plugin's status, and the verbs of the active ones.
-/// Verb clashes depend on who is enabled, so they are found here and never stored.
+/// The index met with the config: every plugin's status, and the verbs and engines of the
+/// active ones. Clashes of verbs, engine kinds and ext keys depend on who is enabled, so they
+/// are found here and never stored.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Activation {
     /// The installed plugins in plugin order, then the config's entries that name none.
     pub plugins: Vec<PluginState>,
     /// By verb name.
     pub verbs: BTreeMap<String, ActiveVerb>,
+    /// By engine kind.
+    pub engines: BTreeMap<EngineKind, ActiveEngine>,
     pub problems: Vec<Problem>,
 }
 
@@ -298,6 +334,7 @@ impl Activation {
     /// A plugin is active when its manifest loaded and its entry does not say `enabled: false`.
     /// A verb of an active plugin that is one of `reserved` (the front end's own verbs), or that
     /// an earlier plugin already has, is dropped with a problem; the earlier plugin keeps it.
+    /// So is its engine, when an earlier plugin's engine already has the kind or the `ext` key.
     /// An entry naming no installed plugin is `Missing`.
     pub fn new(index: &Index, entries: &BTreeMap<String, Entry>, reserved: &[&str]) -> Activation {
         let mut activation = Activation::default();
@@ -308,6 +345,9 @@ impl Activation {
                 Ok(_) if entry.is_some_and(|entry| !entry.enabled) => PluginStatus::Disabled,
                 Ok(manifest) => {
                     activation.claim_verbs(installed, manifest, reserved);
+                    if let Some(engine) = &manifest.engine {
+                        activation.claim_engine(installed, engine);
+                    }
                     PluginStatus::Active
                 }
             };
@@ -355,6 +395,40 @@ impl Activation {
                     },
                 );
             }
+        }
+    }
+
+    /// The kind first: a plugin that loses it is not also told about its `ext` key.
+    fn claim_engine(&mut self, installed: &Installed, engine: &ManifestEngine) {
+        let plugin = installed.id.clone();
+        let kind: EngineKind = engine
+            .kind
+            .parse()
+            .expect("the engine kind of a manifest that loaded");
+        if let Some(taken) = self.engines.get(&kind) {
+            self.problems.push(Problem::TakenEngineKind {
+                plugin,
+                kind,
+                owner: taken.plugin.clone(),
+            });
+        } else if let Some(taken) = self
+            .engines
+            .values()
+            .find(|taken| taken.ext_key == engine.ext_key)
+        {
+            self.problems.push(Problem::TakenExtKey {
+                plugin,
+                key: engine.ext_key.clone(),
+                owner: taken.plugin.clone(),
+            });
+        } else {
+            self.engines.insert(
+                kind,
+                ActiveEngine {
+                    plugin,
+                    ext_key: engine.ext_key.clone(),
+                },
+            );
         }
     }
 
@@ -865,6 +939,95 @@ mod tests {
         let off = entries(&[("zebra", false, Value::Null)]);
         let activation = Activation::new(&index, &off, &[]);
         assert_eq!(activation.verbs["hello"].plugin, "hello");
+    }
+
+    #[test]
+    fn a_clashing_engine_kind_or_ext_key_is_dropped_with_a_problem_and_the_plugin_stays_active() {
+        let sandbox = Sandbox::new();
+        let engine = |root: &str, id: &str, section: &str| {
+            sandbox.manifest(
+                root,
+                id,
+                &format!(
+                    "api: 1\nid: {id}\ndescription: An engine.\nengine:\n  bin: {id}\n{section}"
+                ),
+            );
+        };
+        engine("user", "engine-a", "  kind: alpha\n");
+        engine("user", "engine-b", "  kind: alpha\n  ext_key: other\n");
+        engine("user", "engine-c", "  kind: gamma\n  ext_key: alpha\n");
+        engine("user", "engine-d", "  kind: delta\n");
+        let index = sandbox.load();
+        let activation = Activation::new(&index, &BTreeMap::new(), &[]);
+        let alpha: EngineKind = "alpha".parse().unwrap();
+        let delta: EngineKind = "delta".parse().unwrap();
+        assert_eq!(
+            activation.engines,
+            BTreeMap::from([
+                (
+                    alpha,
+                    ActiveEngine {
+                        plugin: "engine-a".into(),
+                        ext_key: "alpha".into(),
+                    }
+                ),
+                (
+                    delta,
+                    ActiveEngine {
+                        plugin: "engine-d".into(),
+                        ext_key: "delta".into(),
+                    }
+                ),
+            ])
+        );
+        assert_eq!(
+            activation.problems,
+            [
+                Problem::TakenEngineKind {
+                    plugin: "engine-b".into(),
+                    kind: alpha,
+                    owner: "engine-a".into(),
+                },
+                Problem::TakenExtKey {
+                    plugin: "engine-c".into(),
+                    key: "alpha".into(),
+                    owner: "engine-a".into(),
+                },
+            ]
+        );
+        for id in ["engine-a", "engine-b", "engine-c", "engine-d"] {
+            assert!(activation.is_active(id), "{id}");
+        }
+        assert_eq!(activation.problems[0].plugin(), "engine-b");
+        assert_eq!(activation.problems[1].plugin(), "engine-c");
+        assert_eq!(
+            activation.detail(&activation.plugins[1]).as_deref(),
+            Some("engine kind \"alpha\" is already \"engine-a\"'s")
+        );
+        assert_eq!(
+            activation.detail(&activation.plugins[2]).as_deref(),
+            Some("ext key \"alpha\" is already \"engine-a\"'s")
+        );
+        assert_eq!(activation.detail(&activation.plugins[0]), None);
+
+        // The first in plugin order is the shipped one, whatever its id.
+        engine("shipped", "zebra", "  kind: alpha\n");
+        let index = sandbox.load();
+        let activation = Activation::new(&index, &BTreeMap::new(), &[]);
+        assert_eq!(activation.engines[&alpha].plugin, "zebra");
+        // Disabled, it claims nothing; nor does one whose owner is off lose anything.
+        let off = entries(&[
+            ("zebra", false, Value::Null),
+            ("engine-a", false, Value::Null),
+        ]);
+        let activation = Activation::new(&index, &off, &[]);
+        assert_eq!(activation.engines[&alpha].plugin, "engine-b");
+        assert_eq!(activation.engines[&alpha].ext_key, "other");
+        assert_eq!(
+            activation.engines["gamma".parse::<EngineKind>().as_ref().unwrap()].plugin,
+            "engine-c"
+        );
+        assert!(activation.problems.is_empty());
     }
 
     #[test]

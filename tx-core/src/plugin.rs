@@ -7,7 +7,8 @@
 //! A plugin reaches a core in one of two ways. Linked into the process, it is handed to
 //! [`TxCore::plug`]. Installed on disk as a directory with a [`Manifest`], it runs as its own
 //! program: the [`Index`] finds it, the [`Activation`] says whether it is on, and
-//! [`TxCore::plug_external`] puts a proxy for each of its verbs into the core.
+//! [`TxCore::plug_external`] puts a proxy for each of its verbs and for its engine into the
+//! core.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
@@ -432,9 +433,12 @@ impl TxCore {
     /// Brings in the plugins that run as their own programs, after [`Self::plug`] registered
     /// the ones linked into this process (`hosted_ids`, which are left alone here). Each step
     /// lives with the proxies it creates: the installed plugins join [`Self::plugin_status`],
-    /// then every verb of an active plugin becomes a [`Verb`] that starts the plugin's program.
+    /// then every verb of an active plugin becomes a [`Verb`] that starts the plugin's program,
+    /// and the engine of each becomes an [`external::ProcessEngine`] that asks it.
     /// Where such a verb and one registered in-process have the same name, the activation's
-    /// owner is the one [`Self::verb`] answers, as the front end would run it.
+    /// owner is the one [`Self::verb`] answers, as the front end would run it. An engine is not
+    /// settled so: one linked into the process that already has the kind or the `ext` key of an
+    /// installed one makes this fail, as [`Self::plug`] fails for two linked ones.
     pub fn plug_external(
         &mut self,
         index: &Index,
@@ -445,6 +449,7 @@ impl TxCore {
         let context = Arc::new(context);
         external::list(self, activation, hosted_ids);
         external::plug_verbs(self, index, activation, &context, hosted_ids);
+        external::plug_engines(self, index, activation, &context, hosted_ids)?;
         Ok(())
     }
 

@@ -34,15 +34,16 @@ fn usage_errors_exit_2_without_touching_state() {
         cli.fails(&["create", "x", "--cwd", "/"], 2)
             .contains("create needs --prompt T")
     );
-    // An engine outside the closed set is a misuse that names the set.
+    // What cannot be the name of an engine kind is a misuse.
     let stderr = cli.fails(
         &[
-            "create", "x", "--cwd", "/", "--engine", "kodex", "--prompt", "go",
+            "create", "x", "--cwd", "/", "--engine", "Bad Kind", "--prompt", "go",
         ],
         2,
     );
     assert!(
-        stderr.contains("--engine: no engine named \"kodex\" (known: claude, codex)"),
+        stderr.contains("--engine: engine kind \"Bad Kind\" must match [a-z0-9-]{1,31}")
+            && stderr.contains("usage: tx"),
         "{stderr}"
     );
     assert!(cli.fails(&["bogus"], 2).contains("bogus"));
@@ -89,7 +90,34 @@ fn core_errors_exit_1() {
         ],
         1,
     );
-    assert_eq!(stderr, "tx: engine codex is disabled\n");
+    assert_eq!(
+        stderr,
+        "tx: engine codex is not enabled (enabled: claude)\n"
+    );
+    // Any name is an engine kind; one no active engine provides fails at launch, with the kinds
+    // that are provided, and leaves no record and no worktree.
+    for (yaml, engine) in [
+        ("", &["--engine", "kodex"][..]),
+        ("agent:\n  engine: kodex\n", &[]),
+    ] {
+        cli.write_yaml(yaml);
+        let mut arguments = vec!["create", "b", "--cwd", cwd.to_str().unwrap()];
+        arguments.extend_from_slice(engine);
+        arguments.extend_from_slice(&["--prompt", "start"]);
+        assert_eq!(
+            cli.fails(&arguments, 1),
+            "tx: engine kodex is not enabled (enabled: claude, codex)\n"
+        );
+    }
+    assert_eq!(cli.ok(&["ls"]), "");
+    assert_eq!(cli.ok(&["ls", "--ended"]), "");
+    assert!(
+        std::fs::read_dir(cli.worktrees_dir())
+            .unwrap()
+            .next()
+            .is_none(),
+        "a refused create left a worktree"
+    );
 }
 
 /// A disabled engine plugin leaves its kind unregistered: `engines` does not list it, a create
@@ -108,7 +136,7 @@ fn a_disabled_engine_plugin_leaves_its_kind_unregistered_but_its_records_listed(
     assert!(cli.ok(&["show", "old-codex"]).contains("\"codex\""));
     assert_eq!(
         cli.fails(&["respawn", "old-codex"], 1),
-        "tx: engine codex is disabled\n"
+        "tx: engine codex is not enabled (enabled: claude)\n"
     );
     // Re-enabled, the engine check passes and the Codex adapter itself answers: this record
     // never got a conversation to resume.
@@ -118,20 +146,42 @@ fn a_disabled_engine_plugin_leaves_its_kind_unregistered_but_its_records_listed(
     assert!(stderr.contains("codex cannot resume old-codex"), "{stderr}");
 }
 
-/// A record naming an engine this build does not know (hand-edited, or another build's) is
-/// skipped: the other records list, stderr names it with the known engines, nothing is deleted.
+/// A record naming an engine kind that no installed engine provides (another machine's, or a
+/// plugin since removed) is a record like any other: it lists and shows, and cannot be respawned
+/// until an engine of that kind is active.
 #[test]
-fn records_with_an_unknown_engine_are_skipped_and_named_on_stderr() {
+fn a_record_of_a_kind_no_engine_provides_lists_and_cannot_be_respawned() {
+    let cli = Cli::new();
+    let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f3";
+    common::plant_record(&cli, id, "elsewhere", "kodex");
+    let output = cli.run(&["ls", "--ended"], &[], "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    let listed = String::from_utf8_lossy(&output.stdout);
+    assert!(listed.contains("elsewhere"), "{listed}");
+    assert!(
+        cli.ok(&["show", "elsewhere"])
+            .contains("\"engine\": \"kodex\"")
+    );
+    assert_eq!(
+        cli.fails(&["respawn", "elsewhere"], 1),
+        "tx: engine kodex is not enabled (enabled: claude, codex)\n"
+    );
+}
+
+/// A record whose engine is not the name of an engine kind (hand-edited) is skipped: the other
+/// records list, stderr names it and why, nothing is deleted.
+#[test]
+fn records_with_an_invalid_engine_kind_are_skipped_and_named_on_stderr() {
     let cli = Cli::new();
     let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f1";
-    let path = common::plant_record(&cli, id, "odd", "kodex");
+    let path = common::plant_record(&cli, id, "odd", "Bad Kind");
     let output = cli.run(&["ls"], &[], "");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
     assert!(
         stderr.contains(&format!(
-            "skipped record {id}: names engine \"kodex\", which this build does not know (known: claude, codex)"
+            "skipped record {id}: engine kind \"Bad Kind\" must match [a-z0-9-]{{1,31}}"
         )),
         "{stderr}"
     );

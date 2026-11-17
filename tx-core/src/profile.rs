@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::definitions::McpServer;
 
 pub const ROLE_SUFFIX: &str = ".md";
@@ -65,8 +67,10 @@ pub struct Profiles {
 }
 
 /// Where an engine-provided skill comes from: a reference skill (`SKILL.md` with frontmatter
-/// only and `metadata.provided-by`) names it, and the engine delivers it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// only and `metadata.provided-by`) names it, and the engine delivers it. Written as its name:
+/// `claude-bundled`, `claude-synced`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SkillProvider {
     /// Built into the Claude binary.
     ClaudeBundled,
@@ -103,8 +107,9 @@ pub struct ResolvedProfile {
     pub provided_skills: Vec<(String, SkillProvider)>,
 }
 
-/// What an engine adapter receives: the resolved profile, and a file holding its text.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What an engine adapter receives: the resolved profile, and a file holding its text. On the
+/// wire it is its fields; an engine that runs as its own program reads the same file.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     text: String,
     file: PathBuf,

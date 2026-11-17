@@ -398,7 +398,7 @@ fn archived_rollout(archive_directory: &Path, conversation: &str) -> PathBuf {
 
 impl LlmEngine for CodexAdapter {
     fn kind(&self) -> EngineKind {
-        EngineKind::Codex
+        EngineKind::CODEX
     }
 
     fn ext_key(&self) -> &'static str {
@@ -1055,7 +1055,7 @@ mod tests {
 
     #[test]
     fn id_is_codex() {
-        assert_eq!(adapter().kind(), EngineKind::Codex);
+        assert_eq!(adapter().kind(), EngineKind::CODEX);
     }
 
     #[test]
@@ -1551,7 +1551,7 @@ mod tests {
         assert_eq!(CodexPlugin.id(), "engine-codex");
         core.plug(vec![Box::new(CodexPlugin)], &PluginConfig::default())
             .unwrap();
-        assert_eq!(core.engine_kinds(), vec![EngineKind::Codex]);
+        assert_eq!(core.engine_kinds(), vec![EngineKind::CODEX]);
     }
 
     fn write(path: &Path, data: &[u8]) {

@@ -557,6 +557,11 @@ impl TxCore {
         self.engines.kinds()
     }
 
+    /// The engine registered for `kind`; `None`: no active plugin provides it.
+    pub fn engine(&self, kind: EngineKind) -> Option<&dyn LlmEngine> {
+        self.engines.get(kind)
+    }
+
     /// Registers an in-process listener for every event this core emits. See [`EventSink`].
     pub fn subscribe(&mut self, sink: Box<dyn EventSink>) {
         self.sinks.push(sink);
@@ -1520,7 +1525,7 @@ mod tests {
         }
 
         fn kind(&self) -> EngineKind {
-            EngineKind::Claude
+            EngineKind::CLAUDE
         }
 
         fn ext_key(&self) -> &'static str {
@@ -1563,7 +1568,7 @@ mod tests {
             core.register_engine(Box::new(Stub)).unwrap_err(),
             CoreError::EngineTaken(_)
         ));
-        assert_eq!(core.engine_kinds(), [EngineKind::Claude]);
+        assert_eq!(core.engine_kinds(), [EngineKind::CLAUDE]);
     }
 
     #[test]
@@ -1614,7 +1619,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let opts = |launch: LaunchOptions| CreateOptions::new("n", cwd.clone(), launch);
         // No engine is registered on this core: every kind is "disabled".
-        let agent = || LaunchOptions::agent(EngineKind::Codex).initial_prompt("go");
+        let agent = || LaunchOptions::agent(EngineKind::CODEX).initial_prompt("go");
         let mut bad = opts(agent());
         bad.name = "no spaces".into();
         assert!(matches!(
@@ -1636,7 +1641,7 @@ mod tests {
         let bad = opts(agent());
         assert!(matches!(
             core.create_agent(bad).unwrap_err(),
-            CoreError::EngineDisabled(EngineKind::Codex)
+            CoreError::EngineDisabled(EngineKind::CODEX)
         ));
         assert!(
             std::fs::read_dir(directories.data.join("agents"))
@@ -1677,7 +1682,7 @@ mod tests {
         let session = |parent: Option<&str>, tags: &[&str], state| Agent {
             id: "i".parse().unwrap(),
             name: "n".into(),
-            engine: EngineKind::Claude,
+            engine: EngineKind::CLAUDE,
             working_directory: "/".into(),
             roles: vec![],
             definition: None,

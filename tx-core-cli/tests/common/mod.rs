@@ -135,6 +135,28 @@ pub fn tmux_available() -> bool {
     Command::new("tmux").arg("-V").output().is_ok()
 }
 
+/// Whether `python3` runs: the stand-in engine of `fixtures/engine-fake` is a Python script.
+pub fn python3_available() -> bool {
+    Command::new("python3")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+/// Copies the directory `from` to `to`, files with their permissions.
+fn copy_directory(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_directory(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
 /// Every directory flag naming `dir`: the suites keep the five directories in one place, so
 /// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
 /// A stand-in for the shipped default agent definition, `developer`, under `config_dir`.
@@ -224,6 +246,16 @@ impl Cli {
     pub fn plugin(&self, id: &str, manifest: &str, programs: &[(&str, &str)]) -> PathBuf {
         write_plugin(&self.plugins_dir(), id, manifest, programs)
     }
+    /// Installs the plugin `tests/fixtures/<id>` into this sandbox's own plugin root: a copy,
+    /// so a test may edit it. Its directory.
+    pub fn fixture(&self, id: &str) -> PathBuf {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(id);
+        let directory = self.plugins_dir().join(id);
+        copy_directory(&source, &directory);
+        directory
+    }
     /// `--profile-dir` for the stand-in default roles, then the state dir's own roles, which win.
     pub fn role_flags(&self) -> Vec<std::ffi::OsString> {
         vec![
@@ -292,20 +324,11 @@ impl Cli {
     /// `txi` (the internal binary the wired hooks run) against this state dir, the way a hook
     /// inside a session runs it: the exported `TX_*_DIR` and `TX_PLUGIN_PATH`, no flags.
     pub fn txi(&self, args: &[&str], env: &[(&str, &str)], stdin: &str) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_txi"));
+        let mut command = self.txi_command(args, env);
         command
-            .args(args)
-            .envs(directory_environment(&self.state()))
-            .env("TX_PLUGIN_PATH", self.plugin_path())
-            .env_remove("TX_TMUX_SOCKET")
-            .env_remove("TMUX")
-            .env_remove("TX_SESSION_ID")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        for (key, value) in env {
-            command.env(key, value);
-        }
         let mut child = command.spawn().unwrap();
         child
             .stdin
@@ -314,6 +337,21 @@ impl Cli {
             .write_all(stdin.as_bytes())
             .unwrap();
         child.wait_with_output().unwrap()
+    }
+    /// The `txi` of [`Self::txi`] not yet started, for a test that watches it run.
+    pub fn txi_command(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_txi"));
+        command
+            .args(args)
+            .envs(directory_environment(&self.state()))
+            .env("TX_PLUGIN_PATH", self.plugin_path())
+            .env_remove("TX_TMUX_SOCKET")
+            .env_remove("TMUX")
+            .env_remove("TX_SESSION_ID");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        command
     }
     pub fn ok(&self, args: &[&str]) -> String {
         let output = self.run(args, &[], "");
@@ -520,6 +558,16 @@ macro_rules! require_tmux {
     () => {
         if !$crate::common::tmux_available() {
             eprintln!("tmux not available; skipping");
+            return;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! require_python3 {
+    () => {
+        if !$crate::common::python3_available() {
+            eprintln!("python3 not available; skipping");
             return;
         }
     };

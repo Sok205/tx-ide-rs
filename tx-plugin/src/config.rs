@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn a_missing_file_is_every_default() {
         let config = load(Path::new("/nonexistent/tx/config.yaml")).unwrap();
-        assert_eq!(config.agent.engine, EngineKind::Claude);
+        assert_eq!(config.agent.engine, EngineKind::CLAUDE);
         assert!(config.agent.roles.is_empty());
     }
 
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(
             config.agent,
             AgentDefaults {
-                engine: EngineKind::Codex,
+                engine: EngineKind::CODEX,
                 roles: vec!["QA".to_owned()],
                 definition: None,
                 model: Some("gpt-5".to_owned()),
@@ -317,10 +317,20 @@ mod tests {
         }
     }
 
+    /// `agent.engine` is any engine kind: whether an engine provides it is settled when
+    /// something is launched. What cannot be a kind is refused, naming the file.
     #[test]
-    fn an_unknown_engine_is_refused() {
-        let error = parse_text("agent:\n  engine: kodex\n").unwrap_err();
-        assert!(error.0.contains("kodex"), "{error}");
+    fn any_engine_kind_is_accepted_and_what_is_not_one_is_refused() {
+        let config = parse_text("agent:\n  engine: kodex\n").unwrap();
+        assert_eq!(config.agent.engine.as_str(), "kodex");
+        let error = parse_text("agent:\n  engine: Bad Kind\n").unwrap_err();
+        assert!(error.0.starts_with("/c/config.yaml: "), "{error}");
+        assert!(
+            error
+                .0
+                .contains("engine kind \"Bad Kind\" must match [a-z0-9-]{1,31}"),
+            "{error}"
+        );
     }
 
     #[test]

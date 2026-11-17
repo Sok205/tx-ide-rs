@@ -39,7 +39,7 @@ pub const SESSION_NAME: &str = "tx-assistant";
 pub const ROLE: &str = "TX-ASSISTANT";
 pub const COMMON_ROLE: &str = "COMMON";
 pub const TAG: &str = "tx-system";
-pub const ENGINE: EngineKind = EngineKind::Claude;
+pub const ENGINE: EngineKind = EngineKind::CLAUDE;
 pub const DEFAULT_MODEL: &str = "opus";
 pub const DEFAULT_EFFORT: &str = "2";
 /// The first turn, typed by core at launch: an agent needs an initial prompt.

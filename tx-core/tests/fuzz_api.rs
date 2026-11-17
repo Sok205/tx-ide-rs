@@ -46,7 +46,8 @@ fn kind(error: &CoreError) -> &'static str {
 }
 
 fn engine_kind() -> impl Strategy<Value = EngineKind> {
-    prop::sample::select(EngineKind::ALL.to_vec())
+    // Any name of the grammar is a kind, whether or not an engine provides it.
+    "[a-z0-9-]{1,31}".prop_map(|name| name.parse().unwrap())
 }
 
 fn bare_name() -> impl Strategy<Value = String> {
@@ -114,11 +115,12 @@ fn session_with(parent: Option<AgentId>, tags: Vec<String>, state: LlmEngineStat
     Agent {
         id: AgentId::mint(),
         name: "s".into(),
-        engine: EngineKind::Claude,
+        engine: EngineKind::CLAUDE,
         working_directory: "/w".into(),
         roles: vec![],
         definition: None,
         state,
+        idle_reason: None,
         created_at: 1.0,
         last_modified_at: 1.0,
         last_activity_at: None,
@@ -357,7 +359,7 @@ fn engine_adapter_object_is_usable_from_another_thread() {
         }
 
         fn kind(&self) -> EngineKind {
-            EngineKind::Claude
+            EngineKind::CLAUDE
         }
 
         fn ext_key(&self) -> &'static str {

@@ -21,7 +21,7 @@ impl LlmEngine for Shout {
 
     /// Codex: the harness's stub holds Claude.
     fn kind(&self) -> EngineKind {
-        EngineKind::Codex
+        EngineKind::CODEX
     }
 
     fn ext_key(&self) -> &'static str {
@@ -75,7 +75,7 @@ fn the_recipients_engine_frames_the_message() {
         .create_agent(CreateOptions::new(
             "shouter",
             h.repository("s"),
-            LaunchOptions::agent(EngineKind::Codex).initial_prompt("start"),
+            LaunchOptions::agent(EngineKind::CODEX).initial_prompt("start"),
         ))
         .unwrap();
     let cwd = cwd_of(&core, &shouter);

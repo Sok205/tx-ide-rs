@@ -125,7 +125,7 @@ pub struct AgentDefaults {
 impl Default for AgentDefaults {
     fn default() -> Self {
         Self {
-            engine: EngineKind::Claude,
+            engine: EngineKind::CLAUDE,
             roles: Vec::new(),
             definition: Some("developer".to_owned()),
             model: Some("claude-opus-5-5".to_owned()),
@@ -139,7 +139,7 @@ impl AgentDefaults {
     /// [`CoreConfig::new`] holds until the caller hands in a file's values.
     pub fn none() -> Self {
         Self {
-            engine: EngineKind::Claude,
+            engine: EngineKind::CLAUDE,
             roles: Vec::new(),
             definition: None,
             model: None,
@@ -501,7 +501,7 @@ mod tests {
 
     fn file() -> AgentDefaults {
         AgentDefaults {
-            engine: EngineKind::Claude,
+            engine: EngineKind::CLAUDE,
             roles: vec!["COMMON".to_owned()],
             definition: Some("developer".to_owned()),
             model: Some("opus".to_owned()),
@@ -513,7 +513,7 @@ mod tests {
     fn a_launch_that_chose_nothing_takes_the_file() {
         let launch = file().launch(None, Vec::new(), None, [], "start");
         let (engine, roles, options, prompt, definition) = fields(&launch);
-        assert_eq!(engine, EngineKind::Claude);
+        assert_eq!(engine, EngineKind::CLAUDE);
         assert_eq!(roles, ["COMMON"]);
         assert_eq!(
             *options,
@@ -526,15 +526,15 @@ mod tests {
 
     #[test]
     fn a_chosen_engine_wins_and_drops_the_files_model() {
-        let launch = file().launch(Some(EngineKind::Codex), Vec::new(), None, [], "p");
+        let launch = file().launch(Some(EngineKind::CODEX), Vec::new(), None, [], "p");
         let (engine, _, options, _, _) = fields(&launch);
-        assert_eq!(engine, EngineKind::Codex);
+        assert_eq!(engine, EngineKind::CODEX);
         assert_eq!(*options, serde_json::json!({"effort": "3"}));
     }
 
     #[test]
     fn the_files_model_applies_to_its_own_engine_when_chosen_explicitly() {
-        let launch = file().launch(Some(EngineKind::Claude), Vec::new(), None, [], "p");
+        let launch = file().launch(Some(EngineKind::CLAUDE), Vec::new(), None, [], "p");
         let (_, _, options, _, _) = fields(&launch);
         assert_eq!(
             *options,
@@ -593,7 +593,7 @@ mod tests {
     fn a_null_model_and_effort_leave_the_options_to_the_caller() {
         let launch = AgentDefaults::none().launch(None, Vec::new(), None, [], "p");
         let (engine, roles, options, _, definition) = fields(&launch);
-        assert_eq!(engine, EngineKind::Claude);
+        assert_eq!(engine, EngineKind::CLAUDE);
         assert!(roles.is_empty());
         assert_eq!(*options, serde_json::json!({}));
         assert_eq!(definition, None);

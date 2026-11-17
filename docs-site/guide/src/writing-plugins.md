@@ -18,7 +18,7 @@ repeatable, or `TX_PLUGIN_PATH` (colon-separated) replaces both. An entry of a r
 directory holding a `plugin.yaml`, or whose name starts with `.`, is ignored.
 
 **Plugin order** is root order, then id. It is the order `tx plugins` lists, and it decides who
-keeps a verb two plugins declare: the first.
+keeps a verb or an engine kind two plugins declare: the first.
 
 A plugin is **active** when it is installed, its manifest is valid for this tx, and
 `config.yaml` does not say `plugins.<id>.enabled: false`. Only an active plugin has verbs. Its own
@@ -153,9 +153,9 @@ resources:                   # files it publishes; the name is the path inside t
   - bin/tmux-kill-tx-session
 ```
 
-This version reads and checks every section, and acts on `verbs`. The `engine`, `on-event`,
-`update` and `resources` sections are checked and not used yet: until they are, an engine, a
-sink, an updater or a resource comes from a plugin compiled into `tx`. `tier`, `requires`,
+This version reads and checks every section, and acts on `verbs` and on `engine` (see [An
+engine](#an-engine)). The `on-event`, `update` and `resources` sections are checked and not used
+yet: until they are, a sink, an updater or a resource comes from a plugin compiled into `tx`. `tier`, `requires`,
 `needs` and `settings` are for the installer and `tx check`; nothing is refused at run time
 because of them.
 
@@ -207,6 +207,185 @@ directory, or editing a manifest, shows on the next run. A cache directory that 
 written means a scan per run, not an error; `tx help` and a command refused as misuse read the
 index and leave the file as it is.
 
+## An engine
+
+An engine turns a launch into a command line and a hook into a state. A plugin provides one by
+naming a program in the `engine` section of its manifest; the program speaks the protocol below,
+in any language. `kind` is the name that `--engine`, `agent.engine` in `config.yaml` and the
+records use, `[a-z0-9-]{1,31}`; `ext_key` (by default the kind) is the key of a record's `ext`
+that holds the engine's own data. `tx engines` lists the kinds of the active engines.
+
+Like a verb, a kind belongs to the first plugin in plugin order that declares it, and so does an
+`ext` key. A later plugin stays `active` without its engine, and `tx plugins` says why:
+`engine kind "claude" is already "engine-claude"'s`, `ext key "claude" is already
+"engine-claude"'s`.
+
+### An example: the stand-in engine
+
+The engine tx's own tests run on, `tx-core-cli/tests/fixtures/engine-fake/`. It stands for no
+real agent: every launch is `sleep 600`, and hooks fired by hand move the agent. Its manifest:
+
+```yaml
+api: 1
+id: engine-fake
+description: A stand-in engine for tests. Every agent it launches is `sleep`, moved by hooks fired by hand.
+engine:
+  kind: fake
+  bin: engine-fake
+  methods: [archive]
+  interrupt: { key: Escape, state: idle }
+```
+
+Its program, `bin/engine-fake`. It also notes each request in `calls` and its process id in
+`pid`, under its data directory, for the tests to read:
+
+```python
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+DATA = os.environ["TX_PLUGIN_DATA_DIR"]
+LAUNCH = {"program": "sleep", "args": ["600"]}
+CHANGES = {
+    "Stop": {"state": "idle", "idle_reason": "finished"},
+    "UserPromptSubmit": {"state": "working"},
+}
+
+
+def answer(method, params):
+    if method == "configure":
+        # The complete new value of the record's `ext.fake`: what is there, then the options.
+        current = params["session"].get("ext", {}).get("fake", {})
+        return {"ok": {**current, **params["options"]}}
+    if method in ("start", "resume", "fork"):
+        return {"ok": LAUNCH}
+    if method == "on_hook":
+        return {"ok": CHANGES.get(params["hook"]["name"], {})}
+    if method == "archive":
+        return {"ok": None}
+    return {"error": {"kind": "refused", "message": f"fake: no method {method}"}}
+
+
+os.makedirs(DATA, exist_ok=True)
+with open(os.path.join(DATA, "pid"), "w") as file:
+    file.write(f"{os.getpid()}\n")
+for line in sys.stdin:
+    with open(os.path.join(DATA, "calls"), "a") as file:
+        file.write(line)
+    request = json.loads(line)
+    print(json.dumps(answer(request["method"], request["params"])), flush=True)
+```
+
+Copied into `<config>/plugins/`:
+
+```console
+$ tx engines
+claude
+codex
+fake
+$ tx create a --cwd . --engine fake --prompt hi
+3f6c8a52-…
+$ tx show a | jq -r .state
+starting
+$ TX_SESSION_ID=3f6c8a52-… txi hook Stop </dev/null; tx show a | jq -r .state
+idle
+```
+
+The last line is what an engine's CLI does through the hooks the engine wired; this one wires
+none.
+
+### The protocol
+
+The program (`engine.bin` with `engine.args`) is started by the first call that needs it and
+kept: one program per engine, per process that opened the core. It gets the environment of
+[Running a verb](#running-a-verb). One request per line on its standard input, one response per
+line on its standard output, in order; its standard error passes through. When the process that
+started it is done, the program's input is closed; it has one second to exit, then it is killed.
+
+```text
+-> {"method": "start", "params": {"request": {…}, "prompt": "hi"}}
+<- {"ok": {"program": "claude", "args": ["--session-id", "…"], "env": [], "workspace": [], "engine_data": {…}}}
+<- {"error": {"kind": "refused", "message": "claude options: model must not be empty"}}
+```
+
+`error.kind` is `refused`, or `workspace` or `io`, which also name the `path` they are about. tx
+prints the message as the error of the command.
+
+| method | params | ok | when core calls it |
+|---|---|---|---|
+| `configure` | `session`, `options` | the new engine data | create, fork |
+| `start` | `request`, `prompt` | a launch plan | create |
+| `resume` | `request` | a launch plan | respawn |
+| `fork` | `request`, `source`, `prompt` | a launch plan | fork |
+| `on_hook` | `session`, `hook` | a change | every hook that reaches `txi hook` |
+| `prepare`* | `session` | `null` | before every launch |
+| `archive`* | `session`, `archive_directory` | `null` | after a hook, a stop, an exit |
+| `restore`* | `session`, `archive_directory` | `true` or `false` | respawn |
+| `receive_message`* | `sender`, `text` | an input | send |
+| `interrupt`* | `session` | `null`, or `{"input", "state"}` | interrupt |
+
+\* optional: asked only when `engine.methods` lists it. Otherwise tx answers itself, without
+starting the program: nothing to prepare, archive or restore; the standard `<from-user>` /
+`<from-agent>` envelope, submitted; `interrupt:` from the manifest, else "no way to interrupt".
+(`methods` also takes `warnings`, `check` and `tools`; this version does not call them yet.)
+
+The shapes:
+
+- `session`, `source`: the agent record, as `tx show` prints it, `"version": 2` first. The
+  engine's own data is its `ext.<ext_key>`.
+- `options`: the launch options, a JSON object (`{"model": "fable", "effort": "high"}`).
+  `configure` answers the complete new value of the engine's data, which tx stores before the
+  launch reads it.
+- `request`: `{"session": …, "profile": {"text", "file", "skill_dirs", "tools" (null: none
+  given), "disallowed_tools", "mcp_servers", "provided_skills": [[name, provider]]},
+  "hook_command": […]}`. `hook_command` is the argv prefix of every hook the engine wires, with
+  the CLI's event name appended; empty: wire none.
+- launch plan: `{"program", "args", "env": [[key, value]], "workspace": [{"write": {"path",
+  "content"}} | {"symlink": {"src", "dst"}}], "engine_data": object | null}`. Only `program` is
+  required. `engine_data`, when given, replaces the engine's data in the record before the
+  process starts.
+- `hook`: `{"name", "payload", "at"}`: the CLI's own event name, its payload (always an object),
+  the time.
+- change: `{"state": "starting" | "idle" | "working" | "ended" | null, "idle_reason": "finished"
+  | "waiting" | null, "engine_data": object | null}`; `{}` changes nothing.
+- input: `{"text": {"text", "submit"}}` or `{"key": "Escape" | "Enter" | "C-c" | "C-d"}`.
+- `sender`: `{"user": {"via": string | null}}` or `{"agent": {"name"}}`.
+
+A reader ignores a key it does not know.
+
+Two keys of the engine's data are reserved, `conversation_id` and `transcript_path`: an engine
+that records a conversation writes them, and tx reads the conversation from the record, never
+from the engine.
+
+A program that cannot be started, that ends without answering, or whose answer is not such a
+line, fails the command as `engine <kind>: <what happened>`; `tx create` then leaves no record,
+no worktree and no session. That program is discarded and a later call starts a new one.
+`on_hook` cannot fail: it then changes nothing and says why in one line on standard error.
+
+### Hooks
+
+An engine's CLI reports through the hooks the engine wires at launch: each runs `hook_command`
+with the event's name appended, and gets the payload on standard input.
+
+- An engine whose manifest has `hook:` is sent `[<plugin>/bin/<hook.bin>, hook.args…]` as its
+  `hook_command`: its own program is the hook entry. On the Rust SDK that is `--tx-hook`: one
+  process per hook, with the engine in it.
+- An engine without `hook:` is sent `txi hook`. `txi` opens the core, starts the engine's
+  program, and asks it `on_hook`, then `archive`.
+
+Either way a hook must never fail the agent: one that is not tx's (no `$TX_SESSION_ID`, an
+agent tx does not know) exits 0, and a failure exits 1, never 2.
+
+### What starts the program
+
+`tx create`, `tx fork` and `tx respawn` start it once each, and `txi hook` once per hook.
+`tx stop` starts it for an engine that lists `archive`, `tx send` and `tx interrupt` for one that
+lists `receive_message` or `interrupt`. `tx ls`, `tx show`, `tx where`, `tx rename`, `tx tag`
+and `tx engines` never do, unless `ls` or `show` finds an agent exited and has it archived. With
+`TX_PLUGIN_TRACE` each start is a line `engine\t<plugin id>\t<program>`; an engine's own hook
+entry writes `hook\t<plugin id>\t<program>`.
+
 ## A plugin in Rust: the SDK
 
 A plugin crate keeps the in-process API: its `impl Plugin` with `register`, its `Verb`s
@@ -233,6 +412,8 @@ verbs:
 | first | does |
 |---|---|
 | a verb one of the hosted plugins registers | resolves the core as `tx` would (flags, variables, defaults), opens it, runs the verb with the process's standard streams, exits with its code |
+| `--tx-engine` | serves the engine a hosted plugin registers, on standard input and output (the protocol of [An engine](#an-engine)); opens no core |
+| `--tx-hook <Event>` | the hook entry of the hosted engine: what `txi hook` does, with the engine in the process; exits 0 or 1, never 2 |
 | `--tx-update` | opens the core and runs the registered updaters; prints `tx-update: respawn-agents` when one asks. With `TX_PLUGIN_RETIRE=1` it runs `Updater::retire` instead, whether or not the plugin is enabled |
 | `--tx-probe` | exits 0 at once |
 | anything else | `tx-mockup: not a verb of this plugin: x`, exit 2 |
@@ -240,7 +421,21 @@ verbs:
 - A program may host several plugins. Each is registered only when it is active in this
   installation, with the settings `config.yaml` gives its id.
 - The core such a program opens holds the hosted plugins in-process and a proxy for every other
-  active plugin's verb, so `core.verb("layout")` answers in a plugin as it does in `tx`.
+  active plugin's verb and engine, so `core.verb("layout")` and `core.create_agent(…)` answer in
+  a plugin as they do in `tx`.
+- An engine written in Rust keeps its `LlmEngine`, registered by its plugin
+  (`registry.engine(Box::new(…))`). Its manifest names the program twice, as the protocol server
+  and as its own hook entry, so that a hook is one process with the engine in it:
+
+  ```yaml
+  engine:
+    kind: claude
+    bin: tx-engine-claude
+    args: [--tx-engine]
+    hook: { bin: tx-engine-claude, args: [--tx-hook] }
+    methods: [prepare, archive, restore]
+    interrupt: { key: Escape, state: idle }
+  ```
 - Because the program resolves the core itself, it can be run directly for its own verbs,
   without `tx` in front: `tx-mockup --data-dir … mockup show`.
 - `tx_plugin::sdk::tx_bin()` is the `tx` that started the program. Command lines the plugin

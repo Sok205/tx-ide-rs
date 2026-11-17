@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+# The stand-in engine of tx's tests, and the example of the engine protocol in the guide: one
+# JSON request per line on standard input, one JSON response per line on standard output.
+#
+# It stands for no real agent. Every launch is `sleep 600`; hooks, fired by hand with
+# `txi hook <Event>`, move the agent: `Stop` to idle, `UserPromptSubmit` to working. Each
+# request is appended to $TX_PLUGIN_DATA_DIR/calls as it arrived, and the process id is written
+# to $TX_PLUGIN_DATA_DIR/pid when the program starts.
+import json
+import os
+import sys
+
+DATA = os.environ["TX_PLUGIN_DATA_DIR"]
+LAUNCH = {"program": "sleep", "args": ["600"]}
+CHANGES = {
+    "Stop": {"state": "idle", "idle_reason": "finished"},
+    "UserPromptSubmit": {"state": "working"},
+}
+
+
+def answer(method, params):
+    if method == "configure":
+        # The complete new value of the record's `ext.fake`: what is there, then the options.
+        current = params["session"].get("ext", {}).get("fake", {})
+        return {"ok": {**current, **params["options"]}}
+    if method in ("start", "resume", "fork"):
+        return {"ok": LAUNCH}
+    if method == "on_hook":
+        return {"ok": CHANGES.get(params["hook"]["name"], {})}
+    if method == "archive":
+        return {"ok": None}
+    return {"error": {"kind": "refused", "message": f"fake: no method {method}"}}
+
+
+os.makedirs(DATA, exist_ok=True)
+with open(os.path.join(DATA, "pid"), "w") as file:
+    file.write(f"{os.getpid()}\n")
+for line in sys.stdin:
+    with open(os.path.join(DATA, "calls"), "a") as file:
+        file.write(line)
+    request = json.loads(line)
+    print(json.dumps(answer(request["method"], request["params"])), flush=True)

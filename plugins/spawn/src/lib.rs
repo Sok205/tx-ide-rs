@@ -322,7 +322,7 @@ mod tests {
         Reply {
             name: "health".into(),
             prompt: "add GET /health".into(),
-            engine: EngineKind::Codex,
+            engine: EngineKind::CODEX,
             model: "gpt-6-sol".into(),
             effort: "xhigh".into(),
             agent: "qa".into(),
@@ -429,7 +429,7 @@ mod tests {
         else {
             panic!("an agent launch");
         };
-        assert_eq!(engine, EngineKind::Codex);
+        assert_eq!(engine, EngineKind::CODEX);
         // The definition brings its roles: the launch names none.
         assert!(profile.is_empty());
         assert_eq!(definition, Some(DefinitionChoice::new("qa")));

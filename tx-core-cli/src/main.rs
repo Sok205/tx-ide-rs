@@ -223,6 +223,23 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         _ => {}
     }
     let core = open(&invocation.global)?;
+    built_in(&core, invocation).or_else(|failure| match failure {
+        // An engine kind nothing here provides is named next to the kinds that are provided.
+        Failure::Core(error @ CoreError::EngineDisabled(_)) => {
+            let enabled: Vec<String> = core
+                .engine_kinds()
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            eprintln!("tx: {error} (enabled: {})", enabled.join(", "));
+            Ok(ExitCode::from(1))
+        }
+        failure => Err(failure),
+    })
+}
+
+/// A built-in verb that runs on the opened core.
+fn built_in(core: &TxCore, invocation: Invocation) -> Result<ExitCode, Failure> {
     let mut out = std::io::stdout().lock();
     match invocation.verb {
         Verb::Help
@@ -262,7 +279,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             let defaults = &core.config().agent_defaults;
             if let Some(choice) = &definition {
                 // Claude turns its bundled skills on all at once: say so before the launch.
-                if engine.unwrap_or(defaults.engine) == tx_core::EngineKind::Claude
+                if engine.unwrap_or(defaults.engine) == tx_core::EngineKind::CLAUDE
                     && let Ok(agent) = tx_core::definitions::Definitions::new(
                         core.config().directories.definition_roots(),
                     )
@@ -283,6 +300,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                     }
                 }
             }
+            let definition = definition.map(|choice| *choice);
             let mut launch = defaults.launch(engine, roles, definition, options, prompt);
             if !engine_args.is_empty() {
                 launch = launch.option(tx_core::ENGINE_ARGS_OPTION, engine_args);
@@ -395,7 +413,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             writeln!(out, "{}\t{}", session.id, session.tags.join(",")).ok();
         }
         Verb::Send { target, text, via } => {
-            let options = SendOptions::from(sender_from_env(&core, via)?);
+            let options = SendOptions::from(sender_from_env(core, via)?);
             let receipt = core.send_message(&core.resolve(&target)?, &text, options)?;
             writeln!(out, "{}\t{}", receipt.recipient, receipt.pane).ok();
         }
@@ -436,7 +454,13 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             writeln!(out, "{id}\tinterrupted").ok();
         }
         Verb::Respawn { target } => {
-            let session = core.respawn_agent(&core.resolve(&target)?)?;
+            let id = core.resolve(&target)?;
+            // The resume needs the engine, and core asks it under the session lock: an engine
+            // that runs as its own program is started before the lock is taken.
+            if let Some(engine) = core.engine(core.get_agent(&id)?.engine) {
+                engine.warm();
+            }
+            let session = core.respawn_agent(&id)?;
             writeln!(out, "{}\t{}", session.id, session.name).ok();
         }
         Verb::Gc {
@@ -448,7 +472,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 .build_outputs;
             let mut total = 0;
             let mut failed = false;
-            for worktree in tx_core_cli::gc::ended_worktrees(&core, older_than)? {
+            for worktree in tx_core_cli::gc::ended_worktrees(core, older_than)? {
                 let outcome = tx_core_cli::gc::clean(&worktree.directory, &build_outputs, dry_run);
                 for failure in &outcome.failures {
                     eprintln!("tx: gc: {failure}");

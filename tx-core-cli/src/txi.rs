@@ -7,10 +7,8 @@
 
 use std::process::ExitCode;
 
-use tx_core::core::SESSION_ID_ENV;
-use tx_core::{AgentId, CoreError, LlmEngineHook};
 use tx_core_cli::args::Global;
-use tx_core_cli::setup::{Failure, open};
+use tx_core_cli::setup::open;
 
 const USAGE: &str = "\
 usage: txi hook <Event>   (run by the hooks an engine wires) feed $TX_SESSION_ID's state; payload on stdin
@@ -26,49 +24,22 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         // Extra arguments are ignored, not refused: a hook must never fail over its own
-        // command line.
-        Some("hook") => match hook(args.get(1).cloned().unwrap_or_default()) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("txi: {error}");
-                ExitCode::from(1)
+        // command line. The engine of the session may be a plugin's program: it is started
+        // before the session lock is taken (`tx_plugin::engine::hook`).
+        Some("hook") => {
+            match tx_plugin::engine::hook(args.get(1).cloned().unwrap_or_default(), || {
+                open(&Global::default())
+            }) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("txi: {error}");
+                    ExitCode::from(1)
+                }
             }
-        },
+        }
         _ => {
             eprint!("{USAGE}");
             ExitCode::from(2)
         }
-    }
-}
-
-fn hook(name: String) -> Result<(), Failure> {
-    let Some(id) = std::env::var(SESSION_ID_ENV)
-        .ok()
-        .and_then(|raw| raw.parse::<AgentId>().ok())
-    else {
-        return Ok(());
-    };
-    let core = open(&Global::default())?;
-    let hook = LlmEngineHook {
-        name,
-        payload: read_payload(&mut std::io::stdin().lock()),
-        at: tx_core::events::now(),
-    };
-    match core.hook(&id, hook) {
-        Ok(_) | Err(CoreError::NotFound(_)) => Ok(()),
-        Err(error) => Err(error.into()),
-    }
-}
-
-/// A hook's payload, tolerantly: `{}` for none, unreadable, bad JSON or a non-object. The hook
-/// must never fail the agent over its own input.
-fn read_payload(stdin: &mut dyn std::io::Read) -> serde_json::Value {
-    let mut text = String::new();
-    if stdin.read_to_string(&mut text).is_err() {
-        return serde_json::json!({});
-    }
-    match serde_json::from_str(&text) {
-        Ok(value @ serde_json::Value::Object(_)) => value,
-        _ => serde_json::json!({}),
     }
 }

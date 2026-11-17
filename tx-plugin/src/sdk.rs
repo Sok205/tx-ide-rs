@@ -31,6 +31,8 @@ pub const RESPAWN_LINE: &str = "tx-update: respawn-agents";
 /// The entries of a plugin program that are not verbs.
 const PROBE: &str = "--tx-probe";
 const UPDATE: &str = "--tx-update";
+const ENGINE: &str = "--tx-engine";
+const HOOK: &str = "--tx-hook";
 
 static TX_BIN: OnceLock<PathBuf> = OnceLock::new();
 
@@ -74,6 +76,13 @@ pub fn tx_bin() -> PathBuf {
 /// - `--tx-update`: the core is opened and the updaters the hosted plugins registered run; with
 ///   `TX_PLUGIN_RETIRE=1` their `retire` runs instead, whether or not the plugin is enabled.
 ///   [`RESPAWN_LINE`] is printed when one asks for a respawn.
+/// - `--tx-engine`: the engine a hosted plugin registers is served on standard input and
+///   output, one request and one response per line, until the input ends (see
+///   [`crate::engine::serve`]). No core is opened.
+/// - `--tx-hook <Event>`: the hook entry of the hosted engine, what the hooks it wires run when
+///   its manifest names this program under `hook:` (see [`crate::engine::hook`]). It exits 0
+///   for a hook that is not tx's and 1, never more, when it fails: a hook must not block the
+///   agent.
 /// - `--tx-probe`: exit 0 at once.
 /// - anything else: `<program>: not a verb of this plugin: <first>`, exit 2.
 ///
@@ -115,6 +124,11 @@ fn run(program: &str, arguments: &[String], hosted: Vec<Box<dyn Plugin>>) -> u8 
             return 2;
         }
         Some(PROBE) => return 0,
+        Some(ENGINE) => crate::engine::serve_hosted(program, &global, &hosted),
+        Some(HOOK) => {
+            let event = arguments.get(first + 1).cloned().unwrap_or_default();
+            return hook_exit(crate::engine::hook_hosted(&global, hosted, event));
+        }
         Some(UPDATE) => {
             let retire = std::env::var_os(RETIRE_ENV).is_some_and(|value| value == "1");
             update(&global, hosted, retire)
@@ -127,6 +141,18 @@ fn run(program: &str, arguments: &[String], hosted: Vec<Box<dyn Plugin>>) -> u8 
             eprintln!("tx: {error}");
             2
         }
+        Err(error) => {
+            eprintln!("tx: {error}");
+            1
+        }
+    }
+}
+
+/// The exit code of the hook entry: 0, and 1 for a failure of any kind. Never 2, which the
+/// engine's CLI may read as "block the agent".
+fn hook_exit(result: Result<(), Failure>) -> u8 {
+    match result {
+        Ok(()) => 0,
         Err(error) => {
             eprintln!("tx: {error}");
             1
@@ -401,8 +427,8 @@ mod tests {
         for words in [
             &["other"][..],
             &["ls"],
+            // The plugin of these tests registers no engine to serve.
             &["--tx-engine"],
-            &["--tx-hook", "Stop"],
             &["--tx-event"],
             &["--nope"],
             &[],
@@ -447,6 +473,17 @@ mod tests {
             2,
             "nor one it does not declare"
         );
+    }
+
+    /// What is exit 2 for a verb (a `config.yaml` that does not read, say) is 1 for a hook.
+    /// (The entry itself reads the session's variable and standard input, so it is driven
+    /// through `engine::hook_in` in that module's tests, never from here.)
+    #[test]
+    fn the_hook_entry_exits_0_or_1_whatever_failed() {
+        assert_eq!(hook_exit(Ok(())), 0);
+        let misuse = Failure::Usage(crate::args::UsageError("config.yaml: bad".to_owned()));
+        assert_eq!(hook_exit(Err(misuse)), 1);
+        assert_eq!(hook_exit(Err(Failure::Environment("bad".to_owned()))), 1);
     }
 
     #[test]

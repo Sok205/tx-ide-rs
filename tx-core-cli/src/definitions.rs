@@ -149,7 +149,8 @@ pub fn bundle_warning(
 /// Prints `path:line: message` per problem and returns whether there were none; on success, one
 /// line saying what was checked. With an engine, it also prints what that engine carries on
 /// every launch that no flag removes, then per agent what it gets that its file does not say.
-/// The Claude baseline is shown unless the engine is Codex, which has none.
+/// The Claude baseline is shown unless the engine is Codex, which has none. Of an engine other
+/// than those two, tx knows nothing to add.
 pub fn check(
     directories: &Directories,
     profiles: &Profiles,
@@ -162,7 +163,7 @@ pub fn check(
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
     }
-    if engine != Some(EngineKind::Codex) {
+    if engine != Some(EngineKind::CODEX) {
         writeln!(out, "{}", baseline_line()).ok();
         for agent in &report.agent_definitions {
             if let Some(warning) = bundle_warning(directories, &agent.skills)? {
@@ -178,17 +179,19 @@ pub fn check(
     }
     if let Some(engine) = engine {
         let (forced, notes): (&[&str], fn(&_) -> Vec<String>) = match engine {
-            EngineKind::Claude => (
+            EngineKind::CLAUDE => (
                 &tx_engine_claude::FORCED,
                 tx_engine_claude::definition_notes,
             ),
-            EngineKind::Codex => (&tx_engine_codex::FORCED, tx_engine_codex::definition_notes),
+            EngineKind::CODEX => (&tx_engine_codex::FORCED, tx_engine_codex::definition_notes),
+            // Any other engine: nothing tx can name.
+            _ => (&[], |_| Vec::new()),
         };
         for item in forced {
             writeln!(out, "{engine}: always present: {item}").ok();
         }
         // Claude drops a `tools` name it does not know without a word: refuse it here.
-        if engine == EngineKind::Claude {
+        if engine == EngineKind::CLAUDE {
             let built_ins = crate::tools::claude_built_ins(directories)
                 .map_err(|message| DefinitionError::new(&directories.cache, None, message))?;
             for agent in &report.agent_definitions {
@@ -224,11 +227,11 @@ pub fn check(
         for agent in &report.agent_definitions {
             for (name, provider) in provided_skills(directories, &agent.skills)? {
                 let problem = match (engine, provider) {
-                    (EngineKind::Codex, provider) => Some(format!(
+                    (EngineKind::CODEX, provider) => Some(format!(
                         "skill {name:?} is provided by {}: not on codex",
                         provider.as_str()
                     )),
-                    (EngineKind::Claude, SkillProvider::ClaudeSynced)
+                    (EngineKind::CLAUDE, SkillProvider::ClaudeSynced)
                         if !tx_engine_claude::synced_skill_exists(&name) =>
                     {
                         Some(format!(

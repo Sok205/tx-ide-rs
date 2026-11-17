@@ -459,7 +459,7 @@ impl ClaudeAdapter {
 
 impl LlmEngine for ClaudeAdapter {
     fn kind(&self) -> EngineKind {
-        EngineKind::Claude
+        EngineKind::CLAUDE
     }
 
     fn ext_key(&self) -> &'static str {
@@ -1147,7 +1147,7 @@ mod tests {
 
     #[test]
     fn id_is_claude() {
-        assert_eq!(adapter().kind(), EngineKind::Claude);
+        assert_eq!(adapter().kind(), EngineKind::CLAUDE);
     }
 
     /// The adapter under test, with a fixed Claude home.
@@ -1766,7 +1766,7 @@ mod tests {
         assert_eq!(ClaudePlugin.id(), "engine-claude");
         core.plug(vec![Box::new(ClaudePlugin)], &PluginConfig::default())
             .unwrap();
-        assert_eq!(core.engine_kinds(), vec![EngineKind::Claude]);
+        assert_eq!(core.engine_kinds(), vec![EngineKind::CLAUDE]);
     }
 
     /// A record whose conversation `conversation` lives at `transcript`.

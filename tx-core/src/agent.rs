@@ -113,7 +113,8 @@ impl DefinitionChoice {
 pub struct Agent {
     pub id: AgentId,
     pub name: String,
-    /// The engine that runs it, one of the closed [`EngineKind`]s.
+    /// The kind of the engine that runs it: a name, whether or not an engine of that kind is
+    /// installed where the record is read.
     pub engine: EngineKind,
     /// The agent's worktree.
     pub working_directory: PathBuf,
@@ -163,17 +164,27 @@ pub enum RecordError {
     MissingVersion,
     #[error("{0} is not a finite number")]
     NonFiniteTime(&'static str),
-    /// The record names an engine that is not an [`EngineKind`]: written by hand or by a build
-    /// with another engine set. The store skips it and names it.
-    #[error("names engine {0:?}, which this build does not know (known: {known})", known = EngineKind::names())]
-    UnknownEngine(String),
+    /// The record's engine is not the name of an engine kind: written by hand. The store skips
+    /// it and names it.
+    #[error("engine kind {0:?} must match [a-z0-9-]{{1,31}}")]
+    InvalidEngineKind(String),
 }
 
+/// A record as it is written: `version` first, then the agent's own keys.
 #[derive(Serialize)]
-struct RecordOut<'a> {
+pub(crate) struct RecordOut<'a> {
     version: u64,
     #[serde(flatten)]
     session: &'a Agent,
+}
+
+impl<'a> RecordOut<'a> {
+    pub(crate) fn new(session: &'a Agent) -> Self {
+        Self {
+            version: RECORD_VERSION,
+            session,
+        }
+    }
 }
 
 impl Agent {
@@ -190,18 +201,18 @@ impl Agent {
         if self.last_activity_at.is_some_and(|at| !at.is_finite()) {
             return Err(RecordError::NonFiniteTime("last_activity_at"));
         }
-        let record = RecordOut {
-            version: RECORD_VERSION,
-            session: self,
-        };
-        let mut text = serde_json::to_string_pretty(&record)?;
+        let mut text = serde_json::to_string_pretty(&RecordOut::new(self))?;
         text.push('\n');
         Ok(text)
     }
 
     /// Version 2 only; any other version is `UnsupportedVersion`. Keys this build does not know land in `other`.
     pub fn from_json(text: &str) -> Result<Self, RecordError> {
-        let mut value: Map<String, Value> = serde_json::from_str(text)?;
+        Self::from_map(serde_json::from_str(text)?)
+    }
+
+    /// [`Self::from_json`] for a record that is already a JSON object.
+    pub(crate) fn from_map(mut value: Map<String, Value>) -> Result<Self, RecordError> {
         match value.remove("version") {
             None => return Err(RecordError::MissingVersion),
             Some(Value::Number(version)) if version.as_u64() == Some(RECORD_VERSION) => {}
@@ -216,7 +227,7 @@ impl Agent {
         if let Some(Value::String(engine)) = value.get("engine")
             && engine.parse::<EngineKind>().is_err()
         {
-            return Err(RecordError::UnknownEngine(engine.clone()));
+            return Err(RecordError::InvalidEngineKind(engine.clone()));
         }
         Ok(serde_json::from_value(Value::Object(value))?)
     }
@@ -255,7 +266,7 @@ mod tests {
         Agent {
             id: sid("b0000000-0000-4000-8000-000000000001"),
             name: "worker-1".into(),
-            engine: EngineKind::Claude,
+            engine: EngineKind::CLAUDE,
             working_directory: PathBuf::from("/tmp/w"),
             roles: vec!["COMMON".into(), "dev".into()],
             definition: None,
@@ -276,7 +287,7 @@ mod tests {
         Agent {
             id: sid("x"),
             name: "done".into(),
-            engine: EngineKind::Codex,
+            engine: EngineKind::CODEX,
             working_directory: PathBuf::from("/"),
             roles: vec![],
             definition: None,
@@ -395,7 +406,7 @@ mod tests {
     }
 
     /// A version-1 record is refused as an unsupported version before any of its fields is
-    /// looked at (a process record, an unknown engine included).
+    /// looked at (a process record, an invalid engine included).
     #[test]
     fn version_one_is_unsupported() {
         let error = Agent::from_json(VERSION_ONE).unwrap_err();
@@ -416,7 +427,7 @@ mod tests {
             Err(RecordError::UnsupportedVersion(1))
         ));
         assert!(matches!(
-            Agent::from_json(&VERSION_ONE.replace("\"claude\"", "\"kodex\"")),
+            Agent::from_json(&VERSION_ONE.replace("\"claude\"", "\"Bad Kind\"")),
             Err(RecordError::UnsupportedVersion(1))
         ));
         assert!(matches!(
@@ -454,17 +465,30 @@ mod tests {
         ));
     }
 
-    /// A version-2 record naming an engine this build lacks is refused by name, so the store
-    /// can skip it; one whose engine is not even a string is a plain JSON error.
+    /// A record naming any engine kind loads, whether or not this build has such an engine. One
+    /// whose engine is not the name of a kind is refused by name, so the store can skip it; one
+    /// whose engine is not even a string is a plain JSON error.
     #[test]
-    fn an_unknown_engine_is_refused_by_name() {
+    fn any_engine_kind_loads_and_an_invalid_one_is_refused_by_name() {
         let text = ended().to_json().unwrap().replace("\"codex\"", "\"kodex\"");
-        let error = Agent::from_json(&text).unwrap_err();
-        assert!(
-            matches!(&error, RecordError::UnknownEngine(engine) if engine == "kodex"),
-            "{error:?}"
-        );
-        assert!(error.to_string().contains("claude, codex"), "{error}");
+        let session = Agent::from_json(&text).unwrap();
+        assert_eq!(session.engine.as_str(), "kodex");
+        assert_eq!(session.to_json().unwrap(), text);
+        for bad in ["Bad Kind", "", "a_b"] {
+            let text = ended()
+                .to_json()
+                .unwrap()
+                .replace("\"codex\"", &format!("{bad:?}"));
+            let error = Agent::from_json(&text).unwrap_err();
+            assert!(
+                matches!(&error, RecordError::InvalidEngineKind(engine) if engine == bad),
+                "{error:?}"
+            );
+            assert_eq!(
+                error.to_string(),
+                format!("engine kind {bad:?} must match [a-z0-9-]{{1,31}}")
+            );
+        }
         let text = ended().to_json().unwrap().replace("\"codex\"", "7");
         assert!(matches!(Agent::from_json(&text), Err(RecordError::Json(_))));
     }
