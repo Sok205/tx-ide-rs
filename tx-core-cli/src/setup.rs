@@ -1,307 +1,39 @@
-//! What `tx` and `txi` share: the five directories, the core config, `config.yaml`, opening the core,
-//! and how a failure maps to an exit code.
+//! Opening the core for `tx` and `txi`: `tx_plugin::setup` with the plugins this binary links.
 
-use std::ffi::OsString;
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use tx_core::{CoreConfig, CoreError, Directories, PluginConfig, TxCore};
+use tx_core::{CoreConfig, PluginConfig, TxCore};
+pub use tx_plugin::setup::*;
 
-use crate::args::{self, Global};
-use crate::config::Config;
+use crate::args::Global;
 use crate::plugins;
 
-/// Renames all five directories at once, as `NVIM_APPNAME` does for nvim.
-pub const APPNAME_ENV: &str = "TX_APPNAME";
-pub const DEFAULT_APPNAME: &str = "tx-ide";
-/// Under the data dir the roles plugins ship (written by `tx update`); under the config dir
-/// the user's own.
-pub const ROLES_DIR: &str = "roles";
-/// Under each definition root: the skills, the shipped ones and then the user's.
-pub const SKILLS_DIR: &str = "skills";
-/// The internal binary the wired hooks run; installed next to `tx`.
-pub const TXI: &str = "txi";
-
-/// Why `run` stopped: usage is exit 2 with the usage text, everything else exit 1.
-#[derive(Debug)]
-pub enum Failure {
-    Usage(args::UsageError),
-    Core(CoreError),
-    Plugin(tx_core::PluginError),
-    Verb(tx_core::VerbError),
-    /// The environment names an invalid application or leaves a directory unresolvable.
-    Environment(String),
-    /// A definition file that cannot be read where a listing needs it.
-    Definition(tx_core::definitions::DefinitionError),
-    /// An update step, or the stamp it keeps, failed.
-    Update(tx_core::updates::UpdateError),
-}
-
-impl From<CoreError> for Failure {
-    fn from(error: CoreError) -> Self {
-        Failure::Core(error)
+fn linked() -> Linked {
+    Linked {
+        plugins: plugins::manifest(),
+        reserved: plugins::RESERVED
+            .iter()
+            .map(|verb| (*verb).to_owned())
+            .collect(),
     }
-}
-
-impl std::fmt::Display for Failure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Failure::Usage(error) => error.fmt(f),
-            Failure::Core(error) => error.fmt(f),
-            Failure::Plugin(error) => error.fmt(f),
-            Failure::Verb(error) => error.fmt(f),
-            Failure::Environment(text) => f.write_str(text),
-            Failure::Definition(error) => error.fmt(f),
-            Failure::Update(error) => error.fmt(f),
-        }
-    }
-}
-
-/// The process environment, as the resolution reads it: a variable set to the empty string
-/// counts as unset.
-pub fn process_environment(key: &str) -> Option<OsString> {
-    std::env::var_os(key).filter(|value| !value.is_empty())
-}
-
-/// `$TX_APPNAME` when set, else `tx-ide`; validated, since it becomes a path component.
-pub fn application_name(environment: &dyn Fn(&str) -> Option<OsString>) -> Result<String, Failure> {
-    let Some(name) = environment(APPNAME_ENV) else {
-        return Ok(DEFAULT_APPNAME.to_owned());
-    };
-    name.to_str()
-        .filter(|name| {
-            name.chars()
-                .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
-                && *name != "."
-                && *name != ".."
-        })
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            Failure::Environment(format!(
-                "{APPNAME_ENV} must match [A-Za-z0-9_.-]+, got {name:?}"
-            ))
-        })
-}
-
-/// Each directory: its flag, else what core exported into the session (`TX_*_DIR`), else the XDG
-/// variable joined with the application name, else the XDG default; made absolute so paths
-/// exported into sessions do not depend on the caller's cwd.
-pub fn directories(
-    global: &Global,
-    application: &str,
-    environment: &dyn Fn(&str) -> Option<OsString>,
-) -> Result<Directories, Failure> {
-    let home = || {
-        environment("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-    };
-    let resolve = |flag: &Option<PathBuf>, exported: &str, xdg: &str, default: &[&str]| {
-        flag.clone()
-            .or_else(|| environment(exported).map(PathBuf::from))
-            .or_else(|| environment(xdg).map(|base| PathBuf::from(base).join(application)))
-            .unwrap_or_else(|| {
-                default
-                    .iter()
-                    .fold(home(), |path, part| path.join(part))
-                    .join(application)
-            })
-    };
-    let run = match global
-        .run_dir
-        .clone()
-        .or_else(|| environment("TX_RUN_DIR").map(PathBuf::from))
-        .or_else(|| {
-            environment("XDG_RUNTIME_DIR").map(|base| PathBuf::from(base).join(application))
-        }) {
-        Some(run) => run,
-        None => {
-            let user = environment("USER")
-                .or_else(|| environment("LOGNAME"))
-                .ok_or_else(|| {
-                    Failure::Environment(
-                        "cannot name the run directory: set $USER, $XDG_RUNTIME_DIR or --run-dir"
-                            .to_owned(),
-                    )
-                })?;
-            let temporary = environment("TMPDIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/tmp"));
-            temporary.join(format!("{application}.{}", user.to_string_lossy()))
-        }
-    };
-    Ok(Directories {
-        config: absolute(resolve(
-            &global.config_dir,
-            "TX_CONFIG_DIR",
-            "XDG_CONFIG_HOME",
-            &[".config"],
-        )),
-        data: absolute(resolve(
-            &global.data_dir,
-            "TX_DATA_DIR",
-            "XDG_DATA_HOME",
-            &[".local", "share"],
-        )),
-        state: absolute(resolve(
-            &global.state_dir,
-            "TX_STATE_DIR",
-            "XDG_STATE_HOME",
-            &[".local", "state"],
-        )),
-        cache: absolute(resolve(
-            &global.cache_dir,
-            "TX_CACHE_DIR",
-            "XDG_CACHE_HOME",
-            &[".cache"],
-        )),
-        run: absolute(run),
-    })
-}
-
-/// Whether any directory was named on the command line.
-fn names_a_directory(global: &Global) -> bool {
-    [
-        &global.config_dir,
-        &global.data_dir,
-        &global.state_dir,
-        &global.cache_dir,
-        &global.run_dir,
-    ]
-    .iter()
-    .any(|flag| flag.is_some())
-}
-
-pub fn absolute(path: PathBuf) -> PathBuf {
-    if path.is_absolute() {
-        return path;
-    }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(&path))
-        .unwrap_or(path)
-}
-
-/// Without `--profile-dir`: the roles `tx update` materialises, then the user's own, which
-/// override them.
-fn default_profile_dirs(directories: &Directories) -> Vec<PathBuf> {
-    vec![
-        directories.data.join(ROLES_DIR),
-        directories.config.join(ROLES_DIR),
-    ]
-}
-
-/// Without `--skill-dir`: `skills/` under each definition root, the shipped ones and then the
-/// user's.
-fn default_skill_dirs(directories: &Directories) -> Vec<PathBuf> {
-    directories
-        .definition_roots()
-        .into_iter()
-        .map(|dir| dir.join(SKILLS_DIR))
-        .collect()
-}
-
-/// The core config from the globals and the process environment; touches no disk.
-pub fn core_config(global: &Global) -> Result<CoreConfig, Failure> {
-    Ok(core_config_in(global, &process_environment)?.caller_env(std::env::vars()))
-}
-
-pub fn core_config_in(
-    global: &Global,
-    environment: &dyn Fn(&str) -> Option<OsString>,
-) -> Result<CoreConfig, Failure> {
-    let application = application_name(environment)?;
-    let directories = directories(global, &application, environment)?;
-    let profile_dirs = if global.profile_dirs.is_empty() {
-        default_profile_dirs(&directories)
-    } else {
-        global.profile_dirs.clone()
-    };
-    let skill_dirs = if global.skill_dirs.is_empty() {
-        default_skill_dirs(&directories)
-    } else {
-        global.skill_dirs.clone()
-    };
-    let mut config = CoreConfig::new(directories)
-        .profile_dirs(profile_dirs)
-        .skill_dirs(skill_dirs)
-        // Every session carries the application name next to the `TX_*_DIR` core exports.
-        .env(APPNAME_ENV, application);
-    // The hooks a session's engine wires run `txi hook <Event>`, the `txi` installed next to
-    // this binary. Without a path to it the session still launches; it just stays `starting`.
-    if let Ok(exe) = std::env::current_exe() {
-        config = config.hook_command([
-            exe.with_file_name(TXI).to_string_lossy().into_owned(),
-            "hook".into(),
-        ]);
-    }
-    for (key, value) in &global.env {
-        config = config.env(key, value);
-    }
-    // An explicit socket wins; inside a session the exported one applies when no directory was
-    // named on the command line (the two were exported together).
-    let socket = global.socket.clone().map(absolute).or_else(|| {
-        if names_a_directory(global) {
-            return None;
-        }
-        environment(tx_core::core::TMUX_SOCKET_ENV).map(PathBuf::from)
-    });
-    if let Some(socket) = socket {
-        config = config.tmux_socket(socket);
-    }
-    Ok(config)
-}
-
-/// `--config FILE`, else `<config>/config.yaml`.
-pub fn config_file(global: &Global, config: &CoreConfig) -> PathBuf {
-    global
-        .config
-        .clone()
-        .map(absolute)
-        .unwrap_or_else(|| config.directories.config.join(crate::config::FILE_NAME))
-}
-
-/// The config file; reads it, creates nothing.
-pub fn load_config(global: &Global, config: &CoreConfig) -> Result<Config, Failure> {
-    crate::config::load(&config_file(global, config)).map_err(Failure::Usage)
 }
 
 /// The `plugins:` section of the config file, checked against the manifest.
 pub fn plugin_config(global: &Global, config: &CoreConfig) -> Result<PluginConfig, Failure> {
-    let path = config_file(global, config);
-    let file = crate::config::load(&path).map_err(Failure::Usage)?;
-    plugins::plugin_config(
-        file.plugins,
-        &plugins::known_ids(),
-        plugins::RESERVED,
-        &path,
-    )
-    .map_err(Failure::Usage)
+    tx_plugin::setup::plugin_config(global, config, &linked())
 }
 
 /// The plugin verbs this invocation would see, without opening the core (so `help` and an
 /// unknown verb never create a directory).
 pub fn preview_verbs(global: &Global) -> Result<Vec<Arc<dyn tx_core::Verb>>, Failure> {
-    let config = core_config(global)?;
-    let cfg = plugin_config(global, &config)?;
-    tx_core::plugin::preview_verbs(&plugins::manifest(), &cfg, &config).map_err(Failure::Plugin)
+    tx_plugin::setup::preview_verbs(global, &linked())
 }
 
 pub fn open(global: &Global) -> Result<TxCore, Failure> {
-    open_with(global, core_config(global)?)
+    tx_plugin::setup::open(global, linked())
 }
 
-/// Opens the core from an already resolved config, with its plugins. Records this build skips
-/// (those naming an engine it does not know) are skipped by every read; this names each on
-/// stderr, once per invocation.
+/// Opens the core from an already resolved config, with the plugins this binary links.
 pub fn open_with(global: &Global, config: CoreConfig) -> Result<TxCore, Failure> {
-    let cfg = plugin_config(global, &config)?;
-    let defaults = load_config(global, &config)?.agent;
-    let config = config.agent_defaults(defaults);
-    let mut core = TxCore::open(config)?;
-    core.plug(plugins::manifest(), &cfg)
-        .map_err(Failure::Plugin)?;
-    for (id, reason) in core.skipped_records()? {
-        eprintln!("tx: skipped record {id}: {reason}");
-    }
-    Ok(core)
+    tx_plugin::setup::open_with(global, config, linked())
 }

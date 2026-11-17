@@ -1,10 +1,11 @@
 //! Hand-rolled argument parsing: no dependency, exact error texts, exit code 2 on misuse.
 
-use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use tx_core::{CoreError, EngineKind};
+pub use tx_plugin::args::{Global, UsageError};
+use tx_plugin::args::{env_pair, parse_global};
 
 pub const USAGE: &str = "\
 usage: tx [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR] [--run-dir DIR] [--socket PATH]
@@ -106,29 +107,6 @@ The config file is <config>/config.yaml (--config FILE overrides); every key is 
   plugins:                      one entry per plugin id (see `plugins`)
     <id>: { enabled: true, settings: {...} }
 ";
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct UsageError(pub String);
-
-impl fmt::Display for UsageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Global {
-    pub config_dir: Option<PathBuf>,
-    pub data_dir: Option<PathBuf>,
-    pub state_dir: Option<PathBuf>,
-    pub cache_dir: Option<PathBuf>,
-    pub run_dir: Option<PathBuf>,
-    pub socket: Option<PathBuf>,
-    pub profile_dirs: Vec<PathBuf>,
-    pub skill_dirs: Vec<PathBuf>,
-    pub env: Vec<(String, String)>,
-    pub config: Option<PathBuf>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verb {
@@ -306,13 +284,6 @@ fn engine_args_words(text: &str) -> Result<Vec<String>, UsageError> {
     shlex::split(text).ok_or_else(|| usage(format!("--engine-args: unbalanced quotes in {text:?}")))
 }
 
-fn env_pair(text: &str) -> Result<(String, String), UsageError> {
-    text.split_once('=')
-        .filter(|(key, _)| !key.is_empty())
-        .map(|(key, value)| (key.to_owned(), value.to_owned()))
-        .ok_or_else(|| usage(format!("--env expects KEY=VALUE, got {text:?}")))
-}
-
 /// `--via NAME` goes verbatim into the envelope's `session="…"` attribute, so it may not be
 /// empty or hold a character that would end or forge the attribute or the tag.
 fn via_name(text: &str) -> Result<String, UsageError> {
@@ -358,55 +329,8 @@ impl<'a> Cursor<'a> {
 }
 
 pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
-    let mut cursor = Cursor { args, index: 0 };
-    let mut global = Global::default();
-    loop {
-        match cursor.peek() {
-            Some("--config-dir") => {
-                cursor.next();
-                global.config_dir = Some(cursor.value("--config-dir")?.into());
-            }
-            Some("--data-dir") => {
-                cursor.next();
-                global.data_dir = Some(cursor.value("--data-dir")?.into());
-            }
-            Some("--state-dir") => {
-                cursor.next();
-                global.state_dir = Some(cursor.value("--state-dir")?.into());
-            }
-            Some("--cache-dir") => {
-                cursor.next();
-                global.cache_dir = Some(cursor.value("--cache-dir")?.into());
-            }
-            Some("--run-dir") => {
-                cursor.next();
-                global.run_dir = Some(cursor.value("--run-dir")?.into());
-            }
-            Some("--socket") => {
-                cursor.next();
-                global.socket = Some(cursor.value("--socket")?.into());
-            }
-            Some("--profile-dir") => {
-                cursor.next();
-                global
-                    .profile_dirs
-                    .push(cursor.value("--profile-dir")?.into());
-            }
-            Some("--skill-dir") => {
-                cursor.next();
-                global.skill_dirs.push(cursor.value("--skill-dir")?.into());
-            }
-            Some("--env") => {
-                cursor.next();
-                global.env.push(env_pair(cursor.value("--env")?)?);
-            }
-            Some("--config") => {
-                cursor.next();
-                global.config = Some(cursor.value("--config")?.into());
-            }
-            _ => break,
-        }
-    }
+    let (global, index) = parse_global(args)?;
+    let mut cursor = Cursor { args, index };
     let verb = match cursor.next() {
         None => return Err(usage("missing verb")),
         Some("help" | "--help" | "-h") => Verb::Help,
