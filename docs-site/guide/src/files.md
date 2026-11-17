@@ -49,11 +49,13 @@ line for every plugin program started.
 
 **config** holds what you write by hand: `config.yaml` (the defaults for `tx create` in its
 `agent:` block, the build output `tx gc` may delete in `worktree:`, and which plugins are on,
-with their settings, in `plugins:`), `roles/` (your own
+with their settings, in `plugins:`; `tx setup` writes it once, when there is none, and nothing
+writes it after that), `roles/` (your own
 roles, never pruned, overriding a shipped role of the same name), `definitions/` (your own
 `agents/` and `skills/`, each overriding a shipped one of the same name), `layouts/` (one `<name>.yaml` per
 saved pane layout, opened by `tx layout open <name>`; `tx layout path <name>` prints the file,
-and `tx layout save <name>` writes one from a view) and `plugins/` (your own plugins, one
+and `tx layout save <name>` writes one from a view), `presets/` (your own presets, one
+`<name>.yaml` each: see "Presets and the selection" below) and `plugins/` (your own plugins, one
 directory `<id>/` with a `plugin.yaml` each: the second plugin root, which tx reads and never
 writes).
 
@@ -67,7 +69,7 @@ worktrees/<repo-key>/…      the agents' git worktrees; `tx gc` empties their b
 plugins/<id>/               each plugin's own data (artifacts, home, assistant, tutor, …)
 shipped/<id>/               the plugins tx ships, each a directory with a `plugin.yaml`: the
                             first plugin root, written by `tx update --bundles`
-shipped/.selection          which plugins are laid out there, when the installer chose
+shipped/.selection          which plugins are laid out there, written by `tx setup` alone
 shipped/.stamp              the tx and the build they were laid out from
 roles/ definitions/         core's roles, and its agent definitions, skills and MCP servers
 bin/ keys/ conf/ nvim/      helper scripts, key fragments, the theme, the nvim runtime
@@ -85,6 +87,51 @@ neither stops the update before anything is written, and names the package to bu
 are the ids under `plugins` in `.selection` (`{"preset": "full", "plugins": ["mockup", …]}`,
 `"preset": null` for an explicit list); without that file, every bundle of `DIR`. `tx update`
 only reads it.
+
+**Presets and the selection.** `tx setup --bundles DIR [--preset NAME | --plugins a,b,c |
+--upgrade] [--list]` chooses among the bundles of `DIR` that read (one that does not is named and
+left out) and is the only writer of `.selection`. A preset is a set of tiers and ids. Three
+ship: `headless` (the plugins of tier `core`), `ide` (`core` and `ide`) and `full` (all three
+tiers). Yours are `<config>/presets/<name>.yaml`, and one with a shipped name replaces it:
+
+```yaml
+description: The IDE without the timeline and the graph
+tiers: [core, ide]
+plugins: [tour]          # added
+exclude: [timeline, graph]
+```
+
+Every key is optional and an unknown key makes the file no preset (it is named on stderr). A
+preset selects exactly its tiers and `plugins` without its `exclude`; an id under `plugins` that
+has no bundle in `DIR` is an error. `--plugins a,b,c` selects by id and adds, transitively, what
+each plugin `requires` when that has a bundle, saying `tx setup: <a> requires <b>: added` on
+stderr; a requirement without a bundle is only named. `--list` prints
+`<name><TAB><ids separated by spaces>` per preset, the shipped ones first, and writes nothing.
+
+With none of these flags, and stdin and stderr both terminals, it shows a checklist on stderr:
+one row per bundle (a tick box, the id, the tier, the description, and `needs <program> (not
+found)` for each program of its `needs` that is not on `PATH`) and a last row offering to link
+`~/.config/nvim` and `~/.tmux.conf` to the checkout, unticked. It starts with `full` ticked.
+`j`/`k` or the arrows move, `g` and `G` jump to the first and last row, space toggles a row
+(ticking a plugin ticks what it requires, unticking one unticks what requires it), `1`, `2` and
+`3` tick exactly `headless`, `ide` and `full`, Enter accepts, and `q` or Escape leaves without
+writing anything (exit 1). The header names the preset the ticks equal, or `custom`. Without a
+terminal the selection is `full`.
+
+The result is recorded as `{"preset": <name>, "plugins": [<the resolved ids, sorted>]}`, with
+`"preset": null` for `--plugins` and for ticks that are no preset's exact set; of two presets
+that hold the same plugins the checklist records the one last picked with `1`, `2` or `3`. It is
+also printed, for the installer: `plugin<TAB><id>` per id, then `option<TAB>link-dotfiles<TAB>true`
+when that row was ticked. And when `<config>/config.yaml` does not exist it is written: the
+`agent:` and `worktree:` defaults of the repository's `config/tx-ide/config.yaml`, then
+`plugins:` with one entry per selected plugin, `<id>: { enabled: true }`, or with the `settings`
+of its manifest spelled out. A file that is there is never opened for writing.
+
+`--upgrade` asks nothing and never writes `config.yaml`. It resolves the recorded preset again
+against `DIR`, so a plugin new in a later version arrives with `full`; a recorded list
+(`"preset": null`) is kept, without the ids that have no bundle any more, each named on stderr;
+an install that recorded nothing becomes `full`. A recorded preset whose file is gone does not
+stop it: its plugins are kept as a list and `"preset": null` is recorded.
 
 Each file goes in through a temporary file and a rename, so a program that is running keeps the
 file it started from, and a file that did not change is left alone. A file a plugin no longer

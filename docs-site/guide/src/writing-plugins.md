@@ -162,7 +162,19 @@ This version reads, checks and acts on every section: `verbs` (above), `engine` 
 engine](#an-engine)), `on-event` (see [An event sink](#an-event-sink-on-event)), and `update` and
 `resources`, which `tx update` runs and publishes (see [Files](files.md)). `tier`, `requires`,
 `needs` and `settings` are for the installer and `tx check`; nothing is refused at run time
-because of them.
+because of them. `tx setup` (see [Files](files.md)) is what uses them when the shipped plugins
+are chosen:
+
+- `tier` is what a preset selects: `headless` takes tier `core`, `ide` takes `core` and `ide`,
+  `full` all three, and a preset of your own names its tiers.
+- `requires`: `tx setup --plugins` and a tick in its checklist add the plugins a plugin requires,
+  and unticking one unticks what requires it. A preset is exact and adds nothing. `tx check`
+  reports a requirement that is not installed or is disabled.
+- `needs`: the checklist shows `needs <program> (not found)` for a program that is not on `PATH`,
+  and `tx check` warns about it. The plugin can still be selected.
+- `settings` are written into a new `config.yaml`, under the plugin's entry, when `tx setup`
+  seeds the file. They are read nowhere else: the plugin's own code holds its defaults, and the
+  manifest spells them out for whoever opens the file.
 
 Rules checked when the manifest is read:
 

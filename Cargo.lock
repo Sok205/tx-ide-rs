@@ -1976,6 +1976,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-setup"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "tempfile",
+ "tx-core",
+ "tx-plugin",
+]
+
+[[package]]
 name = "tx-spawn"
 version = "0.1.0"
 dependencies = [

@@ -154,8 +154,9 @@ definitions, the tx skills (`tx-sessions`, `tx-artifacts`, `tx-diff-review`, `tx
 
 ## Configuration
 
-One file, `~/.config/tx-ide/config.yaml` (`tx help` prints the path in use). `install` writes it
-once with every default spelled out; after that it is yours. Every key is optional:
+One file, `~/.config/tx-ide/config.yaml` (`tx help` prints the path in use). It is written
+once, when there is none, with every default spelled out; after that it is yours. Every key is
+optional:
 
 ```yaml
 agent:                         # defaults for `tx create`; a flag given replaces its key
@@ -177,6 +178,15 @@ plugins:                       # one entry per plugin (`tx plugins`); a missing 
   home-themes:
     settings: { theme: koi }                    # the home's backdrop; `b` in the home picks another
 ```
+
+The `plugins:` block of a new file comes from `tx setup`, the verb that chooses which shipped
+plugins an install takes: it lists the plugins that were selected, one `<id>: { enabled: true }`
+each, with the default settings a plugin's `plugin.yaml` declares spelled out under it.
+`tx setup --bundles <repo>/plugins --preset headless | ide | full` selects by preset (the plugins
+of tier `core`; `core` and `ide`; all of them), `--plugins a,b,c` by id, and on a terminal with
+neither it shows a checklist. `--list` prints every preset with its plugins, among them your own
+in `~/.config/tx-ide/presets/<name>.yaml`. The file that exists is never written again: a plugin
+selected later has no entry, which means on.
 
 `model` applies only to `agent.engine`: with `--engine codex`, Codex runs its own default.
 `engine-claude` also takes `claude_settings`, Claude settings merged into every launch.

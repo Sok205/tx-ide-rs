@@ -49,6 +49,10 @@ git clone <this-repo> ~/tx-ide-rs
 tx ui attach                    # the IDE: lands on the home screen
 ```
 
+Which of the shipped plugins an install takes is a preset: `headless` (what an agent needs
+without the IDE), `ide` or `full`, or one of your own, resolved and recorded by `tx setup` (see
+[Files](files.md)).
+
 The install script is idempotent; a second run finds nothing to do. Run `tx update` after you
 rebuild `tx`: it runs the pending update steps (see [Files](files.md)), then each plugin's
 updater, which rewrites the tmux configuration: it names the binary's path.

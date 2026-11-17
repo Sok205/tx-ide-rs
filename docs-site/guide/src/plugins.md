@@ -181,6 +181,14 @@ name>`, a shell `{}`, and each pane's `split`,
 `of` and `size` (always `N%`) come from the panes' rectangles, so the layout keeps its proportions
 on any terminal size. No model or effort is written; add them by hand.
 
+**`setup`**: `setup --bundles DIR [--preset NAME | --plugins a,b,c | --upgrade] [--list]` chooses
+which of the shipped plugins an install takes: by preset (`headless`, `ide`, `full`, or one of
+yours in `<config>/presets/`), by id, or on a terminal from a checklist. It records the result in
+`<data>/shipped/.selection`, which `tx update --bundles` lays out, and seeds `config.yaml` when
+there is none (see [Files and directories](files.md)). It exists only as a bundle
+(`plugins/setup/plugin.yaml`, program `tx-setup`): it is not compiled into `tx`, so that the
+checklist's ratatui stays out of it, and it opens no core. No key.
+
 ## Retired ids
 
 `config.yaml` entries for these are skipped, so an old file keeps loading:
