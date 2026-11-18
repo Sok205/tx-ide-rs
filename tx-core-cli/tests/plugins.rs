@@ -321,6 +321,40 @@ fn a_plugin_program_is_told_which_core_and_which_plugin_it_runs_for() {
     let other = cli.dir.path().join("other.yaml");
     std::fs::write(&other, "plugins:\n  probe:\n    settings: [1, 2]\n").unwrap();
     let state = cli.state();
+    // What `tx` added for the program: of the variables below, in the order `tx` gives them,
+    // the ones the `tx` of this sandbox does not hold itself, then the plugin's own five. That
+    // `tx` holds what this test's process holds (inside a tx session, some of them) as
+    // `command` hands it on: less what it takes out.
+    let handed_on = cli.command(&[]);
+    let held = |name: &str| match handed_on.get_envs().find(|(key, _)| *key == name) {
+        Some((_, value)) => value.is_some_and(|value| !value.is_empty()),
+        None => std::env::var_os(name).is_some_and(|value| !value.is_empty()),
+    };
+    let given: Vec<&str> = [
+        "TX_BIN",
+        "TX_APPNAME",
+        "TX_CONFIG_DIR",
+        "TX_DATA_DIR",
+        "TX_STATE_DIR",
+        "TX_CACHE_DIR",
+        "TX_RUN_DIR",
+        "TX_TMUX_SOCKET",
+        "TX_PLUGIN_PATH",
+        "TX_PROFILE_PATH",
+        "TX_SKILL_PATH",
+        "TX_CONFIG_FILE",
+        "TX_SESSION_ENV",
+    ]
+    .into_iter()
+    .filter(|name| !held(name))
+    .chain([
+        "TX_PLUGIN_API",
+        "TX_PLUGIN_ID",
+        "TX_PLUGIN_DIR",
+        "TX_PLUGIN_DATA_DIR",
+        "TX_PLUGIN_SETTINGS",
+    ])
+    .collect();
     let output = cli.ok(&[
         "--config",
         other.to_str().unwrap(),
@@ -351,6 +385,7 @@ fn a_plugin_program_is_told_which_core_and_which_plugin_it_runs_for() {
             state.join("plugins/probe").display()
         ),
         format!("TX_PLUGIN_DIR={}", directory.display()),
+        format!("TX_PLUGIN_GIVEN={}", given.join(":")),
         "TX_PLUGIN_ID=probe".to_owned(),
         format!(
             "TX_PLUGIN_PATH={}:{}",

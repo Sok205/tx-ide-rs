@@ -26,31 +26,57 @@ that creates, ends or changes an agent or a view goes through `tx`, or the recor
 
 ## `tx update`: composing the configuration
 
-The `ide` plugin (in `tx-client`) registers an updater, which `tx update` runs after the core's
-update steps. It materializes the core's roles and
-every active plugin's resources under the data directory (`bin/` and `keys/` executable, `conf/`,
-`roles/`, `definitions/` and the nvim runtime plain) and writes `<data>/tmux.conf`. That file sets three server
-options, `@tx-bin` (the `tx` binary), `@tx-data` and `@tx-arguments` (the flags every `tx` a key
-runs must carry), sources `conf/tmux.conf` (theme and status line), runs `keys/ide.tmux` (pane
-navigation, paging, pane-border look) and then every other active plugin's `keys/<id>.tmux`.
+Core writes a two-line default `<data>/tmux.conf` the first time it opens (`exit-empty`, the
+history limit) and never looks at it again. The IDE's configuration is put there by `tx update`,
+in two steps.
+
+**`tx update` publishes the resources.** After the core's update steps it writes, under the data
+directory, core's roles and definitions and every active plugin's resources (`bin/` and `keys/`
+executable, `conf/`, `roles/`, `definitions/` and the nvim runtime plain). Files under those
+directories that no active plugin provides are deleted, so the installed tree always matches the
+enabled plugins and `tx` needs nothing from the source tree at run time. This step is `tx`'s own:
+an install without the `ide` plugin has its roles and definitions all the same.
+
+**The `ide` plugin composes the server config.** `ide` (`plugins/ide`) has an updater, which
+`tx update` runs after the publish: as the program `tx-ide --tx-update` where the plugin is
+installed as a bundle, inside `tx` where it is not. It writes `<data>/tmux.conf` from the key
+fragments it finds under `<data>/keys`. That file sets three server
+options, `@tx-bin` (the `tx` binary, never a plugin's program), `@tx-data` and `@tx-arguments`
+(the flags every `tx` a key runs must carry), puts `TX_BIN` in the server's environment (what a
+plugin program started from a key or a pane runs `tx` with), sources `conf/tmux.conf` (theme and
+status line), runs `keys/ide.tmux` (pane navigation, paging, pane-border look) and then every
+other `keys/<id>.tmux`, by name.
 Each fragment is run through the interpreter its first line names (`#!/usr/bin/env bash` gives
 `run-shell "/usr/bin/env bash <data>/keys/ide.tmux"`), never executed as a file: on macOS the first
 direct run of a freshly written executable is assessed by the system one file at a time, so the
 twelve fragments of a first server start after `tx update` cost seconds; through an interpreter
 they cost milliseconds. A fragment without a `#!` first line is run as a file.
 
-Files under those directories that no active plugin provides are deleted, so the installed tree
-always matches the enabled plugins and `tx` needs nothing from the source tree at run time.
-Because paths are spliced into tmux config lines, `tx update` refuses a binary or data path
+Because paths are spliced into tmux config lines, the updater refuses a binary or data path
 containing whitespace, quotes, `$`, `#`, `;`, a backslash or a backtick.
 
 **Reconciliation.** Each key fragment declares, in a comment near its top, the prefix keys it
 binds (`# keys: m`) and any global options or hooks it sets (`# unset: …`, `# unhook: …`).
-`tx update` records these in `<data>/keys/.installed`. On a running server it compares the
+The updater records these in `<data>/keys/.installed`. On a running server it compares the
 previous record with the new one, unbinds keys, clears options and removes hooks that a now
 disabled plugin declared, re-sources the configuration and prints `reloaded`. Disabling a plugin
-in `plugins.yaml` and re-running `tx update` therefore removes its keys live. A server set up
+in `config.yaml` and re-running `tx update` therefore removes its keys live. A server set up
 before `.installed` existed gets a hint to restart.
+
+**Retiring.** When `ide` itself is disabled, or leaves the shipped plugins, nothing composes the
+config any more, so `tx update` has the plugin take it back: it runs the same program with
+`TX_PLUGIN_RETIRE=1`. If `<data>/keys/.installed` exists, the retire writes core's default
+`tmux.conf` back, unbinds, unsets and unhooks in a running server everything the record lists
+(whichever plugin's fragment declared it), unsets what the composed config itself had set
+(`@tx-bin`, `@tx-data`, `@tx-arguments`, and `TX_BIN` in the server's environment), loads the new
+config, removes the record, and prints `ide: tmux.conf reset to the core default`. With a server
+running it adds `ide: restart the server to drop the rest of the IDE's look`: the theme, the
+status line and the keys outside the prefix table were set without being declared, and stay
+until the server restarts. Without the record the retire does and prints nothing, so the next
+`tx update` is silent. A server that lived through a retire is a plain core server again:
+enabling `ide` and updating composes the config anew and prints `reloaded`, without the hint to
+restart. While `ide` is also still compiled into `tx`, a shipped `ide` that left the selection
+is retired and then goes on from there: the same update composes the config again.
 
 ## Views
 

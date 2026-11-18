@@ -124,6 +124,101 @@ fn config_disabling(id: &str) -> String {
     format!("plugins:\n  {id}: {{ enabled: false }}\n")
 }
 
+/// The one row of `ide` in `tx plugins --json`.
+fn ide_row(cli: &Cli) -> serde_json::Value {
+    let rows: serde_json::Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let found: Vec<&serde_json::Value> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == "ide")
+        .collect();
+    assert_eq!(found.len(), 1, "{rows}");
+    found[0].clone()
+}
+
+/// What `tx help` says of the plugin's verbs, in its order (by name): the same lines whichever
+/// way the plugin runs.
+const HELP_LINES: [&str; 2] = [
+    "  _resource NAME   print a plugin resource (internal)",
+    "  ui attach | view <open|ls|close>   enter the IDE's server; manage views",
+];
+
+/// The lines of `tx help` that start with one of the plugin's verbs.
+fn help_lines(cli: &Cli) -> Vec<String> {
+    cli.ok(&["help"])
+        .lines()
+        .filter(|line| line.starts_with("  ui ") || line.starts_with("  _resource "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `tx <args>` with the plugin programs it starts traced: its output, and the trace.
+fn traced(cli: &Cli, args: &[&str]) -> (String, String) {
+    let trace = cli.dir.path().join("trace");
+    let _ = std::fs::remove_file(&trace);
+    let output = cli.run(args, &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())], "");
+    assert!(
+        output.status.success(),
+        "tx {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        std::fs::read_to_string(&trace).unwrap_or_default(),
+    )
+}
+
+#[test]
+fn the_ide_bundle_is_the_shipped_plugin_and_its_verbs_and_updater_are_its_program() {
+    let cli = Cli::new();
+    let bundle = common::shipped().join("ide");
+    let program = bundle.join("bin/tx-ide");
+    let row = ide_row(&cli);
+    assert_eq!(row["origin"], "shipped");
+    assert_eq!(row["directory"], bundle.to_str().unwrap());
+    assert_eq!(row["tier"], "ide");
+    assert_eq!(row["requires"], serde_json::json!([]));
+    assert_eq!(row["needs"], serde_json::json!(["tmux", "nvim"]));
+    assert_eq!(row["verbs"], serde_json::json!(["ui", "_resource"]));
+    assert_eq!(help_lines(&cli), HELP_LINES);
+    // A verb is the program, once; so is the updater.
+    let (listed, trace) = traced(&cli, &["ui", "view", "ls"]);
+    assert_eq!(listed, "");
+    assert_eq!(trace, format!("verb\tide\t{}\n", program.display()));
+    let (out, trace) = traced(&cli, &["update"]);
+    assert_eq!(out, updated(&[&cli.conf().display().to_string()]));
+    assert_eq!(trace, format!("update\tide\t{}\n", program.display()));
+    assert_eq!(
+        std::fs::read_to_string(cli.conf()).unwrap(),
+        expected_conf(&cli),
+        "the program names the tx binary, not itself"
+    );
+}
+
+/// Without the bundle the plugin runs compiled into `tx`, complete.
+#[test]
+fn without_the_bundle_ide_runs_compiled_into_tx() {
+    let cli = Cli::compiled_in();
+    assert_eq!(ide_row(&cli)["origin"], "built-in");
+    assert_eq!(help_lines(&cli), HELP_LINES);
+    let (listed, trace) = traced(&cli, &["ui", "view", "ls"]);
+    assert_eq!(listed, "");
+    assert_eq!(trace, "", "no plugin program was started");
+    let (out, trace) = traced(&cli, &["update"]);
+    assert_eq!(out, updated(&[&cli.conf().display().to_string()]));
+    assert_eq!(trace, "", "the updater ran in tx");
+    let conf = std::fs::read_to_string(cli.conf()).unwrap();
+    assert!(
+        conf.contains(&format!("set -g @tx-bin \"{}\"\n", exe().display())),
+        "{conf}"
+    );
+    assert_eq!(
+        cli.ok(&["_resource", "keys/ide.tmux"]).as_bytes(),
+        include_bytes!("../../plugins/ide/keys/ide.tmux")
+    );
+}
+
 #[test]
 fn update_materialises_resources() {
     let cli = Cli::new();
@@ -485,6 +580,211 @@ fn disabling_labels_unsets_border_format_on_reload() {
     );
 }
 
+/// What a retire prints first, and what it adds when a server runs.
+const RESET: &str = "tmux.conf reset to the core default";
+const RESTART_HINT: &str = "restart the server to drop the rest of the IDE's look";
+
+/// Disabling `ide` retires it: its `update` program is told to take the config back.
+#[test]
+fn disabling_ide_gives_the_config_back_to_core() {
+    let cli = Cli::new();
+    cli.ok(&["update"]);
+    assert!(cli.state().join("keys/.installed").is_file());
+
+    cli.write_yaml(&config_disabling("ide"));
+    let (out, trace) = traced(&cli, &["update"]);
+    assert_eq!(out, updated(&[RESET]), "no server runs: nothing to restart");
+    assert_eq!(
+        trace,
+        format!(
+            "update\tide\t{}\n",
+            common::shipped().join("ide/bin/tx-ide").display()
+        ),
+        "the retire is the plugin's update program"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cli.conf()).unwrap(),
+        tx_core::core::DEFAULT_TMUX_CONF
+    );
+    assert!(!cli.state().join("keys/.installed").exists());
+    // The ide's own resources went with the publish; the other plugins' are still there.
+    assert!(!cli.state().join("conf/tmux.conf").exists());
+    assert!(!cli.state().join("keys/ide.tmux").exists());
+    assert!(cli.state().join("keys/kill.tmux").is_file());
+
+    // Safe to repeat: nothing is left to take back, and a config edited since stays.
+    std::fs::write(cli.conf(), "# my own\n").unwrap();
+    assert_eq!(cli.ok(&["update"]), updated(&[]));
+    assert_eq!(std::fs::read_to_string(cli.conf()).unwrap(), "# my own\n");
+
+    std::fs::remove_file(cli.state().join("config.yaml")).unwrap();
+    assert_eq!(
+        cli.ok(&["update"]),
+        updated(&[&cli.conf().display().to_string()])
+    );
+    assert_eq!(
+        std::fs::read_to_string(cli.conf()).unwrap(),
+        expected_conf(&cli)
+    );
+    assert!(cli.state().join("keys/.installed").is_file());
+}
+
+/// In a running server a retire unbinds every key, unsets every option and removes every hook
+/// the record lists, whichever plugin's fragment declared it: no config runs the fragments any
+/// more.
+#[test]
+fn disabling_ide_takes_the_keys_out_of_a_running_server_and_enabling_it_brings_them_back() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.ok(&["update"]);
+    start_server(&cli);
+    let bound = |key: &str| cli.tmux_out(&["list-keys", "-T", "prefix", key]);
+
+    cli.write_yaml(&config_disabling("ide"));
+    assert_eq!(cli.ok(&["update"]), updated(&[RESET, RESTART_HINT]));
+    assert_eq!(
+        std::fs::read_to_string(cli.conf()).unwrap(),
+        tx_core::core::DEFAULT_TMUX_CONF
+    );
+    assert!(!cli.state().join("keys/.installed").exists());
+    for (key, command) in [
+        ("t", "pick"),
+        ("m", "_home-open"),
+        ("X", "tmux-kill-tx-session"),
+        ("e", "tmux-edit-tx-session"),
+        ("s", "_relabel"),
+    ] {
+        assert!(!bound(key).contains(command), "{key}: {:?}", bound(key));
+    }
+    let format = cli.tmux_out(&["show-option", "-gv", "pane-border-format"]);
+    assert!(!format.contains("_pane-label"), "{format:?}");
+    let hook = cli.tmux_out(&["show-hooks", "-g", "after-new-window"]);
+    assert!(!hook.contains("@tx-view"), "{hook:?}");
+    // What the composed config's own first lines set went with the keys.
+    for option in ["@tx-bin", "@tx-data", "@tx-arguments"] {
+        assert_eq!(
+            cli.tmux_out(&["show-option", "-gqv", option]),
+            "",
+            "{option}"
+        );
+    }
+    let environment = cli.tmux_out(&["show-environment", "-g"]);
+    assert!(
+        !environment.lines().any(|line| line.starts_with("TX_BIN=")),
+        "{environment}"
+    );
+    // The rest of the look is the server's until it restarts.
+    assert_eq!(
+        cli.tmux_out(&["show-option", "-gv", "pane-border-lines"]),
+        "heavy"
+    );
+    assert_eq!(cli.ok(&["update"]), updated(&[]), "retired once");
+
+    // The server is a plain core server again: no hint about bindings that were never recorded,
+    // which would be false here (every recorded one was removed).
+    std::fs::remove_file(cli.state().join("config.yaml")).unwrap();
+    assert_eq!(
+        cli.ok(&["update"]),
+        updated(&[&cli.conf().display().to_string(), "reloaded"])
+    );
+    assert!(
+        cli.tmux_out(&["show-option", "-gqv", "@tx-bin"])
+            .ends_with("/tx"),
+        "the config names the tx binary again"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cli.conf()).unwrap(),
+        expected_conf(&cli)
+    );
+    assert!(
+        cli.wait_for(5, || {
+            bound("t").contains("pick")
+                && bound("m").contains("_home-open")
+                && bound("X").contains("tmux-kill-tx-session")
+                && cli
+                    .tmux_out(&["show-option", "-gv", "pane-border-format"])
+                    .contains("_pane-label")
+        }),
+        "the keys never came back"
+    );
+}
+
+/// `tx` on the default plugin roots of `cli`'s directories (`<data>/shipped`, then
+/// `<config>/plugins`), with nothing of the session the tests run in: the shipped plugins are
+/// then what `tx update --bundles` laid out.
+fn shipped_tx(cli: &Cli, args: &[&str]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
+    command
+        .args(common::directory_flags(&cli.state()))
+        .args(args);
+    for variable in [
+        "TMUX",
+        "TX_SESSION_ID",
+        "TX_PLUGIN_PATH",
+        "TX_PROFILE_PATH",
+        "TX_SKILL_PATH",
+        "TX_CONFIG_FILE",
+        "TX_SESSION_ENV",
+        "TX_PLUGIN_TRACE",
+        "TX_PLUGIN_RETIRE",
+    ] {
+        command.env_remove(variable);
+    }
+    command.output().unwrap()
+}
+
+/// A shipped `ide` that leaves the selection is retired before its directory is removed.
+#[test]
+fn an_ide_that_left_the_selection_is_retired_before_it_is_removed() {
+    let cli = Cli::compiled_in();
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let bundles = workspace.join("plugins");
+    let binaries = Path::new(env!("CARGO_BIN_EXE_tx")).parent().unwrap();
+    let update = || {
+        let output = shipped_tx(
+            &cli,
+            &[
+                "update",
+                "--bundles",
+                bundles.to_str().unwrap(),
+                "--binaries",
+                binaries.to_str().unwrap(),
+                "--link",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let out = update();
+    assert!(out.contains("shipped: ide\n"), "{out}");
+    let shipped = cli.state().join("shipped");
+    assert!(shipped.join("ide/plugin.yaml").exists());
+    assert!(cli.state().join("keys/.installed").is_file());
+
+    let others: Vec<String> = std::fs::read_dir(&bundles)
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.path().join("plugin.yaml").is_file())
+        .map(|entry| entry.file_name().into_string().unwrap())
+        .filter(|id| id != "ide")
+        .collect();
+    std::fs::write(
+        shipped.join(".selection"),
+        serde_json::json!({ "preset": null, "plugins": others }).to_string(),
+    )
+    .unwrap();
+    let out = update();
+    assert!(
+        out.starts_with(&format!("ide: {RESET}\nshipped: ide removed\n")),
+        "{out}"
+    );
+    assert!(!shipped.join("ide").exists());
+}
+
 #[test]
 fn legacy_hint_when_no_installed_file() {
     require_tmux!();
@@ -574,26 +874,46 @@ fn no_reload_and_no_hint_without_a_server() {
 }
 
 #[test]
-fn resource_verb_prints_bytes_and_fails_on_unknown() {
+fn resource_verb_prints_the_published_file_and_fails_on_unknown() {
     let cli = Cli::new();
+    // Nothing is published before the first update.
+    assert_eq!(
+        cli.fails(&["_resource", "conf/tmux.conf"], 1),
+        "tx _resource: no such resource: conf/tmux.conf\n"
+    );
+    cli.ok(&["update"]);
     let output = cli.run(&["_resource", "conf/tmux.conf"], &[], "");
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(
         output.stdout,
-        include_bytes!("../../tx-client/conf/tmux.conf")
+        include_bytes!("../../plugins/ide/conf/tmux.conf")
     );
     let output = cli.run(&["_resource", "bin/tmux-nav"], &[], "");
     assert!(output.stdout.starts_with(b"#!/usr/bin/env bash"));
     assert!(!String::from_utf8_lossy(&output.stdout).contains("@tx-ide-nav-keys"));
-    let output = cli.run(&["_resource", "nope/x"], &[], "");
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    // A role is published under `<data>/roles`; another plugin's resource is printed as well.
     assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "tx _resource: no such resource: nope/x\n"
+        cli.ok(&["_resource", "agents/COMMON.md"]),
+        std::fs::read_to_string(cli.state().join("roles/COMMON.md")).unwrap()
     );
+    assert!(
+        cli.ok(&["_resource", "keys/kill.tmux"])
+            .contains("tmux-kill-tx-session")
+    );
+    // Not a resource's name, or one nothing published: the config next to `keys/` stays out of
+    // reach.
+    for name in ["nope/x", "keys/nope.tmux", "tmux.conf", "keys/../tmux.conf"] {
+        let output = cli.run(&["_resource", name], &[], "");
+        assert_eq!(output.status.code(), Some(1), "{name}");
+        assert!(output.stdout.is_empty(), "{name}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("tx _resource: no such resource: {name}\n")
+        );
+    }
     cli.fails(&["_resource"], 2);
     cli.write_yaml(&config_disabling("kill"));
+    cli.ok(&["update"]);
     let stderr = cli.fails(&["_resource", "keys/kill.tmux"], 1);
     assert!(stderr.contains("no such resource"), "{stderr:?}");
 }
@@ -667,6 +987,51 @@ fn ui_attach_lands_in_a_view_home() {
 }
 
 /// The home pane's screen: the floor's TUI, or whatever runs there.
+/// A tmux server keeps the environment of the call that starts it, and every pane inherits it.
+/// `tx ui attach` is that call, and as a bundle it is the program `tx-ide`, which holds
+/// everything `tx` gave it: the core's coordinates, the roots the harness names for this one
+/// command (`TX_PROFILE_PATH`, `TX_PLUGIN_PATH`), its own `TX_PLUGIN_*`. None of that becomes
+/// the server's: it holds what the caller of `tx` held, as when `tx` links `ide`, and the
+/// `TX_BIN` the composed config sets.
+#[test]
+fn the_server_ui_attach_starts_holds_what_the_caller_of_tx_held() {
+    require_tmux!();
+    // What reaches `tx` from the suite's own environment (the harness drops `TX_SESSION_ID`),
+    // one more variable this caller holds, and the config's `TX_BIN`.
+    let mut expected: Vec<String> = std::env::vars()
+        .map(|(name, _)| name)
+        .filter(|name| name.starts_with("TX_") && name != "TX_SESSION_ID")
+        .chain(["TX_APPNAME".to_owned(), "TX_BIN".to_owned()])
+        .collect();
+    expected.sort_unstable();
+    expected.dedup();
+    for (way, cli) in [("bundle", Cli::new()), ("compiled in", Cli::compiled_in())] {
+        cli.write_yaml(&config_disabling("assistant"));
+        cli.ok(&["update"]);
+        cli.run(
+            &["ui", "attach"],
+            &[
+                ("SHELL", SUITE_SHELL),
+                ("TMUX", "/tmp/not-the-core.sock,1,0"),
+                ("TX_APPNAME", "tx-ide"),
+            ],
+            "",
+        );
+        assert!(
+            cli.tmux(&["has-session", "-t", "=home"]).status.success(),
+            "{way}"
+        );
+        let mut held: Vec<String> = cli
+            .tmux_out(&["show-environment", "-g"])
+            .lines()
+            .filter(|line| line.starts_with("TX_"))
+            .map(|line| line.split('=').next().unwrap().to_owned())
+            .collect();
+        held.sort_unstable();
+        assert_eq!(held, expected, "{way}");
+    }
+}
+
 fn home_pane(cli: &Cli) -> String {
     cli.tmux_out(&["capture-pane", "-p", "-t", "=home:"])
 }

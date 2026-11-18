@@ -518,7 +518,7 @@ impl TxCore {
         }
         Ok(Self {
             store: AgentStore::new(directories.data.join(AGENTS_DIR)),
-            tmux: Tmux::new(TMUX_BINARY, config.socket_path(), conf),
+            tmux: Tmux::new(TMUX_BINARY, config.socket_path(), conf).withholding(&config.given),
             events: EventLog::new(directories.data.join(LOG_FILE)),
             engines: EngineRegistry::new(),
             profiles: Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone()),

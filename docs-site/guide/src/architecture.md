@@ -6,12 +6,14 @@ point downwards.
 ## The crates
 
 ```text
-              tx-core-cli   (the tx and txi binaries; still links every plugin)
-             /     |      \
-       plugins/*   |    tx-client   (the tmux layer; also the `ide` plugin)
-             \     |      /
-               tx-plugin        (what a plugin program shares with tx; the SDK)
+              tx-core-cli       (the tx and txi binaries; still links every plugin)
                    |
+               plugins/*        (one package each, `ide` among them)
+              /         \
+       tx-client       tx-plugin
+   (the tmux and       (what a plugin program
+    nvim library)       shares with tx; the SDK)
+              \         /
                 tx-core         (the library)
 ```
 
@@ -24,9 +26,10 @@ point downwards.
   `tx-client`, and a few reuse a sibling's library code: `home` and `timeline` use `tx-chat`'s
   transcript readers, `tour` uses `tx-artifacts`' store.
 - **`tx-client`** is the code the key plugins share: the socket-bound tmux helper, the views
-  store, the row renderer, the modal editor, the fzf prompt and the colour palette. It is also a
-  plugin itself, `ide`, which owns `tx ui attach | view` and the updater that writes the IDE's
-  server config on `tx update`.
+  store, the row renderer, the modal editor, the fzf prompt and the colour palette. It is a
+  library only: it registers no plugin and, of the workspace, depends on `tx-core` alone. The
+  `ide` plugin, which owns `tx ui attach | view` and the updater that writes the IDE's server
+  config on `tx update`, is `plugins/ide` (package `tx-ide`), a plugin like the others.
 - **`tx-core-cli`** builds the binaries. `tx` is a thin CLI over the library that registers the
   bundled plugins; `txi` is the internal entry point.
 - **`tx-plugin`** is what any program that runs as tx shares with it, so a plugin program can

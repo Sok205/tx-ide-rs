@@ -12,7 +12,7 @@ floor's hook, its popups, the pane's next program, the other plugins' verbs it r
 
 ## The attach path
 
-`tx ui attach` belongs to the `ide` plugin in `tx-client`. It does three things:
+`tx ui attach` belongs to the `ide` plugin, `plugins/ide`. It does three things:
 
 1. **Ensure the `home` view.** If there is no session named `home`, it creates one: a view of
    kind `home` running your shell, window named `home`, status bar and pane-border labels on.

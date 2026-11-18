@@ -1792,7 +1792,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tx-core",
- "tx-plugin",
 ]
 
 [[package]]
@@ -1829,6 +1828,7 @@ dependencies = [
  "tx-graph",
  "tx-home",
  "tx-home-themes",
+ "tx-ide",
  "tx-kill",
  "tx-labels",
  "tx-layouts",
@@ -1925,6 +1925,16 @@ dependencies = [
  "tx-client",
  "tx-core",
  "tx-home-backdrop",
+ "tx-plugin",
+]
+
+[[package]]
+name = "tx-ide"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "tx-client",
+ "tx-core",
  "tx-plugin",
 ]
 

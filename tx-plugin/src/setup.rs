@@ -6,6 +6,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tx_core::plugin::external::PLUGIN_GIVEN_ENV;
 use tx_core::plugin::external::TRACE_HOOK;
 use tx_core::plugin::{Activation, Entry, ExecContext, Index, Launcher};
 use tx_core::{CoreConfig, CoreError, Directories, Plugin, PluginConfig, Registry, TxCore};
@@ -333,7 +334,25 @@ pub fn core_config_in(
     if let Some(socket) = socket.filter(|socket| *socket != config.socket_path()) {
         config = config.tmux_socket(socket);
     }
-    Ok(config)
+    // What was added to this process's environment on the way to it: no tmux call of the core
+    // inherits it, so a server this process starts holds what the caller of `tx` held.
+    Ok(config.given(given(environment)))
+}
+
+/// The names `$TX_PLUGIN_GIVEN` lists: the variables that were added to this process's
+/// environment on the way to it. None in a process `tx` did not start as a plugin program,
+/// directly or further up.
+fn given(environment: &dyn Fn(&str) -> Option<OsString>) -> Vec<String> {
+    environment(PLUGIN_GIVEN_ENV)
+        .map(|names| {
+            names
+                .to_string_lossy()
+                .split(':')
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// `--config FILE`, else `$TX_CONFIG_FILE`, else `<config>/config.yaml`.
@@ -358,7 +377,18 @@ fn config_file_in(
 /// `global`: the `tx` to run, the application name, the five directories and the socket, always;
 /// and what stands for a global flag only where the flag (or its variable, which the program
 /// inherits as it is) replaced a default. With these a plugin program resolves the same core.
+/// Last, under `TX_PLUGIN_GIVEN`, which of them this process's own environment does not hold,
+/// after the ones that were already added on the way to this process.
 pub fn exec_context(global: &Global, config: &CoreConfig) -> ExecContext {
+    exec_context_in(global, config, &process_environment)
+}
+
+/// [`exec_context`] for a process whose environment is `held`.
+fn exec_context_in(
+    global: &Global,
+    config: &CoreConfig,
+    held: &dyn Fn(&str) -> Option<OsString>,
+) -> ExecContext {
     // What `core_config` put into every session's environment, before any `--env` of the
     // caller's.
     let exported = |key: &str| {
@@ -408,6 +438,17 @@ pub fn exec_context(global: &Global, config: &CoreConfig) -> ExecContext {
             SESSION_ENV_ENV,
             serde_json::Value::Object(object).to_string(),
         );
+    }
+    // A variable the caller already held is handed on resolved and is not an addition; one
+    // that was added further up stays on the list, whoever holds it by now.
+    let mut given = config.given.clone();
+    for (key, _) in &environment {
+        if held(key).is_none() && !given.contains(key) {
+            given.push(key.clone());
+        }
+    }
+    if !given.is_empty() {
+        environment.push((PLUGIN_GIVEN_ENV.to_owned(), given.join(":")));
     }
     ExecContext {
         environment,
@@ -860,7 +901,11 @@ mod tests {
     fn a_child_gets_the_resolved_core_and_only_the_flags_that_replace_a_default() {
         let variables = [(TX_BIN_ENV, "/opt/tx/bin/tx"), (APPNAME_ENV, "tx-dev")];
         let global = Global::default();
-        let context = exec_context(&global, &config(&global, &variables));
+        let context = exec_context_in(
+            &global,
+            &config(&global, &variables),
+            &environment(&variables),
+        );
         assert_eq!(
             context.environment,
             [
@@ -872,10 +917,85 @@ mod tests {
                 ("TX_CACHE_DIR", "/home/u/.cache/tx-dev"),
                 ("TX_RUN_DIR", "/tmp/tx-dev.u"),
                 ("TX_TMUX_SOCKET", "/tmp/tx-dev.u/tmux.sock"),
+                // The two the caller held are handed on, and are not additions.
+                (
+                    PLUGIN_GIVEN_ENV,
+                    "TX_CONFIG_DIR:TX_DATA_DIR:TX_STATE_DIR:TX_CACHE_DIR:TX_RUN_DIR:TX_TMUX_SOCKET"
+                ),
             ]
             .map(|(key, value)| (key.to_owned(), value.to_owned()))
         );
         assert_eq!(context.trace, None);
+    }
+
+    /// The list a program is given: what its starter's caller did not hold, after what was
+    /// already added on the way to the starter.
+    fn given_by(global: &Global, variables: &[(&str, &str)]) -> Option<String> {
+        exec_context_in(global, &config(global, variables), &environment(variables))
+            .environment
+            .into_iter()
+            .find(|(key, _)| key == PLUGIN_GIVEN_ENV)
+            .map(|(_, names)| names)
+    }
+
+    #[test]
+    fn a_child_is_told_which_variables_its_caller_did_not_hold() {
+        const DIRECTORIES: [(&str, &str); 5] = [
+            ("TX_CONFIG_DIR", "/c"),
+            ("TX_DATA_DIR", "/d"),
+            ("TX_STATE_DIR", "/s"),
+            ("TX_CACHE_DIR", "/k"),
+            ("TX_RUN_DIR", "/r"),
+        ];
+        // A plain shell holds none of them.
+        assert_eq!(
+            given_by(&Global::default(), &[]).as_deref(),
+            Some(
+                "TX_APPNAME:TX_CONFIG_DIR:TX_DATA_DIR:TX_STATE_DIR:TX_CACHE_DIR:TX_RUN_DIR:TX_TMUX_SOCKET"
+            )
+        );
+        // A caller that exports the core's coordinates keeps them: a flag of this one command
+        // is an addition, whatever the caller held under another name.
+        let mut sandbox = vec![(APPNAME_ENV, "tx-qa")];
+        sandbox.extend(DIRECTORIES);
+        let flagged = Global {
+            profile_dirs: paths(&["/roles"]),
+            ..Global::default()
+        };
+        assert_eq!(
+            given_by(&flagged, &sandbox).as_deref(),
+            Some("TX_TMUX_SOCKET:TX_PROFILE_PATH")
+        );
+        // A variable the caller held is not listed, whatever its value: the flag only changes
+        // what is handed on.
+        sandbox.push((PROFILE_PATH_ENV, "/other/roles"));
+        assert_eq!(
+            given_by(&flagged, &sandbox).as_deref(),
+            Some("TX_TMUX_SOCKET")
+        );
+        sandbox.push(("TX_TMUX_SOCKET", "/r/tmux.sock"));
+        assert_eq!(given_by(&flagged, &sandbox), None, "nothing was added");
+    }
+
+    #[test]
+    fn what_was_added_further_up_stays_on_the_list() {
+        // A plugin program: it holds everything by now, and its own list says what was added.
+        let program = [
+            (APPNAME_ENV, "tx-ide"),
+            ("TX_DATA_DIR", "/d"),
+            ("TX_PLUGIN_ID", "ide"),
+            (PLUGIN_GIVEN_ENV, "TX_DATA_DIR::TX_PLUGIN_ID:"),
+        ];
+        let config = config(&Global::default(), &program);
+        assert_eq!(config.given, ["TX_DATA_DIR", "TX_PLUGIN_ID"]);
+        assert_eq!(
+            given_by(&Global::default(), &program).as_deref(),
+            Some(
+                "TX_DATA_DIR:TX_PLUGIN_ID:TX_CONFIG_DIR:TX_STATE_DIR:TX_CACHE_DIR:TX_RUN_DIR:TX_TMUX_SOCKET"
+            )
+        );
+        // Without the variable nothing was added to this process.
+        assert!(self::config(&Global::default(), &[]).given.is_empty());
     }
 
     #[test]
@@ -894,7 +1014,11 @@ mod tests {
             ],
             ..Global::default()
         };
-        let context = exec_context(&global, &config(&global, &variables));
+        let context = exec_context_in(
+            &global,
+            &config(&global, &variables),
+            &environment(&variables),
+        );
         let get = |key: &str| {
             context
                 .environment
@@ -932,6 +1056,25 @@ mod tests {
         assert_eq!(child.skill_dirs, parent.skill_dirs);
         assert_eq!(exported(&child, "A"), Some("1"));
         assert_eq!(exported(&child, "B"), Some("x=y"));
+        // And it knows that all of it was added: its caller held none of these.
+        assert!(parent.given.is_empty());
+        assert_eq!(
+            child.given,
+            [
+                APPNAME_ENV,
+                "TX_CONFIG_DIR",
+                "TX_DATA_DIR",
+                "TX_STATE_DIR",
+                "TX_CACHE_DIR",
+                "TX_RUN_DIR",
+                "TX_TMUX_SOCKET",
+                PLUGIN_PATH_ENV,
+                PROFILE_PATH_ENV,
+                SKILL_PATH_ENV,
+                CONFIG_FILE_ENV,
+                SESSION_ENV_ENV,
+            ]
+        );
     }
 
     /// The socket every child is told is an override only when it is not the run directory's
@@ -941,7 +1084,7 @@ mod tests {
         let global = Global::default();
         let parent = config(&global, &[]);
         assert_eq!(parent.tmux_socket, None);
-        let context = exec_context(&global, &parent);
+        let context = exec_context_in(&global, &parent, &environment(&[]));
         let variables: Vec<(&str, &str)> = context
             .environment
             .iter()
@@ -964,9 +1107,11 @@ mod tests {
     #[test]
     fn a_variable_that_named_the_roots_is_handed_on_absolute() {
         let global = Global::default();
-        let context = exec_context(
+        let variables = [(PLUGIN_PATH_ENV, "relative/root")];
+        let context = exec_context_in(
             &global,
-            &config(&global, &[(PLUGIN_PATH_ENV, "relative/root")]),
+            &config(&global, &variables),
+            &environment(&variables),
         );
         let root = std::env::current_dir().unwrap().join("relative/root");
         assert!(

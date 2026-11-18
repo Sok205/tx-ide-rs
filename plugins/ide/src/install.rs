@@ -1,19 +1,23 @@
 //! The `ide` plugin's updater, `ui attach` and `ui view`: compose the core's server config from
-//! the key fragments `tx update` published (on `tx update`), enter the IDE's server, and open,
-//! list or close views from a shell.
+//! the key fragments `tx update` published (on `tx update`) and give the core's own back when
+//! the plugin is retired, enter the IDE's server, and open, list or close views from a shell.
 
 use std::io;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use tx_client::tmux::{Ui, UiError};
+use tx_client::views::{self, ViewKind, ViewRequest};
+use tx_core::core::DEFAULT_TMUX_CONF;
+use tx_core::plugin::manifest::RESOURCE_KINDS;
 use tx_core::updates::Outcome;
 use tx_core::{TxCore, Updater, Verb, VerbError, VerbIo};
 use tx_plugin::bundle::KEYS_INSTALLED;
+use tx_plugin::sdk::TX_BIN_ENV;
+use tx_plugin::setup::ROLES_DIR;
 
-use crate::tmux::{Ui, UiError};
 use crate::view_verb;
-use crate::views::{self, ViewKind, ViewRequest};
 
 const HOME_SESSION: &str = "home";
 const IDE_FRAGMENT: &str = "ide";
@@ -21,12 +25,19 @@ const IDE_FRAGMENT: &str = "ide";
 const KEYS_DIR: &str = "keys";
 const FRAGMENT_EXTENSION: &str = "tmux";
 const LEGACY_HINT: &str = "legacy bindings may remain; restart the server to drop them";
-/// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
-/// view's runtimepath by `views::open`.
-pub const NVIM_RESOURCE: &str = "nvim";
+/// The server options the composed config sets in its own first lines (see [`conf_text`]); with
+/// `TX_BIN` in the server's environment, what a retire takes back next to the fragments' keys.
+/// `@tx-bin` is also how the updater recognises a server whose bindings were never recorded.
+const CONF_OPTIONS: [&str; 3] = ["@tx-bin", "@tx-data", "@tx-arguments"];
+/// What a retire says: the config is core's again, and what a running server keeps of the IDE.
+const RESET: &str = "tmux.conf reset to the core default";
+const RESTART_HINT: &str = "restart the server to drop the rest of the IDE's look";
 /// The home plugin's verb that puts the home TUI into the view's pane; absent when the plugin
 /// is disabled.
 const HOME_INSTALL_VERB: &str = "_home-install";
+/// The resource kind of a role: `tx update` publishes an `agents/…` name under `<data>/roles/`,
+/// since `<data>/agents/` holds the agent records.
+const ROLES_RESOURCE: &str = "agents";
 
 /// `@tx-data` locates `bin/` and `keys/`; `@tx-arguments` is what every `tx` a key fragment
 /// runs carries (the core's `cli_arguments()`, words split by spaces: `install` refuses unsafe
@@ -151,6 +162,20 @@ fn tmux_env_socket(env: Option<&str>) -> Option<&str> {
         .filter(|socket| !socket.is_empty())
 }
 
+/// Takes back, in a running server, what a key fragment declared: its prefix keys are unbound,
+/// its options and its hooks unset.
+fn take_back(ui: &Ui, declared: &Declared) {
+    for key in &declared.keys {
+        ui.quiet(&["unbind", key]);
+    }
+    for option in &declared.unset {
+        ui.quiet(&["set", "-gu", option]);
+    }
+    for hook in &declared.unhook {
+        ui.quiet(&["set-hook", "-gu", hook]);
+    }
+}
+
 /// The words of `before` that `now` no longer lists; all of them when the fragment is gone.
 fn dropped(before: &[String], now: Option<&[String]>) -> Vec<String> {
     before
@@ -190,7 +215,23 @@ impl Verb for UiVerb {
     }
 }
 
-/// `_resource <name>`: the bytes of an active plugin's resource, for tests and debugging.
+/// Where `tx update` publishes the resource `name`: `<data>/<name>`, an `agents/…` name under
+/// `<data>/roles/`. `None` for a name no resource can have: not `<kind>/<path>` with one of the
+/// kinds `tx update` publishes, or holding a `..` segment.
+fn published_path(data: &Path, name: &str) -> Option<PathBuf> {
+    let (kind, path) = name.split_once('/')?;
+    if !RESOURCE_KINDS.contains(&kind) || path.split('/').any(|segment| segment == "..") {
+        return None;
+    }
+    Some(if kind == ROLES_RESOURCE {
+        data.join(format!("{ROLES_DIR}/{path}"))
+    } else {
+        data.join(name)
+    })
+}
+
+/// `_resource <name>`: a resource as `tx update` published it, whichever plugin it is of, for
+/// tests and debugging.
 pub struct ResourceVerb;
 
 impl Verb for ResourceVerb {
@@ -207,14 +248,19 @@ impl Verb for ResourceVerb {
             let _ = writeln!(io.stderr, "usage: tx _resource NAME");
             return Ok(2);
         };
-        match core.resources("").into_iter().find(|r| &r.name == name) {
-            Some(resource) => {
+        let missing = format!("tx _resource: no such resource: {name}");
+        let Some(path) = published_path(&core.config().directories.data, name) else {
+            return fail(io, &missing);
+        };
+        match std::fs::read(&path) {
+            Ok(bytes) => {
                 io.stdout
-                    .write_all(resource.bytes)
+                    .write_all(&bytes)
                     .map_err(|e| VerbError::Failed(format!("write: {e}")))?;
                 Ok(0)
             }
-            None => fail(io, &format!("tx _resource: no such resource: {name}")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => fail(io, &missing),
+            Err(error) => Err(io_failed(&path)(error)),
         }
     }
 }
@@ -255,7 +301,8 @@ fn published_fragments(data: &Path) -> Result<Vec<(String, String)>, VerbError> 
 }
 
 /// The `ide` plugin's part of `tx update`: composes the server config from the key fragments
-/// `tx update` published, and reloads a running server.
+/// `tx update` published, and reloads a running server. Retired, it gives the config back to
+/// core.
 pub struct IdeUpdater;
 
 impl Updater for IdeUpdater {
@@ -263,6 +310,50 @@ impl Updater for IdeUpdater {
         install(core, io)?;
         Ok(Outcome::default())
     }
+
+    fn retire(&self, core: &TxCore, io: &mut VerbIo<'_>) -> Result<Outcome, VerbError> {
+        retire(core, io)?;
+        Ok(Outcome::default())
+    }
+}
+
+/// Takes back what [`install`] generated, once the plugin stopped being active. The record of
+/// the fragments the config was composed from, `<data>/keys/.installed`, says there is
+/// something to take back: without it nothing is done and nothing printed, so a retire is safe
+/// to repeat. With it, `<data>/tmux.conf` is core's default again; a running server loses every
+/// key, option and hook the record lists, the options and the `TX_BIN` the composed config
+/// itself set, and loads that config; the record goes last, so a retire that failed half way is
+/// tried again by the next `tx update`. The server is then a plain core server to the updater:
+/// enabling the plugin again finds no trace of an unrecorded install. What the fragments set
+/// without declaring it (the theme, the root-table keys) stays until the server restarts.
+fn retire(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
+    let installed = core.config().directories.data.join(KEYS_INSTALLED);
+    let entries = match std::fs::read_to_string(&installed) {
+        Ok(text) => parse_installed(&text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(io_failed(&installed)(error)),
+    };
+    let conf = core.config().tmux_conf_path();
+    std::fs::write(&conf, DEFAULT_TMUX_CONF).map_err(io_failed(&conf))?;
+    let mut out = format!("{RESET}\n");
+    let ui = Ui::from_core(core);
+    if ui.quiet(&["list-sessions"]).0 {
+        for (_, declared) in &entries {
+            take_back(&ui, declared);
+        }
+        for option in CONF_OPTIONS {
+            ui.quiet(&["set", "-gu", option]);
+        }
+        ui.quiet(&["set-environment", "-gu", TX_BIN_ENV]);
+        ui.run(&["source-file", &conf.to_string_lossy()])
+            .map_err(|e| VerbError::Failed(e.to_string()))?;
+        out.push_str(RESTART_HINT);
+        out.push('\n');
+    }
+    std::fs::remove_file(&installed).map_err(io_failed(&installed))?;
+    io.stdout
+        .write_all(out.as_bytes())
+        .map_err(|e| VerbError::Failed(format!("write: {e}")))
 }
 
 fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
@@ -310,15 +401,14 @@ fn install(core: &TxCore, io: &mut VerbIo<'_>) -> Result<(), VerbError> {
         };
         for (id, before) in previous.iter().flatten() {
             let now = fragments.iter().find(|(now, _)| now == id).map(|(_, d)| d);
-            for key in dropped(&before.keys, now.map(|d| d.keys.as_slice())) {
-                ui.quiet(&["unbind", &key]);
-            }
-            for option in dropped(&before.unset, now.map(|d| d.unset.as_slice())) {
-                ui.quiet(&["set", "-gu", &option]);
-            }
-            for hook in dropped(&before.unhook, now.map(|d| d.unhook.as_slice())) {
-                ui.quiet(&["set-hook", "-gu", &hook]);
-            }
+            take_back(
+                &ui,
+                &Declared {
+                    keys: dropped(&before.keys, now.map(|d| d.keys.as_slice())),
+                    unset: dropped(&before.unset, now.map(|d| d.unset.as_slice())),
+                    unhook: dropped(&before.unhook, now.map(|d| d.unhook.as_slice())),
+                },
+            );
         }
         ui.run(&["source-file", &conf.to_string_lossy()])
             .map_err(|e| VerbError::Failed(e.to_string()))?;
@@ -605,6 +695,95 @@ mod tests {
         assert_eq!(parse_installed(&text), entries);
         assert!(parse_installed("").is_empty());
         assert!(parse_installed("\n\tkeys=a\n").is_empty());
+    }
+
+    /// A core on directories of its own, with no server on its socket.
+    fn core() -> (tempfile::TempDir, TxCore) {
+        let dir = tempfile::Builder::new()
+            .prefix("tx")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let core = TxCore::open(tx_core::CoreConfig::new(tx_core::Directories::under(
+            dir.path().join("state"),
+        )))
+        .unwrap();
+        (dir, core)
+    }
+
+    /// What the updater's `retire` printed.
+    fn retired(core: &TxCore) -> String {
+        let mut stdout = Vec::new();
+        IdeUpdater
+            .retire(
+                core,
+                &mut VerbIo {
+                    stdin: &mut io::empty(),
+                    stdout: &mut stdout,
+                    stderr: &mut Vec::new(),
+                },
+            )
+            .unwrap();
+        String::from_utf8(stdout).unwrap()
+    }
+
+    #[test]
+    fn retire_gives_the_config_back_to_core_and_drops_the_record() {
+        let (_dir, core) = core();
+        let conf = core.config().tmux_conf_path();
+        let installed = core.config().directories.data.join(KEYS_INSTALLED);
+        std::fs::write(&conf, "set -g @tx-bin \"/opt/tx\"\n").unwrap();
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        std::fs::write(&installed, "ide\tkeys=C-h\tunset=\tunhook=\n").unwrap();
+        // No server runs: nothing to unbind, and nothing to restart.
+        assert_eq!(retired(&core), format!("{RESET}\n"));
+        assert_eq!(std::fs::read_to_string(&conf).unwrap(), DEFAULT_TMUX_CONF);
+        assert!(!installed.exists());
+    }
+
+    #[test]
+    fn retire_without_the_record_does_and_says_nothing() {
+        let (_dir, core) = core();
+        let conf = core.config().tmux_conf_path();
+        std::fs::write(&conf, "# the operator's own\n").unwrap();
+        assert_eq!(retired(&core), "");
+        assert_eq!(
+            std::fs::read_to_string(&conf).unwrap(),
+            "# the operator's own\n"
+        );
+    }
+
+    #[test]
+    fn a_resource_is_published_under_its_name_and_a_role_under_roles() {
+        let data = Path::new("/s/data");
+        let published = |name| published_path(data, name);
+        assert_eq!(
+            published("keys/ide.tmux"),
+            Some(PathBuf::from("/s/data/keys/ide.tmux"))
+        );
+        assert_eq!(
+            published("nvim/lua/tx-ask.lua"),
+            Some(PathBuf::from("/s/data/nvim/lua/tx-ask.lua"))
+        );
+        assert_eq!(
+            published("agents/COMMON.md"),
+            Some(PathBuf::from("/s/data/roles/COMMON.md"))
+        );
+        // Never outside the directory of its kind.
+        assert_eq!(
+            published("agents//etc/passwd"),
+            Some(PathBuf::from("/s/data/roles//etc/passwd"))
+        );
+        for name in [
+            "",
+            "tmux.conf",
+            "nope/x",
+            "roles/COMMON.md",
+            "/etc/passwd",
+            "keys/../tmux.conf",
+            "agents/../../x",
+        ] {
+            assert_eq!(published(name), None, "{name:?}");
+        }
     }
 
     #[test]

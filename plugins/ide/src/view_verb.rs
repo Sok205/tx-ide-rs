@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use tx_core::{AgentId, TxCore, VerbError, VerbIo};
 
-use crate::tmux::Ui;
-use crate::views::{self, ViewKind, ViewRequest};
+use tx_client::tmux::Ui;
+use tx_client::views::{self, ViewKind, ViewRequest};
 
 const USAGE: &str = "usage: tx ui view open <name> --kind <kind> [--parent <agent>] [--cwd <dir>] [--tag <tag>]… [--bound <value>] [-- <program> [<argument>…]]\n\
                      \x20      tx ui view ls\n\

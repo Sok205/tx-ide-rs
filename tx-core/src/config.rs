@@ -211,6 +211,12 @@ pub struct CoreConfig {
     /// The plugin roots, in order, when the caller names them; `None`: the two defaults of
     /// [`Self::plugin_roots`].
     pub plugin_dirs: Option<Vec<PathBuf>>,
+    /// The variables of this process's environment that were added on the way to it, as
+    /// `TX_PLUGIN_GIVEN` names them: a plugin program's own, and what `tx` resolved for it. They
+    /// are for this process and the helpers it runs. No tmux call inherits them: the call that
+    /// starts the server gives it its environment, which every pane inherits, so a server
+    /// holds what the caller of `tx` held. Empty in a process nothing was added for.
+    pub given: Vec<String>,
 }
 
 impl CoreConfig {
@@ -225,6 +231,7 @@ impl CoreConfig {
             skill_dirs: Vec::new(),
             hook_command: Vec::new(),
             plugin_dirs: None,
+            given: Vec::new(),
         }
     }
 
@@ -291,6 +298,17 @@ impl CoreConfig {
         P: Into<PathBuf>,
     {
         self.plugin_dirs = Some(dirs.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Names the variables that were added to this process's environment: see
+    /// [`Self::given`].
+    pub fn given<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.given = names.into_iter().map(Into::into).collect();
         self
     }
 

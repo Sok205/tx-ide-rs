@@ -94,11 +94,31 @@ The program inherits the caller's environment, with these on top:
 | `TX_PLUGIN_API` | `1` |
 | `TX_PLUGIN_ID`, `TX_PLUGIN_DIR`, `TX_PLUGIN_DATA_DIR` | the plugin, its directory, `<data>/plugins/<id>` (not created) |
 | `TX_PLUGIN_SETTINGS` | `plugins.<id>.settings` of `config.yaml` as JSON; `null` without one |
+| `TX_PLUGIN_GIVEN` | the names, colon-separated, of the variables of this table that the environment of whoever started the program did not hold: what was added on the way, the five `TX_PLUGIN_*` above always among them. A variable the caller already held is passed on resolved and is not listed |
 
 Every global flag of `tx` has such a variable, read when the flag is absent (flag, then variable,
 then default). So `"$TX_BIN" ls` run by a plugin opens exactly the core its parent opened, and so
 does a plugin program that opens the core itself. Every session core launches carries `TX_BIN`
 too (and `TX_PLUGIN_PATH` when the roots are named), next to the directories.
+
+These variables are for the program and the helpers it runs, never for something long-lived
+that hosts other programs. The case that matters is the tmux server: the first tmux call starts
+it, the server keeps that call's environment, and every pane inherits it. A server started with
+the variables above would hand one command's role roots to every later `tx`, one plugin's id
+and settings to every program, and the core's directories to every shell of an install that
+never exported them. So a program that may start such a host starts it without the variables
+`TX_PLUGIN_GIVEN` names, and without `TX_PLUGIN_GIVEN` itself: the host then holds what the
+caller of `tx` held, as if `tx` had started it. The list accumulates: a program started by
+another plugin's program, or by a `tx` that a plugin ran, gets the list its starter was given
+plus what was added for it. In Rust nothing is to be done: every tmux call of `TxCore` and of
+`tx_client::tmux::Ui::from_core` is made that way. A script does it itself:
+
+```sh
+(   # a subshell: the script itself keeps its environment
+  for name in $(printf %s "$TX_PLUGIN_GIVEN" | tr ':' ' ') TX_PLUGIN_GIVEN; do unset "$name"; done
+  exec tmux -S "$socket" new-session -d …
+)
+```
 
 One plugin runs another's verb the same way, or, from Rust, through `TxCore::verb(name)`, which
 starts that plugin's program with standard input closed and hands back its output, error and

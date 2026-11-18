@@ -37,13 +37,31 @@ pub const TRACE_ENGINE: &str = "engine";
 /// engine's CLI does), so the entry writes the line itself.
 pub const TRACE_HOOK: &str = "hook";
 
+/// Tells a plugin program which variables of its environment were added on the way to it: the
+/// names, colon-separated, of those the environment of whoever ran `tx` did not hold. They are
+/// for the program and the helpers it runs, never for a tmux server it starts, whose
+/// environment every pane inherits. The list accumulates from one program to the next.
+pub const PLUGIN_GIVEN_ENV: &str = "TX_PLUGIN_GIVEN";
+
+/// The variables that name a program's own plugin. Every start sets them anew, so they are
+/// always among the given ones.
+const PLUGIN_VARIABLES: [&str; 5] = [
+    "TX_PLUGIN_API",
+    "TX_PLUGIN_ID",
+    "TX_PLUGIN_DIR",
+    "TX_PLUGIN_DATA_DIR",
+    "TX_PLUGIN_SETTINGS",
+];
+
 /// What every plugin program is started with, whichever plugin it belongs to. Built by the front
 /// end, since core never reads the environment.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExecContext {
     /// The variables a plugin program gets on top of the caller's environment, apart from the
     /// ones that name its plugin: the `tx` to run, the application name, the five directories,
-    /// the socket, and the variables that stand for a global flag.
+    /// the socket, and the variables that stand for a global flag. With them, under
+    /// [`PLUGIN_GIVEN_ENV`], the names of those the caller did not hold, after what was
+    /// already added on the way to this process; [`Launcher::command`] adds the plugin's own.
     pub environment: Vec<(String, String)>,
     /// The file that gets one line `<role>\t<plugin id>\t<program>` for every plugin program
     /// started; `None`: no trace.
@@ -110,10 +128,24 @@ impl Launcher {
 
     /// The command that runs `program` with `args`, for a caller about to start it in the role
     /// `role`: the trace line is appended here. The program inherits the caller's environment
-    /// with the context's variables and its plugin's on top; standard input, output and error
-    /// are the caller's to set.
+    /// with the context's variables and its plugin's on top, and is told under
+    /// [`PLUGIN_GIVEN_ENV`] which of them were added: what the context lists, and the
+    /// plugin's own. Standard input, output and error are the caller's to set.
     pub fn command(&self, role: &str, program: &Path, args: &[String]) -> Command {
         self.context.trace(role, &self.id, program);
+        let mut given: Vec<&str> = self
+            .context
+            .environment
+            .iter()
+            .filter(|(key, _)| key == PLUGIN_GIVEN_ENV)
+            .flat_map(|(_, names)| names.split(':'))
+            .filter(|name| !name.is_empty())
+            .collect();
+        for name in PLUGIN_VARIABLES {
+            if !given.contains(&name) {
+                given.push(name);
+            }
+        }
         let mut command = Command::new(program);
         command
             .args(args)
@@ -127,7 +159,8 @@ impl Launcher {
             .env("TX_PLUGIN_ID", &self.id)
             .env("TX_PLUGIN_DIR", &self.directory)
             .env("TX_PLUGIN_DATA_DIR", &self.data)
-            .env("TX_PLUGIN_SETTINGS", &self.settings);
+            .env("TX_PLUGIN_SETTINGS", &self.settings)
+            .env(PLUGIN_GIVEN_ENV, given.join(":"));
         command
     }
 }
@@ -686,6 +719,59 @@ done"#;
 
     /// A plugin `engine-test` in a temporary directory whose engine is the shell script
     /// `bin/engine`.
+    /// What a program of the plugin `notes` is told was added to its environment, started
+    /// from a context with `environment`.
+    fn given_to_a_program(environment: &[(&str, &str)]) -> String {
+        let context = Arc::new(ExecContext {
+            environment: environment
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            trace: None,
+        });
+        let config = CoreConfig::new(Directories::under("/s"));
+        let state = PluginState {
+            id: "notes".to_owned(),
+            status: PluginStatus::Active,
+            settings: Value::Null,
+            installed: Some(0),
+        };
+        let installed = Installed {
+            id: "notes".to_owned(),
+            directory: PathBuf::from("/p/notes"),
+            root: PathBuf::from("/p"),
+            manifest: Err("not looked at".to_owned()),
+        };
+        let command = Launcher::new(&context, &config, &state, &installed).command(
+            TRACE_VERB,
+            Path::new("/p/notes/bin/notes"),
+            &[],
+        );
+        let value = command
+            .get_envs()
+            .find(|(name, _)| *name == PLUGIN_GIVEN_ENV)
+            .and_then(|(_, value)| value)
+            .expect("TX_PLUGIN_GIVEN is set");
+        value.to_str().unwrap().to_owned()
+    }
+
+    #[test]
+    fn a_program_is_told_what_was_added_to_its_environment() {
+        const OWN: &str =
+            "TX_PLUGIN_API:TX_PLUGIN_ID:TX_PLUGIN_DIR:TX_PLUGIN_DATA_DIR:TX_PLUGIN_SETTINGS";
+        // Its plugin's own variables are set by every start: always given.
+        assert_eq!(given_to_a_program(&[]), OWN);
+        assert_eq!(given_to_a_program(&[("TX_BIN", "/x/tx")]), OWN);
+        // What the context lists comes first; a name is listed once.
+        assert_eq!(
+            given_to_a_program(&[
+                ("TX_BIN", "/x/tx"),
+                (PLUGIN_GIVEN_ENV, "TX_BIN:TX_PLUGIN_ID::TX_DATA_DIR")
+            ]),
+            "TX_BIN:TX_PLUGIN_ID:TX_DATA_DIR:TX_PLUGIN_API:TX_PLUGIN_DIR:TX_PLUGIN_DATA_DIR:TX_PLUGIN_SETTINGS"
+        );
+    }
+
     struct Fixture {
         dir: tempfile::TempDir,
     }

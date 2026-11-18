@@ -67,15 +67,25 @@ timeline and the home use. Tier `core`; it ships as a bundle
 (`plugins/chat/plugin.yaml`): where the bundle is installed its verbs run as the program `tx-chat`,
 elsewhere compiled into `tx`.
 
-**`ide`** (in `tx-client`): its updater (run by `tx update`), `ui attach` and `ui view open | ls | close`.
+**`ide`** (`plugins/ide`, package `tx-ide`): its updater (run by `tx update`), `ui attach` and
+`ui view open | ls | close`. Tier `ide` (it needs `tmux` and `nvim`); it ships as a bundle
+(`plugins/ide/plugin.yaml`) whose program is `tx-ide`: where the bundle is installed its verbs run
+as that program and `tx update` runs its updater as `tx-ide --tx-update`, elsewhere both run
+compiled into `tx`.
 The updater composes the server config, `<data>/tmux.conf`: it runs the key fragments
 `tx update` published under `<data>/keys` (`ide`'s first, the others by name), names the `tx`
 binary (`@tx-bin`, and `TX_BIN` in the server's environment, which a plugin program started from
 a key runs tx with), and reloads a running server, unbinding what a fragment that is gone had
-declared. It no longer writes resources: `tx update` publishes them itself, the `ide`'s like
+declared. It writes no resources: `tx update` publishes them itself, the `ide`'s like
 every plugin's. It publishes the theme and status line, the navigation keys (`C-h`/`C-j`/`C-k`/`C-l` across nested sessions,
 `C-u`/`C-d` to page an agent's scrollback), helper scripts and the nvim runtime every nvim view
 gets.
+When the plugin is disabled, or leaves the shipped plugins, `tx update` retires it: the same
+program, told `TX_PLUGIN_RETIRE=1`, writes core's default `tmux.conf` back, takes out of a running
+server every key, option and hook recorded in `<data>/keys/.installed`, and removes the record
+(see [The tmux layer and views](tmux-and-views.md#tx-update-composing-the-configuration)).
+`ui attach` hands the `home` view's pane to the `home` plugin through its verb `_home-install`,
+which from `tx-ide` runs the program `tx-home`.
 
 **`labels`**: `whoami` prints the session the terminal runs in. prefix+s refreshes labels and opens
 tmux's session tree. Its fragment draws the pane-border label: the nested session's name and tags,

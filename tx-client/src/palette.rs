@@ -1,7 +1,7 @@
 //! The tx-ide palette (Tokyo Night), defined once. The RGB constants are the source. Next to
 //! each sit the forms other surfaces use, written out by hand: the `_HEX` strings for tmux and
 //! fzf, the `_ANSI` truecolour foreground escapes (`ESC[38;2;r;g;bm`); a test checks them
-//! against the constants. `tx-client/tmux/keys.tmux` is shell and repeats two hex values.
+//! against the constants. `plugins/ide/keys/ide.tmux` is shell and repeats two hex values.
 //!
 //! Every ratatui surface routes its colours through [`palette`], so `TX_HOME_COLORS=256` swaps
 //! them for the nearest entries of the 256-colour palette.

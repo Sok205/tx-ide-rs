@@ -4,11 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "The tx client: shared UI code for the key plugins (tmux helper, picker renderer, modal editor) and the ide plugin (its tx update updater, ui attach and view, the home session)."
+description = "The tx client: the tmux and nvim library the IDE's plugins share (tmux helper, views, picker renderer, modal editor)."
 
 [dependencies]
 tx-core.workspace = true
-tx-plugin.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libc = "0.2"
