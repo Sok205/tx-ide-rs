@@ -148,7 +148,8 @@ runs as the program `tx-tour`, elsewhere compiled into `tx`.
 
 **`timeline`**: `timeline` draws swimlanes of session activity from the transcripts' turn
 markers; `timeline health` prints, per agent record, what the timeline can read for it; prefix+T opens a resident timeline view in a popup
-(q detaches, it stays warm).
+(q detaches, it stays warm). Tier `ide`. It ships as a bundle (`plugins/timeline/plugin.yaml`): where the bundle is installed its
+verbs run as the program `tx-timeline`, elsewhere compiled into `tx`.
 
 **`graph`**: `graph` draws the agents as a graph: columns by lineage depth, dashed edges for
 lineage, and solid edges for the messages agents (and you, the node "you") sent each other in the
@@ -158,7 +159,9 @@ narrow it, and `g` cycles the group. It is live: each new message travels its ed
 From 130 columns a sidebar shows the selected agent. Keys act through `tx`: `s` sends a line as
 you, `f` forks, `x` stops (after `y`), `r` respawns an ended agent, `a` opens its artifacts, Enter
 jumps to its pane; `?` lists them. prefix+g opens a resident graph in a popup (q detaches, it
-stays warm). `--snapshot` prints one frame as text.
+stays warm). `--snapshot` prints one frame as text. Tier `ide`. It ships as a bundle
+(`plugins/graph/plugin.yaml`): where the bundle is installed its verbs run as the program `tx-graph`,
+elsewhere compiled into `tx`.
 
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).

@@ -5,7 +5,6 @@
 //! The commands drop `TX_SESSION_ID`: run from an agent's pane, `tx send` would otherwise speak
 //! as that agent. What the graph sends, the operator sends.
 
-use std::io;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -25,11 +24,11 @@ pub struct Tx {
 }
 
 impl Tx {
-    pub fn current(core: &TxCore) -> io::Result<Self> {
-        Ok(Self {
-            program: std::env::current_exe()?,
+    pub fn current(core: &TxCore) -> Self {
+        Self {
+            program: tx_plugin::sdk::tx_bin(),
             arguments: core.config().cli_arguments().to_vec(),
-        })
+        }
     }
 
     pub fn program(&self) -> String {

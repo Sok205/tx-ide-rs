@@ -1,0 +1,25 @@
+api: 1
+id: timeline
+description: Swimlanes of session activity in the terminal (ratatui), prefix+T.
+tier: ide
+
+verbs:
+  - name: timeline
+    usage: "timeline [--last DURATION] [--snapshot] | health   swimlanes of session activity (q quits)"
+    bin: tx-timeline
+    args: [timeline]
+  - name: _timeline-resident
+    usage: "_timeline-resident [--last DURATION]   the popup's resident timeline; q detaches (internal)"
+    bin: tx-timeline
+    args: [_timeline-resident]
+  - name: _timeline-attach
+    usage: "_timeline-attach   start or attach the resident timeline; q detaches (prefix+T, internal)"
+    bin: tx-timeline
+    args: [_timeline-attach]
+  - name: _timeline-json
+    usage: "_timeline-json [--days N]   the timeline payload as /api/timeline JSON (internal)"
+    bin: tx-timeline
+    args: [_timeline-json]
+
+resources:
+  - keys/timeline.tmux

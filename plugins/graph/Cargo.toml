@@ -6,9 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "tx-core plugin: the agent graph (lineage and messages) in the terminal (ratatui)."
 
+# The plugin as its own program: what `plugin.yaml` names for its verbs.
+[[bin]]
+name = "tx-graph"
+path = "src/main.rs"
+
 [dependencies]
 tx-core.workspace = true
 tx-client.workspace = true
+tx-plugin.workspace = true
 tx-chat = { path = "../chat" }
 serde_json.workspace = true
 ratatui = "0.30"

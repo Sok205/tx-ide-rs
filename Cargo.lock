@@ -1888,6 +1888,7 @@ dependencies = [
  "tx-chat",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -2033,6 +2034,7 @@ dependencies = [
  "tx-chat",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]

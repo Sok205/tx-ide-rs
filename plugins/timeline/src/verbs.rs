@@ -23,7 +23,7 @@ const POPUP_LOCK: &str = "popup.lock";
 const DEFAULT_SNAPSHOT_COLUMNS: u16 = 120;
 const DEFAULT_SNAPSHOT_ROWS: u16 = 40;
 const RESIDENT_WINDOW: &str = "30m";
-/// The inside of prefix+T's popup (`tmux/keys.tmux`: 118×30 less its border): the resident's
+/// The inside of prefix+T's popup (`keys/timeline.tmux`: 118×30 less its border): the resident's
 /// window is exactly this, or the popup clips its right columns (now, `▸`) and its footer.
 const POPUP_INSIDE_COLUMNS: &str = "116";
 const POPUP_INSIDE_ROWS: &str = "28";
@@ -197,16 +197,15 @@ impl Verb for Timeline {
 }
 
 /// `<tx> <cli_arguments> _timeline-resident --last 30m`, as argv.
-fn resident_argv(core: &TxCore) -> Result<Vec<String>, VerbError> {
-    let exe = std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
-    let mut words = vec![exe.to_string_lossy().into_owned()];
+fn resident_argv(core: &TxCore) -> Vec<String> {
+    let mut words = vec![tx_plugin::sdk::tx_bin().to_string_lossy().into_owned()];
     words.extend(core.config().cli_arguments().iter().cloned());
     words.extend([
         RESIDENT_VERB.to_owned(),
         "--last".to_owned(),
         RESIDENT_WINDOW.to_owned(),
     ]);
-    Ok(words)
+    words
 }
 
 /// Starts the resident view unless it is running, and sizes its window to the popup's inside
@@ -214,7 +213,7 @@ fn resident_argv(core: &TxCore) -> Result<Vec<String>, VerbError> {
 /// hold the popup lock.
 fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
     if !ui.has_session(POPUP_SESSION) {
-        let argv = resident_argv(core)?;
+        let argv = resident_argv(core);
         views::open(
             ui,
             &ViewRequest {

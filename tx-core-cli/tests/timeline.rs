@@ -93,6 +93,40 @@ fn timeline_snapshot_matches_mains_frame() {
 }
 
 #[test]
+fn without_the_bundle_timeline_runs_compiled_into_tx() {
+    let cli = Cli::compiled_in();
+    let world = seed(&cli);
+    let now = world["now"].to_string();
+    let args = [
+        "timeline",
+        "--snapshot",
+        "--days",
+        "1",
+        "--last",
+        "4h",
+        "--cols",
+        "120",
+        "--rows",
+        "40",
+        "--now",
+        &now,
+    ];
+    let main = world::expected(&fixtures(), "snapshot-120x40-4h.txt");
+    assert_eq!(stdout(&utc(&cli, &args)), format!("{main}\n"));
+}
+
+#[test]
+fn without_the_bundle_graph_runs_compiled_into_tx() {
+    let cli = Cli::compiled_in();
+    let world = seed(&cli);
+    let now = world["now"].to_string();
+    let frame = stdout(&utc(&cli, &["graph", "--snapshot", "--now", &now]));
+    for name in ["lead", "worker", "reviewer"] {
+        assert!(frame.contains(name), "{name}: {frame}");
+    }
+}
+
+#[test]
 fn a_disabled_engine_never_fails_the_view_and_health_reports_it() {
     let cli = Cli::new();
     seed(&cli);

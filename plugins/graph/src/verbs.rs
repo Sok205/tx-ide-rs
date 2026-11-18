@@ -180,8 +180,7 @@ fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
     if ui.has_session(POPUP_SESSION) {
         return Ok(());
     }
-    let program =
-        std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
+    let program = tx_plugin::sdk::tx_bin();
     let mut arguments = core.config().cli_arguments().to_vec();
     arguments.push(RESIDENT_VERB.to_owned());
     views::open(
@@ -266,7 +265,7 @@ impl Verb for GraphOpen {
             return Ok(2);
         };
         let ui = Ui::from_core(core);
-        let tx = Tx::current(core).map_err(failed)?;
+        let tx = Tx::current(core);
         let mut words = vec![tx.program()];
         words.extend(tx.arguments().iter().cloned());
         words.push("_graph-attach".to_owned());
