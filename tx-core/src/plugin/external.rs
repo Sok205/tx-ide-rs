@@ -604,7 +604,6 @@ mod tests {
     use crate::profile::Profile;
     use crate::state::IdleReason;
     use serde_json::json;
-    use std::os::unix::fs::PermissionsExt;
 
     /// An engine that answers every method, notes each start in `starts` (its pid) and each
     /// request in `calls`, both in the plugin's directory.
@@ -643,8 +642,8 @@ done"#;
             };
             let program = fixture.plugin().join("bin/engine");
             std::fs::create_dir_all(program.parent().unwrap()).unwrap();
-            std::fs::write(&program, format!("#!/bin/sh\n{script}\n")).unwrap();
-            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::os::unix::fs::symlink("/bin/sh", &program).unwrap();
+            std::fs::write(fixture.dir.path().join("engine.sh"), format!("{script}\n")).unwrap();
             fixture
         }
 
@@ -671,6 +670,10 @@ done"#;
 
         /// The proxy for `section`, tracing into [`Self::trace`].
         fn engine(&self, section: &ManifestEngine) -> ProcessEngine {
+            let mut section = section.clone();
+            section
+                .args
+                .insert(0, self.dir.path().join("engine.sh").display().to_string());
             let context = Arc::new(ExecContext {
                 environment: Vec::new(),
                 trace: Some(self.trace()),
@@ -690,7 +693,7 @@ done"#;
             };
             ProcessEngine::new(
                 Launcher::new(&context, &config, &state, &installed),
-                section,
+                &section,
             )
         }
 

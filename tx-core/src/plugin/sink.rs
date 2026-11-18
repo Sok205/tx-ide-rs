@@ -147,7 +147,6 @@ mod tests {
     use crate::plugin::PluginStatus;
     use crate::plugin::index::{Installed, PluginState};
     use serde_json::Value;
-    use std::os::unix::fs::PermissionsExt;
 
     /// A plugin `log-events` in a temporary directory whose `on-event` program is the shell
     /// script `bin/sink`, tracing into `trace`.
@@ -162,8 +161,8 @@ mod tests {
             };
             let program = fixture.plugin().join("bin/sink");
             std::fs::create_dir_all(program.parent().unwrap()).unwrap();
-            std::fs::write(&program, format!("#!/bin/sh\n{script}\n")).unwrap();
-            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::os::unix::fs::symlink("/bin/sh", &program).unwrap();
+            std::fs::write(fixture.dir.path().join("sink.sh"), format!("{script}\n")).unwrap();
             fixture
         }
 
@@ -196,7 +195,7 @@ mod tests {
             let on_event = ManifestOnEvent {
                 events,
                 bin: "sink".to_owned(),
-                args: Vec::new(),
+                args: vec![self.dir.path().join("sink.sh").display().to_string()],
                 timeout,
             };
             ExecSink::new(
