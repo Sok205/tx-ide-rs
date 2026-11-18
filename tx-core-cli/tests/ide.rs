@@ -292,9 +292,11 @@ fn update_fragment_loads() {
     assert!(bound("prefix", "e").contains("tmux-edit-tx-session"));
     assert!(bound("prefix", "s").contains("_relabel"));
     assert!(bound("root", "C-h").contains("tmux-nav"));
+    let format = cli.tmux_out(&["show-option", "-gv", "pane-border-format"]);
+    assert!(format.contains("_pane-label"), "{format:?}");
     assert!(
-        cli.tmux_out(&["show-option", "-gv", "pane-border-format"])
-            .contains("_pane-label")
+        format.contains("/tx-labels "),
+        "the label runs the plugin's program directly: {format:?}"
     );
     assert!(
         cli.tmux_out(&["show-option", "-gv", "status-right"])

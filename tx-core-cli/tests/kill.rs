@@ -155,3 +155,16 @@ fn disabled_kill_hides_the_verb() {
         cli.ok(&["plugins"])
     );
 }
+
+#[test]
+fn without_the_bundle_kill_runs_compiled_into_tx() {
+    require_tmux!();
+    let cli = Cli::compiled_in();
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let row = rows.iter().find(|row| row["id"] == "kill").unwrap();
+    assert_eq!(row["origin"], "built-in");
+    cli.create("a");
+    assert_eq!(cli.ok(&["kill", "a"]), "Killed 'a'\n");
+    assert_eq!(state_of(&cli, "a"), "ended");
+}

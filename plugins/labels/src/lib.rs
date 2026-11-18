@@ -1,5 +1,6 @@
 //! tx-core plugin `labels`: what a session is called, seen from tmux. `whoami` and the internal
-//! feeds tmux and fzf call (`_pane-info`, `_tmux-name`, `_relabel`, `_pane-label`), plus the
+//! feeds tmux and fzf call (`_pane-info`, `_tmux-name`, `_relabel`, `_pane-label`,
+//! `_label-program`), plus the
 //! `keys/labels.tmux` fragment: prefix+s session tree, pane-border labels.
 
 use std::sync::Arc;
@@ -34,7 +35,8 @@ impl Plugin for LabelsPlugin {
         r.verb(Arc::new(Relabel));
         r.verb(Arc::new(Whoami));
         r.verb(Arc::new(PaneLabel));
-        r.resource("keys/labels.tmux", include_bytes!("../tmux/keys.tmux"))
+        r.verb(Arc::new(LabelProgram));
+        r.resource("keys/labels.tmux", include_bytes!("../keys/labels.tmux"))
     }
 }
 
@@ -189,6 +191,28 @@ impl Verb for PaneLabel {
             NOT_NESTED.to_owned()
         };
         write_out(io, &label)?;
+        Ok(0)
+    }
+}
+
+/// The program the border label runs: the plugin's own when it is installed as a bundle (tmux
+/// then starts it directly, not through `tx`), `tx` when it is compiled in. The key fragment asks
+/// once, when the server's configuration loads.
+pub struct LabelProgram;
+
+impl Verb for LabelProgram {
+    fn name(&self) -> &'static str {
+        "_label-program"
+    }
+
+    fn usage(&self) -> &'static str {
+        "_label-program   the program the pane-border label runs (internal)"
+    }
+
+    fn run(&self, _core: &TxCore, io: &mut VerbIo<'_>, _argv: &[String]) -> Result<i32, VerbError> {
+        let program = std::env::current_exe()
+            .map_err(|error| VerbError::Failed(format!("current_exe: {error}")))?;
+        write_out(io, &format!("{}\n", program.display()))?;
         Ok(0)
     }
 }

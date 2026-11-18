@@ -1848,6 +1848,7 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1919,6 +1920,7 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1928,6 +1930,7 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]

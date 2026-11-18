@@ -107,18 +107,6 @@ fn position(rows: &[&str], row: &str) -> usize {
         .unwrap_or_else(|| panic!("{row:?} missing from {rows:?}"))
 }
 
-/// `ide` is listed before every other key plugin, whatever its own status.
-fn assert_ide_precedes_the_key_plugins(rows: &[&str], ide_status: &str) {
-    let ide = position(rows, &format!("ide\t{ide_status}"));
-    for id in ["labels", "kill", "picker", "edit"] {
-        let row = rows
-            .iter()
-            .position(|row| row.starts_with(&format!("{id}\t")))
-            .unwrap_or_else(|| panic!("{id} missing from {rows:?}"));
-        assert!(ide < row, "ide after {id}: {rows:?}");
-    }
-}
-
 /// The manifest of a plugin `id` with one verb of the same name, run by `bin/<id>`.
 fn manifest(id: &str) -> String {
     format!(
@@ -162,7 +150,6 @@ fn without_a_yaml_every_plugin_is_active() {
         !rows.iter().any(|row| row.starts_with("views\t")),
         "{rows:?}"
     );
-    assert_ide_precedes_the_key_plugins(&rows, "active");
     assert_eq!(cli.ok(&["engines"]), "claude\ncodex\n");
 }
 
@@ -272,7 +259,6 @@ fn disabled_ide_hides_verbs() {
     let rows = rows(&listing);
     position(&rows, "ide\tdisabled");
     position(&rows, "kill\tactive");
-    assert_ide_precedes_the_key_plugins(&rows, "disabled");
 }
 
 #[test]

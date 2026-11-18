@@ -56,3 +56,13 @@ fn disabled_edit_hides_its_verbs() {
         cli.ok(&["plugins"])
     );
 }
+
+#[test]
+fn without_the_bundle_edit_runs_compiled_into_tx() {
+    let cli = Cli::compiled_in();
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let row = rows.iter().find(|row| row["id"] == "edit").unwrap();
+    assert_eq!(row["origin"], "built-in");
+    cli.fails(&["_edit-tag", "nope"], 1);
+}

@@ -69,15 +69,22 @@ gets.
 **`labels`**: `whoami` prints the session the terminal runs in. prefix+s refreshes labels and opens
 tmux's session tree. Its fragment draws the pane-border label: the nested session's name and tags,
 with a green bar while the agent works and the age since its last activity while idle.
+Tier `core`; it ships as a bundle (`plugins/labels/plugin.yaml`) and its program is `tx-labels`. The
+fragment asks `_label-program` once, when the server's configuration loads, and has tmux run that
+program for the border label directly, not through `tx`; where the bundle is not installed the
+verbs are compiled into `tx` and the label runs `tx`, as before.
 
 **`kill`**: `kill <name>` stops an agent through core or closes a view by name. prefix+X does the
 same for the active pane after a confirmation, and refuses the `home` base.
+Tier `core`; it ships as a bundle whose program is `tx-kill`, elsewhere compiled into `tx`.
 
 **`picker`**: `pick` is the fzf session picker on prefix+t: running agents and views in one list,
 newest activity first, with vim-style normal and search modes, a roles panel on TAB, Ctrl-T to tag
 and alt-p to open a pick in a popup. Enter nests the pick into the launching view's pane.
 
 **`edit`**: prefix+e opens a modal form for the session's name, tags and group (`ext.edit`).
+Tier `ide` (it requires `ide` and needs `fzf`); it ships as a bundle whose program is `tx-edit`,
+elsewhere compiled into `tx`.
 
 **`spawn`**: prefix+n opens the new-agent form (an embedded nvim form): name, tags, project
 (defaulting to the pane's directory), prompt, engine, model, effort and role, COMMON always

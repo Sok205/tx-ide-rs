@@ -6,9 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "tx-core plugin: session names and tags on pane borders, in prefix+s and in whoami."
 
+# The plugin as its own program: what `plugin.yaml` names for its verbs.
+[[bin]]
+name = "tx-labels"
+path = "src/main.rs"
+
 [dependencies]
 tx-core.workspace = true
 tx-client.workspace = true
+tx-plugin.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

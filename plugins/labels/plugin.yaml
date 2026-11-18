@@ -1,0 +1,34 @@
+api: 1
+id: labels
+description: Session names and tags on pane borders, in prefix+s and in whoami.
+tier: core
+needs: [tmux]
+
+verbs:
+  - name: _pane-info
+    usage: "_pane-info <session_id>   name and tags, two lines (internal)"
+    bin: tx-labels
+    args: [_pane-info]
+  - name: _tmux-name
+    usage: "_tmux-name <name>   the live tmux target, if any (internal)"
+    bin: tx-labels
+    args: [_tmux-name]
+  - name: _relabel
+    usage: "_relabel   refresh every session's @tx-name (internal)"
+    bin: tx-labels
+    args: [_relabel]
+  - name: whoami
+    usage: "whoami   the session this terminal runs in"
+    bin: tx-labels
+    args: [whoami]
+  - name: _pane-label
+    usage: "_pane-label <pane_id> [rev]   pane-border label (internal)"
+    bin: tx-labels
+    args: [_pane-label]
+  - name: _label-program
+    usage: "_label-program   the program the pane-border label runs (internal)"
+    bin: tx-labels
+    args: [_label-program]
+
+resources:
+  - keys/labels.tmux
