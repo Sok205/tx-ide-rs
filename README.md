@@ -33,30 +33,67 @@ API docs. `tx help` lists every verb and flag.
 
 ```sh
 git clone <this-repo> ~/tx-ide-rs
-~/tx-ide-rs/install --dry-run   # print every change, change nothing
-~/tx-ide-rs/install
+~/tx-ide-rs/install --dry-run   # print what every step would do, change nothing
+~/tx-ide-rs/install             # on a terminal: a checklist of the shipped plugins, all ticked
 tx ui attach                    # the IDE: the home
 ```
 
-Needs Rust 1.92+, tmux, git, fzf, curl, at least one engine CLI (`claude`, the default engine and
-the assistant's, or `codex`) and `nvim` for views; `install` also needs `jq`. It installs `tx` and
-`txi` with cargo, runs `tx update` (the pending update steps; then the shipped roles and
-definitions and every plugin's keys and scripts, published under the data directory; then each
-plugin's updater: the IDE's tmux config), links
-`~/.config/nvim` and `~/.tmux.conf` to this repository's `config/nvim` and `config/tmux.conf`
-(moving what was there to `<path>.bak.<stamp>`), and writes `~/.config/tx-ide/config.yaml` with every default spelled out, once. It is safe to
-re-run. After rebuilding `tx` by hand, run `tx update`: it runs the update steps a newer tx
-needs, such as moving files (the last one run is in `<data>/update-version`; other verbs warn
-while one is pending), publishes the roles, definitions and plugin resources again, then
-reinstalls the tmux config, which names the binary's path. The plugins that run as their own
-programs come from the same build: `tx update --bundles plugins --binaries target/release` lays
-them out under `<data>/shipped` (with `--link` they are links into the checkout and the build,
-so a rebuild is live).
+Needs Rust 1.92+, tmux, jq and git. What else depends on the plugins you take: each one names the
+programs it runs (`fzf`, `nvim`, an engine CLI: `claude`, the default engine and the assistant's,
+or `codex`), and `install` warns about every one that a selected plugin needs and `PATH` does
+not have.
+
+**Which plugins.** tx's features are plugins, and an install takes a selection of them. A plugin
+outside the selection is not built and not installed. Three presets ship: `headless` (what an
+agent needs without the IDE: the engines, artifacts, chat, the pane labels, `tx setup` itself),
+`ide` (that and the IDE) and `full` (everything, the default).
+
+```sh
+install                          # on a terminal: the checklist; 1, 2, 3 tick a preset, space a row
+install --preset headless        # a preset: headless, ide, full, or one of your own
+install --plugins mockup,tour    # exactly these, and the plugins they require
+install --yes                    # ask nothing: full
+install --link-dotfiles          # also link ~/.config/nvim and ~/.tmux.conf to config/
+install --upgrade                # after a git pull: the same selection, rebuilt
+```
+
+Without a terminal, and with `--yes`, the selection is `full`. A preset of your own is
+`~/.config/tx-ide/presets/<name>.yaml` (see the guide's Files page). While the plugins are still
+moving out of the `tx` binary, one that has no bundle in `plugins/` yet runs compiled into `tx`
+whatever the selection.
+
+**What lands where.**
+
+- `tx` and `txi` in cargo's bin directory (`~/.cargo/bin`): the only two programs on `PATH`.
+- The selected plugins under `<data>/shipped/<id>/` (the manifest, the program, the resources),
+  built with `cargo build --release` and laid out by
+  `tx update --bundles plugins --binaries target/release`; the selection itself is recorded in
+  `<data>/shipped/.selection`. The same `tx update` runs the pending update steps, publishes the
+  shipped roles and definitions and every plugin's keys and scripts under the data directory, and
+  runs each plugin's updater (the IDE's tmux config).
+- `~/.config/tx-ide/config.yaml`, written once by `tx setup` with every default spelled out and
+  the selected plugins. A file that exists is never touched.
+- Your dotfiles are left alone unless you ask: with `--link-dotfiles`, or the checklist's last
+  row, `~/.config/nvim` and `~/.tmux.conf` become links to this repository's `config/nvim` and
+  `config/tmux.conf` (what was there moves to `<path>.bak.<stamp>`).
+
+It is safe to re-run; a run with another `--preset` or `--plugins` changes the selection, and
+`tx update` removes the plugins that left it.
+
+**Upgrading.** `git pull`, then `install --upgrade`. It asks nothing, resolves the recorded
+preset again (so a plugin that is new in `full` arrives), rebuilds and lays everything out, and
+never writes `config.yaml` or a dotfile. After rebuilding `tx` by hand, run `tx update`: it runs
+the update steps a newer tx needs, such as moving files (the last one run is in
+`<data>/update-version`; other verbs warn while one is pending), publishes the roles, definitions
+and plugin resources again, then reinstalls the tmux config, which names the binary's path. With
+`tx update --bundles plugins --binaries target/debug --link` the shipped plugins are links into
+the checkout and the build, so a rebuild is live.
 
 Coming from the previous `tx` (removed on 2026-11-02; its last tree is commit `7607347`),
 `install` also switches the machine once: the old install stays runnable as `tx-old`, its hook
 entries leave `~/.claude/settings.json` and `~/.codex/hooks.json` after a backup, and
-`tx doctor --fix-hooks` removes what older versions wired.
+`tx doctor --fix-hooks` removes what older versions wired (it is the `chat` plugin's verb, so
+that last step runs when `chat` is selected).
 
 ## First steps
 

@@ -86,7 +86,8 @@ manifest, every resource the manifest lists and every program a `bin` names: the
 neither stops the update before anything is written, and names the package to build. The plugins
 are the ids under `plugins` in `.selection` (`{"preset": "full", "plugins": ["mockup", …]}`,
 `"preset": null` for an explicit list); without that file, every bundle of `DIR`. `tx update`
-only reads it.
+only reads it. The `install` script runs both for you, `tx setup` to choose and then this
+`tx update`: see [Install](index.md#install).
 
 **Presets and the selection.** `tx setup --bundles DIR [--preset NAME | --plugins a,b,c |
 --upgrade] [--list]` chooses among the bundles of `DIR` that read (one that does not is named and

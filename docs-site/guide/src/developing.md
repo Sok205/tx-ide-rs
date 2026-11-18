@@ -26,8 +26,11 @@ pays nothing for them. `Cli::compiled_in()` is a sandbox without the shared root
 plugin runs compiled into `tx`. A test's own plugin is a directory it writes under its
 `<config>/plugins/` (`Cli::plugin`).
 
-After rebuilding, run `tx update` (or the `install` script) before trying the IDE: the
-server's configuration names the `tx` binary by path.
+After rebuilding, run `./install --upgrade` before trying the IDE: it rebuilds the selected
+plugins in release, installs `tx` and `txi` and lays everything out again (the server's
+configuration names the `tx` binary by path). Or, from a checkout, run
+`tx update --bundles plugins --binaries target/debug --link` once: the shipped plugins are then
+links into the checkout and the build, after which a rebuild is live.
 
 ## Property tests and fuzzing
 
