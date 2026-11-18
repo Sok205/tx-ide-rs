@@ -255,24 +255,144 @@ fn an_unknown_preset_or_plugin_fails_and_writes_nothing() {
 }
 
 #[test]
-fn a_preset_file_with_an_unknown_key_is_named_and_is_no_preset() {
+fn a_preset_file_that_does_not_read_is_named_and_fails_the_run_that_uses_its_name() {
     let sandbox = Sandbox::new();
     sandbox.preset("odd", "tiers: [core]\ncolour: red\n");
+    let file = sandbox.path("config/presets/odd.yaml");
     let stderr = sandbox.fails(&["--preset", "odd"], 1);
     let lines: Vec<&str> = stderr.lines().collect();
     assert_eq!(lines.len(), 2, "{stderr}");
-    assert!(
-        lines[0].starts_with("tx setup: ") && lines[0].contains("odd.yaml"),
-        "{stderr}"
-    );
+    let named = format!("tx setup: {}: ", file.display());
+    assert!(lines[0].starts_with(&named), "{stderr}");
     assert!(
         lines[0].contains("colour") && lines[0].ends_with(": skipped"),
         "{stderr}"
     );
-    assert_eq!(
-        lines[1],
-        "tx setup: no preset \"odd\" (known: full, headless, ide)"
+    // The error of the run is the file's, without "skipped".
+    assert!(lines[1].starts_with(&named), "{stderr}");
+    assert!(
+        lines[1].contains("colour") && !lines[1].contains("skipped"),
+        "{stderr}"
     );
+    assert!(!sandbox.path("data").exists());
+    assert!(!sandbox.config_file().exists());
+    // A run that does not use the name goes on.
+    sandbox.ok(&["--preset", "headless"]);
+}
+
+#[test]
+fn a_full_file_that_does_not_read_never_becomes_the_shipped_full() {
+    let sandbox = Sandbox::new();
+    sandbox.preset("full", "tiers: [core]\ncolour: red\n");
+    let file = sandbox.path("config/presets/full.yaml");
+    let named = format!("tx setup: {}: ", file.display());
+
+    let run = sandbox.ok(&["--list"]);
+    assert_eq!(
+        run.stdout,
+        "headless\tengine labels\n\
+         ide\tengine home ide labels\n\
+         full\tengine home ide labels themes\n"
+    );
+    assert!(run.stderr.starts_with(&named), "{}", run.stderr);
+    assert!(run.stderr.ends_with(": skipped\n"), "{}", run.stderr);
+
+    for arguments in [&["--preset", "full"][..], &[][..]] {
+        let stderr = sandbox.fails(arguments, 1);
+        let lines: Vec<&str> = stderr.lines().collect();
+        assert_eq!(lines.len(), 2, "{arguments:?}: {stderr}");
+        assert!(
+            lines[1].starts_with(&named) && lines[1].contains("colour"),
+            "{arguments:?}: {stderr}"
+        );
+        assert!(!lines[1].contains("skipped"), "{arguments:?}: {stderr}");
+        assert!(!sandbox.path("data").exists(), "{arguments:?}");
+        assert!(!sandbox.config_file().exists(), "{arguments:?}");
+    }
+
+    sandbox.ok(&["--preset", "headless"]);
+    assert_eq!(
+        sandbox.selection(),
+        selected(Some("headless"), &["engine", "labels"])
+    );
+}
+
+#[test]
+fn an_upgrade_is_not_stopped_by_the_file_of_its_recorded_preset() {
+    let sandbox = Sandbox::new();
+    sandbox.preset("full", "tiers: [core]\ncolour: red\n");
+    sandbox.record(Some("full"), &["mockup"]);
+    let run = sandbox.ok(&["--upgrade"]);
+    assert_eq!(run.stdout, "");
+    let file = sandbox.path("config/presets/full.yaml");
+    assert!(
+        run.stderr
+            .contains(&format!("tx setup: {}: ", file.display())),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr
+            .contains(": keeping the plugins of preset \"full\"\n"),
+        "{}",
+        run.stderr
+    );
+    // `mockup` has no bundle here: dropped, and the shipped full is not resolved in its place.
+    assert_eq!(sandbox.selection(), selected(None, &[]));
+}
+
+#[test]
+fn an_upgrade_that_implies_full_stops_at_a_full_file_that_does_not_read() {
+    let sandbox = Sandbox::new();
+    sandbox.preset("full", "tiers: [core]\ncolour: red\n");
+    let file = sandbox.path("config/presets/full.yaml");
+    let stderr = sandbox.fails(&["--upgrade"], 1);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 2, "{stderr}");
+    assert!(
+        lines[1].starts_with(&format!("tx setup: {}: ", file.display()))
+            && lines[1].contains("colour")
+            && !lines[1].contains("skipped"),
+        "{stderr}"
+    );
+    assert!(!sandbox.path("data").exists());
+    assert!(!sandbox.config_file().exists());
+}
+
+#[test]
+fn an_empty_selection_is_never_recorded() {
+    let sandbox = Sandbox::new();
+    for plugins in ["", ",", ",,"] {
+        let stderr = sandbox.fails(&["--plugins", plugins], 2);
+        assert!(
+            stderr.starts_with(
+                "tx setup: --plugins needs at least one id\nusage: tx setup --bundles DIR "
+            ),
+            "{stderr}"
+        );
+    }
+    sandbox.preset("empty", "tiers: []\n");
+    sandbox.preset("nothing", "tiers: [core]\nexclude: [engine, labels]\n");
+    for name in ["empty", "nothing"] {
+        assert_eq!(
+            sandbox.fails(&["--preset", name], 1),
+            format!(
+                "tx setup: preset \"{name}\" selects no plugin in {}\n",
+                sandbox.bundles().display()
+            )
+        );
+    }
+    // Without a terminal and without a mode flag the run uses `full`.
+    sandbox.preset("full", "tiers: []\n");
+    assert_eq!(
+        sandbox.fails(&[], 1),
+        format!(
+            "tx setup: preset \"full\" selects no plugin in {}\n",
+            sandbox.bundles().display()
+        )
+    );
+    assert!(!sandbox.path("data").exists());
+    assert!(!sandbox.config_file().exists());
 }
 
 #[test]

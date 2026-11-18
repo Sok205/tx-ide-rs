@@ -81,13 +81,17 @@ fn parse(arguments: &[String]) -> Result<Arguments, Failure> {
                 continue;
             }
             "--preset" => Mode::Preset(value()?.clone()),
-            "--plugins" => Mode::Plugins(
-                value()?
+            "--plugins" => {
+                let ids: Vec<String> = value()?
                     .split(',')
                     .filter(|id| !id.is_empty())
                     .map(str::to_owned)
-                    .collect(),
-            ),
+                    .collect();
+                if ids.is_empty() {
+                    return Err(usage("--plugins needs at least one id".to_owned()));
+                }
+                Mode::Plugins(ids)
+            }
             "--upgrade" => Mode::Upgrade,
             _ => return Err(usage(format!("unexpected argument {flag:?}"))),
         };
@@ -129,6 +133,18 @@ fn note(message: &str) {
     eprintln!("tx setup: {message}");
 }
 
+/// What the preset `name` selects of `bundles`; a preset that selects no plugin is no choice.
+fn preset_choice(name: &str, presets: &Presets, bundles: &Bundles) -> Result<Choice, String> {
+    let plugins = presets.resolve(name, bundles)?;
+    if plugins.is_empty() {
+        return Err(format!(
+            "preset {name:?} selects no plugin in {}",
+            bundles.directory.display()
+        ));
+    }
+    Ok(Choice::of(Some(name), plugins))
+}
+
 /// The wizard's choice; `None` when the person left it.
 fn ask(bundles: &Bundles, presets: &Presets) -> Result<Option<Choice>, Failure> {
     // A preset that names a plugin without a bundle selects nothing here: it is not offered.
@@ -147,7 +163,8 @@ fn ask(bundles: &Bundles, presets: &Presets) -> Result<Option<Choice>, Failure> 
 }
 
 /// What an upgrade selects: the recorded preset resolved again; a recorded list, or the list of
-/// a preset that is gone, as it is without what has no bundle any more; and `full` for an
+/// a preset that is gone or whose file does not read, as it is without what has no bundle any
+/// more; and `full` for an
 /// install that recorded nothing.
 fn upgrade(
     recorded: Option<Selection>,
@@ -158,13 +175,19 @@ fn upgrade(
         return Ok(Choice::of(Some(FULL), presets.resolve(FULL, bundles)?));
     };
     if let Some(name) = &recorded.preset {
-        if let Some((_, preset)) = presets.0.iter().find(|(known, _)| known == name) {
+        if let Some(message) = presets.1.get(name) {
+            // The user's file of that name does not read: the shipped preset is not its stand-in.
+            note(&format!(
+                "{message}: keeping the plugins of preset {name:?}"
+            ));
+        } else if let Some((_, preset)) = presets.0.iter().find(|(known, _)| known == name) {
             return Ok(Choice::of(Some(name), preset.resolve(bundles)?));
+        } else {
+            // The user removed the preset's file: that never stops an upgrade.
+            note(&format!(
+                "preset {name:?} no longer exists: keeping its plugins"
+            ));
         }
-        // The user removed the preset's file: that never stops an upgrade.
-        note(&format!(
-            "preset {name:?} no longer exists: keeping its plugins"
-        ));
     }
     let mut kept = BTreeSet::new();
     for id in recorded.plugins {
@@ -187,9 +210,9 @@ fn run(arguments: &[String]) -> Result<ExitCode, Failure> {
     let (bundles, skipped) = Bundles::read(&arguments.bundles)
         .map_err(|error| failed(format!("{}: {error}", arguments.bundles.display())))?;
     let presets_directory = directories.config.join(PRESETS_DIR);
-    let (presets, unread) = Presets::read(&presets_directory)
+    let presets = Presets::read(&presets_directory)
         .map_err(|error| failed(format!("{}: {error}", presets_directory.display())))?;
-    for message in skipped.iter().chain(&unread) {
+    for message in skipped.iter().chain(&presets.skipped()) {
         note(message);
     }
 
@@ -210,15 +233,8 @@ fn run(arguments: &[String]) -> Result<ExitCode, Failure> {
     }
 
     let shipped = directories.data.join(SHIPPED_PLUGINS_DIR);
-    let full = || {
-        presets
-            .resolve(FULL, &bundles)
-            .map(|plugins| Choice::of(Some(FULL), plugins))
-    };
     let choice = match &arguments.mode {
-        Mode::Preset(name) => presets
-            .resolve(name, &bundles)
-            .map(|plugins| Choice::of(Some(name), plugins)),
+        Mode::Preset(name) => preset_choice(name, &presets, &bundles),
         Mode::Plugins(ids) => bundles.named(ids).map(|named| {
             let mut selected = named.clone();
             for id in &named {
@@ -239,7 +255,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, Failure> {
                 None => return Ok(ExitCode::FAILURE),
             }
         }
-        Mode::Ask => full(),
+        Mode::Ask => preset_choice(FULL, &presets, &bundles),
     }
     .map_err(Failure::Failed)?;
 
@@ -327,6 +343,10 @@ mod tests {
                 "--preset, --plugins and --upgrade exclude each other",
             ),
             ("--bundles /b extra", "unexpected argument \"extra\""),
+            (
+                "--bundles /b --plugins ,",
+                "--plugins needs at least one id",
+            ),
         ] {
             assert_eq!(
                 parse(&words(line)).unwrap_err(),

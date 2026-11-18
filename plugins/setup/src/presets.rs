@@ -161,16 +161,18 @@ impl Preset {
 }
 
 /// Every preset by name: the shipped ones first, then the user's own in name order. A user
-/// preset of a shipped name stands in its place.
+/// preset of a shipped name stands in its place. The second field is each file that does not
+/// read, by the name it would have: `<file>: <error>`. Such a file is no preset, and it never
+/// turns into the shipped preset of its name when a run uses that name.
 #[derive(Debug)]
-pub struct Presets(pub Vec<(String, Preset)>);
+pub struct Presets(pub Vec<(String, Preset)>, pub BTreeMap<String, String>);
 
 impl Presets {
-    /// The shipped presets and those of `directory` (`<config>/presets`), and why each file
-    /// there that does not read was left out.
-    pub fn read(directory: &Path) -> io::Result<(Self, Vec<String>)> {
+    /// The shipped presets and those of `directory` (`<config>/presets`); each file there that
+    /// does not read is left out and kept in the second field.
+    pub fn read(directory: &Path) -> io::Result<Self> {
         let mut own = BTreeMap::new();
-        let mut skipped = Vec::new();
+        let mut unread = BTreeMap::new();
         let entries = match std::fs::read_dir(directory) {
             Ok(entries) => Some(entries),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -190,10 +192,11 @@ impl Presets {
                 Ok(preset) => {
                     own.insert(name.into_owned(), preset);
                 }
-                Err(error) => skipped.push(format!("{}: {error}: skipped", file.display())),
+                Err(error) => {
+                    unread.insert(name.into_owned(), format!("{}: {error}", file.display()));
+                }
             }
         }
-        skipped.sort_unstable();
         let mut presets = Vec::new();
         for (name, tiers) in SHIPPED {
             let shipped = Preset {
@@ -203,11 +206,23 @@ impl Presets {
             presets.push((name.to_owned(), own.remove(name).unwrap_or(shipped)));
         }
         presets.extend(own);
-        Ok((Self(presets), skipped))
+        Ok(Self(presets, unread))
     }
 
-    /// The preset `name`; else the error that lists the known ones.
+    /// What was said of each file that does not read, to name it as left out.
+    pub fn skipped(&self) -> Vec<String> {
+        self.1
+            .values()
+            .map(|message| format!("{message}: skipped"))
+            .collect()
+    }
+
+    /// The preset `name`; else the error of its file when that does not read, or the error that
+    /// lists the known ones.
     pub fn named(&self, name: &str) -> Result<&Preset, String> {
+        if let Some(message) = self.1.get(name) {
+            return Err(message.clone());
+        }
         if let Some((_, preset)) = self.0.iter().find(|(known, _)| known == name) {
             return Ok(preset);
         }
@@ -271,7 +286,7 @@ mod tests {
     use super::testing::{all, bundle, set, source};
     use super::*;
 
-    fn presets(files: &[(&str, &str)]) -> (Presets, Vec<String>) {
+    fn presets(files: &[(&str, &str)]) -> Presets {
         let directory = tempfile::tempdir().unwrap();
         for (name, text) in files {
             std::fs::write(directory.path().join(name), text).unwrap();
@@ -282,7 +297,7 @@ mod tests {
     #[test]
     fn the_shipped_presets_follow_the_tiers() {
         let (_directory, bundles) = source();
-        let (presets, _) = Presets::read(Path::new("/nonexistent/presets")).unwrap();
+        let presets = Presets::read(Path::new("/nonexistent/presets")).unwrap();
         let resolve = |name: &str| presets.resolve(name, &bundles).unwrap();
         assert_eq!(resolve("headless"), set(&["engine", "labels"]));
         assert_eq!(resolve("ide"), set(&["engine", "home", "ide", "labels"]));
@@ -304,7 +319,7 @@ mod tests {
     #[test]
     fn a_preset_of_your_own_is_its_tiers_and_plugins_without_its_excludes_and_nothing_more() {
         let (_directory, bundles) = source();
-        let (presets, skipped) = presets(&[
+        let presets = presets(&[
             (
                 "mine.yaml",
                 "description: mine\ntiers: [core]\nplugins: [themes]\nexclude: [engine, not-a-bundle]\n",
@@ -312,7 +327,7 @@ mod tests {
             ("empty.yaml", "# nothing\n"),
             ("notes.txt", "not a preset"),
         ]);
-        assert_eq!(skipped, [] as [String; 0]);
+        assert_eq!(presets.skipped(), [] as [String; 0]);
         let names: Vec<&str> = presets.0.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(names, ["headless", "ide", "full", "empty", "mine"]);
         // `themes` requires `home`: a preset is exact, the requirement is not added.
@@ -326,7 +341,7 @@ mod tests {
     #[test]
     fn a_preset_of_a_shipped_name_replaces_it_in_its_place() {
         let (_directory, bundles) = source();
-        let (presets, _) = presets(&[("ide.yaml", "plugins: [ide]\n")]);
+        let presets = presets(&[("ide.yaml", "plugins: [ide]\n")]);
         let names: Vec<&str> = presets.0.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(names, ["headless", "ide", "full"]);
         assert_eq!(presets.resolve("ide", &bundles).unwrap(), set(&["ide"]));
@@ -334,20 +349,38 @@ mod tests {
 
     #[test]
     fn an_unknown_key_leaves_the_preset_out_and_names_the_file() {
-        let (presets, skipped) = presets(&[("odd.yaml", "tiers: [core]\ncolour: red\n")]);
+        let presets = presets(&[("odd.yaml", "tiers: [core]\ncolour: red\n")]);
+        let skipped = presets.skipped();
         assert_eq!(skipped.len(), 1);
         assert!(skipped[0].contains("odd.yaml"), "{skipped:?}");
         assert!(skipped[0].contains("colour"), "{skipped:?}");
+        assert!(skipped[0].ends_with(": skipped"), "{skipped:?}");
         assert_eq!(
             presets.named("odd").unwrap_err(),
-            "no preset \"odd\" (known: full, headless, ide)"
+            skipped[0].strip_suffix(": skipped").unwrap()
+        );
+    }
+
+    #[test]
+    fn a_file_that_does_not_read_never_becomes_the_shipped_preset_of_its_name() {
+        let (_directory, bundles) = source();
+        let presets = presets(&[("full.yaml", "colour: red\n")]);
+        let names: Vec<&str> = presets.0.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["headless", "ide", "full"], "still listed, shipped");
+        let error = presets.resolve("full", &bundles).unwrap_err();
+        assert!(error.contains("full.yaml: "), "{error}");
+        assert!(error.contains("colour"), "{error}");
+        assert!(!error.contains("skipped"), "{error}");
+        assert_eq!(
+            presets.resolve("ide", &bundles).unwrap(),
+            set(&["engine", "home", "ide", "labels"])
         );
     }
 
     #[test]
     fn an_unknown_preset_and_an_unknown_plugin_are_named() {
         let (directory, bundles) = source();
-        let (presets, _) = presets(&[("mine.yaml", "plugins: [nope]\n")]);
+        let presets = presets(&[("mine.yaml", "plugins: [nope]\n")]);
         assert_eq!(
             presets.resolve("x", &bundles).unwrap_err(),
             "no preset \"x\" (known: full, headless, ide, mine)"

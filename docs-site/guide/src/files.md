@@ -101,9 +101,11 @@ plugins: [tour]          # added
 exclude: [timeline, graph]
 ```
 
-Every key is optional and an unknown key makes the file no preset (it is named on stderr). A
-preset selects exactly its tiers and `plugins` without its `exclude`; an id under `plugins` that
-has no bundle in `DIR` is an error. `--plugins a,b,c` selects by id and adds, transitively, what
+Every key is optional. A file that does not read (an unknown key, say) is no preset: it is named
+on stderr and left out, unless the run uses its name (`--preset <name>`, or `full` when nothing
+else is asked), which then fails with the file and its error, even for a shipped name: it never
+turns into the shipped preset. A preset selects exactly its tiers and `plugins` without its
+`exclude`; an id under `plugins` that has no bundle in `DIR` is an error. `--plugins a,b,c` selects by id and adds, transitively, what
 each plugin `requires` when that has a bundle, saying `tx setup: <a> requires <b>: added` on
 stderr; a requirement without a bundle is only named. `--list` prints
 `<name><TAB><ids separated by spaces>` per preset, the shipped ones first, and writes nothing.
@@ -115,8 +117,11 @@ found)` for each program of its `needs` that is not on `PATH`) and a last row of
 `j`/`k` or the arrows move, `g` and `G` jump to the first and last row, space toggles a row
 (ticking a plugin ticks what it requires, unticking one unticks what requires it), `1`, `2` and
 `3` tick exactly `headless`, `ide` and `full`, Enter accepts, and `q` or Escape leaves without
-writing anything (exit 1). The header names the preset the ticks equal, or `custom`. Without a
-terminal the selection is `full`.
+writing anything (exit 1). The header names the preset the ticks equal, or `custom`. With no
+plugin ticked Enter does not accept (the header says `nothing is selected`; the dotfiles row is
+no plugin). Without a terminal the selection is `full`. A run never records an empty selection:
+`--plugins` without an id is a usage error (exit 2), and a preset that selects no plugin of `DIR`
+fails (exit 1).
 
 The result is recorded as `{"preset": <name>, "plugins": [<the resolved ids, sorted>]}`, with
 `"preset": null` for `--plugins` and for ticks that are no preset's exact set; of two presets
@@ -131,7 +136,9 @@ of its manifest spelled out. A file that is there is never opened for writing.
 against `DIR`, so a plugin new in a later version arrives with `full`; a recorded list
 (`"preset": null`) is kept, without the ids that have no bundle any more, each named on stderr;
 an install that recorded nothing becomes `full`. A recorded preset whose file is gone does not
-stop it: its plugins are kept as a list and `"preset": null` is recorded.
+stop it: its plugins are kept as a list and `"preset": null` is recorded, and so is one whose
+file does not read (named on stderr). Only an install that recorded nothing stops at a `full.yaml`
+that does not read, as every run that implies `full` does.
 
 Each file goes in through a temporary file and a rename, so a program that is running keeps the
 file it started from, and a file that did not change is left alone. A file a plugin no longer

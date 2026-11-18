@@ -22,6 +22,7 @@ use crate::presets::Bundles;
 
 /// The header when the ticks are no preset's exact set.
 const CUSTOM: &str = "custom";
+const NOTHING: &str = "tx setup: nothing is selected (tick a plugin, or q to leave)";
 const LINK_DOTFILES: &str = "link ~/.config/nvim and ~/.tmux.conf to this checkout";
 const KEYS: &str = "j/k move   space toggle   1 headless   2 ide   3 full   enter accept   q leave";
 
@@ -154,7 +155,8 @@ impl<'a> Wizard<'a> {
             KeyCode::Char('1') => self.tick_preset(crate::presets::SHIPPED[0].0),
             KeyCode::Char('2') => self.tick_preset(crate::presets::SHIPPED[1].0),
             KeyCode::Char('3') => self.tick_preset(crate::presets::SHIPPED[2].0),
-            KeyCode::Enter => return Step::Accept,
+            // Nothing is accepted while no plugin is ticked: the header says so.
+            KeyCode::Enter if !self.ticked.is_empty() => return Step::Accept,
             KeyCode::Char('q') | KeyCode::Esc => return Step::Leave,
             _ => {}
         }
@@ -162,6 +164,9 @@ impl<'a> Wizard<'a> {
     }
 
     fn header(&self) -> String {
+        if self.ticked.is_empty() {
+            return NOTHING.to_owned();
+        }
         format!(
             "tx setup: {}   ({} of {} plugins)",
             self.preset().unwrap_or(CUSTOM),
@@ -287,7 +292,7 @@ mod tests {
     use crate::presets::testing::{all, set, source};
 
     fn resolved(bundles: &Bundles) -> Vec<(String, BTreeSet<String>)> {
-        let (presets, _) = Presets::read(std::path::Path::new("/nonexistent/presets")).unwrap();
+        let presets = Presets::read(std::path::Path::new("/nonexistent/presets")).unwrap();
         let resolve = |(name, preset): &(String, crate::presets::Preset)| {
             (name.clone(), preset.resolve(bundles).unwrap())
         };
@@ -450,6 +455,28 @@ mod tests {
             wizard.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Step::Leave
         );
+    }
+
+    #[test]
+    fn enter_accepts_nothing_while_no_plugin_is_ticked() {
+        let (_directory, bundles) = source();
+        let presets = resolved(&bundles);
+        let mut wizard = Wizard::new(&bundles, &presets, "full", |_| true);
+        wizard.ticked.clear();
+        assert_eq!(
+            screen(&wizard)[0],
+            "tx setup: nothing is selected (tick a plugin, or q to leave)"
+        );
+        assert_eq!(press(&mut wizard, "\n"), Step::Continue);
+        // The dotfiles row is no plugin.
+        press(&mut wizard, "G ");
+        assert!(wizard.link_dotfiles);
+        assert_eq!(press(&mut wizard, "\n"), Step::Continue);
+        assert!(screen(&wizard)[0].contains("nothing is selected"));
+        assert_eq!(press(&mut wizard, "q"), Step::Leave);
+        press(&mut wizard, "g ");
+        assert!(screen(&wizard)[0].starts_with("tx setup: custom "));
+        assert_eq!(press(&mut wizard, "\n"), Step::Accept);
     }
 
     #[test]
