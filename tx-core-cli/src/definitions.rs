@@ -1,20 +1,112 @@
-//! `tx definitions` and `tx check`: list and validate the agent, skill and MCP definitions. Both
-//! read only the definition roots, never the core's state.
+//! `tx definitions` and `tx check`: list and validate the agent, skill and MCP definitions, and
+//! print what the active engines add to them. Both read only the definition roots and
+//! `config.yaml`, never the core's state; an engine that runs as its own program is asked over
+//! the protocol.
 
+use std::collections::BTreeMap;
 use std::io::Write;
+use std::sync::Arc;
 
-use tx_core::definitions::{DefinitionError, Definitions, McpServer, read_agent, read_skill};
+use tx_core::definitions::{
+    AgentDefinition, DefinitionError, Definitions, McpServer, read_agent, read_skill,
+};
+use tx_core::engine::{AgentSummary, DefinitionsRequest, Finding};
+use tx_core::plugin::Registry;
+use tx_core::plugin::external::{ProcessEngine, engine_proxies};
 use tx_core::profile::Profiles;
-use tx_core::{Directories, EngineKind, SkillProvider};
+use tx_core::{Directories, EngineKind, LlmEngine, SkillProvider};
 
-use crate::args::DefinitionKind;
+use crate::args::{DefinitionKind, Global};
+use crate::setup::{Failure, Installation, Linked, exec_context};
 
-/// The one line saying what Claude adds to every agent's tools, shown wherever agents are.
-fn baseline_line() -> String {
-    format!(
-        "# claude adds to every agent's tools: {}",
-        tx_engine_claude::BASELINE_TOOLS.join(", ")
-    )
+/// The engines a core of this installation would have, without opening one: a proxy for the
+/// engine of every active installed plugin, and, until the linked plugins are gone (PR 19), the
+/// engine of each linked plugin that still runs compiled in, registered into a registry of its
+/// own. That second half repeats on purpose what `active_engines` in `check.rs` does for the
+/// kinds; both go with the linked plugins.
+pub struct Engines {
+    installed: Vec<ProcessEngine>,
+    linked: Vec<Registry>,
+}
+
+impl Engines {
+    pub fn read(
+        global: &Global,
+        installation: &Installation,
+        linked: &Linked,
+    ) -> Result<Self, Failure> {
+        let context = Arc::new(exec_context(global, &installation.config));
+        let installed = engine_proxies(
+            &installation.index,
+            &installation.activation,
+            &context,
+            &installation.config,
+            &[],
+        )
+        .into_iter()
+        .map(|(_, engine)| engine)
+        .collect();
+        let mut registries = Vec::new();
+        for plugin in &linked.plugins {
+            let entry = installation.entries.get(plugin.id());
+            if installation.index.contains(plugin.id()) || entry.is_some_and(|entry| !entry.enabled)
+            {
+                continue;
+            }
+            let settings = entry.map_or(serde_json::Value::Null, |entry| entry.settings.clone());
+            let mut registry = Registry::new(settings, installation.config.clone());
+            plugin.register(&mut registry).map_err(Failure::Plugin)?;
+            if !registry.engines().is_empty() {
+                registries.push(registry);
+            }
+        }
+        Ok(Self {
+            installed,
+            linked: registries,
+        })
+    }
+
+    /// Every active engine, in kind order.
+    pub fn all(&self) -> BTreeMap<EngineKind, &dyn LlmEngine> {
+        let mut engines = BTreeMap::new();
+        let installed = self.installed.iter().map(|engine| engine as &dyn LlmEngine);
+        let linked = self
+            .linked
+            .iter()
+            .flat_map(|registry| registry.engines().iter().map(Box::as_ref));
+        for engine in installed.chain(linked) {
+            engines.entry(engine.kind()).or_insert(engine);
+        }
+        engines
+    }
+
+    /// What every active engine adds to every agent, in kind order.
+    pub fn notes(&self) -> Vec<String> {
+        self.all()
+            .values()
+            .flat_map(|engine| engine.notes())
+            .collect()
+    }
+}
+
+/// Every skill of the definition roots that an engine provides, by name, from its reference
+/// `SKILL.md`.
+pub fn provided_skills(
+    directories: &Directories,
+) -> Result<BTreeMap<String, SkillProvider>, DefinitionError> {
+    Ok(Definitions::new(directories.definition_roots())
+        .skill_directories()?
+        .into_iter()
+        .filter_map(|(name, directory)| Some((name, read_skill(&directory).ok()?.provided_by?)))
+        .collect())
+}
+
+/// `<path>:<line>`, or `<path>` for a finding without a line.
+fn place(finding: &Finding) -> String {
+    match finding.line {
+        Some(line) => format!("{}:{line}", finding.path.display()),
+        None => finding.path.display().to_string(),
+    }
 }
 
 /// `name<TAB>description` per definition (for a server: its type and URL or command). One kind
@@ -23,6 +115,7 @@ fn baseline_line() -> String {
 pub fn list(
     directories: &Directories,
     kind: Option<DefinitionKind>,
+    notes: &[String],
     out: &mut dyn Write,
 ) -> Result<(), DefinitionError> {
     let definitions = Definitions::new(directories.definition_roots());
@@ -30,10 +123,6 @@ pub fn list(
         Some(kind) => vec![kind],
         None => DefinitionKind::ALL.to_vec(),
     };
-    if kind == Some(DefinitionKind::Tools) {
-        return crate::tools::list(directories, out)
-            .map_err(|message| DefinitionError::new(&directories.cache, None, message));
-    }
     for (index, kind) in kinds.iter().enumerate() {
         let rows = rows(&definitions, *kind)?;
         if kinds.len() > 1 {
@@ -46,7 +135,9 @@ pub fn list(
             writeln!(out, "{name}\t{description}").ok();
         }
         if *kind == DefinitionKind::Agents {
-            writeln!(out, "{}", baseline_line()).ok();
+            for note in notes {
+                writeln!(out, "# {note}").ok();
+            }
         }
     }
     Ok(())
@@ -100,52 +191,6 @@ fn described(description: Result<String, DefinitionError>) -> String {
 
 const INVALID: &str = "(invalid: see `tx check`)";
 
-/// The engine-provided skills among `skills`, by name, from their reference `SKILL.md`.
-fn provided_skills(
-    directories: &Directories,
-    skills: &[String],
-) -> Result<Vec<(String, SkillProvider)>, DefinitionError> {
-    let directories = Definitions::new(directories.definition_roots()).skill_directories()?;
-    Ok(skills
-        .iter()
-        .filter_map(|name| {
-            let skill = read_skill(directories.get(name)?).ok()?;
-            Some((name.clone(), skill.provided_by?))
-        })
-        .collect())
-}
-
-/// Claude turns its bundled skills on all at once: listing one brings in every one. The known
-/// names are the shipped `claude-bundled` references; the version may ship more.
-pub fn bundle_warning(
-    directories: &Directories,
-    skills: &[String],
-) -> Result<Option<String>, DefinitionError> {
-    let listed: Vec<String> = provided_skills(directories, skills)?
-        .into_iter()
-        .filter(|(_, provider)| *provider == SkillProvider::ClaudeBundled)
-        .map(|(name, _)| name)
-        .collect();
-    if listed.is_empty() {
-        return Ok(None);
-    }
-    let all: Vec<String> = Definitions::new(directories.definition_roots())
-        .skill_directories()?
-        .into_iter()
-        .filter(|(_, directory)| {
-            read_skill(directory)
-                .is_ok_and(|skill| skill.provided_by == Some(SkillProvider::ClaudeBundled))
-        })
-        .map(|(name, _)| name)
-        .collect();
-    Ok(Some(format!(
-        "bundled skill {} brings in all bundled skills: {}, and any others this Claude version \
-         ships",
-        listed.join(", "),
-        all.join(", ")
-    )))
-}
-
 /// What [`check`] found: whether there were no problems, and what was checked, for the caller to
 /// close with `ok: <summary>` (and more, when it checked more).
 pub struct Checked {
@@ -155,115 +200,65 @@ pub struct Checked {
 }
 
 /// Prints `path:line: message` per problem and returns whether there were none, with what was
-/// checked; the caller prints the closing line. With an engine, it also prints what that engine carries on
-/// every launch that no flag removes, then per agent what it gets that its file does not say.
-/// The Claude baseline is shown unless the engine is Codex, which has none. Of an engine other
-/// than those two, tx knows nothing to add.
+/// checked; the caller prints the closing line. Then what the consulted engines say: every
+/// active engine, or only `engine` (which the caller made sure is active). Their notes, as
+/// `# <note>`, and their warnings; with an engine, what it carries on every launch that no flag
+/// removes, its problems (each fails the check) and per agent what it gets that its file does
+/// not say.
 pub fn check(
     directories: &Directories,
     profiles: &Profiles,
+    engines: &Engines,
     engine: Option<EngineKind>,
     names: &[String],
     out: &mut dyn Write,
 ) -> Result<Checked, DefinitionError> {
     let report = Definitions::new(directories.definition_roots()).check(names, profiles)?;
-    let mut engine_problems = 0;
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
     }
-    if engine != Some(EngineKind::CODEX) {
-        writeln!(out, "{}", baseline_line()).ok();
-        for agent in &report.agent_definitions {
-            if let Some(warning) = bundle_warning(directories, &agent.skills)? {
-                writeln!(
-                    out,
-                    "{}:{}: warning: {warning}",
-                    agent.path.display(),
-                    agent.line_of("skills").unwrap_or(1)
-                )
-                .ok();
-            }
+    let consulted: Vec<(EngineKind, &dyn LlmEngine)> = engines
+        .all()
+        .into_iter()
+        .filter(|(kind, _)| engine.is_none_or(|wanted| wanted == *kind))
+        .collect();
+    let agents: Vec<AgentSummary> = report
+        .agent_definitions
+        .iter()
+        .map(AgentDefinition::summary)
+        .collect();
+    let provided = provided_skills(directories)?;
+    let request = DefinitionsRequest {
+        agents: &agents,
+        provided_skills: &provided,
+        cache: &directories.cache,
+    };
+    for (_, consulted) in &consulted {
+        for note in consulted.notes() {
+            writeln!(out, "# {note}").ok();
         }
     }
-    if let Some(engine) = engine {
-        let (forced, notes): (&[&str], fn(&_) -> Vec<String>) = match engine {
-            EngineKind::CLAUDE => (
-                &tx_engine_claude::FORCED,
-                tx_engine_claude::definition_notes,
-            ),
-            EngineKind::CODEX => (&tx_engine_codex::FORCED, tx_engine_codex::definition_notes),
-            // Any other engine: nothing tx can name.
-            _ => (&[], |_| Vec::new()),
-        };
-        for item in forced {
-            writeln!(out, "{engine}: always present: {item}").ok();
+    for (_, consulted) in &consulted {
+        for warning in consulted.warnings(&request) {
+            writeln!(out, "{}: warning: {}", place(&warning), warning.message).ok();
         }
-        // Claude drops a `tools` name it does not know without a word: refuse it here.
-        if engine == EngineKind::CLAUDE {
-            let built_ins = crate::tools::claude_built_ins(directories)
-                .map_err(|message| DefinitionError::new(&directories.cache, None, message))?;
-            for agent in &report.agent_definitions {
-                let unknown: Vec<&str> = agent
-                    .tools
-                    .iter()
-                    .chain(
-                        agent
-                            .disallowed_tools
-                            .iter()
-                            .filter(|tool| !tool.starts_with("mcp__")),
-                    )
-                    .map(String::as_str)
-                    .filter(|tool| {
-                        *tool != "Task" && !built_ins.tools.iter().any(|known| known == tool)
-                    })
-                    .collect();
-                if !unknown.is_empty() {
-                    engine_problems += 1;
-                    writeln!(
-                        out,
-                        "{}:{}: not a Claude Code {} tool, which it would drop silently: {}",
-                        agent.path.display(),
-                        agent.line_of("tools").unwrap_or(1),
-                        built_ins.version,
-                        unknown.join(", ")
-                    )
-                    .ok();
-                }
-            }
+    }
+    let mut engine_problems = 0;
+    if let Some((kind, consulted)) = consulted.first()
+        && engine.is_some()
+    {
+        let checked = consulted
+            .check(&request)
+            .map_err(|error| DefinitionError::new(&directories.cache, None, error.to_string()))?;
+        for item in &checked.always_present {
+            writeln!(out, "{kind}: always present: {item}").ok();
         }
-        // Reference skills: a synced one must be on this machine; Codex has none of them.
-        for agent in &report.agent_definitions {
-            for (name, provider) in provided_skills(directories, &agent.skills)? {
-                let problem = match (engine, provider) {
-                    (EngineKind::CODEX, provider) => Some(format!(
-                        "skill {name:?} is provided by {}: not on codex",
-                        provider.as_str()
-                    )),
-                    (EngineKind::CLAUDE, SkillProvider::ClaudeSynced)
-                        if !tx_engine_claude::synced_skill_exists(&name) =>
-                    {
-                        Some(format!(
-                            "no claude.ai-synced skill {name:?} on this machine"
-                        ))
-                    }
-                    _ => None,
-                };
-                if let Some(problem) = problem {
-                    engine_problems += 1;
-                    writeln!(
-                        out,
-                        "{}:{}: {problem}",
-                        agent.path.display(),
-                        agent.line_of("skills").unwrap_or(1)
-                    )
-                    .ok();
-                }
-            }
+        for problem in &checked.problems {
+            writeln!(out, "{}: {}", place(problem), problem.message).ok();
         }
-        for agent in &report.agent_definitions {
-            for note in notes(agent) {
-                writeln!(out, "{}: {engine}: {note}", agent.path.display()).ok();
-            }
+        engine_problems = checked.problems.len();
+        for note in &checked.notes {
+            writeln!(out, "{}: {kind}: {}", note.path.display(), note.message).ok();
         }
     }
     let clean = report.problems.is_empty() && engine_problems == 0;

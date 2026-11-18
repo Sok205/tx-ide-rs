@@ -51,6 +51,9 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tx_core::engine::{
+    AgentSummary, DefinitionsRequest, EngineCheck, EngineTools, Finding, ToolsRequest,
+};
 use tx_core::{
     Agent, ENGINE_ARGS_OPTION, EngineError, EngineKind, IdleReason, Input, Key, LaunchPlan,
     LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
@@ -94,7 +97,7 @@ pub const FORCED: [&str; 6] = [
 
 /// What one agent definition gets on Claude that its file does not say: the baseline it does not
 /// list, and writes through `Bash` when `Edit`/`Write` are left out.
-pub fn definition_notes(agent: &tx_core::definitions::AgentDefinition) -> Vec<String> {
+pub fn definition_notes(agent: &AgentSummary) -> Vec<String> {
     let lists = |tool: &str| agent.tools.iter().any(|listed| listed == tool);
     let mut notes = Vec::new();
     let added: Vec<&str> = BASELINE_TOOLS
@@ -627,6 +630,165 @@ impl LlmEngine for ClaudeAdapter {
         mirror_file(&archived_transcript, &transcript)?;
         mirror_tree(&archived_sidecars, &sidecars)?;
         Ok(true)
+    }
+
+    fn notes(&self) -> Vec<String> {
+        vec![baseline_note()]
+    }
+
+    fn warnings(&self, request: &DefinitionsRequest<'_>) -> Vec<Finding> {
+        bundle_warnings(request)
+    }
+
+    /// Probes the installed Claude for its built-in tools (cached per version under
+    /// `request.cache`), then [`check_with`].
+    fn check(&self, request: &DefinitionsRequest<'_>) -> Result<EngineCheck, EngineError> {
+        let built_ins = probe::built_ins(request.cache).map_err(EngineError::Refused)?;
+        Ok(check_with(&built_ins, request, synced_skill_exists))
+    }
+
+    /// Probes the installed Claude for its built-in tools (cached per version under
+    /// `request.cache`), then [`tools_report`]. Claude does not list MCP tools.
+    fn tools(&self, request: &ToolsRequest<'_>) -> Result<EngineTools, EngineError> {
+        let built_ins = probe::built_ins(request.cache).map_err(EngineError::Refused)?;
+        Ok(tools_report(&built_ins))
+    }
+}
+
+/// What Claude adds to every agent's tools, said wherever agents are listed.
+fn baseline_note() -> String {
+    format!(
+        "claude adds to every agent's tools: {}",
+        BASELINE_TOOLS.join(", ")
+    )
+}
+
+/// The line of `key` in an agent's file; line 1 when the key is not there.
+fn line_of(agent: &AgentSummary, key: &str) -> usize {
+    agent.lines.get(key).copied().unwrap_or(1)
+}
+
+/// Claude turns its bundled skills on all at once: listing one brings in every one. One
+/// warning per agent that lists a bundled skill, at the line of its `skills`; the known names
+/// are the `claude-bundled` references of the definition roots, and the version may ship more.
+pub fn bundle_warnings(request: &DefinitionsRequest<'_>) -> Vec<Finding> {
+    let bundled =
+        |name: &String| request.provided_skills.get(name) == Some(&SkillProvider::ClaudeBundled);
+    let all: Vec<&str> = request
+        .provided_skills
+        .keys()
+        .filter(|name| bundled(name))
+        .map(String::as_str)
+        .collect();
+    request
+        .agents
+        .iter()
+        .filter_map(|agent| {
+            let listed: Vec<&str> = agent
+                .skills
+                .iter()
+                .filter(|name| bundled(name))
+                .map(String::as_str)
+                .collect();
+            (!listed.is_empty()).then(|| Finding {
+                path: agent.path.clone(),
+                line: Some(line_of(agent, "skills")),
+                message: format!(
+                    "bundled skill {} brings in all bundled skills: {}, and any others this \
+                     Claude version ships",
+                    listed.join(", "),
+                    all.join(", ")
+                ),
+            })
+        })
+        .collect()
+}
+
+/// What `tx check --engine claude` reports, given the installed Claude's built-ins and whether
+/// a claude.ai-synced skill is on this machine: [`FORCED`]; per agent the tool names Claude would
+/// drop without a word (it does not know them), then per agent the synced skills that are
+/// missing; per agent [`definition_notes`].
+pub fn check_with(
+    built_ins: &probe::BuiltIns,
+    request: &DefinitionsRequest<'_>,
+    synced_skill_exists: impl Fn(&str) -> bool,
+) -> EngineCheck {
+    let mut problems = Vec::new();
+    for agent in request.agents {
+        let unknown: Vec<&str> = agent
+            .tools
+            .iter()
+            .chain(
+                agent
+                    .disallowed_tools
+                    .iter()
+                    .filter(|tool| !tool.starts_with("mcp__")),
+            )
+            .map(String::as_str)
+            .filter(|tool| *tool != "Task" && !built_ins.tools.iter().any(|known| known == tool))
+            .collect();
+        if !unknown.is_empty() {
+            problems.push(Finding {
+                path: agent.path.clone(),
+                line: Some(line_of(agent, "tools")),
+                message: format!(
+                    "not a Claude Code {} tool, which it would drop silently: {}",
+                    built_ins.version,
+                    unknown.join(", ")
+                ),
+            });
+        }
+    }
+    for agent in request.agents {
+        for name in &agent.skills {
+            if request.provided_skills.get(name) == Some(&SkillProvider::ClaudeSynced)
+                && !synced_skill_exists(name)
+            {
+                problems.push(Finding {
+                    path: agent.path.clone(),
+                    line: Some(line_of(agent, "skills")),
+                    message: format!("no claude.ai-synced skill {name:?} on this machine"),
+                });
+            }
+        }
+    }
+    let notes = request
+        .agents
+        .iter()
+        .flat_map(|agent| {
+            definition_notes(agent).into_iter().map(|message| Finding {
+                path: agent.path.clone(),
+                line: None,
+                message,
+            })
+        })
+        .collect();
+    EngineCheck {
+        always_present: FORCED.iter().map(|item| (*item).to_owned()).collect(),
+        problems,
+        notes,
+    }
+}
+
+/// What `tx definitions tools` prints for Claude: its built-ins, the interactive-only ones
+/// marked, and the baseline it adds.
+pub fn tools_report(built_ins: &probe::BuiltIns) -> EngineTools {
+    EngineTools {
+        heading: format!("claude (Claude Code {}):", built_ins.version),
+        rows: built_ins
+            .tools
+            .iter()
+            .map(|tool| {
+                let note = if INTERACTIVE_TOOLS.contains(&tool.as_str()) {
+                    "built-in, interactive only"
+                } else {
+                    "built-in"
+                };
+                (tool.clone(), note.to_owned())
+            })
+            .collect(),
+        footer: vec![format!("# {}", baseline_note())],
+        mcp: None,
     }
 }
 
@@ -1982,5 +2144,149 @@ mod tests {
                 "{partial}"
             );
         }
+    }
+
+    fn summary(name: &str, tools: &[&str], disallowed: &[&str], skills: &[&str]) -> AgentSummary {
+        AgentSummary {
+            name: name.to_owned(),
+            path: format!("/d/agents/{name}.md").into(),
+            tools: tools.iter().map(|tool| (*tool).to_owned()).collect(),
+            disallowed_tools: disallowed.iter().map(|tool| (*tool).to_owned()).collect(),
+            skills: skills.iter().map(|skill| (*skill).to_owned()).collect(),
+            lines: [("tools".to_owned(), 4), ("skills".to_owned(), 6)]
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    fn provided() -> std::collections::BTreeMap<String, SkillProvider> {
+        [
+            ("xlsx", SkillProvider::ClaudeBundled),
+            ("pdf", SkillProvider::ClaudeBundled),
+            ("notes", SkillProvider::ClaudeSynced),
+        ]
+        .into_iter()
+        .map(|(name, provider)| (name.to_owned(), provider))
+        .collect()
+    }
+
+    #[test]
+    fn the_note_is_the_baseline_every_agent_gets() {
+        assert_eq!(
+            ClaudeAdapter::new("/nowhere").notes(),
+            ["claude adds to every agent's tools: Skill, ToolSearch"]
+        );
+    }
+
+    #[test]
+    fn an_agent_that_lists_a_bundled_skill_is_warned_that_the_whole_bundle_comes() {
+        let agents = [
+            summary("mine", &["Read"], &[], &["notes", "xlsx", "pdf"]),
+            summary("plain", &["Read"], &[], &["notes"]),
+        ];
+        let skills = provided();
+        let request = DefinitionsRequest {
+            agents: &agents,
+            provided_skills: &skills,
+            cache: Path::new("/c"),
+        };
+        assert_eq!(
+            bundle_warnings(&request),
+            [Finding {
+                path: "/d/agents/mine.md".into(),
+                line: Some(6),
+                message: "bundled skill xlsx, pdf brings in all bundled skills: pdf, xlsx, and \
+                          any others this Claude version ships"
+                    .to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_check_names_the_tools_claude_would_drop_and_the_synced_skills_that_are_missing() {
+        let built_ins = probe::BuiltIns {
+            version: "2.1.326".to_owned(),
+            tools: vec!["Bash".to_owned(), "Read".to_owned()],
+        };
+        let agents = [
+            summary(
+                "mine",
+                &["Read", "Nope", "Task"],
+                &["mcp__x__y", "Gone"],
+                &["notes"],
+            ),
+            summary("fine", &["Bash", "Read"], &[], &[]),
+        ];
+        let skills = provided();
+        let request = DefinitionsRequest {
+            agents: &agents,
+            provided_skills: &skills,
+            cache: Path::new("/c"),
+        };
+        let check = check_with(&built_ins, &request, |_| false);
+        assert_eq!(check.always_present, FORCED);
+        assert_eq!(
+            check.problems,
+            [
+                Finding {
+                    path: "/d/agents/mine.md".into(),
+                    line: Some(4),
+                    message: "not a Claude Code 2.1.326 tool, which it would drop silently: \
+                              Nope, Gone"
+                        .to_owned(),
+                },
+                Finding {
+                    path: "/d/agents/mine.md".into(),
+                    line: Some(6),
+                    message: "no claude.ai-synced skill \"notes\" on this machine".to_owned(),
+                },
+            ]
+        );
+        assert_eq!(
+            check.notes,
+            [
+                Finding {
+                    path: "/d/agents/mine.md".into(),
+                    line: None,
+                    message: "gets the baseline tools Skill, ToolSearch".to_owned(),
+                },
+                Finding {
+                    path: "/d/agents/fine.md".into(),
+                    line: None,
+                    message: "gets the baseline tools Skill, ToolSearch".to_owned(),
+                },
+                Finding {
+                    path: "/d/agents/fine.md".into(),
+                    line: None,
+                    message: "`Bash` is listed: files stay writable through it without Edit/Write"
+                        .to_owned(),
+                },
+            ]
+        );
+        assert!(check_with(&built_ins, &request, |_| true).problems.len() == 1);
+    }
+
+    #[test]
+    fn the_tools_report_is_the_built_ins_and_the_baseline() {
+        let report = tools_report(&probe::BuiltIns {
+            version: "2.1.326".to_owned(),
+            tools: vec!["AskUserQuestion".to_owned(), "Bash".to_owned()],
+        });
+        assert_eq!(report.heading, "claude (Claude Code 2.1.326):");
+        assert_eq!(
+            report.rows,
+            [
+                (
+                    "AskUserQuestion".to_owned(),
+                    "built-in, interactive only".to_owned()
+                ),
+                ("Bash".to_owned(), "built-in".to_owned()),
+            ]
+        );
+        assert_eq!(
+            report.footer,
+            ["# claude adds to every agent's tools: Skill, ToolSearch"]
+        );
+        assert_eq!(report.mcp, None);
     }
 }

@@ -12,6 +12,15 @@ same program is the hook command of every agent it launches (`tx-engine-<kind> -
 so a hook is one process. Where the plugin is not installed as a bundle, the same adapter runs
 compiled into `tx` and its hooks run `txi hook <Event>`.
 
+What an engine adds to the definitions is the engine's to say, not `tx`'s. The `# claude adds to
+every agent's tools: …` line of `tx definitions` and `tx check` is the manifest's `notes`, printed
+without starting the program. The rest is asked of each active engine, over the protocol for a
+bundle: the bundled-skill warning of `tx check` and `tx create --agent` (`warnings`); the
+`<kind>: always present:` lines, the problems and the per-agent notes of `tx check --engine
+<kind>` (`check`); and each engine's section of `tx definitions tools`, with the `mcp <server>:`
+sections of the first engine that can list MCP tools (`tools`; here Codex, through
+`codex app-server`). A disabled engine prints nothing there, and `tx check --engine` refuses it.
+
 **`engine-claude`** registers the Claude Code adapter. It launches a minimal session,
 `claude --session-id <tx id> --strict-mcp-config --setting-sources "" --tools
 Bash,Read,Edit,Write,Skill,ToolSearch --append-system-prompt <profile> --dangerously-skip-permissions …`

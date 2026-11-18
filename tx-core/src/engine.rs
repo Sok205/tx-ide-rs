@@ -11,8 +11,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::Agent;
+use crate::definitions::McpServer;
 use crate::error::CoreError;
-use crate::profile::Profile;
+use crate::profile::{Profile, SkillProvider};
 use crate::state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 
 pub mod wire;
@@ -221,6 +222,71 @@ pub const TRANSCRIPT_PATH_KEY: &str = "transcript_path";
 pub struct Conversation {
     pub id: String,
     pub transcript_path: PathBuf,
+}
+
+/// One thing an engine says about a definition file: `<path>:<line>: <message>`, or
+/// `<path>: <message>` without a line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    pub path: PathBuf,
+    pub line: Option<usize>,
+    pub message: String,
+}
+
+/// What an engine needs to know of an agent definition: no prompt, the lines of its keys.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSummary {
+    pub name: String,
+    pub path: PathBuf,
+    pub tools: Vec<String>,
+    pub disallowed_tools: Vec<String>,
+    pub skills: Vec<String>,
+    /// The 1-based line of the file on which each frontmatter key starts.
+    pub lines: BTreeMap<String, usize>,
+}
+
+/// What `warnings` and `check` look at: the agent definitions, the skills an engine provides,
+/// and a directory the engine may cache what it learns in.
+#[derive(Clone, Copy, Debug)]
+pub struct DefinitionsRequest<'a> {
+    pub agents: &'a [AgentSummary],
+    /// every skill of the definition roots that an engine provides, by name
+    pub provided_skills: &'a BTreeMap<String, SkillProvider>,
+    pub cache: &'a Path,
+}
+
+/// What `tx check --engine` prints of one engine: what every launch carries that no flag
+/// removes, the problems (each fails the check), and per agent what it gets that its file does
+/// not say.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EngineCheck {
+    pub always_present: Vec<String>,
+    pub problems: Vec<Finding>,
+    pub notes: Vec<Finding>,
+}
+
+/// What `tools` looks at: a directory the engine may cache what it learns in, and the MCP
+/// servers of the definition roots.
+#[derive(Clone, Copy, Debug)]
+pub struct ToolsRequest<'a> {
+    pub cache: &'a Path,
+    pub mcp_servers: &'a BTreeMap<String, McpServer>,
+}
+
+/// The tools of one MCP server as (name, description), or why there are none.
+pub type ServerTools = Result<Vec<(String, String)>, String>;
+
+/// What `tx definitions tools` prints of one engine: a heading line, a row per tool name an
+/// agent definition can use (`name<TAB>note`), footer lines, and the MCP servers' tools.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EngineTools {
+    pub heading: String,
+    pub rows: Vec<(String, String)>,
+    pub footer: Vec<String>,
+    /// `None`: this engine cannot list MCP tools. `Some(Err(why))`: it can, and the listing
+    /// failed as a whole. Else per MCP server: its tools as (name, description), or why
+    /// there are none.
+    pub mcp: Option<Result<BTreeMap<String, ServerTools>, String>>,
 }
 
 /// The longest name an [`EngineKind`] holds.
@@ -443,6 +509,34 @@ pub trait LlmEngine: Send + Sync {
     /// engine that runs as its own program is not started while one is held. The default has
     /// nothing to start.
     fn warm(&self) {}
+
+    /// What this engine adds to every agent, one line each, printed as `# <note>` by
+    /// `tx definitions` and `tx check`. Pure. The default adds nothing.
+    fn notes(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// What this engine would do with the agents that the agents' files do not let one
+    /// expect, printed as warnings by `tx check` and `tx create --agent`. The default warns of
+    /// nothing.
+    fn warnings(&self, request: &DefinitionsRequest<'_>) -> Vec<Finding> {
+        let _ = request;
+        Vec::new()
+    }
+
+    /// What `tx check --engine` reports of this engine for the agents. The default reports
+    /// nothing.
+    fn check(&self, request: &DefinitionsRequest<'_>) -> Result<EngineCheck, EngineError> {
+        let _ = request;
+        Ok(EngineCheck::default())
+    }
+
+    /// The tool names an agent definition can use on this engine, for `tx definitions tools`.
+    /// The default lists none, and no MCP tools.
+    fn tools(&self, request: &ToolsRequest<'_>) -> Result<EngineTools, EngineError> {
+        let _ = request;
+        Ok(EngineTools::default())
+    }
 }
 
 /// This engine's data in a record: `ext[ext_key]`, `Null` when absent. A non-object value (a

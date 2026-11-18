@@ -19,8 +19,13 @@ use super::{PluginError, Verb, VerbError, VerbIo};
 use crate::agent::Agent;
 use crate::config::CoreConfig;
 use crate::core::TxCore;
-use crate::engine::wire::{Call, Interrupted, Launch, Record, Reply, Sender};
-use crate::engine::{EngineError, EngineKind, Input, LaunchPlan, LaunchRequest, LlmEngine};
+use crate::engine::wire::{
+    Call, Definitions, Interrupted, Launch, Record, Reply, Sender, ToolsReport,
+};
+use crate::engine::{
+    DefinitionsRequest, EngineCheck, EngineError, EngineKind, EngineTools, Finding, Input,
+    LaunchPlan, LaunchRequest, LlmEngine, ToolsRequest,
+};
 use crate::messaging::{EnvelopeSender, build_envelope};
 use crate::state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 
@@ -267,14 +272,14 @@ impl Running {
 /// for every later call: one request line in, one response line out. It ends when the proxy is
 /// dropped: its input is closed, it has a second to exit, then it is killed. A method the
 /// manifest does not list is answered here as the trait's default answers it, without the
-/// program; so is `interrupt` when the manifest gives the fixed answer, and `conversation`
-/// always (the two reserved keys of the engine's data).
+/// program; so is `interrupt` when the manifest gives the fixed answer, `notes` always (the
+/// manifest's), and `conversation` always (the two reserved keys of the engine's data).
 ///
 /// An exchange that breaks (the program cannot start, ends without answering, or says
 /// something that is not a response) is `EngineError::Refused("engine <kind>: <what
-/// happened>")`; the program is then discarded and the next call starts a new one. The three
-/// methods that cannot fail (`on_hook`, `receive_message`, `interrupt`) fall back to the
-/// trait's default and say why in one line on standard error.
+/// happened>")`; the program is then discarded and the next call starts a new one. The four
+/// methods that cannot fail (`on_hook`, `receive_message`, `interrupt`, `warnings`) fall back
+/// to the trait's default and say why in one line on standard error.
 pub struct ProcessEngine {
     kind: EngineKind,
     ext_key: String,
@@ -282,6 +287,9 @@ pub struct ProcessEngine {
     args: Vec<String>,
     methods: Vec<EngineMethod>,
     interrupt: Option<ManifestInterrupt>,
+    /// What the engine adds to every agent: the manifest's `notes`, answered without the
+    /// program.
+    notes: Vec<String>,
     /// The engine's own hook entry, `[<plugin>/bin/<hook.bin>, hook.args…]`, sent in every
     /// launch request instead of core's; `None`: the engine has none, and core's stands.
     hook_command: Option<Vec<String>>,
@@ -302,6 +310,7 @@ impl ProcessEngine {
             args: engine.args.clone(),
             methods: engine.methods.clone(),
             interrupt: engine.interrupt.clone(),
+            notes: engine.notes.clone(),
             hook_command: engine.hook.as_ref().map(|hook| {
                 std::iter::once(launcher.program(&hook.bin).to_string_lossy().into_owned())
                     .chain(hook.args.iter().cloned())
@@ -547,6 +556,39 @@ impl LlmEngine for ProcessEngine {
             *running = self.spawn().ok();
         }
     }
+
+    fn notes(&self) -> Vec<String> {
+        self.notes.clone()
+    }
+
+    fn warnings(&self, request: &DefinitionsRequest<'_>) -> Vec<Finding> {
+        if !self.implements(EngineMethod::Warnings) {
+            return Vec::new();
+        }
+        self.ask(&Call::Warnings(Definitions::from(request)))
+            .unwrap_or_else(|error| {
+                complain(&error);
+                Vec::new()
+            })
+    }
+
+    fn check(&self, request: &DefinitionsRequest<'_>) -> Result<EngineCheck, EngineError> {
+        if !self.implements(EngineMethod::Check) {
+            return Ok(EngineCheck::default());
+        }
+        self.ask(&Call::Check(Definitions::from(request)))
+    }
+
+    fn tools(&self, request: &ToolsRequest<'_>) -> Result<EngineTools, EngineError> {
+        if !self.implements(EngineMethod::Tools) {
+            return Ok(EngineTools::default());
+        }
+        let report: ToolsReport = self.ask(&Call::Tools {
+            cache: request.cache.to_owned(),
+            mcp_servers: request.mcp_servers.clone(),
+        })?;
+        Ok(report.into())
+    }
 }
 
 impl Drop for ProcessEngine {
@@ -573,25 +615,38 @@ pub(super) fn plug_engines(
     context: &Arc<ExecContext>,
     hosted_ids: &[&str],
 ) -> Result<(), PluginError> {
-    for (state, installed, manifest) in activation.active(index) {
-        let Some(engine) = &manifest.engine else {
-            continue;
-        };
-        let owns = activation
-            .engines
-            .values()
-            .any(|active| active.plugin == state.id);
-        if !owns || hosted_ids.contains(&state.id.as_str()) {
-            continue;
-        }
-        let launcher = Launcher::new(context, core.config(), state, installed);
-        core.register_engine(Box::new(ProcessEngine::new(launcher, engine)))
-            .map_err(|source| PluginError::Engine {
-                plugin: state.id.clone(),
-                source,
-            })?;
+    for (plugin, engine) in engine_proxies(index, activation, context, core.config(), hosted_ids) {
+        core.register_engine(Box::new(engine))
+            .map_err(|source| PluginError::Engine { plugin, source })?;
     }
     Ok(())
+}
+
+/// A proxy, with its plugin's id, for the engine of every active plugin that is not hosted
+/// here and that the activation gave its engine kind: what [`TxCore::plug_external`] registers,
+/// and what a command that opens no core (`tx check`, `tx definitions`) asks.
+pub fn engine_proxies(
+    index: &Index,
+    activation: &Activation,
+    context: &Arc<ExecContext>,
+    config: &CoreConfig,
+    hosted_ids: &[&str],
+) -> Vec<(String, ProcessEngine)> {
+    activation
+        .active(index)
+        .filter_map(|(state, installed, manifest)| {
+            let engine = manifest.engine.as_ref()?;
+            let owns = activation
+                .engines
+                .values()
+                .any(|active| active.plugin == state.id);
+            if !owns || hosted_ids.contains(&state.id.as_str()) {
+                return None;
+            }
+            let launcher = Launcher::new(context, config, state, installed);
+            Some((state.id.clone(), ProcessEngine::new(launcher, engine)))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1086,5 +1141,123 @@ exec sleep 30"#,
             "{waited:?}"
         );
         assert!(!fixture.alive());
+    }
+
+    /// An engine that reports: one finding per `warnings`, a check, a tools report whose MCP
+    /// listing failed as a whole. Notes each start and each request as [`ANSWERING`] does.
+    const REPORTING: &str = r##"echo "$$" >> "$TX_PLUGIN_DIR/starts"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$TX_PLUGIN_DIR/calls"
+  case "$line" in
+    '{"method":"warnings"'*) echo '{"ok":[{"path":"/a.md","line":5,"message":"brings in all"}]}' ;;
+    '{"method":"check"'*) echo '{"ok":{"always_present":["a baseline"],"problems":[],"notes":[{"path":"/a.md","line":null,"message":"gets more"}]}}' ;;
+    '{"method":"tools"'*) echo '{"ok":{"heading":"fake:","rows":[["Read","built-in"]],"footer":["# more"],"mcp":{"error":"no answer"}}}' ;;
+    *) echo '{"ok":null}' ;;
+  esac
+done"##;
+
+    fn definitions() -> (
+        Vec<crate::engine::AgentSummary>,
+        BTreeMap<String, crate::SkillProvider>,
+    ) {
+        let agent = crate::engine::AgentSummary {
+            name: "a".to_owned(),
+            path: "/a.md".into(),
+            tools: vec!["Read".to_owned()],
+            disallowed_tools: Vec::new(),
+            skills: vec!["pdf".to_owned()],
+            lines: BTreeMap::new(),
+        };
+        let skills = [("pdf".to_owned(), crate::SkillProvider::ClaudeBundled)]
+            .into_iter()
+            .collect();
+        (vec![agent], skills)
+    }
+
+    #[test]
+    fn what_an_engine_adds_is_asked_only_when_listed_and_its_notes_come_from_the_manifest() {
+        let fixture = Fixture::new(REPORTING);
+        let (agents, skills) = definitions();
+        let servers = BTreeMap::new();
+        let request = DefinitionsRequest {
+            agents: &agents,
+            provided_skills: &skills,
+            cache: Path::new("/cache"),
+        };
+        let tools = ToolsRequest {
+            cache: Path::new("/cache"),
+            mcp_servers: &servers,
+        };
+
+        let quiet = fixture.engine(&ManifestEngine {
+            notes: vec!["fake adds Skill".to_owned()],
+            ..Fixture::section(&[])
+        });
+        assert_eq!(quiet.notes(), ["fake adds Skill"]);
+        assert_eq!(quiet.warnings(&request), []);
+        assert_eq!(quiet.check(&request).unwrap(), EngineCheck::default());
+        assert_eq!(quiet.tools(&tools).unwrap(), EngineTools::default());
+        assert_eq!(fixture.starts(), 0);
+        assert!(!fixture.trace().exists());
+
+        let engine = fixture.engine(&Fixture::section(&[
+            EngineMethod::Warnings,
+            EngineMethod::Check,
+            EngineMethod::Tools,
+        ]));
+        assert_eq!(engine.notes(), Vec::<String>::new());
+        assert_eq!(
+            engine.warnings(&request),
+            [Finding {
+                path: "/a.md".into(),
+                line: Some(5),
+                message: "brings in all".to_owned(),
+            }]
+        );
+        let check = engine.check(&request).unwrap();
+        assert_eq!(check.always_present, ["a baseline"]);
+        assert_eq!(check.notes[0].line, None);
+        assert_eq!(
+            engine.tools(&tools).unwrap(),
+            EngineTools {
+                heading: "fake:".to_owned(),
+                rows: vec![("Read".to_owned(), "built-in".to_owned())],
+                footer: vec!["# more".to_owned()],
+                mcp: Some(Err("no answer".to_owned())),
+            }
+        );
+        assert_eq!(fixture.starts(), 1, "one program for the three calls");
+        assert_eq!(fixture.methods_called(), ["warnings", "check", "tools"]);
+        let calls = fixture.calls();
+        assert_eq!(
+            calls[0]["params"]["skills"],
+            json!({"pdf": "claude-bundled"})
+        );
+        assert_eq!(calls[0]["params"]["cache"], "/cache");
+        assert_eq!(calls[1]["params"]["agents"][0]["name"], "a");
+        assert_eq!(
+            calls[2]["params"],
+            json!({"cache": "/cache", "mcp_servers": {}})
+        );
+    }
+
+    #[test]
+    fn warnings_that_cannot_be_had_are_none_and_a_check_that_cannot_is_a_refusal() {
+        let fixture = Fixture::new("exit 0");
+        let engine = fixture.engine(&Fixture::section(&[
+            EngineMethod::Warnings,
+            EngineMethod::Check,
+        ]));
+        let (agents, skills) = definitions();
+        let request = DefinitionsRequest {
+            agents: &agents,
+            provided_skills: &skills,
+            cache: Path::new("/cache"),
+        };
+        assert_eq!(engine.warnings(&request), []);
+        assert_eq!(
+            refusal(engine.check(&request)),
+            "engine fake: the engine exited without answering check"
+        );
     }
 }

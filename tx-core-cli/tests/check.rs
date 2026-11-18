@@ -449,7 +449,7 @@ fn definitions_alone_say_nothing_about_plugins() {
     plugin_t(&cli, "colour: red\n", &[]);
     for args in [
         &["check", "developer"][..],
-        &["check", "--engine", "claude"][..],
+        &["check", "--engine", "codex"][..],
     ] {
         let outcome = check(&cli, args);
         assert!(

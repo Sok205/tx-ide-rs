@@ -12,7 +12,8 @@ use tx_core::{
     AgentId, CoreError, CreateOptions, ForkOptions, IdleReason, ListFilter, SendOptions, Sender,
     TxCore,
 };
-use tx_core_cli::args::{self, Global, Invocation, Verb};
+use tx_core_cli::args::{self, DefinitionKind, Global, Invocation, Verb};
+use tx_core_cli::definitions::Engines;
 
 use tx_core_cli::setup::{
     Failure, Installation, config_file, core_config, linked, load_config, open,
@@ -186,16 +187,31 @@ fn check(
     plugins_only: bool,
     names: &[String],
 ) -> Result<ExitCode, Failure> {
-    let config = core_config(global)?;
+    let installation = tx_core_cli::setup::Installation::read_with(global, core_config(global)?)?;
     let mut out = std::io::stdout().lock();
     let mut clean = true;
     let mut summary = None;
     if !plugins_only {
+        let engines = Engines::read(global, &installation, &linked())?;
+        // The engine asked about is named next to the active ones before anything is printed.
+        if let Some(kind) = engine
+            && !engines.all().contains_key(&kind)
+        {
+            let enabled: Vec<String> = engines.all().keys().map(ToString::to_string).collect();
+            eprintln!(
+                "tx: {} (enabled: {})",
+                CoreError::EngineDisabled(kind),
+                enabled.join(", ")
+            );
+            return Ok(ExitCode::from(1));
+        }
+        let config = &installation.config;
         let profiles =
             tx_core::profile::Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone());
         let checked = tx_core_cli::definitions::check(
             &config.directories,
             &profiles,
+            &engines,
             engine,
             names,
             &mut out,
@@ -207,7 +223,6 @@ fn check(
     let mut closing = summary.clone();
     if plugins_only || (engine.is_none() && names.is_empty()) {
         let ids = if plugins_only { names } else { &[] };
-        let installation = tx_core_cli::setup::Installation::read_with(global, config)?;
         if let Some(id) = tx_core_cli::check::unknown(&installation, ids) {
             eprintln!("tx check: no plugin {id:?}");
             return Ok(ExitCode::from(1));
@@ -231,6 +246,31 @@ fn check(
     })
 }
 
+/// `tx definitions [KIND]`. What the active engines add is read only for the kinds that show
+/// it, agents and tools: those read `config.yaml`, which says which engines are active.
+fn definitions(global: &args::Global, kind: Option<DefinitionKind>) -> Result<ExitCode, Failure> {
+    let config = core_config(global)?;
+    let directories = config.directories.clone();
+    let mut out = std::io::stdout().lock();
+    match kind {
+        Some(DefinitionKind::Skills | DefinitionKind::Mcp) => {
+            tx_core_cli::definitions::list(&directories, kind, &[], &mut out)
+        }
+        _ => {
+            let installation = tx_core_cli::setup::Installation::read_with(global, config)?;
+            let engines = Engines::read(global, &installation, &linked())?;
+            match kind {
+                Some(DefinitionKind::Tools) => {
+                    tx_core_cli::tools::list(&directories, &engines, &mut out)
+                }
+                _ => tx_core_cli::definitions::list(&directories, kind, &engines.notes(), &mut out),
+            }
+        }
+    }
+    .map_err(Failure::Definition)?;
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     match &invocation.verb {
         Verb::Help => {
@@ -248,10 +288,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     // The definitions are files under two roots: no core to open, nothing created.
     match &invocation.verb {
         Verb::Definitions { kind } => {
-            let directories = core_config(&invocation.global)?.directories;
-            tx_core_cli::definitions::list(&directories, *kind, &mut std::io::stdout().lock())
-                .map_err(Failure::Definition)?;
-            return Ok(ExitCode::SUCCESS);
+            return definitions(&invocation.global, *kind);
         }
         Verb::Check {
             engine,
@@ -315,27 +352,27 @@ fn built_in(core: &TxCore, invocation: Invocation) -> Result<ExitCode, Failure> 
             };
             // `config.yaml`'s `agent:` block fills in every flag not given.
             let defaults = &core.config().agent_defaults;
-            if let Some(choice) = &definition {
-                // Claude turns its bundled skills on all at once: say so before the launch.
-                if engine.unwrap_or(defaults.engine) == tx_core::EngineKind::CLAUDE
-                    && let Ok(agent) = tx_core::definitions::Definitions::new(
-                        core.config().directories.definition_roots(),
-                    )
-                    .agent(&choice.agent)
-                {
-                    let skills: Vec<String> = agent
-                        .skills
-                        .into_iter()
-                        .chain(choice.skills.clone())
-                        .collect();
-                    if let Some(warning) = tx_core_cli::definitions::bundle_warning(
-                        &core.config().directories,
-                        &skills,
-                    )
-                    .map_err(Failure::Definition)?
-                    {
-                        eprintln!("tx: warning: {warning}");
-                    }
+            // What the launch engine would do with the agent that its file does not let one
+            // expect (Claude's whole bundle for one bundled skill): said before the launch, by
+            // the engine that then launches it.
+            let directories = &core.config().directories;
+            if let Some(choice) = &definition
+                && let Some(launch_engine) = core.engine(engine.unwrap_or(defaults.engine))
+                && let Ok(agent) =
+                    tx_core::definitions::Definitions::new(directories.definition_roots())
+                        .agent(&choice.agent)
+            {
+                let mut summary = agent.summary();
+                summary.skills.extend(choice.skills.iter().cloned());
+                let provided = tx_core_cli::definitions::provided_skills(directories)
+                    .map_err(Failure::Definition)?;
+                let request = tx_core::engine::DefinitionsRequest {
+                    agents: std::slice::from_ref(&summary),
+                    provided_skills: &provided,
+                    cache: &directories.cache,
+                };
+                for warning in launch_engine.warnings(&request) {
+                    eprintln!("tx: warning: {}", warning.message);
                 }
             }
             let definition = definition.map(|choice| *choice);

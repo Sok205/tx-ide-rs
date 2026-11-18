@@ -7,7 +7,8 @@ use std::io::{BufRead, Read, Write};
 
 use serde::Serialize;
 use tx_core::core::SESSION_ID_ENV;
-use tx_core::engine::wire::{Call, Failure as Refusal, Interrupted, Reply};
+use tx_core::engine::ToolsRequest;
+use tx_core::engine::wire::{Call, Failure as Refusal, Interrupted, Reply, ToolsReport};
 use tx_core::{AgentId, CoreError, LlmEngine, LlmEngineHook, LlmEngineState, Plugin, TxCore};
 
 use crate::args::Global;
@@ -79,6 +80,15 @@ fn answer(engine: &dyn LlmEngine, request: &str) -> String {
         Call::Interrupt { session } => written(&Reply::Ok(
             engine.interrupt(&session.0).map(Interrupted::from),
         )),
+        Call::Warnings(definitions) => written(&Reply::Ok(engine.warnings(&definitions.request()))),
+        Call::Check(definitions) => written(&Reply::from(engine.check(&definitions.request()))),
+        Call::Tools { cache, mcp_servers } => {
+            let request = ToolsRequest {
+                cache: &cache,
+                mcp_servers: &mcp_servers,
+            };
+            written(&Reply::from(engine.tools(&request).map(ToolsReport::from)))
+        }
     }
 }
 
@@ -196,7 +206,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use serde_json::{Value, json};
-    use tx_core::engine::wire::{Launch, Record, Sender};
+    use std::collections::BTreeMap;
+    use tx_core::engine::wire::{Definitions, Launch, Record, Sender};
+    use tx_core::engine::{DefinitionsRequest, EngineCheck, EngineTools, Finding};
     use tx_core::{
         Agent, EngineError, EngineKind, IdleReason, Input, Key, LaunchPlan, LaunchRequest,
         LlmEngineChange, PluginError, Registry, WorkspaceAction,
@@ -319,6 +331,41 @@ mod tests {
         fn restore(&self, session: &Agent, _: &Path) -> Result<bool, EngineError> {
             self.note(format!("restore {}", session.name));
             Ok(true)
+        }
+
+        fn warnings(&self, request: &DefinitionsRequest<'_>) -> Vec<Finding> {
+            self.note(format!("warnings {}", request.cache.display()));
+            request
+                .agents
+                .iter()
+                .map(|agent| Finding {
+                    path: agent.path.clone(),
+                    line: agent.lines.get("skills").copied(),
+                    message: format!("{} provided", request.provided_skills.len()),
+                })
+                .collect()
+        }
+
+        fn check(&self, request: &DefinitionsRequest<'_>) -> Result<EngineCheck, EngineError> {
+            self.note(format!("check {}", request.cache.display()));
+            if request.agents.is_empty() {
+                return Err(EngineError::Refused("test: nothing to check".into()));
+            }
+            Ok(EngineCheck {
+                always_present: vec!["a baseline".to_owned()],
+                problems: Vec::new(),
+                notes: Vec::new(),
+            })
+        }
+
+        fn tools(&self, request: &ToolsRequest<'_>) -> Result<EngineTools, EngineError> {
+            self.note(format!("tools {}", request.mcp_servers.len()));
+            Ok(EngineTools {
+                heading: "test:".to_owned(),
+                rows: vec![("Read".to_owned(), "built-in".to_owned())],
+                footer: Vec::new(),
+                mcp: Some(Err("no answer".to_owned())),
+            })
         }
     }
 
@@ -537,6 +584,60 @@ mod tests {
     }
 
     #[test]
+    fn what_an_engine_adds_is_answered_in_the_shape_its_caller_reads() {
+        let (engine, seen) = engine();
+        let agents = vec![tx_core::engine::AgentSummary {
+            name: "mine".to_owned(),
+            path: "/c/agents/mine.md".into(),
+            tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            skills: vec!["pdf".to_owned()],
+            lines: [("skills".to_owned(), 4)].into_iter().collect(),
+        }];
+        let definitions = Definitions {
+            agents: agents.clone(),
+            skills: [("pdf".to_owned(), tx_core::SkillProvider::ClaudeBundled)]
+                .into_iter()
+                .collect(),
+            cache: "/cache".into(),
+        };
+        let findings: Vec<Finding> = asked(&engine, &Call::Warnings(definitions.clone())).unwrap();
+        assert_eq!(
+            findings,
+            [Finding {
+                path: "/c/agents/mine.md".into(),
+                line: Some(4),
+                message: "1 provided".to_owned(),
+            }]
+        );
+        let check: EngineCheck = asked(&engine, &Call::Check(definitions.clone())).unwrap();
+        assert_eq!(check.always_present, ["a baseline"]);
+        let refused = asked::<EngineCheck>(
+            &engine,
+            &Call::Check(Definitions {
+                agents: Vec::new(),
+                ..definitions
+            }),
+        );
+        assert_eq!(refused.unwrap_err().to_string(), "test: nothing to check");
+        let report: ToolsReport = asked(
+            &engine,
+            &Call::Tools {
+                cache: "/cache".into(),
+                mcp_servers: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        let tools = EngineTools::from(report);
+        assert_eq!(tools.heading, "test:");
+        assert_eq!(tools.mcp, Some(Err("no answer".to_owned())));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["warnings /cache", "check /cache", "check /cache", "tools 0"]
+        );
+    }
+
+    #[test]
     fn what_the_engine_refuses_comes_back_as_the_error_it_was() {
         let (engine, _) = engine();
         let refused = asked::<Value>(
@@ -589,7 +690,7 @@ mod tests {
             &[
                 "oops".to_owned(),
                 String::new(),
-                r#"{"method":"tools","params":{}}"#.to_owned(),
+                r#"{"method":"reload","params":{}}"#.to_owned(),
                 r#"{"method":"archive","params":{}}"#.to_owned(),
                 prepare,
             ],
@@ -598,7 +699,7 @@ mod tests {
         for (response, start) in responses.iter().zip([
             "not a request: expected value",
             "not a request: EOF while parsing",
-            "not a request: unknown variant `tools`",
+            "not a request: unknown variant `reload`",
             "not a request: missing field `session`",
         ]) {
             let reply: Reply<()> = serde_json::from_str(response).unwrap();

@@ -5,7 +5,12 @@
 //! launched program received and the engine data in the record, for a start, a fork and a
 //! resume. What differs between two sandboxes by construction is brought to placeholders first:
 //! the sandbox's directory, the agents' ids and worktrees, and the words of the hook command,
-//! which with a bundle are the plugin's own program. Each test skips itself without tmux.
+//! which with a bundle are the plugin's own program. Each test that launches an agent skips
+//! itself without tmux.
+//!
+//! The same holds for what an engine adds to the definitions: `tx definitions`,
+//! `tx definitions tools`, `tx check` and the warning of `tx create --agent` print what the
+//! engines report, byte for byte the same either way.
 
 mod common;
 
@@ -321,4 +326,297 @@ fn claude_as_a_plugin_program_launches_what_the_adapter_compiled_in_launches() {
 fn codex_as_a_plugin_program_launches_what_the_adapter_compiled_in_launches() {
     require_tmux!();
     launches_the_same_as_compiled_in(&CODEX);
+}
+
+// What an engine adds to the definitions (`tx definitions`, `tx definitions tools`, `tx check`,
+// the warning of `tx create --agent`) comes from the engine, the same as a plugin program and
+// compiled in. A `claude` that answers `--version` and the probe, and a `codex` whose
+// `app-server` lists one tool: nothing real runs.
+
+/// Answers `claude --version`, and the probe's headless run with its `system/init` event.
+const PROBED_CLAUDE: &str = r#"case "$1" in
+  --version) echo '2.1.999 (Claude Code)' ;;
+  -p) echo '{"type":"system","subtype":"init","tools":["Bash","Read","Task","Write"]}'; exec sleep 60 ;;
+  *) exec sleep 600 ;;
+esac"#;
+
+/// `codex app-server` that answers `initialize` and lists one tool for the server asked about.
+const LISTING_CODEX: &str = r#"[ "$1" = app-server ] || exec sleep 600
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) echo '{"id":0,"result":{}}' ;;
+    *'"method":"mcpServerStatus/list"'*)
+      id=$(printf '%s' "$line" | sed 's/.*"id":\([0-9]*\).*/\1/')
+      echo "{\"id\":$id,\"result\":{\"data\":[{\"name\":\"docs\",\"tools\":{\"find\":{\"description\":\"Finds  a page.\"}}}]}}" ;;
+  esac
+done"#;
+
+/// `codex app-server` as the QA machine's stand-in has it: refused.
+const REFUSING_CODEX: &str = r#"[ "$1" = app-server ] && exit 1
+exec sleep 600"#;
+
+/// An agent definition of the operator's that lists a bundled skill and a tool Claude does not
+/// know, the bundled skill's reference, and one MCP server.
+fn definitions(cli: &Cli) {
+    let root = cli.state().join("definitions");
+    std::fs::create_dir_all(root.join("agents")).unwrap();
+    std::fs::write(
+        root.join("agents/mine.md"),
+        "---\nname: mine\ndescription: test\ntools: Read, Nope\nskills: [pdf]\n---\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("skills/pdf")).unwrap();
+    std::fs::write(
+        root.join("skills/pdf/SKILL.md"),
+        "---\nname: pdf\ndescription: PDFs.\nmetadata:\n  provided-by: claude-bundled\n---\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("mcp.json"),
+        r#"{"mcpServers": {"docs": {"type": "stdio", "command": "docs-mcp"}}}"#,
+    )
+    .unwrap();
+}
+
+/// What `tx <args>` printed, with `codex` behaving as `codex`, the sandbox's directory as
+/// `<sandbox>`: exit code, standard output, standard error.
+fn reported(cli: &Cli, args: &[&str], codex: &str, env: &[(&str, &str)]) -> (i32, String, String) {
+    let path = cli.shim_path(&[("claude", PROBED_CLAUDE), ("codex", codex)]);
+    let mut env = env.to_vec();
+    env.push(("PATH", path.as_str()));
+    let output = cli.run(args, &env, "");
+    let sandbox = cli.dir.path().to_str().unwrap();
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace(sandbox, "<sandbox>");
+    (
+        output.status.code().unwrap(),
+        text(&output.stdout),
+        text(&output.stderr),
+    )
+}
+
+/// The commands of acceptance line 1, but `tx check` on the one definition: the plugins it
+/// would also check differ between the two sandboxes by construction.
+const COMMANDS: [&[&str]; 5] = [
+    &["definitions"],
+    &["definitions", "tools"],
+    &["check", "mine"],
+    &["check", "--engine", "claude", "mine"],
+    &["check", "--engine", "codex", "mine"],
+];
+
+#[test]
+fn what_the_engines_add_reads_the_same_from_plugin_programs_and_compiled_in() {
+    let (as_programs, compiled_in) = (Cli::new(), Cli::compiled_in());
+    for cli in [&as_programs, &compiled_in] {
+        definitions(cli);
+    }
+    for args in COMMANDS {
+        assert_eq!(
+            reported(&as_programs, args, LISTING_CODEX, &[]),
+            reported(&compiled_in, args, LISTING_CODEX, &[]),
+            "tx {args:?}"
+        );
+    }
+    let mine = "<sandbox>/state/definitions/agents/mine.md";
+
+    let (code, out, _) = reported(&as_programs, &["definitions"], LISTING_CODEX, &[]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains(
+            "mine\ttest\n# claude adds to every agent's tools: Skill, ToolSearch\n\nskills:"
+        ),
+        "{out}"
+    );
+
+    let (code, out, _) = reported(&as_programs, &["definitions", "tools"], LISTING_CODEX, &[]);
+    assert_eq!(code, 0);
+    assert!(
+        out.starts_with("claude (Claude Code 2.1.999):\nAgent\tbuilt-in\nAskUserQuestion\tbuilt-in, interactive only\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "Write\tbuilt-in\n# claude adds to every agent's tools: Skill, ToolSearch\n\n\
+             codex (the Claude names it switches off when left out):\nBash\t--disable shell_tool\n"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.ends_with(
+            "ScheduleWakeup\t--disable sleep_tool\n\nmcp docs:\nmcp__docs__find\tFinds a page.\n"
+        ),
+        "{out}"
+    );
+
+    let (code, out, _) = reported(&as_programs, &["check", "mine"], LISTING_CODEX, &[]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        out,
+        format!(
+            "# claude adds to every agent's tools: Skill, ToolSearch\n\
+             {mine}:5: warning: bundled skill pdf brings in all bundled skills: pdf, and any \
+             others this Claude version ships\nok: 1 agents, 0 skills, 0 MCP servers\n"
+        )
+    );
+
+    let (code, out, _) = reported(
+        &as_programs,
+        &["check", "--engine", "claude", "mine"],
+        LISTING_CODEX,
+        &[],
+    );
+    assert_eq!(code, 1, "Nope fails the check");
+    assert!(
+        out.contains("\nclaude: always present: the tools EndConversation, advisor and DeferredToolPlaceholder\n"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with(&format!(
+            "{mine}:4: not a Claude Code 2.1.999 tool, which it would drop silently: Nope\n\
+             {mine}: claude: gets the baseline tools Skill, ToolSearch\n"
+        )),
+        "{out}"
+    );
+
+    let (code, out, _) = reported(
+        &as_programs,
+        &["check", "--engine", "codex", "mine"],
+        LISTING_CODEX,
+        &[],
+    );
+    assert_eq!(code, 1, "codex has no bundled skills");
+    assert!(out.starts_with("codex: always present: "), "{out}");
+    assert!(!out.contains("# claude adds"), "{out}");
+    assert!(
+        out.contains(&format!(
+            "{mine}:5: skill \"pdf\" is provided by claude-bundled: not on codex\n"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!("{mine}: codex: no codex counterpart: Nope\n")),
+        "{out}"
+    );
+}
+
+/// The trace of one `tx` run of the bundle sandbox: the plugin programs it started.
+fn started(cli: &Cli, args: &[&str]) -> Vec<String> {
+    let trace = cli.dir.path().join("trace");
+    std::fs::write(&trace, "").unwrap();
+    reported(
+        cli,
+        args,
+        LISTING_CODEX,
+        &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+    );
+    std::fs::read_to_string(&trace)
+        .unwrap()
+        .lines()
+        .map(|line| line.split('\t').take(2).collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
+#[test]
+fn listing_definitions_starts_no_engine_and_a_check_starts_the_one_it_asks() {
+    let cli = Cli::new();
+    definitions(&cli);
+    assert_eq!(started(&cli, &["definitions"]), Vec::<String>::new());
+    assert_eq!(started(&cli, &["check", "mine"]), ["engine engine-claude"]);
+    assert_eq!(
+        started(&cli, &["check", "--engine", "claude", "mine"]),
+        ["engine engine-claude"]
+    );
+    assert_eq!(
+        started(&cli, &["check", "--engine", "codex", "mine"]),
+        ["engine engine-codex"]
+    );
+}
+
+#[test]
+fn without_codex_no_engine_lists_mcp_tools_and_codex_cannot_be_checked() {
+    for cli in [Cli::new(), Cli::compiled_in()] {
+        definitions(&cli);
+        cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
+        let (code, out, _) = reported(&cli, &["definitions", "tools"], LISTING_CODEX, &[]);
+        assert_eq!(code, 0);
+        assert!(
+            out.ends_with(
+                "Skill, ToolSearch\n\n# no MCP tools listed: no active engine can list them\n"
+            ),
+            "{out}"
+        );
+        assert_eq!(
+            reported(&cli, &["check", "--engine", "codex"], LISTING_CODEX, &[]),
+            (
+                1,
+                String::new(),
+                "tx: engine codex is not enabled (enabled: claude)\n".to_owned()
+            )
+        );
+    }
+}
+
+/// The QA machine's stand-in `codex` refuses `app-server`: today's build prints both engines'
+/// sections, then fails the listing as a whole.
+#[test]
+fn an_mcp_listing_that_fails_as_a_whole_fails_after_every_engines_section() {
+    let (as_programs, compiled_in) = (Cli::new(), Cli::compiled_in());
+    for cli in [&as_programs, &compiled_in] {
+        definitions(cli);
+    }
+    let failed = reported(&as_programs, &["definitions", "tools"], REFUSING_CODEX, &[]);
+    assert_eq!(
+        failed,
+        reported(&compiled_in, &["definitions", "tools"], REFUSING_CODEX, &[])
+    );
+    let (code, out, err) = failed;
+    assert_eq!(code, 1);
+    assert!(
+        out.ends_with("ScheduleWakeup\t--disable sleep_tool\n"),
+        "{out}"
+    );
+    assert_eq!(err, "tx: <sandbox>/state: codex app-server: no answer\n");
+}
+
+/// `tx create --agent` warns with the launch engine's warnings, and that engine is the one
+/// program it starts.
+#[test]
+fn creating_an_agent_warns_as_its_engine_says_and_starts_that_engine_once() {
+    require_tmux!();
+    for cli in [Cli::new(), Cli::compiled_in()] {
+        definitions(&cli);
+        let repository = cli.repository("repository");
+        let trace = cli.dir.path().join("trace");
+        let (code, _, err) = reported(
+            &cli,
+            &[
+                "create",
+                "x",
+                "--agent",
+                "mine",
+                "--engine",
+                "claude",
+                "--cwd",
+                repository.to_str().unwrap(),
+                "--prompt",
+                "hi",
+            ],
+            LISTING_CODEX,
+            &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+        );
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(
+            err,
+            "tx: warning: bundled skill pdf brings in all bundled skills: pdf, and any others \
+             this Claude version ships\n"
+        );
+        let engines = std::fs::read_to_string(&trace)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.starts_with("engine\t"))
+            .count();
+        let bundled = cli.plugin_dirs.len() > 1;
+        assert_eq!(engines, usize::from(bundled));
+        cli.ok(&["stop", "x"]);
+    }
 }

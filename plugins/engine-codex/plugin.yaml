@@ -9,5 +9,5 @@ engine:
   bin: tx-engine-codex
   args: [--tx-engine]
   hook: { bin: tx-engine-codex, args: [--tx-hook] }
-  methods: [archive, restore]
+  methods: [archive, restore, check, tools]
   interrupt: { key: Escape, state: idle }

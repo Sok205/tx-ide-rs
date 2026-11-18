@@ -376,11 +376,15 @@ prints the message as the error of the command.
 | `restore`* | `session`, `archive_directory` | `true` or `false` | respawn |
 | `receive_message`* | `sender`, `text` | an input | send |
 | `interrupt`* | `session` | `null`, or `{"input", "state"}` | interrupt |
+| `warnings`* | `agents`, `skills`, `cache` | findings | `tx check`, `tx create --agent` |
+| `check`* | `agents`, `skills`, `cache` | `{"always_present", "problems", "notes"}` | `tx check --engine` |
+| `tools`* | `cache`, `mcp_servers` | a tools report | `tx definitions tools` |
 
 \* optional: asked only when `engine.methods` lists it. Otherwise tx answers itself, without
 starting the program: nothing to prepare, archive or restore; the standard `<from-user>` /
 `<from-agent>` envelope, submitted; `interrupt:` from the manifest, else "no way to interrupt".
-(`methods` also takes `warnings`, `check` and `tools`; this version does not call them yet.)
+(`warnings`, `check` and `tools` are what an engine adds to the definitions: see
+[What an engine adds](#what-an-engine-adds-notes-warnings-check-tools).)
 
 The shapes:
 
@@ -500,6 +504,42 @@ cat >> "$TX_PLUGIN_DATA_DIR/events.jsonl"
 On the Rust SDK a plugin keeps its in-process sink (`registry.sink(Box::new(…))`) and names its
 program with `args: [--tx-event]`: the program reads the line and hands the event to the sinks
 the hosted plugins register.
+
+### What an engine adds: `notes`, `warnings`, `check`, `tools`
+
+`tx definitions`, `tx check` and `tx definitions tools` print what each active engine adds to the
+agent, skill and MCP definitions, in kind order. An engine that says nothing adds nothing.
+
+- `notes` (a manifest key, a list of lines): what the engine adds to every agent, printed as
+  `# <note>` under the agents of `tx definitions` and at the top of `tx check`. tx reads them from
+  the manifest and never starts the program for them.
+- `warnings`: what the engine would do with an agent that its file does not let one expect.
+  Params: `agents`, the agent definitions as `{"name", "path", "tools", "disallowed_tools",
+  "skills", "lines": {<key>: <line>}}` (no prompt; `lines` is where each frontmatter key
+  starts); `skills`, every skill of the definition roots that an engine provides,
+  `{<name>: "claude-bundled" | "claude-synced"}`; `cache`, a directory the engine may keep what
+  it learns in. The answer is a list of findings, `{"path", "line": number | null, "message"}`,
+  printed `<path>:<line>: warning: <message>` by `tx check`, and `tx: warning: <message>` by
+  `tx create --agent` for the engine it launches with. It cannot fail: a broken exchange is no
+  warnings and one line on standard error.
+- `check`: the same params. The answer is `{"always_present": [line], "problems": [finding],
+  "notes": [finding]}`, printed by `tx check --engine <kind>` as `<kind>: always present:
+  <line>`, `<path>:<line>: <message>` (each problem makes the check exit 1) and
+  `<path>: <kind>: <message>`.
+- `tools`: params `cache` and `mcp_servers` (the definition roots' servers, as `mcp.json` gives
+  them). The answer is `{"heading", "rows": [[name, note]], "footer": [line], "mcp"}`: the
+  heading, a `name<TAB>note` row per tool name an agent definition can use, and the footer lines.
+  `mcp` is `null` when the engine cannot list MCP tools. Otherwise it is `{"ok": {<server>:
+  {"ok": [[tool, description]]} | {"error": why}}}`, or `{"error": why}` when the listing failed
+  as a whole: then `tx definitions tools` prints every engine's section and fails with
+  `tx: <cache>: <why>`. The first engine whose report has `mcp` gives the `mcp <server>:`
+  sections. When none has, the command ends with
+  `# no MCP tools listed: no active engine can list them`.
+
+Each is asked only when `engine.methods` lists it; otherwise tx answers for the engine, with
+nothing. `tx definitions` starts no engine; `tx check` starts each that lists `warnings`;
+`tx check --engine <kind>` starts that one; `tx create --agent` asks the engine it launches with,
+which is then the one program the create starts.
 
 ## A plugin in Rust: the SDK
 

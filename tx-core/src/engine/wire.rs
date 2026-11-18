@@ -20,21 +20,26 @@
 //! | `restore` | `session`, `archive_directory` | `true` or `false` |
 //! | `receive_message` | `sender`, `text` | an [`Input`] |
 //! | `interrupt` | `session` | `null`, or an [`Interrupted`] |
+//! | `warnings` | `agents`, `skills`, `cache` ([`Definitions`]) | a list of [`Finding`](super::Finding)s |
+//! | `check` | `agents`, `skills`, `cache` | an [`EngineCheck`](super::EngineCheck) |
+//! | `tools` | `cache`, `mcp_servers` | a [`ToolsReport`] |
 //!
 //! Every shape is what serde writes for the type core already has. The two types that only
 //! borrow what they name ([`LaunchRequest`], [`EnvelopeSender`]) have a twin here that owns it,
 //! for the side that reads. A reader ignores a key it does not know.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-use super::{EngineError, Input, LaunchRequest};
+use super::{AgentSummary, DefinitionsRequest, EngineError, EngineTools, Input, LaunchRequest};
 use crate::agent::{Agent, RecordOut};
+use crate::definitions::McpServer;
 use crate::messaging::EnvelopeSender;
-use crate::profile::Profile;
+use crate::profile::{Profile, SkillProvider};
 use crate::state::{LlmEngineHook, LlmEngineState};
 
 /// One request: `{"method": …, "params": {…}}`.
@@ -79,6 +84,12 @@ pub enum Call {
     Interrupt {
         session: Record,
     },
+    Warnings(Definitions),
+    Check(Definitions),
+    Tools {
+        cache: PathBuf,
+        mcp_servers: BTreeMap<String, McpServer>,
+    },
 }
 
 impl Call {
@@ -95,6 +106,9 @@ impl Call {
             Call::Restore { .. } => "restore",
             Call::ReceiveMessage { .. } => "receive_message",
             Call::Interrupt { .. } => "interrupt",
+            Call::Warnings(_) => "warnings",
+            Call::Check(_) => "check",
+            Call::Tools { .. } => "tools",
         }
     }
 }
@@ -271,10 +285,122 @@ impl From<Interrupted> for (Input, Option<LlmEngineState>) {
     }
 }
 
+/// A [`DefinitionsRequest`] that owns what it names, the params of `warnings` and of `check`:
+/// `{"agents", "skills", "cache"}`, `skills` being every provided skill by name.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Definitions {
+    pub agents: Vec<AgentSummary>,
+    pub skills: BTreeMap<String, SkillProvider>,
+    pub cache: PathBuf,
+}
+
+impl Definitions {
+    /// The request, as an engine's `warnings` and `check` take it.
+    pub fn request(&self) -> DefinitionsRequest<'_> {
+        DefinitionsRequest {
+            agents: &self.agents,
+            provided_skills: &self.skills,
+            cache: &self.cache,
+        }
+    }
+}
+
+impl From<&DefinitionsRequest<'_>> for Definitions {
+    fn from(request: &DefinitionsRequest<'_>) -> Self {
+        Self {
+            agents: request.agents.to_vec(),
+            skills: request.provided_skills.clone(),
+            cache: request.cache.to_owned(),
+        }
+    }
+}
+
+/// One of the two levels of a tools report's `mcp` on the wire: `{"ok": …}` or
+/// `{"error": "<why>"}`, lowercase as every answer's envelope is, for engines in any language.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Listed<T> {
+    Ok(T),
+    Error(String),
+}
+
+impl<T> From<Result<T, String>> for Listed<T> {
+    fn from(result: Result<T, String>) -> Self {
+        match result {
+            Ok(value) => Listed::Ok(value),
+            Err(why) => Listed::Error(why),
+        }
+    }
+}
+
+impl<T> From<Listed<T>> for Result<T, String> {
+    fn from(listed: Listed<T>) -> Self {
+        match listed {
+            Listed::Ok(value) => Ok(value),
+            Listed::Error(why) => Err(why),
+        }
+    }
+}
+
+/// The MCP servers' tools as a tools report carries them: the whole listing, or why it failed;
+/// per server its tools as (name, description), or why there are none.
+pub type McpListing = Listed<BTreeMap<String, Listed<Vec<(String, String)>>>>;
+
+/// [`EngineTools`] as the answer to `tools`: `{"heading", "rows": [[name, note]], "footer",
+/// "mcp": null | {"ok": {<server>: {"ok": [[tool, description]]} | {"error": why}}} |
+/// {"error": why}}`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolsReport {
+    #[serde(default)]
+    pub heading: String,
+    #[serde(default)]
+    pub rows: Vec<(String, String)>,
+    #[serde(default)]
+    pub footer: Vec<String>,
+    #[serde(default)]
+    pub mcp: Option<McpListing>,
+}
+
+impl From<EngineTools> for ToolsReport {
+    fn from(tools: EngineTools) -> Self {
+        Self {
+            heading: tools.heading,
+            rows: tools.rows,
+            footer: tools.footer,
+            mcp: tools.mcp.map(|listing| {
+                Listed::from(listing.map(|servers| {
+                    servers
+                        .into_iter()
+                        .map(|(server, tools)| (server, Listed::from(tools)))
+                        .collect()
+                }))
+            }),
+        }
+    }
+}
+
+impl From<ToolsReport> for EngineTools {
+    fn from(tools: ToolsReport) -> Self {
+        Self {
+            heading: tools.heading,
+            rows: tools.rows,
+            footer: tools.footer,
+            mcp: tools.mcp.map(|listing| {
+                Result::from(listing).map(|servers| {
+                    servers
+                        .into_iter()
+                        .map(|(server, tools)| (server, Result::from(tools)))
+                        .collect()
+                })
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{Key, LaunchPlan, WorkspaceAction};
+    use crate::engine::{EngineCheck, Finding, Key, LaunchPlan, WorkspaceAction};
     use crate::state::{IdleReason, LlmEngineChange};
     use serde_json::json;
 
@@ -340,7 +466,33 @@ mod tests {
                 text: "status?".to_owned(),
             },
             Call::Interrupt { session: session() },
+            Call::Warnings(definitions()),
+            Call::Check(definitions()),
+            Call::Tools {
+                cache: "/c".into(),
+                mcp_servers: serde_json::from_value(
+                    json!({"docs": {"type": "stdio", "command": "docs-mcp"}}),
+                )
+                .unwrap(),
+            },
         ]
+    }
+
+    fn definitions() -> Definitions {
+        Definitions {
+            agents: vec![AgentSummary {
+                name: "mine".to_owned(),
+                path: "/c/definitions/agents/mine.md".into(),
+                tools: vec!["Read".to_owned()],
+                disallowed_tools: Vec::new(),
+                skills: vec!["pdf".to_owned()],
+                lines: [("skills".to_owned(), 5)].into_iter().collect(),
+            }],
+            skills: [("pdf".to_owned(), SkillProvider::ClaudeBundled)]
+                .into_iter()
+                .collect(),
+            cache: "/c".into(),
+        }
     }
 
     #[test]
@@ -426,7 +578,10 @@ mod tests {
                 "archive",
                 "restore",
                 "receive_message",
-                "interrupt"
+                "interrupt",
+                "warnings",
+                "check",
+                "tools"
             ]
         );
         for call in calls {
@@ -446,9 +601,9 @@ mod tests {
             serde_json::from_str::<Call>(&text).unwrap(),
             Call::Prepare { session: session() }
         );
-        let error = serde_json::from_str::<Call>(r#"{"method":"tools","params":{}}"#).unwrap_err();
+        let error = serde_json::from_str::<Call>(r#"{"method":"reload","params":{}}"#).unwrap_err();
         assert!(
-            error.to_string().starts_with("unknown variant `tools`"),
+            error.to_string().starts_with("unknown variant `reload`"),
             "{error}"
         );
     }
@@ -647,5 +802,84 @@ mod tests {
                 "{not_a_response}"
             );
         }
+    }
+
+    #[test]
+    fn warnings_and_check_carry_the_agents_the_provided_skills_and_the_cache() {
+        let params = r#"{"agents":[{"name":"mine","path":"/c/definitions/agents/mine.md","tools":["Read"],"disallowed_tools":[],"skills":["pdf"],"lines":{"skills":5}}],"skills":{"pdf":"claude-bundled"},"cache":"/c"}"#;
+        assert_eq!(
+            written(&Call::Warnings(definitions())),
+            format!(r#"{{"method":"warnings","params":{params}}}"#)
+        );
+        assert_eq!(
+            written(&Call::Check(definitions())),
+            format!(r#"{{"method":"check","params":{params}}}"#)
+        );
+        let request = definitions();
+        assert_eq!(Definitions::from(&request.request()), request);
+    }
+
+    #[test]
+    fn findings_and_a_check_are_written_as_their_fields() {
+        let check = EngineCheck {
+            always_present: vec!["a baseline".to_owned()],
+            problems: vec![Finding {
+                path: "/a.md".into(),
+                line: Some(4),
+                message: "not a tool".to_owned(),
+            }],
+            notes: vec![Finding {
+                path: "/a.md".into(),
+                line: None,
+                message: "gets more".to_owned(),
+            }],
+        };
+        let text = r#"{"ok":{"always_present":["a baseline"],"problems":[{"path":"/a.md","line":4,"message":"not a tool"}],"notes":[{"path":"/a.md","line":null,"message":"gets more"}]}}"#;
+        assert_eq!(written(&Reply::Ok(check.clone())), text);
+        assert_eq!(
+            serde_json::from_str::<Reply<EngineCheck>>(text).unwrap(),
+            Reply::Ok(check)
+        );
+    }
+
+    #[test]
+    fn both_levels_of_a_tools_reports_mcp_are_ok_or_error_in_lowercase() {
+        let listed = EngineTools {
+            heading: "codex:".to_owned(),
+            rows: vec![("Bash".to_owned(), "--disable shell_tool".to_owned())],
+            footer: Vec::new(),
+            mcp: Some(Ok([
+                (
+                    "docs".to_owned(),
+                    Ok(vec![("mcp__docs__find".to_owned(), "Finds.".to_owned())]),
+                ),
+                ("linear".to_owned(), Err("auth required".to_owned())),
+            ]
+            .into_iter()
+            .collect())),
+        };
+        let text = r#"{"heading":"codex:","rows":[["Bash","--disable shell_tool"]],"footer":[],"mcp":{"ok":{"docs":{"ok":[["mcp__docs__find","Finds."]]},"linear":{"error":"auth required"}}}}"#;
+        assert_eq!(written(&ToolsReport::from(listed.clone())), text);
+        let read: ToolsReport = serde_json::from_str(text).unwrap();
+        assert_eq!(EngineTools::from(read), listed);
+
+        let failed = EngineTools {
+            mcp: Some(Err("codex app-server: no answer".to_owned())),
+            ..EngineTools::default()
+        };
+        let text =
+            r#"{"heading":"","rows":[],"footer":[],"mcp":{"error":"codex app-server: no answer"}}"#;
+        assert_eq!(written(&ToolsReport::from(failed.clone())), text);
+        let read: ToolsReport = serde_json::from_str(text).unwrap();
+        assert_eq!(EngineTools::from(read), failed);
+
+        let none: ToolsReport = serde_json::from_str(r#"{"heading":"claude:"}"#).unwrap();
+        assert_eq!(
+            EngineTools::from(none),
+            EngineTools {
+                heading: "claude:".to_owned(),
+                ..EngineTools::default()
+            }
+        );
     }
 }
