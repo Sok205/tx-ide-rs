@@ -623,8 +623,18 @@ fn update_refuses_unsafe_paths() {
     assert!(!state.join("keys/.installed").exists());
 }
 
+/// The shell every `ui attach` of this suite runs its panes with: one that reads no start-up file,
+/// so the runner's own shell (and the user's files behind it) never takes part. tmux reports it
+/// as `SUITE_SHELL_NAME`.
+const SUITE_SHELL: &str = "/bin/dash";
+const SUITE_SHELL_NAME: &str = "dash";
+
 fn attach_command(cli: &Cli) -> String {
-    format!("{} {} ui attach", env!("CARGO_BIN_EXE_tx"), cli.arguments())
+    format!(
+        "env SHELL={SUITE_SHELL} {} {} ui attach",
+        env!("CARGO_BIN_EXE_tx"),
+        cli.arguments()
+    )
 }
 
 #[test]
@@ -673,7 +683,10 @@ fn ui_attach_inside_another_tmux_says_its_prefix_wins() {
     cli.write_yaml(&config_disabling("assistant"));
     let output = cli.run(
         &["ui", "attach"],
-        &[("TMUX", "/tmp/not-the-core.sock,1,0")],
+        &[
+            ("SHELL", SUITE_SHELL),
+            ("TMUX", "/tmp/not-the-core.sock,1,0"),
+        ],
         "",
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -705,7 +718,11 @@ fn ui_attach_inside_the_core_switches_the_client() {
         "client never attached"
     );
     let inside = format!("{},1,0", cli.sock().display());
-    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside)], "");
+    let output = cli.run(
+        &["ui", "attach"],
+        &[("SHELL", SUITE_SHELL), ("TMUX", &inside)],
+        "",
+    );
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -790,7 +807,11 @@ fn ui_attach_without_the_roles_installed_shows_the_failed_assistant() {
     let path = cli.fake_claude_path();
     let output = cli.run(
         &["ui", "attach"],
-        &[("PATH", &path), ("TMUX", "/tmp/not-the-core.sock,1,0")],
+        &[
+            ("PATH", &path),
+            ("SHELL", SUITE_SHELL),
+            ("TMUX", "/tmp/not-the-core.sock,1,0"),
+        ],
         "",
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -864,7 +885,11 @@ fn ui_attach_installs_the_floor_on_an_existing_shell_home() {
         "#{client_session}"
     ]) == "other"));
     let inside = format!("{},1,0", cli.sock().display());
-    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside)], "");
+    let output = cli.run(
+        &["ui", "attach"],
+        &[("SHELL", SUITE_SHELL), ("TMUX", &inside)],
+        "",
+    );
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -898,11 +923,7 @@ fn ui_attach_with_home_disabled_opens_a_shell() {
         ]) == "home"),
         "no client attached to home"
     );
-    let shell = std::path::Path::new(&std::env::var("SHELL").unwrap_or_else(|_| "sh".into()))
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
+    let shell = SUITE_SHELL_NAME;
     assert!(
         cli.wait_for(5, || cli.tmux_out(&[
             "display-message",
@@ -957,18 +978,18 @@ fn ui_attach_with_home_disabled_after_it_was_enabled_repairs_the_pane() {
         "the TUI did not die"
     );
     let inside = format!("{},1,0", cli.sock().display());
-    let output = cli.run(&["ui", "attach"], &[("TMUX", &inside)], "");
+    let output = cli.run(
+        &["ui", "attach"],
+        &[("SHELL", SUITE_SHELL), ("TMUX", &inside)],
+        "",
+    );
     assert_eq!(
         output.status.code(),
         Some(0),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let shell = Path::new(&std::env::var("SHELL").unwrap_or_else(|_| "sh".into()))
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
+    let shell = SUITE_SHELL_NAME;
     assert!(
         cli.wait_for(5, || pane_format("#{pane_dead}") == "0"
             && pane_format("#{pane_current_command}") == shell),
