@@ -92,6 +92,10 @@ Tier `core`; it ships as a bundle whose program is `tx-kill`, elsewhere compiled
 **`picker`**: `pick` is the fzf session picker on prefix+t: running agents and views in one list,
 newest activity first, with vim-style normal and search modes, a roles panel on TAB, Ctrl-T to tag
 and alt-p to open a pick in a popup. Enter nests the pick into the launching view's pane.
+Tier `ide` (it requires `ide` and needs `fzf`); it ships as a bundle whose program is `tx-picker`,
+elsewhere compiled into `tx`. The picker's own verbs that fzf runs as children (the reload once a
+second, the key handler, the roles) run `tx-picker` directly, one process each, not through `tx`;
+`kill`, `_edit-tag` and the popup of alt-p start with `tx`.
 
 **`edit`**: prefix+e opens a modal form for the session's name, tags and group (`ext.edit`).
 Tier `ide` (it requires `ide` and needs `fzf`); it ships as a bundle whose program is `tx-edit`,
@@ -100,6 +104,8 @@ elsewhere compiled into `tx`.
 **`spawn`**: prefix+n opens the new-agent form (an embedded nvim form): name, tags, project
 (defaulting to the pane's directory), prompt, engine, model, effort and role, COMMON always
 included. `_new-agent` then creates the agent; the outcome lands on the status line.
+Tier `ide` (it requires `ide` and needs `nvim`); it ships as a bundle whose program is `tx-spawn`,
+elsewhere compiled into `tx`. The form's engine list is every active engine.
 
 **`assistant`**: `assistant warm` starts the `tx-assistant` agent (Claude, `opus`, effort
 `medium`, roles COMMON and TX-ASSISTANT, tag `tx-system`) unless it is running, respawning a

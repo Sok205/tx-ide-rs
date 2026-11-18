@@ -1,0 +1,16 @@
+api: 1
+id: spawn
+description: "Prefix+n, the new-agent form: name, tags, prompt, engine, model, effort and agent definition."
+tier: ide
+requires: [ide]
+needs: [nvim]
+
+verbs:
+  - name: _new-agent
+    usage: "_new-agent <pane> <client> [--cwd DIR]   the new-agent form, then create the agent (prefix+n, internal)"
+    bin: tx-spawn
+    args: [_new-agent]
+
+resources:
+  - keys/spawn.tmux
+  - bin/tmux-new-agent

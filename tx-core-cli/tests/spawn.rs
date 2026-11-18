@@ -131,9 +131,16 @@ fn a_failed_create_is_reported_on_the_status_line() {
     assert!(cli.ok(&["ls"]).is_empty());
 }
 
+fn plugin_row(cli: &Cli, id: &str) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    rows.into_iter().find(|row| row["id"] == id).unwrap()
+}
+
 #[test]
 fn new_agent_wants_a_pane_and_a_client() {
     let cli = Cli::new();
+    assert_eq!(plugin_row(&cli, "spawn")["origin"], "shipped");
     assert!(
         cli.fails(&["_new-agent", "%0"], 2)
             .starts_with("usage: tx _new-agent <pane> <client>")
@@ -150,4 +157,14 @@ fn disabled_spawn_hides_the_verb_and_the_key() {
     // The roles are the core's, not the plugin's: still installed.
     assert!(cli.state().join("roles/COMMON.md").exists());
     assert!(cli.state().join("roles/TX-ASSISTANT.md").exists());
+}
+
+#[test]
+fn without_the_bundle_spawn_runs_compiled_into_tx() {
+    let cli = Cli::compiled_in();
+    assert_eq!(plugin_row(&cli, "spawn")["origin"], "built-in");
+    assert!(
+        cli.fails(&["_new-agent", "%0"], 2)
+            .starts_with("usage: tx _new-agent <pane> <client>")
+    );
 }

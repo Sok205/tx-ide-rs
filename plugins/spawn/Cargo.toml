@@ -6,9 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "tx-core plugin: prefix+n, the new-agent form: name, tags, prompt, engine, model, effort and agent definition."
 
+# The plugin as its own program: what `plugin.yaml` names for its verbs.
+[[bin]]
+name = "tx-spawn"
+path = "src/main.rs"
+
 [dependencies]
 tx-core.workspace = true
 tx-client.workspace = true
+tx-plugin.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
