@@ -9,13 +9,14 @@ description = "tx-core plugin: animated themes for the tx-ide home backdrop, cho
 [dependencies]
 tx-core.workspace = true
 tx-client.workspace = true
-tx-home = { path = "../home" }
+tx-home-backdrop = { path = "../home-backdrop" }
 serde_json.workspace = true
 ratatui = "0.30"
 fastrand = "2"
 
 [dev-dependencies]
 tempfile.workspace = true
+tx-plugin.workspace = true
 
 [lints]
 workspace = true

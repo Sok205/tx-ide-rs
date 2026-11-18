@@ -1,0 +1,31 @@
+api: 1
+id: home
+description: "The tx-ide home (ratatui): projects, agents, views and history; the floor of the home pane and prefix+m."
+tier: ide
+requires: [ide]
+needs: [git]
+
+verbs:
+  - name: home
+    usage: "home   the tx-ide home: projects, their agents and views, the assistant (prefix+m)"
+    bin: tx-home
+    args: [home]
+  - name: _home-open
+    usage: "_home-open <pane> <client>   the home in a popup, then its choice (prefix+m, internal)"
+    bin: tx-home
+    args: [_home-open]
+  - name: _home-tui
+    usage: "_home-tui <pane> [--first] [--returned-from SESSION] [--popup] [--choice FILE]   the home TUI; writes the choice (internal)"
+    bin: tx-home
+    args: [_home-tui]
+  - name: _home-install
+    usage: "_home-install <session>   keep the home TUI in the view's pane (internal)"
+    bin: tx-home
+    args: [_home-install]
+  - name: _home-perform
+    usage: "_home-perform <pane>   run the home's choice in its pane, else the home again (pane-died hook, internal)"
+    bin: tx-home
+    args: [_home-perform]
+
+resources:
+  - keys/home.tmux

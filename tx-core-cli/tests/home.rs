@@ -64,6 +64,110 @@ fn installed_server(cli: &Cli, yaml: &str) {
     );
 }
 
+/// The program of the `home` bundle, which hosts `home-themes` too. It is what the floor's pane
+/// runs: `tx` becomes the program of the plugin whose verb it was given.
+const PROGRAM: &str = "tx-home";
+
+/// The one row of plugin `id` in `tx plugins --json`.
+fn row(cli: &Cli, id: &str) -> serde_json::Value {
+    let rows: serde_json::Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let found: Vec<&serde_json::Value> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == id)
+        .collect();
+    assert_eq!(found.len(), 1, "{rows}");
+    found[0].clone()
+}
+
+/// `tx home` outside tx-ide, traced: its exit code and the plugin programs it started.
+fn traced_home(cli: &Cli) -> (Option<i32>, String) {
+    let trace = cli.dir.path().join("trace");
+    let output = cli.run(
+        &["home"],
+        &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+        "",
+    );
+    (
+        output.status.code(),
+        std::fs::read_to_string(&trace).unwrap_or_default(),
+    )
+}
+
+#[test]
+fn the_bundles_are_the_shipped_plugins_and_the_home_is_one_program() {
+    let cli = Cli::new();
+    let bundle = common::shipped().join("home");
+    assert_eq!(
+        row(&cli, "home"),
+        serde_json::json!({
+            "id": "home", "status": "active", "detail": null, "origin": "shipped",
+            "directory": bundle,
+            "description": "The tx-ide home (ratatui): projects, agents, views and history; the floor of the home pane and prefix+m.",
+            "tier": "ide", "requires": ["ide"], "needs": ["git"],
+            "verbs": ["home", "_home-open", "_home-tui", "_home-install", "_home-perform"],
+            "engine": null,
+        })
+    );
+    // No verb, no program, no resource: the home's program hosts it.
+    assert_eq!(
+        row(&cli, "home-themes"),
+        serde_json::json!({
+            "id": "home-themes", "status": "active", "detail": null, "origin": "shipped",
+            "directory": common::shipped().join("home-themes"),
+            "description": "Animated themes for the tx-ide home backdrop, chosen by settings.theme.",
+            "tier": "ide", "requires": ["home"], "needs": [],
+            "verbs": [], "engine": null,
+        })
+    );
+    let help = cli.ok(&["help"]);
+    assert_eq!(
+        help.lines()
+            .filter(|line| line.starts_with("  home "))
+            .count(),
+        1,
+        "{help}"
+    );
+    let (code, trace) = traced_home(&cli);
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        trace,
+        format!(
+            "verb\thome\t{}\n",
+            bundle.join("bin").join(PROGRAM).display()
+        ),
+        "one plugin program was started: tx became it"
+    );
+}
+
+/// With no bundle installed both plugins run compiled into `tx`, complete: the floor's TUI is
+/// `tx` itself.
+#[test]
+fn without_the_bundles_the_home_runs_compiled_into_tx() {
+    require_tmux!();
+    let cli = Cli::compiled_in();
+    for id in ["home", "home-themes"] {
+        let row = row(&cli, id);
+        assert_eq!(row["origin"], "built-in", "{row}");
+        assert_eq!(row["status"], "active", "{row}");
+    }
+    assert!(common::lists_verb(&cli.ok(&["help"]), "home"));
+    let (code, trace) = traced_home(&cli);
+    assert_eq!(code, Some(1));
+    assert_eq!(trace, "", "no plugin program was started");
+    installed_server(&cli, PLAIN_HOME);
+    hand_made_home(&cli, "sh");
+    assert_eq!(cli.ok(&["_home-install", "home"]), "");
+    assert!(
+        cli.wait_for(5, || home_command(&cli) == "tx"),
+        "{}",
+        home_command(&cli)
+    );
+    let hooks = cli.tmux_out(&["show-hooks", "-p", "-t", &home_pane(&cli)]);
+    assert!(hooks.contains("_home-perform"), "{hooks}");
+}
+
 const PLAIN_HOME: &str = "plugins:\n  assistant: { enabled: false }\n  home-themes: { enabled: false }\n  layouts: { enabled: false }\n";
 
 #[test]
@@ -300,7 +404,7 @@ fn home_install_turns_a_shell_home_into_the_tui() {
     std::fs::write(&stale[1], "gone").unwrap();
     assert_eq!(cli.ok(&["_home-install", "home"]), "");
     assert!(
-        cli.wait_for(5, || home_command(&cli) == "tx"),
+        cli.wait_for(5, || home_command(&cli) == PROGRAM),
         "{}",
         home_command(&cli)
     );
@@ -336,7 +440,7 @@ fn home_install_leaves_a_split_shell_alone() {
     hand_made_home(&cli, "sh");
     cli.ok(&["_home-install", "home"]);
     assert!(
-        cli.wait_for(5, || home_command(&cli) == "tx"),
+        cli.wait_for(5, || home_command(&cli) == PROGRAM),
         "{}",
         home_command(&cli)
     );
@@ -369,7 +473,7 @@ fn home_install_leaves_a_split_shell_alone() {
             &floor_pane,
             "#{pane_current_command}"
         ]),
-        "tx"
+        PROGRAM
     );
     assert_eq!(pid_of(&floor_pane), floor_pid);
     assert_eq!(
@@ -385,7 +489,7 @@ fn an_editor_in_the_home_pane_is_left_alone() {
     installed_server(&cli, PLAIN_HOME);
     hand_made_home(&cli, "sleep 600");
     cli.ok(&["_home-install", "home"]);
-    assert!(!cli.wait_for(1, || home_command(&cli) == "tx"));
+    assert!(!cli.wait_for(1, || home_command(&cli) == PROGRAM));
     assert_eq!(home_command(&cli), "sleep");
 }
 
@@ -683,7 +787,7 @@ fn the_popup_variant_closes_on_q_and_attach_switches_the_client() {
         "{:?}",
         clients(&cli)
     );
-    assert_eq!(home_command(&cli), "tx");
+    assert_eq!(home_command(&cli), PROGRAM);
 }
 
 /// The first paint's budget is 100 ms on a quiet machine; 500 ms keeps the suite green under load.

@@ -10,7 +10,7 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, Pixels};
+use tx_home_backdrop::{Backdrop, Pixels};
 
 use crate::common::{
     Pointer, STEP, Steps, angle, distance, draw_logo, fill, glow, logo_size, noise_time, pixel_of,
@@ -318,7 +318,7 @@ impl Backdrop for Abyss {
 #[cfg(test)]
 mod tests {
     use ratatui::crossterm::event::MouseEventKind;
-    use tx_home::backdrop::layout;
+    use tx_home_backdrop::layout;
 
     use super::*;
     use crate::common::MAX_GAP;

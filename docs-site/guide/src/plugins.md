@@ -156,6 +156,16 @@ stays warm). `--snapshot` prints one frame as text.
 
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).
+Tier `ide` (it requires `ide` and needs `git`); it ships as a bundle (`plugins/home/plugin.yaml`)
+and runs as the program `tx-home`, which also hosts `home-themes`. Where the bundle is not
+installed it runs compiled into `tx`.
+
+**`home-themes`**: the animated backdrops of the home, chosen by `settings.theme` (default
+`koi`); `b` in the home cycles them, and the choice is kept in `<data>/plugins/home-themes/theme`.
+Tier `ide` (it requires `home`). Its bundle is a manifest alone
+(`plugins/home-themes/plugin.yaml`): it has no program of its own. The home's program `tx-home`
+hosts it and registers it when it is installed and enabled; without it the home is plain. No
+verb, no key.
 
 **`layouts`** (tier `ide`; program `tx-layouts`, compiled into `tx` where the bundle is not installed):
 `layout ls | open NAME | save NAME | path NAME | check NAME` opens a saved pane layout, one YAML file per

@@ -7,7 +7,6 @@
 //! State and keys: [`model`]; what it shows: [`data`], [`detail`], [`project`]; drawing: [`ui`];
 //! the terminal: [`run`]; the verbs and the actions: [`verbs`].
 
-pub mod backdrop;
 pub mod data;
 pub mod detail;
 pub mod floor;
@@ -18,6 +17,9 @@ pub mod ui;
 pub mod verbs;
 
 use tx_core::{Plugin, PluginError, Registry};
+
+/// The backdrop API (package `tx-home-backdrop`), under the name the home's own code uses.
+pub use tx_home_backdrop as backdrop;
 
 pub const PLUGIN_ID: &str = "home";
 
@@ -33,6 +35,6 @@ impl Plugin for HomePlugin {
         for verb in verbs::verbs() {
             r.verb(verb);
         }
-        r.resource("keys/home.tmux", include_bytes!("../tmux/keys.tmux"))
+        r.resource("keys/home.tmux", include_bytes!("../keys/home.tmux"))
     }
 }

@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use tx_core::LlmEngineState;
@@ -95,6 +95,9 @@ pub struct Context {
     pub home_directory: PathBuf,
     /// The names `tx layout ls` lists; `None` when the `layout` verb is absent, which hides `w`.
     pub layouts: Option<Vec<String>>,
+    /// The modification time of `<config>/layouts` when `layouts` was listed, `None` without
+    /// the directory: the next context lists again only when it differs.
+    pub layouts_modified: Option<SystemTime>,
 }
 
 /// One line of the main list.
@@ -1067,6 +1070,7 @@ pub(crate) mod tests {
             now: 1000.0,
             home_directory: PathBuf::from("/home/operator"),
             layouts: None,
+            layouts_modified: None,
         }
     }
 

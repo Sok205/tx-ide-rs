@@ -1900,6 +1900,17 @@ dependencies = [
  "tx-chat",
  "tx-client",
  "tx-core",
+ "tx-home-backdrop",
+ "tx-home-themes",
+ "tx-plugin",
+]
+
+[[package]]
+name = "tx-home-backdrop"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "tx-client",
 ]
 
 [[package]]
@@ -1912,7 +1923,8 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
- "tx-home",
+ "tx-home-backdrop",
+ "tx-plugin",
 ]
 
 [[package]]

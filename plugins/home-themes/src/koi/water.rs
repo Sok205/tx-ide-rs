@@ -7,7 +7,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tx_client::palette::palette;
-use tx_home::backdrop::{dim, is_text};
+use tx_home_backdrop::{dim, is_text};
 
 /// Pixels per second a ripple's ring grows.
 const RIPPLE_SPEED: f32 = 9.0;

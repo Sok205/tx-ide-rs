@@ -9,7 +9,7 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, Pixels};
+use tx_home_backdrop::{Backdrop, Pixels};
 
 use crate::common::{
     STEP, Steps, draw_logo, logo_size, noise_time, pixel_of, quantised, value_noise,
@@ -214,7 +214,7 @@ impl Backdrop for Campfire {
 
 #[cfg(test)]
 mod tests {
-    use tx_home::backdrop::layout;
+    use tx_home_backdrop::layout;
 
     use super::*;
     use crate::common::MAX_GAP;
