@@ -34,7 +34,10 @@ column stays the single token `idle`, so it splits on whitespace as before. A `s
 line reads `working → idle (waiting)`.
 
 The vocabulary is core's; the rules are the engine adapter's. At launch the adapter wires the
-CLI's own hooks to run `txi hook <Event>`. When one fires inside the session, core asks the
+CLI's own hooks to the engine's own program, `tx-engine-<kind> --tx-hook <Event>`, which applies
+the hook in one process. `txi hook <Event>` stays for an engine that names no hook entry of its
+own and for agents launched before the engines became programs: those keep the command they
+were launched with until they are respawned. When a hook fires inside the session, core asks the
 adapter's `on_hook` for an [`LlmEngineChange`](../internal/tx_core/state/struct.LlmEngineChange.html)
 (a new state, why when it is idle, and new engine data, all optional) and writes it under the
 agent's lock. For Claude, `SessionStart`, `Stop` and `StopFailure` mean idle, finished;

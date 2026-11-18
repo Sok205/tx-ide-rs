@@ -642,10 +642,15 @@ fn of_two_plugins_with_one_kind_or_one_ext_key_the_first_keeps_it() {
         "{listed}"
     );
     // An installed engine of a kind a compiled-in engine has is not settled silently: tx
-    // refuses to run with both.
-    engine("engine-clash", "  kind: claude\n");
+    // refuses to run with both. Claude is compiled in where no bundle of it is installed.
+    let compiled_in = Cli::compiled_in();
+    compiled_in.plugin(
+        "engine-clash",
+        "api: 1\nid: engine-clash\ndescription: Another engine.\nengine:\n  bin: engine-clash\n  kind: claude\n",
+        &[],
+    );
     assert_eq!(
-        cli.fails(&["ls"], 1),
+        compiled_in.fails(&["ls"], 1),
         "tx: plugin \"engine-clash\": an engine of kind claude is already registered\n"
     );
 }

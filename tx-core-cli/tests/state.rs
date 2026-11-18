@@ -82,7 +82,8 @@ fn the_wired_hooks_move_a_claude_session() {
     let id = cli.create_claude("a");
     assert_eq!(cli.state_of("a"), "starting");
 
-    // The adapter wired every hook to this very tx, through `--settings`.
+    // The engine is the bundle of this sandbox, and it wired every hook to its own program,
+    // through `--settings`.
     let argv = cli.claude_argv();
     let at = argv.iter().position(|arg| arg == "--settings").unwrap();
     let settings: Value = serde_json::from_str(&argv[at + 1]).unwrap();
@@ -93,18 +94,30 @@ fn the_wired_hooks_move_a_claude_session() {
     assert_eq!(
         command,
         format!(
-            "'{}' 'hook' 'SessionStart' || exit 1",
-            env!("CARGO_BIN_EXE_txi")
+            "'{}' '--tx-hook' 'SessionStart' || exit 1",
+            common::shipped()
+                .join("engine-claude/bin/tx-engine-claude")
+                .display()
         )
     );
 
     // Run that exact command the way Claude does: through a shell, payload on stdin, inside
-    // the session's environment.
-    let mut child = Command::new("sh")
-        .args(["-c", &command])
-        .env("TX_SESSION_ID", &id)
-        .envs(common::directory_environment(&cli.state()))
+    // the session. It gets what a session of this sandbox carries and nothing else of tx's:
+    // whoever runs the suite may sit in a tx session of their own, whose `TX_*` name another
+    // core.
+    let mut shell = Command::new("sh");
+    shell.args(["-c", &command]);
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("TX_") {
+            shell.env_remove(name);
+        }
+    }
+    let mut child = shell
         .env_remove("TMUX")
+        .envs(common::directory_environment(&cli.state()))
+        .env("TX_TMUX_SOCKET", cli.sock())
+        .env("TX_PLUGIN_PATH", cli.plugin_path())
+        .env("TX_SESSION_ID", &id)
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();

@@ -1,0 +1,13 @@
+api: 1
+id: engine-codex
+description: The Codex engine.
+tier: core
+needs: [codex]
+engine:
+  kind: codex
+  ext_key: codex
+  bin: tx-engine-codex
+  args: [--tx-engine]
+  hook: { bin: tx-engine-codex, args: [--tx-hook] }
+  methods: [archive, restore]
+  interrupt: { key: Escape, state: idle }

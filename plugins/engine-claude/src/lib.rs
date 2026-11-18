@@ -52,8 +52,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tx_core::{
-    Agent, Conversation, ENGINE_ARGS_OPTION, EngineError, EngineKind, IdleReason, Input, Key,
-    LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
+    Agent, ENGINE_ARGS_OPTION, EngineError, EngineKind, IdleReason, Input, Key, LaunchPlan,
+    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
     SkillProvider, WorkspaceAction, engine_data, hook_shell_command, mirror_file,
     mirror_file_exact, mirror_tree,
 };
@@ -628,15 +628,6 @@ impl LlmEngine for ClaudeAdapter {
         mirror_tree(&archived_sidecars, &sidecars)?;
         Ok(true)
     }
-
-    /// The recorded `conversation_id` and `transcript_path`; `None` until both are known.
-    fn conversation(&self, session: &Agent) -> Option<Conversation> {
-        let data = engine_data(self, session);
-        Some(Conversation {
-            id: data.get(CONVERSATION_ID_KEY)?.as_str()?.to_owned(),
-            transcript_path: PathBuf::from(data.get(TRANSCRIPT_PATH_KEY)?.as_str()?),
-        })
-    }
 }
 
 /// The engine data after a `SessionStart`: `current` with the payload's `session_id` as
@@ -824,7 +815,7 @@ impl tx_core::Plugin for ClaudePlugin {
 mod tests {
     use super::*;
     use std::path::Path;
-    use tx_core::{Profile, ResolvedProfile};
+    use tx_core::{Conversation, Profile, ResolvedProfile};
 
     fn profile(text: &str, skills: &[&str]) -> (tempfile::TempDir, Profile) {
         let dir = tempfile::tempdir().unwrap();

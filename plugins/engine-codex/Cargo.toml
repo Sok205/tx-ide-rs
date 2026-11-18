@@ -5,8 +5,14 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+# The plugin as its own program: what `plugin.yaml` names for its engine and its hook entry.
+[[bin]]
+name = "tx-engine-codex"
+path = "src/main.rs"
+
 [dependencies]
 tx-core.workspace = true
+tx-plugin.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -6,6 +6,12 @@ verbs and key. Verbs starting with `_` are internal: key bindings, hooks and pop
 
 ## Engines
 
+Each engine is the program `tx-engine-<kind>` of its plugin. `tx` starts it when a command needs
+the engine (a create, a fork, a respawn, a stop) and talks to it over the engine protocol; the
+same program is the hook command of every agent it launches (`tx-engine-<kind> --tx-hook <Event>`),
+so a hook is one process. Where the plugin is not installed as a bundle, the same adapter runs
+compiled into `tx` and its hooks run `txi hook <Event>`.
+
 **`engine-claude`** registers the Claude Code adapter. It launches a minimal session,
 `claude --session-id <tx id> --strict-mcp-config --setting-sources "" --tools
 Bash,Read,Edit,Write,Skill,ToolSearch --append-system-prompt <profile> --dangerously-skip-permissions …`
@@ -27,7 +33,7 @@ to `~/.claude/skills/synced/<account>/<name>/`. Bundled skills stay off (`disabl
 unless the agent lists one. Claude cannot turn them on one by one, so that turns the whole bundle
 on, and `tx check` and `tx create` warn with the known names. The built-in `plugin-authoring`
 plugin is off unless listed. Before each launch the plugin marks the worktree trusted in Claude's config file
-(`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`), so it never stops on the trust dialog. It wires Claude's hooks to `txi hook <Event>`. It keeps
+(`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`), so it never stops on the trust dialog. It wires Claude's hooks, through `--settings`, to its own program. It keeps
 `conversation_id`, `transcript_path`, `model` and `effort` under `ext.claude`, archives each
 transcript with its sidecar directory, and restores it for a resume when Claude has cleaned it up.
 

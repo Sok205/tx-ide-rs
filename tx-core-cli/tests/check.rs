@@ -19,11 +19,22 @@ impl Outcome {
     }
 }
 
+/// `tx <args>` in `cli`. Left out of what it printed: the `needs` warnings about the bundles of
+/// the shared root. What a shipped plugin needs on `PATH` depends on the machine, so it cannot
+/// be pinned; a warning about a plugin of the test's own stays.
 fn check(cli: &Cli, args: &[&str]) -> Outcome {
     let output = cli.run(args, &[], "");
+    let shipped = format!("{}/", common::shipped().display());
+    let out = String::from_utf8(output.stdout)
+        .unwrap()
+        .split_inclusive('\n')
+        .filter(|line| {
+            !(line.starts_with(&shipped) && line.contains("/plugin.yaml: warning: needs "))
+        })
+        .collect();
     Outcome {
         code: output.status.code().unwrap(),
-        out: String::from_utf8(output.stdout).unwrap(),
+        out,
         err: String::from_utf8(output.stderr).unwrap(),
     }
 }
