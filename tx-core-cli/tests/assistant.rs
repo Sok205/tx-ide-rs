@@ -80,19 +80,20 @@ fn two_concurrent_warms_make_one_assistant() {
     cli.ok(&["update"]);
     let path = cli.fake_claude_path();
     let env = [("PATH", path.as_str())];
-    let barrier = std::sync::Barrier::new(2);
-    let outputs: Vec<std::process::Output> = std::thread::scope(|scope| {
-        let warms: Vec<_> = (0..2)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut command = cli.command(&["assistant", "warm"], &env);
-                    barrier.wait();
-                    command.output().unwrap()
-                })
-            })
-            .collect();
-        warms.into_iter().map(|warm| warm.join().unwrap()).collect()
-    });
+    let children: Vec<std::process::Child> = (0..2)
+        .map(|_| {
+            cli.command(&["assistant", "warm"], &env)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    let outputs: Vec<std::process::Output> = children
+        .into_iter()
+        .map(|child| child.wait_with_output().unwrap())
+        .collect();
     for output in &outputs {
         assert_eq!(
             output.status.code(),
