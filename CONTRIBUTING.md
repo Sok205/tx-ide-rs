@@ -67,7 +67,7 @@ every crate inherits it with `version.workspace = true`.
 - **PATCH** (`1.4.1` → `1.4.2`): bug fixes only, nothing a user must change.
 - **MINOR** (`1.4.2` → `1.5.0`): new features that keep existing use working.
 - **MAJOR** (`1.4.2` → `2.0.0`): a breaking change to the command line, the on-disk records,
-  configuration, definitions or the plugin API.
+  configuration, definitions or the plugin API (`api` in a plugin's manifest).
 
 **Before 1.0** the public surface is not yet stable. While the version is `0.y.z`, a breaking
 change bumps **MINOR** (`0.1.4` → `0.2.0`), and everything else, features included, bumps

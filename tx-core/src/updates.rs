@@ -29,7 +29,19 @@ pub struct UpdateStep {
 }
 
 /// Every update step, in order. Append only.
-pub const UPDATE_STEPS: &[UpdateStep] = &[];
+pub const UPDATE_STEPS: &[UpdateStep] = &[UpdateStep {
+    version: 1,
+    description: "plugins run as their own programs",
+    run: plugins_run_as_their_own_programs,
+}];
+
+/// Changes no file. Agents started before the upgrade keep reporting through `txi hook`; one
+/// respawned wires its engine's own program as its hook command.
+fn plugins_run_as_their_own_programs(_: &Directories) -> io::Result<Outcome> {
+    Ok(Outcome {
+        respawn_agents: true,
+    })
+}
 
 /// A step that ran, as `apply_pending` reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,11 +98,12 @@ fn read_stamp(directories: &Directories) -> Result<Option<u32>, UpdateError> {
 
 /// Nothing to update: `<data>` is absent or empty, and `<config>` holds no subdirectory (a lone
 /// `config.yaml` is the operator's settings, not tx's files). `<data>/shipped` does not count:
-/// `tx setup` and `tx update` lay the shipped plugins out there before any step runs.
+/// `tx setup` and `tx update` lay the shipped plugins out there before any step runs. Nor does
+/// the stamp: it is tx's own note about the install, not data.
 pub fn is_fresh(directories: &Directories) -> Result<bool, UpdateError> {
     let data_empty = entries(&directories.data)?
         .iter()
-        .all(|path| path.ends_with(SHIPPED_PLUGINS_DIR));
+        .all(|path| path.ends_with(SHIPPED_PLUGINS_DIR) || path.ends_with(STAMP_FILE));
     let config_has_directory = entries(&directories.config)?
         .iter()
         .any(|path| path.is_dir());
@@ -273,6 +286,21 @@ mod tests {
     }
 
     #[test]
+    fn the_first_step_changes_no_file_and_asks_for_a_respawn() {
+        let (_root, directories) = used_layout();
+        let before = entries(&directories.data).unwrap();
+        let applied = collect(&directories, UPDATE_STEPS);
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].version, 1);
+        assert_eq!(applied[0].description, "plugins run as their own programs");
+        assert!(applied[0].outcome.respawn_agents);
+        let mut after = entries(&directories.data).unwrap();
+        after.retain(|path| !path.ends_with(STAMP_FILE));
+        assert_eq!(after, before);
+        assert_eq!(stamp(&directories), "1\n");
+    }
+
+    #[test]
     fn an_absent_stamp_reads_zero() {
         let (_root, directories) = layout();
         assert_eq!(current(&directories).unwrap(), 0);
@@ -400,6 +428,13 @@ mod tests {
         let (_root, directories) = used_layout();
         assert!(collect(&directories, &[]).is_empty());
         assert_eq!(stamp(&directories), "0\n");
+    }
+
+    #[test]
+    fn a_data_directory_holding_only_the_stamp_is_fresh() {
+        let (_root, directories) = layout();
+        write_stamp(&directories, 1).unwrap();
+        assert!(is_fresh(&directories).unwrap());
     }
 
     #[test]

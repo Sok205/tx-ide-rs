@@ -5,8 +5,7 @@ plugin (crate `tx-home`) replaces the earlier start menu (`menu`, now a retired 
 
 The plugin ships as a bundle (`plugins/home/plugin.yaml`) and runs as the program `tx-home`:
 `tx _home-tui …` becomes that program, so it is what the floor's pane runs. The same program
-hosts the `home-themes` plugin (see [The backdrop](#the-backdrop-home-themes)). Where the bundle
-is not installed, the home runs compiled into `tx`. Every command line the home builds (the
+hosts the `home-themes` plugin (see [The backdrop](#the-backdrop-home-themes)). Every command line the home builds (the
 floor's hook, its popups, the pane's next program, the other plugins' verbs it runs) starts with
 `tx`, never with `tx-home`.
 
@@ -135,8 +134,8 @@ re-exported as `tx_home::backdrop`).
 The home starts with the theme last chosen, kept in `<data>/plugins/home-themes/theme`, else
 with `plugins.home-themes.settings.theme` (default `koi`). `b` cycles through the themes and
 then off. With `home-themes` disabled or not installed the home is plain and `b` does nothing.
-Both plugins must run the same way, as bundles or compiled into `tx`: the themes reach the home
-only inside the program that runs it.
+The themes reach the home only inside the program that runs it, so both plugins must be
+installed.
 
 ## The assistant in the header
 

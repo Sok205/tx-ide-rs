@@ -176,8 +176,11 @@ needs something done once per machine (files moved, a setting rewritten, leftove
 it ships an update step; `tx update` runs each pending step in order and stamps its number after
 each, so a failure leaves the stamp at the last success and a re-run continues from there. Steps
 check before they act, so running one twice (a `config` shared across machines) does no harm. A
-fresh install (a `data` that is empty apart from `shipped/`, no subdirectory in `config`) is
-stamped at the latest version without running any. While the stamp is behind, every other verb prints
+fresh install (a `data` that is empty apart from `shipped/` and the stamp, no subdirectory in
+`config`) is stamped at the latest version without running any. Step 1, "plugins run as their own
+programs", is the one an install of v0.1.0 runs after `git pull` and `install --upgrade`: it
+changes no file and asks for a respawn, because agents started before the upgrade keep reporting
+through `txi hook`, and a respawned agent uses its engine's own program. While the stamp is behind, every other verb prints
 `tx: N update steps pending: run tx update` on stderr once and carries on; when a
 step says so, `tx update` also asks you to respawn the running agents.
 

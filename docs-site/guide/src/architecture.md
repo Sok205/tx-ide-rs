@@ -189,7 +189,7 @@ transcript parser in `tx-chat`) is fine.
 
 Both binaries share `tx-core-cli`'s library: argument parsing, the plugin switchboard and opening
 the core. `tx` is what people type. `txi` is what machines run: nothing in it is listed in
-`tx help`, and its one verb today is `txi hook <Event>`. When an engine launches an agent it
+`tx help`, and its one verb is `txi hook <Event>`. When an engine launches an agent it
 wires the engine CLI's own hook mechanism (Claude through `--settings`, Codex through
 `-c hooks.<Event>=…`) to a hook command: its own program when its manifest names one, as both
 shipped engines do, else `txi hook <Event>`. `txi` opens the same core from the `TX_*_DIR`
@@ -197,8 +197,9 @@ variables every session carries and hands the payload to `TxCore::hook`, which i
 moves (see [Agents and records](agents-and-records.md)). A hook must never fail the agent:
 anything that is not tx's (a call outside a session, an unknown id) exits 0. `txi` starts the
 agent's engine before it takes the agent's lock (next section). An agent launched before its
-engine had a hook entry of its own keeps the `txi hook` command it was started with, and that
-keeps working.
+engine had a hook entry of its own (an agent started by v0.1.0) keeps the `txi hook` command it
+was started with, and that keeps working: `tx update` after the upgrade runs update step 1 and
+asks for a respawn, and a respawned agent wires its engine's own program.
 
 `txi` is the one next to the `tx` that launched the agent. `tx` names itself when it starts and
 `txi` names its sibling; a plugin program that launches an agent is told through `TX_BIN`, which

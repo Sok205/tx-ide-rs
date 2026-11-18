@@ -49,6 +49,17 @@ impl Sandbox {
         self.path("config/plugins")
     }
 
+    /// The update steps of this tx counted as run, for a test that is about something else: an
+    /// install that has data (a plugin of the operator's own is data) would run step 1.
+    fn steps_done(&self) {
+        std::fs::create_dir_all(self.data()).unwrap();
+        std::fs::write(
+            self.data().join("update-version"),
+            format!("{}\n", tx_core::updates::latest()),
+        )
+        .unwrap();
+    }
+
     fn write_yaml(&self, text: &str) {
         std::fs::create_dir_all(self.path("config")).unwrap();
         std::fs::write(self.path("config/config.yaml"), text).unwrap();
@@ -437,6 +448,47 @@ fn a_fresh_install_is_stamped_at_the_latest_step_without_running_any() {
     );
 }
 
+/// An install that has data and no stamp, or the stamp `0` that v0.1.0 left, has not had step 1.
+#[test]
+fn an_install_with_data_runs_the_first_step_once_and_asks_for_a_respawn() {
+    for stamp in [None, Some("0\n")] {
+        let sandbox = Sandbox::new();
+        sandbox.bundle("hello");
+        std::fs::create_dir_all(sandbox.data().join("agents")).unwrap();
+        if let Some(stamp) = stamp {
+            std::fs::write(sandbox.data().join("update-version"), stamp).unwrap();
+        }
+        let out = stdout(&sandbox.update(&["--link"]));
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(
+            lines.contains(&"update 1: plugins run as their own programs"),
+            "{out}"
+        );
+        assert_eq!(
+            lines.last(),
+            Some(&"respawn running agents to pick this up"),
+            "{out}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sandbox.data().join("update-version")).unwrap(),
+            "1\n"
+        );
+        let again = stdout(&sandbox.update(&["--link"]));
+        assert!(!again.contains("update 1:"), "{again}");
+        assert!(!again.contains("respawn running agents"), "{again}");
+    }
+}
+
+#[test]
+fn a_verb_warns_of_the_pending_step_until_tx_update_has_run_it() {
+    let sandbox = Sandbox::new();
+    std::fs::create_dir_all(sandbox.data().join("agents")).unwrap();
+    let warning = "tx: 1 update step pending: run tx update";
+    assert!(stderr(&sandbox.run(&["plugins"])).contains(warning));
+    assert!(sandbox.run(&["update"]).status.success());
+    assert!(!stderr(&sandbox.run(&["plugins"])).contains(warning));
+}
+
 #[test]
 fn the_directories_come_together_and_the_link_only_with_them() {
     let sandbox = Sandbox::new();
@@ -481,6 +533,7 @@ touch "$TX_DATA_DIR/$TX_PLUGIN_ID-made"; echo "did x"; echo "tx-update: respawn-
 #[test]
 fn an_installed_plugins_updater_is_its_program_with_its_lines_under_its_id() {
     let sandbox = Sandbox::new();
+    sandbox.steps_done();
     sandbox.updating(&sandbox.own(), "hello", MAKES);
     sandbox.updating(
         &sandbox.own(),
@@ -535,6 +588,7 @@ fn an_installed_plugins_updater_is_its_program_with_its_lines_under_its_id() {
 #[test]
 fn an_updater_that_fails_is_named_and_the_others_still_run() {
     let sandbox = Sandbox::new();
+    sandbox.steps_done();
     sandbox.updating(&sandbox.own(), "hello", "echo before; exit 3");
     sandbox.updating(&sandbox.own(), "later", "echo ran");
     common::write_plugin(
@@ -716,6 +770,7 @@ fn a_later_source_replaces_a_resource_of_the_same_name() {
 #[test]
 fn a_resource_a_plugin_lists_and_lacks_is_named_and_the_rest_is_published() {
     let sandbox = Sandbox::new();
+    sandbox.steps_done();
     let hello = sandbox.publishing(
         "hello",
         &[

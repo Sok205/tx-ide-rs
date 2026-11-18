@@ -75,8 +75,7 @@ status line and the keys outside the prefix table were set without being declare
 until the server restarts. Without the record the retire does and prints nothing, so the next
 `tx update` is silent. A server that lived through a retire is a plain core server again:
 enabling `ide` and updating composes the config anew and prints `reloaded`, without the hint to
-restart. While `ide` is also still compiled into `tx`, a shipped `ide` that left the selection
-is retired and then goes on from there: the same update composes the config again.
+restart.
 
 ## Views
 

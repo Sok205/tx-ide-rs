@@ -58,9 +58,8 @@ install --upgrade                # after a git pull: the same selection, rebuilt
 ```
 
 Without a terminal, and with `--yes`, the selection is `full`. A preset of your own is
-`~/.config/tx-ide/presets/<name>.yaml` (see the guide's Files page). While the plugins are still
-moving out of the `tx` binary, one that has no bundle in `plugins/` yet runs compiled into `tx`
-whatever the selection.
+`~/.config/tx-ide/presets/<name>.yaml` (see the guide's Files page). A plugin outside the
+selection is not installed: its verbs are unknown to `tx`.
 
 **What lands where.**
 
@@ -159,6 +158,7 @@ the popup. The graph lists its keys on `?`.
 | `tx show NAME`, `tx where NAME`, `tx attach NAME` | its record as JSON; its tmux socket, session and pane; attach this terminal to it |
 | `tx rename NAME NEW`, `tx tag NAME TAG…` | rename it; replace its tags |
 | `tx gc [--older-than 1d] [--dry-run]` | delete the build output (`worktree.build_outputs`) in the worktrees of agents that ended longer ago than that |
+| `tx setup [--bundles DIR] [--preset NAME \| --plugins a,b,c \| --upgrade] [--list]` | choose which shipped plugins this machine has (a preset, ids, or a checklist on a terminal), record the selection in `<data>/shipped/.selection` and seed `config.yaml` when there is none |
 | `tx definitions`, `tx check [--plugins [ID…]]` | list and validate the agent definitions, skills and MCP servers; `tx check` then validates the installed plugins (manifests, programs, resources, clashes, `requires`, the config, the shipped stamp), and `--plugins` checks only those |
 | `tx update [--bundles DIR --binaries DIR [--link]]` | bring this machine up to this tx: lay the shipped plugins out from a checkout's `plugins/` and its build (with `--bundles`), run the pending update steps, publish the roles, definitions and plugin resources under the data directory, run each plugin's updater |
 | `tx engines`, `tx plugins` | the enabled engines; every plugin and whether it is on |

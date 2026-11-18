@@ -207,6 +207,18 @@ pub struct Cli {
 /// runs on, and REVIEWER, a role of the operator's own for `--role`.
 pub const STAND_IN_ROLES: [&str; 2] = ["COMMON", "REVIEWER"];
 
+/// The update steps of this tx counted as run in the sandbox whose directories are all `state`,
+/// so no suite sees the "update step pending" warning by accident. The stamp does not count
+/// against "fresh". Every constructor of a sandbox calls this.
+pub fn stamp_update_steps(state: &std::path::Path) {
+    std::fs::create_dir_all(state).unwrap();
+    std::fs::write(
+        state.join("update-version"),
+        format!("{}\n", tx_core::updates::latest()),
+    )
+    .unwrap();
+}
+
 impl Cli {
     /// A sandbox whose plugin roots are the shared [`shipped`] one and then its own
     /// `<config>/plugins`: every shipped plugin runs as its own program.
@@ -225,6 +237,7 @@ impl Cli {
         // Likewise the default agent definition (`agent.definition: developer`), which a real
         // install ships under `<data>/definitions`; `tx update` replaces this stand-in.
         stand_in_definition(&dir.path().join("state"));
+        stamp_update_steps(&dir.path().join("state"));
         let plugin_dirs = vec![
             shipped().to_path_buf(),
             dir.path().join("state").join("plugins"),

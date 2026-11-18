@@ -22,6 +22,7 @@ impl Cli {
             .prefix("tx")
             .tempdir_in("/tmp")
             .unwrap();
+        common::stamp_update_steps(&dir.path().join("state"));
         let plugin_dirs = vec![
             common::shipped().to_path_buf(),
             dir.path().join("state").join("plugins"),
@@ -54,10 +55,15 @@ impl Cli {
         stderr
     }
     /// Two roots of the test's own, outside the five directories: `first`, then `second`.
+    /// No update stamp: its tests are about what a command creates, and help, misuse and a
+    /// refused command create nothing.
     fn with_two_roots() -> Self {
-        let mut cli = Self::new();
-        cli.plugin_dirs = vec![cli.dir.path().join("first"), cli.dir.path().join("second")];
-        cli
+        let dir = tempfile::Builder::new()
+            .prefix("tx")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let plugin_dirs = vec![dir.path().join("first"), dir.path().join("second")];
+        Self { dir, plugin_dirs }
     }
     fn state(&self) -> PathBuf {
         self.dir.path().join("state")
