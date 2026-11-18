@@ -279,11 +279,11 @@ fn the_bundle_is_the_shipped_plugin_and_its_verbs_are_its_program() {
         command.contains(&format!("{} _mockup-view ", cli.arguments())),
         "{command}"
     );
-    // A compiled-in verb starts no plugin program.
+    // A built-in verb starts no plugin program.
     let trace_file = cli.dir.path().join("trace");
     std::fs::remove_file(&trace_file).unwrap();
     let output = cli.run(
-        &["layout", "ls"],
+        &["plugins"],
         &[("TX_PLUGIN_TRACE", trace_file.to_str().unwrap())],
         "",
     );

@@ -1,0 +1,12 @@
+api: 1
+id: layouts
+description: "tx-core plugin: saved pane layouts opened as views, `tx layout`."
+tier: ide
+requires: [ide]
+needs: [git]
+
+verbs:
+  - name: layout
+    usage: "layout ls | open NAME [--cwd DIR] [--agent A] [--tag T]… [--detach] | save NAME [--view V] [--force] | path NAME | check NAME   open a saved pane layout as a view, save a view as one, or check a layout file"
+    bin: tx-layouts
+    args: [layout]

@@ -578,7 +578,9 @@ fn a_program_that_cannot_run_is_named_and_exits_1() {
 
 #[test]
 fn a_traced_run_appends_one_line_per_plugin_program_started() {
-    let cli = Cli::new();
+    let mut cli = Cli::new();
+    // No bundle is installed: `layout ls` is compiled in, whichever plugins have moved.
+    cli.plugin_dirs.remove(0);
     let directory = hello(&cli);
     let trace = cli.dir.path().join("trace");
     let traced = |args: &[&str]| {

@@ -6,7 +6,7 @@ mod common;
 
 use std::path::Path;
 
-use common::Cli;
+use common::{Cli, lists_verb};
 use serde_json::{Value, json};
 
 impl Cli {
@@ -359,4 +359,82 @@ fn update_binds_prefix_f() {
         !cli.tmux_out(&["list-keys", "-T", "prefix", "f"])
             .contains("tmux-fork-tx-session")
     );
+}
+
+/// The one row of `chat` in `tx plugins --json`.
+fn plugin_row(cli: &Cli) -> Value {
+    let rows: Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let found: Vec<&Value> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == "chat")
+        .collect();
+    assert_eq!(found.len(), 1, "{rows}");
+    found[0].clone()
+}
+
+/// `tx chat ls a` with every plugin program it starts traced: its output, and the trace.
+fn traced_chat_ls(cli: &Cli) -> (String, String) {
+    let trace = cli.dir.path().join("trace");
+    let output = cli.run(
+        &["chat", "ls", "a"],
+        &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+        "",
+    );
+    assert!(output.status.success());
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        std::fs::read_to_string(&trace).unwrap_or_default(),
+    )
+}
+
+#[test]
+fn the_bundle_is_the_shipped_plugin_and_its_verbs_are_its_program() {
+    require_tmux!();
+    let cli = Cli::new();
+    let bundle = common::shipped().join("chat");
+    let row = plugin_row(&cli);
+    assert_eq!(row["origin"], "shipped");
+    assert_eq!(row["directory"], bundle.to_str().unwrap());
+    assert_eq!(row["tier"], "core");
+    assert_eq!(row["needs"], json!(["fzf"]));
+    assert_eq!(row["verbs"], json!(["chat", "doctor", "_fork-pane"]));
+    let help = cli.ok(&["help"]);
+    for verb in ["chat", "doctor", "_fork-pane"] {
+        assert_eq!(
+            help.lines()
+                .filter(|line| line.starts_with(&format!("  {verb} ")))
+                .count(),
+            1,
+            "{help}"
+        );
+    }
+    cli.create_agent("a");
+    let (_, trace) = traced_chat_ls(&cli);
+    assert_eq!(
+        trace,
+        format!("verb\tchat\t{}\n", bundle.join("bin/tx-chat").display()),
+        "one plugin program was started: tx became it, and no engine"
+    );
+}
+
+/// Without the bundle the plugin runs compiled into `tx`, complete.
+#[test]
+fn without_the_bundle_chat_ls_runs_compiled_into_tx() {
+    require_tmux!();
+    let cli = Cli::compiled_in();
+    assert_eq!(plugin_row(&cli)["origin"], "built-in");
+    assert!(lists_verb(&cli.ok(&["help"]), "chat"));
+    let id = cli.create_agent("a");
+    let transcript = cli.show("a")["ext"]["claude"]["transcript_path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (output, trace) = traced_chat_ls(&cli);
+    assert_eq!(
+        output,
+        format!("a — conversation {id}\n  transcript {transcript}\n")
+    );
+    assert!(!trace.contains("verb\tchat"), "{trace}");
 }

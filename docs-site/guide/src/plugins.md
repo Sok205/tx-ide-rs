@@ -63,7 +63,9 @@ default.
 **`chat`**: `chat ls <agent>` prints the agent's current conversation; `doctor --fix-hooks`
 removes the global hooks older tx versions installed; prefix+f forks the agent in the active pane
 through `_fork-pane` (a popup asks for the name). Its library holds the transcript readers the
-timeline and the home use.
+timeline and the home use. Tier `core`; it ships as a bundle
+(`plugins/chat/plugin.yaml`): where the bundle is installed its verbs run as the program `tx-chat`,
+elsewhere compiled into `tx`.
 
 **`ide`** (in `tx-client`): its updater (run by `tx update`), `ui attach` and `ui view open | ls | close`.
 The updater composes the server config, `<data>/tmux.conf`: it runs the key fragments
@@ -155,7 +157,8 @@ stays warm). `--snapshot` prints one frame as text.
 **`home`**: `home` opens the session manager in a popup; prefix+m is its key, and it is the floor
 of the `home` view. See [Startup and the home](home.md).
 
-**`layouts`**: `layout ls | open NAME | save NAME | path NAME | check NAME` opens a saved pane layout, one YAML file per
+**`layouts`** (tier `ide`; program `tx-layouts`, compiled into `tx` where the bundle is not installed):
+`layout ls | open NAME | save NAME | path NAME | check NAME` opens a saved pane layout, one YAML file per
 layout under `<config>/layouts/` (see [Files and directories](files.md)), as one view. `ls` lists
 the names, and `path NAME` prints the file to edit, existing or not. `check NAME` reads and
 validates the file as `open` does, with the same errors, but starts no tmux and no agent: it
