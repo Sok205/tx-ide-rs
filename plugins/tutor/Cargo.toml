@@ -6,9 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "tx-core plugin: the vimtutor-style walkthrough, `tx tutor`."
 
+# The plugin as its own program: what `plugin.yaml` names for its verb.
+[[bin]]
+name = "tx-tutor"
+path = "src/main.rs"
+
 [dependencies]
 tx-core.workspace = true
 tx-client.workspace = true
+tx-plugin.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

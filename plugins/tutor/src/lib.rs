@@ -2,7 +2,7 @@
 //! project from a lesson pack and opens the `tutor-<lang>` view; `check` verifies the current
 //! lesson and advances; `next` / `prev` / `goto` / `status` / `hint` / `reset` move around.
 //! Port of main's `verbs/tutor.rs` and `tutor/`. Progress lives in the plugin's data dir,
-//! `<data>/plugins/tutor/<lang>.json`; the packs ship as `tutor/…` resources and are
+//! `<data>/plugins/tutor/<lang>.json`; the packs are compiled into the program (`bundle`) and
 //! materialised under `<data>/plugins/tutor/packs/`.
 
 use std::io::IsTerminal;
@@ -53,9 +53,6 @@ impl Plugin for TutorPlugin {
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(TutorVerb));
-        for (name, bytes) in bundle::FILES.iter().chain([&bundle::LESSON_LUA]) {
-            r.resource(name, bytes)?;
-        }
         Ok(())
     }
 }
@@ -253,12 +250,14 @@ impl<'a> Tutor<'a> {
         self.data.join("packs")
     }
 
-    /// Materialises the active resources, then loads `<packs>/<lang>`.
+    /// Materialises the compiled-in packs and `lesson.lua`, then loads `<packs>/<lang>`.
     fn pack(&self, lang: &str) -> Result<Pack, VerbError> {
         let packs = self.packs();
-        let resources = self.core.resources(bundle::PREFIX);
-        bundle::materialise(&packs, resources.iter().map(|r| (r.name.as_str(), r.bytes)))
-            .map_err(|error| failed(format!("{}: {error}", packs.display())))?;
+        bundle::materialise(
+            &packs,
+            bundle::FILES.iter().chain([&bundle::LESSON_LUA]).copied(),
+        )
+        .map_err(|error| failed(format!("{}: {error}", packs.display())))?;
         Pack::find(&packs, lang).map_err(failed)
     }
 

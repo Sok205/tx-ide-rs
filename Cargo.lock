@@ -1763,6 +1763,7 @@ dependencies = [
  "tx-client",
  "tx-core",
  "tx-engine-claude",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -2042,6 +2043,7 @@ dependencies = [
  "toml",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]

@@ -105,7 +105,10 @@ impl Plugin for AssistantPlugin {
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         let settings = Settings::from_value(r.settings())?;
         r.verb(Arc::new(Assistant { settings }));
-        r.resource("keys/assistant.tmux", include_bytes!("../tmux/keys.tmux"))
+        r.resource(
+            "keys/assistant.tmux",
+            include_bytes!("../keys/assistant.tmux"),
+        )
     }
 }
 

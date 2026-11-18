@@ -95,6 +95,9 @@ included. `_new-agent` then creates the agent; the outcome lands on the status l
 stopped one in place under a lock. It runs in a worktree of its own small repository under
 `<data>/plugins/assistant/home`. `assistant ask` delivers one line to it; prefix+/ is the key (see
 [Messaging](messaging.md)).
+Tier `ide`; it ships as a bundle (`plugins/assistant/plugin.yaml`) and runs as the program
+`tx-assistant`, which starts the assistant through the Claude engine's program (`engine-claude`);
+where the bundle is not installed it runs compiled into `tx`.
 
 **`mockup`**: `mockup start --project DIR | show | wait | stop`. An agent writes a JSON screen
 description; a ratatui viewer renders it in a per-agent `mockup-<agent>` view, and `show`
@@ -106,6 +109,10 @@ No key.
 **`tutor`**: `tutor start [LANG]` scaffolds a practice project from a lesson pack and opens a
 `tutor-<lang>` view (lesson, cheat sheet, two shells); `check`, `next`, `prev`, `goto N`,
 `status`, `hint` and `reset` move through the lessons. The home's `L` starts it. No key.
+Tier `extra`; it ships as a bundle (`plugins/tutor/plugin.yaml`) and runs as the program
+`tx-tutor`, which carries the lesson packs itself: they are materialised under
+`<data>/plugins/tutor/packs` and published as no resource. Where the bundle is not installed it
+runs compiled into `tx`.
 
 **`artifacts`**: `artifact create | modify | ls | show | diff | open | path | archive | close | …`
 keeps durable, versioned deliverables under `<data>/plugins/artifacts/`. A `document` opens in an

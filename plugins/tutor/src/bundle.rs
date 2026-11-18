@@ -1,11 +1,11 @@
-//! The lesson packs as plugin resources: the plugin's `packs/` tree, compiled in under
-//! `tutor/<path>`, plus the plugin's own `lesson.lua`. `materialise` writes them into the
+//! The lesson packs: the plugin's `packs/` tree, compiled in under `tutor/<path>`, plus the
+//! plugin's own `lesson.lua`. They are the plugin's own, not published as resources. `materialise` writes them into the
 //! plugin's data dir, where nvim and the scaffold read them.
 
 use std::io::{self, Write};
 use std::path::Path;
 
-/// Every resource name starts with this.
+/// Every name starts with this.
 pub const PREFIX: &str = "tutor/";
 
 macro_rules! from_repo {
@@ -14,7 +14,7 @@ macro_rules! from_repo {
     };
 }
 
-/// `(resource name, bytes)`; the path under `packs/` is the name.
+/// `(name, bytes)`; the path under `packs/` is the name.
 pub const FILES: &[(&str, &[u8])] = from_repo![
     "keys.txt",
     "python/pack.toml",
