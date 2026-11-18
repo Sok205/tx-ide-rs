@@ -128,14 +128,3 @@ fn disabled_picker_hides_its_verbs() {
         cli.ok(&["plugins"])
     );
 }
-
-#[test]
-fn without_the_bundle_picker_runs_compiled_into_tx() {
-    require_tmux!();
-    let cli = Cli::compiled_in();
-    assert_eq!(plugin_row(&cli, "picker")["origin"], "built-in");
-    cli.create("a");
-    cli.create("b");
-    assert_rows(&cli.ok(&["_list"]), 2);
-    cli.fails(&["pick", "--nope"], 2);
-}

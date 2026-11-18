@@ -39,12 +39,6 @@ pub const SESSION_ENV_ENV: &str = "TX_SESSION_ENV";
 /// The file that gets one line for every plugin program started; unset: no trace.
 pub const PLUGIN_TRACE_ENV: &str = "TX_PLUGIN_TRACE";
 
-/// The plugins compiled into the calling program, and the verbs none of them may register.
-pub struct Linked {
-    pub plugins: Vec<Box<dyn Plugin>>,
-    pub reserved: Vec<String>,
-}
-
 /// Why `run` stopped: usage is exit 2 with the usage text, everything else exit 1.
 #[derive(Debug)]
 pub enum Failure {
@@ -461,25 +455,6 @@ pub fn load_config(global: &Global, config: &CoreConfig) -> Result<Config, Failu
     crate::config::load(&config_file(global, config)).map_err(Failure::Usage)
 }
 
-/// The `plugins:` section of the config file, as it concerns the linked plugins.
-pub fn plugin_config(
-    global: &Global,
-    config: &CoreConfig,
-    linked: &Linked,
-) -> Result<PluginConfig, Failure> {
-    let file = load_config(global, config)?;
-    let known: Vec<&str> = linked.plugins.iter().map(|plugin| plugin.id()).collect();
-    Ok(crate::config::linked_config(
-        &file.plugins,
-        &known,
-        &reserved(linked),
-    ))
-}
-
-fn reserved(linked: &Linked) -> Vec<&str> {
-    linked.reserved.iter().map(String::as_str).collect()
-}
-
 /// What this installation holds, resolved once per invocation: the core config, `config.yaml`,
 /// the plugins installed in the plugin roots, and which of them are active.
 pub struct Installation {
@@ -531,47 +506,6 @@ impl Installation {
             state,
             installed,
         )
-    }
-
-    /// The switches and settings of the linked plugins that still run compiled in: an id the
-    /// index holds belongs to the installed plugin, whether that one is enabled, disabled or in
-    /// error.
-    fn linked_config(&self, linked: &Linked) -> PluginConfig {
-        let known: Vec<&str> = linked
-            .plugins
-            .iter()
-            .map(|plugin| plugin.id())
-            .filter(|id| !self.index.contains(id))
-            .collect();
-        crate::config::linked_config(&self.file.plugins, &known, &reserved(linked))
-    }
-
-    /// The verbs of the linked plugins that still run compiled in, without opening the core (so
-    /// `help` and an unknown verb never create a directory).
-    pub fn preview_verbs(&self, linked: &Linked) -> Result<Vec<Arc<dyn tx_core::Verb>>, Failure> {
-        let mut cfg = self.linked_config(linked);
-        // Left out of the registration, like a disabled one.
-        cfg.disabled.extend(
-            linked
-                .plugins
-                .iter()
-                .map(|plugin| plugin.id())
-                .filter(|id| self.index.contains(id))
-                .map(str::to_owned),
-        );
-        tx_core::plugin::preview_verbs(&linked.plugins, &cfg, &self.config).map_err(Failure::Plugin)
-    }
-
-    /// Opens the core with the linked plugins that still run compiled in, and a proxy for every
-    /// verb of an active installed plugin.
-    pub fn open(self, global: &Global, linked: Linked) -> Result<TxCore, Failure> {
-        let cfg = self.linked_config(&linked);
-        let plugins = linked
-            .plugins
-            .into_iter()
-            .filter(|plugin| !self.index.contains(plugin.id()))
-            .collect();
-        self.open_plugged(global, plugins, &cfg)
     }
 
     /// Opens the core a plugin program runs on: each of `hosted` that is active in this
@@ -689,24 +623,6 @@ impl Installation {
         }
         Ok(core)
     }
-}
-
-/// The verbs of the linked plugins this invocation would see, without opening the core.
-pub fn preview_verbs(
-    global: &Global,
-    linked: &Linked,
-) -> Result<Vec<Arc<dyn tx_core::Verb>>, Failure> {
-    Installation::read(global)?.preview_verbs(linked)
-}
-
-pub fn open(global: &Global, linked: Linked) -> Result<TxCore, Failure> {
-    open_with(global, core_config(global)?, linked)
-}
-
-/// Opens the core from an already resolved config, with its plugins: the linked ones, and the
-/// installed ones behind proxies.
-pub fn open_with(global: &Global, config: CoreConfig, linked: Linked) -> Result<TxCore, Failure> {
-    Installation::read_with(global, config)?.open(global, linked)
 }
 
 /// The core a plugin program opens: see [`Installation::open_hosted`].

@@ -11,30 +11,21 @@ use tx_core::definitions::{
     AgentDefinition, DefinitionError, Definitions, McpServer, read_agent, read_skill,
 };
 use tx_core::engine::{AgentSummary, DefinitionsRequest, Finding};
-use tx_core::plugin::Registry;
 use tx_core::plugin::external::{ProcessEngine, engine_proxies};
 use tx_core::profile::Profiles;
 use tx_core::{Directories, EngineKind, LlmEngine, SkillProvider};
 
 use crate::args::{DefinitionKind, Global};
-use crate::setup::{Failure, Installation, Linked, exec_context};
+use crate::setup::{Installation, exec_context};
 
 /// The engines a core of this installation would have, without opening one: a proxy for the
-/// engine of every active installed plugin, and, until the linked plugins are gone (PR 19), the
-/// engine of each linked plugin that still runs compiled in, registered into a registry of its
-/// own. That second half repeats on purpose what `active_engines` in `check.rs` does for the
-/// kinds; both go with the linked plugins.
+/// engine of every active plugin.
 pub struct Engines {
     installed: Vec<ProcessEngine>,
-    linked: Vec<Registry>,
 }
 
 impl Engines {
-    pub fn read(
-        global: &Global,
-        installation: &Installation,
-        linked: &Linked,
-    ) -> Result<Self, Failure> {
+    pub fn read(global: &Global, installation: &Installation) -> Self {
         let context = Arc::new(exec_context(global, &installation.config));
         let installed = engine_proxies(
             &installation.index,
@@ -46,38 +37,15 @@ impl Engines {
         .into_iter()
         .map(|(_, engine)| engine)
         .collect();
-        let mut registries = Vec::new();
-        for plugin in &linked.plugins {
-            let entry = installation.entries.get(plugin.id());
-            if installation.index.contains(plugin.id()) || entry.is_some_and(|entry| !entry.enabled)
-            {
-                continue;
-            }
-            let settings = entry.map_or(serde_json::Value::Null, |entry| entry.settings.clone());
-            let mut registry = Registry::new(settings, installation.config.clone());
-            plugin.register(&mut registry).map_err(Failure::Plugin)?;
-            if !registry.engines().is_empty() {
-                registries.push(registry);
-            }
-        }
-        Ok(Self {
-            installed,
-            linked: registries,
-        })
+        Self { installed }
     }
 
     /// Every active engine, in kind order.
     pub fn all(&self) -> BTreeMap<EngineKind, &dyn LlmEngine> {
-        let mut engines = BTreeMap::new();
-        let installed = self.installed.iter().map(|engine| engine as &dyn LlmEngine);
-        let linked = self
-            .linked
+        self.installed
             .iter()
-            .flat_map(|registry| registry.engines().iter().map(Box::as_ref));
-        for engine in installed.chain(linked) {
-            engines.entry(engine.kind()).or_insert(engine);
-        }
-        engines
+            .map(|engine| (engine.kind(), engine as &dyn LlmEngine))
+            .collect()
     }
 
     /// What every active engine adds to every agent, in kind order.

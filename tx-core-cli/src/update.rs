@@ -1,8 +1,7 @@
 //! `tx update`: lays the shipped plugins out when it is given a checkout's bundles and build,
 //! runs the core's pending update steps, publishes under `<data>` the resources of core and of
-//! every active plugin, then runs every plugin's updater, a linked one in this process and an
-//! installed one as its `update` program; and the warning every other verb prints while a step
-//! is pending.
+//! every active plugin, then runs every plugin's updater, its `update` program; and the warning
+//! every other verb prints while a step is pending.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -12,15 +11,14 @@ use std::process::{ExitCode, Stdio};
 use std::sync::Arc;
 
 use tx_core::config::SHIPPED_PLUGINS_DIR;
-use tx_core::plugin::manifest::RESOURCE_KINDS;
 use tx_core::plugin::{Installed, Launcher, ManifestProgram, PLUGIN_API, PluginState};
 use tx_core::updates::{self, Applied};
-use tx_core::{CoreConfig, Directories, PluginStatus, TxCore};
+use tx_core::{CoreConfig, Directories, PluginStatus, roles};
 use tx_plugin::bundle::{self, Program, Source, Stamp};
 use tx_plugin::sdk::{RESPAWN_LINE, RETIRE_ENV};
 
 use crate::args::{Global, UsageError};
-use crate::setup::{Failure, Installation, absolute, core_config, exec_context, open_with};
+use crate::setup::{Failure, Installation, absolute, core_config, exec_context};
 
 const RESPAWN: &str = "respawn running agents to pick this up";
 /// What a program is run with once after it was written, and the role the trace gives that run.
@@ -90,14 +88,13 @@ fn source(arguments: &[String]) -> Result<Option<Source>, UsageError> {
 
 /// In order. With `--bundles`, the shipped plugins are laid out in `<data>/shipped` first: a
 /// source that lacks something stops the update before a byte is written. Then the core's
-/// update steps, before anything opens the core: opening it creates `<data>/agents`, which
+/// update steps, before an updater opens the core: opening it creates `<data>/agents`, which
 /// would make a fresh install look used. A failed step stops there. Then the resources are
 /// published; when that is refused no updater runs, since an updater works on what was
-/// published. Then the updaters: the linked plugins' in manifest order, then the installed
-/// plugins' `update` programs in plugin order, an active one to update and a disabled one to
-/// retire; what each prints is prefixed with its plugin id. A failed updater is named and the
-/// others still run, since they are independent. Exit 1 on any failure. `arguments` are the
-/// words after `update`.
+/// published. Then the updaters: the plugins' `update` programs in plugin order, an active
+/// one to update and a disabled one to retire; what each prints is prefixed with its plugin id.
+/// A failed updater is named and the others still run, since they are independent. Exit 1 on
+/// any failure. `arguments` are the words after `update`.
 pub fn run(global: &Global, arguments: &[String]) -> Result<ExitCode, Failure> {
     let source = source(arguments).map_err(Failure::Usage)?;
     let config = core_config(global)?;
@@ -129,32 +126,11 @@ pub fn run(global: &Global, arguments: &[String]) -> Result<ExitCode, Failure> {
         )
         .ok();
     }
-    let installation = Installation::read_with(global, config.clone())?;
-    let core = open_with(global, config)?;
-    if !publish(&core, &installation, &mut summary) {
+    let installation = Installation::read_with(global, config)?;
+    installation.cache();
+    if !publish(&installation, &mut summary) {
         summary.failed = true;
         return Ok(summary.finish(&mut out));
-    }
-    for (plugin, updater) in core.updaters() {
-        let mut stdout = Vec::new();
-        let mut stdin = std::io::empty();
-        let mut stderr = std::io::stderr().lock();
-        let mut io = tx_core::VerbIo {
-            stdin: &mut stdin,
-            stdout: &mut stdout,
-            stderr: &mut stderr,
-        };
-        let result = updater.update(&core, &mut io);
-        for line in String::from_utf8_lossy(&stdout).lines() {
-            writeln!(out, "{plugin}: {line}").ok();
-        }
-        match result {
-            Ok(outcome) => summary.respawn |= outcome.respawn_agents,
-            Err(error) => {
-                eprintln!("tx: update: {plugin}: {error}");
-                summary.failed = true;
-            }
-        }
     }
     let context = Arc::new(exec_context(global, &installation.config));
     for state in &installation.activation.plugins {
@@ -175,15 +151,14 @@ pub fn run(global: &Global, arguments: &[String]) -> Result<ExitCode, Failure> {
 }
 
 /// Publishes the resources under `<data>`. The sources, in order: core's own roles and
-/// definitions, what the active linked plugins register, then the files each active installed
-/// plugin's manifest lists, in plugin order; a later source replaces an earlier one of the same
-/// name. A file an installed plugin lists and does not have is named, and the rest is published
-/// all the same. `false`: nothing could be published, and why is on stderr.
-fn publish(core: &TxCore, installation: &Installation, summary: &mut Summary) -> bool {
-    let mut resources: BTreeMap<String, Vec<u8>> = RESOURCE_KINDS
+/// definitions, then the files each active plugin's manifest lists, in plugin order; a later
+/// source replaces an earlier one of the same name. A file a plugin lists and does not have is
+/// named, and the rest is published all the same. `false`: nothing could be published, and why
+/// is on stderr.
+fn publish(installation: &Installation, summary: &mut Summary) -> bool {
+    let mut resources: BTreeMap<String, Vec<u8>> = roles::SHIPPED
         .iter()
-        .flat_map(|kind| core.resources(&format!("{kind}/")))
-        .map(|resource| (resource.name, resource.bytes.to_vec()))
+        .map(|(name, bytes)| ((*name).to_owned(), bytes.to_vec()))
         .collect();
     for (state, installed, manifest) in installation.activation.active(&installation.index) {
         for name in &manifest.resources {

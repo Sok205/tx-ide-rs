@@ -14,13 +14,46 @@ use serde_json::Value;
 
 use super::PluginStatus;
 use super::manifest::{BIN_DIR, MANIFEST_FILE, Manifest, ManifestEngine};
-use crate::config::CoreConfig;
+use crate::config::{CoreConfig, SHIPPED_PLUGINS_DIR};
 use crate::engine::EngineKind;
 
 /// Under the cache directory: the scan of the plugin roots.
 pub const INDEX_FILE: &str = "plugins-index.json";
 /// The layout of the index file; a file of another format is scanned again.
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
+/// In the shipped root: the build its plugins were laid out from, written by `tx update`.
+pub const SHIPPED_STAMP_FILE: &str = ".stamp";
+
+/// What the stamp of the shipped root said when the roots were scanned.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShippedStamp {
+    /// The plugins were laid out by the tx of this version.
+    By(String),
+    /// No stamp is there: nothing was laid out.
+    Absent,
+    /// The stamp does not read: its path and why.
+    Unreadable(String),
+}
+
+/// The one key of the stamp the index needs.
+#[derive(Deserialize)]
+struct StampFile {
+    tx_version: String,
+}
+
+impl ShippedStamp {
+    fn read(file: &Path) -> Self {
+        let text = match std::fs::read_to_string(file) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Self::Absent,
+            Err(error) => return Self::Unreadable(format!("{}: {error}", file.display())),
+        };
+        match serde_json::from_str::<StampFile>(&text) {
+            Ok(stamp) => Self::By(stamp.tx_version),
+            Err(error) => Self::Unreadable(format!("{}: {error}", file.display())),
+        }
+    }
+}
 
 /// One plugin directory of a root.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +114,7 @@ struct Cached {
     roots: Vec<PathBuf>,
     inputs: Vec<Input>,
     plugins: Vec<Installed>,
+    shipped: Option<ShippedStamp>,
 }
 
 /// The index file, as it is written.
@@ -91,6 +125,7 @@ struct Caching<'a> {
     roots: &'a [PathBuf],
     inputs: &'a [Input],
     plugins: &'a [Installed],
+    shipped: &'a Option<ShippedStamp>,
 }
 
 /// Every plugin directory of the plugin roots, in plugin order: root order, then id. A plugin
@@ -99,6 +134,9 @@ struct Caching<'a> {
 pub struct Index {
     pub roots: Vec<PathBuf>,
     pub plugins: Vec<Installed>,
+    /// The stamp of `<data>/shipped`, when that directory is one of the roots; `None` when the
+    /// roots were replaced and the shipped plugins are not what runs.
+    pub shipped: Option<ShippedStamp>,
     /// Every path the scan looked at, with what `stat` said just before it was read.
     inputs: Vec<Input>,
     tx_version: String,
@@ -120,21 +158,34 @@ impl Index {
     pub fn read(config: &CoreConfig, tx_version: &str) -> Index {
         let roots = config.plugin_roots();
         let file = config.directories.cache.join(INDEX_FILE);
-        Self::cached(&file, &roots, tx_version).unwrap_or_else(|| Self::scan(roots, tx_version))
+        let shipped = config.directories.data.join(SHIPPED_PLUGINS_DIR);
+        let stamp = roots
+            .contains(&shipped)
+            .then(|| shipped.join(SHIPPED_STAMP_FILE));
+        Self::cached(&file, &roots, stamp.as_deref(), tx_version)
+            .unwrap_or_else(|| Self::scan(roots, stamp.as_deref(), tx_version))
     }
 
-    /// The index file, when it is of this format, of this tx, of these roots, and everything it
-    /// was built from still has the modification time and size it had.
-    fn cached(file: &Path, roots: &[PathBuf], tx_version: &str) -> Option<Index> {
+    /// The index file, when it is of this format, of this tx, of these roots, with the shipped
+    /// stamp `stamp` looked at or not as now, and everything it was built from still has the
+    /// modification time and size it had.
+    fn cached(
+        file: &Path,
+        roots: &[PathBuf],
+        stamp: Option<&Path>,
+        tx_version: &str,
+    ) -> Option<Index> {
         let text = std::fs::read_to_string(file).ok()?;
         let cached: Cached = serde_json::from_str(&text).ok()?;
         let fresh = cached.format == FORMAT
             && cached.tx_version == tx_version
             && cached.roots == roots
+            && cached.shipped.is_some() == stamp.is_some()
             && cached.inputs.iter().all(Input::holds);
         fresh.then_some(Index {
             roots: cached.roots,
             plugins: cached.plugins,
+            shipped: cached.shipped,
             inputs: cached.inputs,
             tx_version: cached.tx_version,
             cached: true,
@@ -144,8 +195,9 @@ impl Index {
     /// Reads the roots. An entry of a root is a plugin when it is a directory holding a
     /// `plugin.yaml` and its name does not start with `.`; a directory without one is remembered
     /// as such, so that a manifest written into it later is seen. The second directory of an id
-    /// is an entry that says where the first is.
-    fn scan(roots: Vec<PathBuf>, tx_version: &str) -> Index {
+    /// is an entry that says where the first is. `stamp` is the stamp of the shipped root, when
+    /// that root is one of `roots`: one more input.
+    fn scan(roots: Vec<PathBuf>, stamp: Option<&Path>, tx_version: &str) -> Index {
         let mut inputs = Vec::new();
         let mut plugins: Vec<Installed> = Vec::new();
         for root in &roots {
@@ -178,9 +230,14 @@ impl Index {
                 });
             }
         }
+        let shipped = stamp.map(|file| {
+            inputs.push(Input::of(file.to_path_buf()));
+            ShippedStamp::read(file)
+        });
         Index {
             roots,
             plugins,
+            shipped,
             inputs,
             tx_version: tx_version.to_owned(),
             cached: false,
@@ -203,6 +260,7 @@ impl Index {
             roots: &self.roots,
             inputs: &self.inputs,
             plugins: &self.plugins,
+            shipped: &self.shipped,
         })?;
         std::fs::create_dir_all(directory)?;
         let mut file = tempfile::NamedTempFile::new_in(directory)?;
@@ -700,6 +758,42 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_stamp_is_one_more_input_when_the_shipped_root_is_a_root() {
+        let sandbox = Sandbox::new();
+        // The sandbox's own roots replace `<data>/shipped`: its stamp is not looked at.
+        assert_eq!(sandbox.load().shipped, None);
+
+        let config = CoreConfig::new(Directories::under(sandbox.dir.path().join("home")));
+        let shipped = config.directories.data.join(SHIPPED_PLUGINS_DIR);
+        let load = || Index::load(&config, VERSION);
+        assert_eq!(load().shipped, Some(ShippedStamp::Absent));
+        assert!(load().cached, "a missing stamp is remembered as missing");
+
+        std::fs::create_dir_all(&shipped).unwrap();
+        let stamp = shipped.join(SHIPPED_STAMP_FILE);
+        std::fs::write(&stamp, r#"{"tx_version": "0.1.0", "api": 1}"#).unwrap();
+        assert_eq!(load().shipped, Some(ShippedStamp::By("0.1.0".to_owned())));
+        let again = load();
+        assert!(again.cached, "an unchanged stamp is not read again");
+        assert_eq!(again.shipped, Some(ShippedStamp::By("0.1.0".to_owned())));
+
+        // Laid out again by another tx: the same size.
+        std::fs::write(&stamp, r#"{"tx_version": "0.2.0", "api": 1}"#).unwrap();
+        assert_eq!(load().shipped, Some(ShippedStamp::By("0.2.0".to_owned())));
+
+        std::fs::write(&stamp, "not json").unwrap();
+        match load().shipped {
+            Some(ShippedStamp::Unreadable(why)) => {
+                assert!(why.starts_with(&format!("{}: ", stamp.display())), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        std::fs::remove_dir_all(&shipped).unwrap();
+        assert_eq!(load().shipped, Some(ShippedStamp::Absent));
+    }
+
+    #[test]
     fn a_manifest_written_into_a_directory_that_was_already_there_is_seen() {
         let sandbox = Sandbox::new();
         let directory = sandbox.root("user").join("late");
@@ -734,13 +828,14 @@ mod tests {
         assert_eq!(index.roots, [sandbox.root("user")]);
 
         let text = std::fs::read_to_string(sandbox.index_file()).unwrap();
+        let format = format!(r#""format":{FORMAT}"#);
         assert!(
-            text.starts_with(r#"{"format":1,"tx_version":"0.2.0","#),
+            text.starts_with(&format!(r#"{{{format},"tx_version":"0.2.0","#)),
             "{text}"
         );
         std::fs::write(
             sandbox.index_file(),
-            text.replacen(r#""format":1"#, r#""format":0"#, 1),
+            text.replacen(&format, r#""format":0"#, 1),
         )
         .unwrap();
         assert!(!Index::load(&fewer, "0.2.0").cached);

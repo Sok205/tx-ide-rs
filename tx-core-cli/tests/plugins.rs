@@ -1,6 +1,6 @@
 //! Which plugins tx has and how their verbs run: the `plugins:` section of config.yaml switches
-//! the compiled-in ones and the installed ones alike; a directory with a `plugin.yaml` and a
-//! program is a plugin, and its verb replaces the `tx` process.
+//! them; a directory with a `plugin.yaml` and a program is a plugin, and its verb replaces the
+//! `tx` process.
 
 mod common;
 
@@ -27,6 +27,31 @@ impl Cli {
             dir.path().join("state").join("plugins"),
         ];
         Self { dir, plugin_dirs }
+    }
+    /// The default roots: `<data>/shipped`, then `<config>/plugins`, both under the state dir.
+    fn with_the_default_roots() -> Self {
+        let mut cli = Self::new();
+        cli.plugin_dirs.clear();
+        cli
+    }
+    /// The stamp `tx update` leaves in the shipped root, as the tx of `version` would.
+    fn stamp(&self, version: &str) {
+        let shipped = self.state().join("shipped");
+        std::fs::create_dir_all(&shipped).unwrap();
+        std::fs::write(
+            shipped.join(".stamp"),
+            format!(
+                r#"{{"tx_version": "{version}", "api": 1, "bundles": "/b", "binaries": "/c", "linked": false}}"#
+            ),
+        )
+        .unwrap();
+    }
+    /// What `tx <args>` wrote on standard error; the command must exit `code`.
+    fn stderr(&self, args: &[&str], code: i32) -> String {
+        let output = self.run(args);
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_eq!(output.status.code(), Some(code), "tx {args:?}: {stderr}");
+        stderr
     }
     /// Two roots of the test's own, outside the five directories: `first`, then `second`.
     fn with_two_roots() -> Self {
@@ -613,9 +638,7 @@ fn a_program_that_cannot_run_is_named_and_exits_1() {
 
 #[test]
 fn a_traced_run_appends_one_line_per_plugin_program_started() {
-    let mut cli = Cli::new();
-    // No bundle is installed: `layout ls` is compiled in, whichever plugins have moved.
-    cli.plugin_dirs.remove(0);
+    let cli = Cli::new();
     let directory = hello(&cli);
     let trace = cli.dir.path().join("trace");
     let traced = |args: &[&str]| {
@@ -629,8 +652,7 @@ fn a_traced_run_appends_one_line_per_plugin_program_started() {
     traced(&["hello", "a"]);
     let line = format!("verb\thello\t{}\n", directory.join("bin/hello").display());
     assert_eq!(std::fs::read_to_string(&trace).unwrap(), line);
-    // A compiled-in verb and a built-in start no plugin program.
-    traced(&["layout", "ls"]);
+    // A built-in starts no plugin program.
     traced(&["plugins"]);
     traced(&["hello"]);
     assert_eq!(std::fs::read_to_string(&trace).unwrap(), line.repeat(2));
@@ -679,4 +701,68 @@ fn help_and_an_unknown_verb_create_nothing_and_a_plugin_verb_only_the_index() {
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     assert_eq!(created, ["plugins-index.json"]);
+}
+
+/// Shipped plugins link the same core as `tx`, so they must come from the same build: a stamp
+/// of another version is named once on every verb but `update` and the internal ones, and the
+/// command carries on.
+#[test]
+fn shipped_plugins_of_another_tx_are_named_once_and_the_command_carries_on() {
+    const UPGRADE: &str = "tx: shipped plugins are from tx 0.0.1: run install --upgrade\n";
+    let cli = Cli::with_the_default_roots();
+    cli.stamp("0.0.1");
+    write_plugin(
+        &cli.state().join("plugins"),
+        "hello",
+        "api: 1\nid: hello\ndescription: Says hello.\nverbs:\n  - name: hello\n    usage: \"hello\"\n    bin: hello\n  - name: _hello\n    usage: \"_hello\"\n    bin: hello\n",
+        &[("hello", "echo hi")],
+    );
+    for args in [
+        &["ls"][..],
+        &["help"],
+        &["plugins"],
+        &["definitions", "skills"],
+        &["hello"],
+    ] {
+        assert_eq!(cli.stderr(args, 0), UPGRADE, "tx {args:?}");
+    }
+    assert_eq!(cli.ok(&["hello"]), "hi\n", "the verb still runs");
+    assert_eq!(
+        cli.stderr(&["_hello"], 0),
+        "",
+        "an internal verb says nothing"
+    );
+    assert!(!cli.stderr(&["update"], 0).contains("shipped plugins"));
+    // `tx check` reports it as a problem of its own as well.
+    assert_eq!(cli.stderr(&["check", "--plugins"], 1), UPGRADE);
+
+    cli.stamp(env!("CARGO_PKG_VERSION"));
+    assert_eq!(cli.stderr(&["ls"], 0), "");
+}
+
+/// No stamp at all: nothing was laid out. A fresh install is not told, one that has data is;
+/// a stamp that does not read is named the same way.
+#[test]
+fn an_install_with_data_and_no_shipped_plugins_is_told_to_install() {
+    let cli = Cli::with_the_default_roots();
+    assert_eq!(cli.stderr(&["ls"], 0), "", "nothing is installed yet");
+    assert_eq!(
+        cli.stderr(&["ls"], 0),
+        "tx: no shipped plugins are installed: run install\n",
+        "the first run left data"
+    );
+    // With the roots replaced the shipped plugins are not what runs: nothing to say.
+    let mut replaced = Cli::new();
+    replaced.plugin_dirs = vec![cli.dir.path().join("elsewhere")];
+    replaced.ok(&["ls"]);
+    assert_eq!(replaced.stderr(&["ls"], 0), "");
+
+    let stamp = cli.state().join("shipped/.stamp");
+    std::fs::create_dir_all(stamp.parent().unwrap()).unwrap();
+    std::fs::write(&stamp, "not json").unwrap();
+    let stderr = cli.stderr(&["ls"], 0);
+    assert!(
+        stderr.starts_with(&format!("tx: {}: ", stamp.display())) && stderr.lines().count() == 1,
+        "{stderr}"
+    );
 }

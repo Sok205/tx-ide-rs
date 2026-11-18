@@ -158,13 +158,3 @@ fn disabled_spawn_hides_the_verb_and_the_key() {
     assert!(cli.state().join("roles/COMMON.md").exists());
     assert!(cli.state().join("roles/TX-ASSISTANT.md").exists());
 }
-
-#[test]
-fn without_the_bundle_spawn_runs_compiled_into_tx() {
-    let cli = Cli::compiled_in();
-    assert_eq!(plugin_row(&cli, "spawn")["origin"], "built-in");
-    assert!(
-        cli.fails(&["_new-agent", "%0"], 2)
-            .starts_with("usage: tx _new-agent <pane> <client>")
-    );
-}

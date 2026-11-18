@@ -54,8 +54,7 @@ pub use messaging::DELIVERY_PAUSE;
 pub use messaging::{EnvelopeSender, build_envelope};
 pub use mirror::{mirror_file, mirror_file_exact, mirror_tree};
 pub use plugin::{
-    Plugin, PluginConfig, PluginError, PluginStatus, Registry, Resource, Updater, Verb, VerbError,
-    VerbIo,
+    Plugin, PluginConfig, PluginError, PluginStatus, Registry, Updater, Verb, VerbError, VerbIo,
 };
 pub use profile::{Profile, Profiles, ResolvedProfile, RoleError, SkillProvider};
 pub use state::{IdleReason, LlmEngineChange, LlmEngineHook, LlmEngineState, state_label};

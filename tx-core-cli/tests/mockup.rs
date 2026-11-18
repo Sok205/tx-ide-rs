@@ -1,6 +1,5 @@
 //! `tx mockup`: the session dir, the `mockup-<agent>` view, switching and the viewer. The
-//! plugin ships as a bundle, so here its verbs run as the program `tx-mockup`; a sandbox
-//! without the bundle runs it compiled into `tx`, as before.
+//! plugin ships as a bundle, so here its verbs run as the program `tx-mockup`.
 
 mod common;
 
@@ -169,22 +168,21 @@ fn no_agent_exits_2() {
     );
 }
 
-/// Switched off, the plugin has no verb, as a bundle and compiled in alike.
+/// Switched off, the plugin has no verb.
 #[test]
 fn disabled_plugin_hides_verb() {
-    for cli in [Cli::new(), Cli::compiled_in()] {
-        cli.write_yaml("plugins:\n  mockup: { enabled: false }\n");
-        let stderr = cli.fails(&["mockup", "stop", "--for", "a"], 2);
-        assert!(stderr.contains("unknown verb \"mockup\""), "{stderr}");
-        let help = cli.ok(&["help"]);
-        assert!(!lists_verb(&help, "mockup"), "{help}");
-        let listing = cli.ok(&["plugins"]);
-        let rows: Vec<&str> = listing
-            .lines()
-            .filter(|row| row.starts_with("mockup\t"))
-            .collect();
-        assert_eq!(rows, ["mockup\tdisabled"]);
-    }
+    let cli = Cli::new();
+    cli.write_yaml("plugins:\n  mockup: { enabled: false }\n");
+    let stderr = cli.fails(&["mockup", "stop", "--for", "a"], 2);
+    assert!(stderr.contains("unknown verb \"mockup\""), "{stderr}");
+    let help = cli.ok(&["help"]);
+    assert!(!lists_verb(&help, "mockup"), "{help}");
+    let listing = cli.ok(&["plugins"]);
+    let rows: Vec<&str> = listing
+        .lines()
+        .filter(|row| row.starts_with("mockup\t"))
+        .collect();
+    assert_eq!(rows, ["mockup\tdisabled"]);
 }
 
 /// The program of the bundle, where the build left it.
@@ -292,36 +290,6 @@ fn the_bundle_is_the_shipped_plugin_and_its_verbs_are_its_program() {
 }
 
 #[test]
-fn without_the_bundle_the_plugin_runs_compiled_into_tx() {
-    require_tmux!();
-    let cli = Cli::compiled_in();
-    let row = row(&cli);
-    assert_eq!(row["origin"], "built-in");
-    assert_eq!(row["status"], "active");
-    assert!(lists_verb(&cli.ok(&["help"]), "mockup"));
-    cli.create("a");
-    let json = start(&cli);
-    assert_eq!(json["view"], "mockup-a");
-    let (output, trace) = traced_show(&cli);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "mockup ready in view mockup-a\n"
-    );
-    assert_eq!(trace, "", "no plugin program was started");
-    let command = viewer_command(&cli);
-    assert!(
-        command.contains(&format!(
-            "{} {} _mockup-view ",
-            env!("CARGO_BIN_EXE_tx"),
-            cli.arguments()
-        )),
-        "{command}"
-    );
-    cli.ok(&["mockup", "stop", "--for", "a"]);
-    assert!(!has_view(&cli));
-}
-
-#[test]
 fn a_directory_of_the_users_with_the_same_id_is_in_error_and_the_shipped_one_runs() {
     require_tmux!();
     let cli = Cli::new();
@@ -353,53 +321,52 @@ fn a_directory_of_the_users_with_the_same_id_is_in_error_and_the_shipped_one_run
 }
 
 /// The round the `tx-mockup` skill describes, run by the agent itself: no `--for`, and `tx` is
-/// the one its session is told about. As a bundle and compiled in.
+/// the one its session is told about.
 #[test]
 fn the_round_works_from_inside_an_agents_session() {
     require_tmux!();
-    for cli in [Cli::new(), Cli::compiled_in()] {
-        let checkout = cli.repository("a");
-        let path = cli.shim_path(&[(
+    let cli = Cli::new();
+    let checkout = cli.repository("a");
+    let path = cli.shim_path(&[(
+        "claude",
+        "\"$TX_BIN\" mockup start --project \"$PWD\" > start.out 2> start.err; \
+         \"$TX_BIN\" mockup show > show.out 2> show.err; echo done > round.done; exec sleep 60",
+    )]);
+    let output = cli.run(
+        &[
+            "create",
+            "a",
+            "--cwd",
+            checkout.to_str().unwrap(),
+            "--engine",
             "claude",
-            "\"$TX_BIN\" mockup start --project \"$PWD\" > start.out 2> start.err; \
-             \"$TX_BIN\" mockup show > show.out 2> show.err; echo done > round.done; exec sleep 60",
-        )]);
-        let output = cli.run(
-            &[
-                "create",
-                "a",
-                "--cwd",
-                checkout.to_str().unwrap(),
-                "--engine",
-                "claude",
-                "--prompt",
-                "start",
-            ],
-            &[("PATH", path.as_str())],
-            "",
-        );
-        assert!(output.status.success(), "{output:?}");
-        let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        let worktree = common::cwd_of(&cli, "a");
-        assert!(
-            cli.wait_for(10, || worktree.join("round.done").exists()),
-            "the agent never finished the round"
-        );
-        let read = |name: &str| std::fs::read_to_string(worktree.join(name)).unwrap();
-        assert_eq!(read("start.err"), "");
-        let started: serde_json::Value = serde_json::from_str(read("start.out").trim()).unwrap();
-        assert_eq!(started["view"], "mockup-a");
-        let session_dir = worktree.join(".superpowers/mockup").join(&id);
-        assert_eq!(
-            started["content_dir"],
-            session_dir.join("content").to_str().unwrap()
-        );
-        assert_eq!(read("show.err"), "");
-        assert_eq!(read("show.out"), "mockup ready in view mockup-a\n");
-        assert!(has_view(&cli));
-        let views = cli.ok(&["ui", "view", "ls"]);
-        assert!(views.contains("mockup-a"), "{views}");
-    }
+            "--prompt",
+            "start",
+        ],
+        &[("PATH", path.as_str())],
+        "",
+    );
+    assert!(output.status.success(), "{output:?}");
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let worktree = common::cwd_of(&cli, "a");
+    assert!(
+        cli.wait_for(10, || worktree.join("round.done").exists()),
+        "the agent never finished the round"
+    );
+    let read = |name: &str| std::fs::read_to_string(worktree.join(name)).unwrap();
+    assert_eq!(read("start.err"), "");
+    let started: serde_json::Value = serde_json::from_str(read("start.out").trim()).unwrap();
+    assert_eq!(started["view"], "mockup-a");
+    let session_dir = worktree.join(".superpowers/mockup").join(&id);
+    assert_eq!(
+        started["content_dir"],
+        session_dir.join("content").to_str().unwrap()
+    );
+    assert_eq!(read("show.err"), "");
+    assert_eq!(read("show.out"), "mockup ready in view mockup-a\n");
+    assert!(has_view(&cli));
+    let views = cli.ok(&["ui", "view", "ls"]);
+    assert!(views.contains("mockup-a"), "{views}");
 }
 
 /// `tx-mockup` resolves the core itself, so it runs without `tx` in front for its own verbs,

@@ -564,13 +564,3 @@ fn the_bundle_is_the_shipped_plugin_and_its_verb_is_its_program() {
         "one plugin program was started: tx became it"
     );
 }
-
-#[test]
-fn without_the_bundle_the_plugin_runs_compiled_into_tx() {
-    let cli = Cli::compiled_in();
-    let row = row(&cli);
-    assert_eq!(row["origin"], "built-in");
-    assert_eq!(row["status"], "active");
-    assert!(lists_verb(&cli.ok(&["help"]), "tutor"));
-    assert_eq!(traced_usage(&cli), "", "no plugin program was started");
-}

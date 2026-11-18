@@ -33,10 +33,6 @@ impl Plugin for ChatPlugin {
         for verb in verbs::verbs().into_iter().chain(fork_pane::verbs()) {
             r.verb(verb);
         }
-        r.resource("keys/chat.tmux", include_bytes!("../keys/chat.tmux"))?;
-        r.resource(
-            "bin/tmux-fork-tx-session",
-            include_bytes!("../bin/tmux-fork-tx-session"),
-        )
+        Ok(())
     }
 }

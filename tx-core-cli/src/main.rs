@@ -1,12 +1,12 @@
 //! `tx`: the thin CLI over tx-core. Exit 0 on success, 1 on a core error (`tx: <error>` on
 //! stderr), 2 on misuse (the usage line on stderr). `attach` replaces the process with tmux.
 
-use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
 
 use tx_client::tmux::Ui;
+use tx_core::plugin::Index;
 use tx_core::plugin::external::TRACE_VERB;
 use tx_core::{
     AgentId, CoreError, CreateOptions, ForkOptions, IdleReason, ListFilter, SendOptions, Sender,
@@ -15,9 +15,8 @@ use tx_core::{
 use tx_core_cli::args::{self, DefinitionKind, Global, Invocation, Verb};
 use tx_core_cli::definitions::Engines;
 
-use tx_core_cli::setup::{
-    Failure, Installation, config_file, core_config, linked, load_config, open,
-};
+use tx_core_cli::plugins::warn_if_shipped_differ;
+use tx_core_cli::setup::{Failure, Installation, config_file, core_config, load_config};
 
 fn main() -> ExitCode {
     // First thing: the plugin programs and the sessions this run starts are told which `tx`
@@ -77,9 +76,9 @@ fn sender_from_env(core: &TxCore, via: Option<String>) -> Result<Sender, CoreErr
     Ok(Sender::User { via: view.or(via) })
 }
 
-/// `tx help`: the built-in usage, the config file this run would read, then one line per plugin
-/// verb, installed or compiled in, by verb name. A `config.yaml` that cannot be read still gets
-/// the built-in usage.
+/// `tx help`: the built-in usage, the config file this run would read, then one line per verb
+/// of an active plugin, by verb name. A `config.yaml` that cannot be read still gets the
+/// built-in usage.
 fn help(global: &Global) {
     print!("{}", args::USAGE);
     let Ok(config) = core_config(global) else {
@@ -92,72 +91,39 @@ fn help(global: &Global) {
     let Ok(installation) = Installation::read_with(global, config) else {
         return;
     };
-    let Ok(compiled_in) = installation.preview_verbs(&linked()) else {
-        return;
-    };
-    let mut usages: BTreeMap<&str, &str> = compiled_in
-        .iter()
-        .map(|verb| (verb.name(), verb.usage()))
-        .collect();
-    for (name, verb) in &installation.activation.verbs {
-        usages.insert(name, &verb.usage);
-    }
-    if !usages.is_empty() {
+    warn_if_shipped_differ(&installation.index, &installation.config.directories);
+    let verbs = &installation.activation.verbs;
+    if !verbs.is_empty() {
         println!("\nplugin verbs:");
-        for usage in usages.values() {
-            println!("  {usage}");
+        for verb in verbs.values() {
+            println!("  {}", verb.usage);
         }
     }
 }
 
-/// A verb that is not built in. When an active installed plugin has it, `tx` becomes that
-/// plugin's program: its standard streams, terminal, signals and exit code are the plugin's own,
-/// and neither a plugin nor the core is set up here. Otherwise it is a compiled-in plugin's, run
-/// in-process.
+/// A verb that is not built in: an active plugin's, or unknown. `tx` becomes that plugin's
+/// program: its standard streams, terminal, signals and exit code are the plugin's own, and
+/// neither a plugin nor the core is set up here.
 fn plugin_verb(global: &Global, name: &str, argv: &[String]) -> Result<ExitCode, Failure> {
     let installation = Installation::read(global)?;
-    // The internal `_…` verbs run from tmux hooks, where a warning is noise.
-    let warn_if_behind = || {
-        if !name.starts_with('_') {
-            tx_core_cli::update::warn_if_behind(&installation.config.directories);
-        }
-    };
-    if let Some(verb) = installation.activation.verbs.get(name) {
-        warn_if_behind();
-        installation.cache();
-        let error = installation
-            .launcher(global, &verb.plugin)
-            .command(TRACE_VERB, &verb.program, &verb.args)
-            .args(argv)
-            .exec();
-        eprintln!("tx: {name}: cannot run {}: {error}", verb.program.display());
-        return Ok(ExitCode::from(1));
-    }
-    let linked = linked();
-    if !installation
-        .preview_verbs(&linked)?
-        .iter()
-        .any(|verb| verb.name() == name)
-    {
+    let Some(verb) = installation.activation.verbs.get(name) else {
         return Err(Failure::Usage(args::UsageError(format!(
             "unknown verb {name:?}"
         ))));
-    }
-    warn_if_behind();
-    let core = installation.open(global, linked)?;
-    let verb = core.verb(name).expect("checked by preview_verbs");
-    let (mut stdin, mut stdout, mut stderr) = (
-        std::io::stdin().lock(),
-        std::io::stdout().lock(),
-        std::io::stderr().lock(),
-    );
-    let mut io = tx_core::VerbIo {
-        stdin: &mut stdin,
-        stdout: &mut stdout,
-        stderr: &mut stderr,
     };
-    let code = verb.run(&core, &mut io, argv).map_err(Failure::Verb)?;
-    Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
+    // The internal `_…` verbs run from tmux hooks, where a warning is noise.
+    if !name.starts_with('_') {
+        tx_core_cli::update::warn_if_behind(&installation.config.directories);
+        warn_if_shipped_differ(&installation.index, &installation.config.directories);
+    }
+    installation.cache();
+    let error = installation
+        .launcher(global, &verb.plugin)
+        .command(TRACE_VERB, &verb.program, &verb.args)
+        .args(argv)
+        .exec();
+    eprintln!("tx: {name}: cannot run {}: {error}", verb.program.display());
+    Ok(ExitCode::from(1))
 }
 
 /// `tx plugins [--json]`: every plugin and its status. The index and `config.yaml` say it all,
@@ -165,6 +131,7 @@ fn plugin_verb(global: &Global, name: &str, argv: &[String]) -> Result<ExitCode,
 fn plugins(global: &Global, json: bool) -> Result<ExitCode, Failure> {
     let installation = Installation::read(global)?;
     tx_core_cli::update::warn_if_behind(&installation.config.directories);
+    warn_if_shipped_differ(&installation.index, &installation.config.directories);
     installation.cache();
     let rows = tx_core_cli::plugins::rows(&installation);
     let mut out = std::io::stdout().lock();
@@ -192,7 +159,7 @@ fn check(
     let mut clean = true;
     let mut summary = None;
     if !plugins_only {
-        let engines = Engines::read(global, &installation, &linked())?;
+        let engines = Engines::read(global, &installation);
         // The engine asked about is named next to the active ones before anything is printed.
         if let Some(kind) = engine
             && !engines.all().contains_key(&kind)
@@ -228,7 +195,7 @@ fn check(
             return Ok(ExitCode::from(1));
         }
         let file = tx_core_cli::setup::config_file(global, &installation.config);
-        let report = tx_core_cli::check::plugins(&installation, &linked(), &file, ids, &mut out)?;
+        let report = tx_core_cli::check::plugins(&installation, &file, ids, &mut out)?;
         clean &= report.problems == 0;
         let loaded = format!("{} plugins", report.loaded);
         closing = Some(match summary {
@@ -258,7 +225,7 @@ fn definitions(global: &args::Global, kind: Option<DefinitionKind>) -> Result<Ex
         }
         _ => {
             let installation = tx_core_cli::setup::Installation::read_with(global, config)?;
-            let engines = Engines::read(global, &installation, &linked())?;
+            let engines = Engines::read(global, &installation);
             match kind {
                 Some(DefinitionKind::Tools) => {
                     tx_core_cli::tools::list(&directories, &engines, &mut out)
@@ -283,9 +250,19 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         }
         Verb::Plugin { name, argv } => return plugin_verb(&invocation.global, name, argv),
         Verb::Plugins { json } => return plugins(&invocation.global, *json),
-        _ => tx_core_cli::update::warn_if_behind(&core_config(&invocation.global)?.directories),
+        _ => {}
     }
-    // The definitions are files under two roots: no core to open, nothing created.
+    let config = core_config(&invocation.global)?;
+    tx_core_cli::update::warn_if_behind(&config.directories);
+    // The definitions are files under two roots: no core to open, nothing created. Neither
+    // verb needs `config.yaml` for the warning: the index alone holds the shipped stamp.
+    if matches!(
+        invocation.verb,
+        Verb::Definitions { .. } | Verb::Check { .. }
+    ) {
+        let index = Index::read(&config, tx_plugin::VERSION);
+        warn_if_shipped_differ(&index, &config.directories);
+    }
     match &invocation.verb {
         Verb::Definitions { kind } => {
             return definitions(&invocation.global, *kind);
@@ -297,7 +274,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         } => return check(&invocation.global, *engine, *plugins, names),
         _ => {}
     }
-    let core = open(&invocation.global)?;
+    let installation = Installation::read_with(&invocation.global, config)?;
+    warn_if_shipped_differ(&installation.index, &installation.config.directories);
+    let core = installation.open_hosted(&invocation.global, Vec::new())?;
     built_in(&core, invocation).or_else(|failure| match failure {
         // An engine kind nothing here provides is named next to the kinds that are provided.
         Failure::Core(error @ CoreError::EngineDisabled(_)) => {

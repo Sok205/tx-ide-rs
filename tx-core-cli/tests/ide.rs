@@ -196,29 +196,6 @@ fn the_ide_bundle_is_the_shipped_plugin_and_its_verbs_and_updater_are_its_progra
     );
 }
 
-/// Without the bundle the plugin runs compiled into `tx`, complete.
-#[test]
-fn without_the_bundle_ide_runs_compiled_into_tx() {
-    let cli = Cli::compiled_in();
-    assert_eq!(ide_row(&cli)["origin"], "built-in");
-    assert_eq!(help_lines(&cli), HELP_LINES);
-    let (listed, trace) = traced(&cli, &["ui", "view", "ls"]);
-    assert_eq!(listed, "");
-    assert_eq!(trace, "", "no plugin program was started");
-    let (out, trace) = traced(&cli, &["update"]);
-    assert_eq!(out, updated(&[&cli.conf().display().to_string()]));
-    assert_eq!(trace, "", "the updater ran in tx");
-    let conf = std::fs::read_to_string(cli.conf()).unwrap();
-    assert!(
-        conf.contains(&format!("set -g @tx-bin \"{}\"\n", exe().display())),
-        "{conf}"
-    );
-    assert_eq!(
-        cli.ok(&["_resource", "keys/ide.tmux"]).as_bytes(),
-        include_bytes!("../../plugins/ide/keys/ide.tmux")
-    );
-}
-
 #[test]
 fn update_materialises_resources() {
     let cli = Cli::new();
@@ -736,7 +713,7 @@ fn shipped_tx(cli: &Cli, args: &[&str]) -> Output {
 /// A shipped `ide` that leaves the selection is retired before its directory is removed.
 #[test]
 fn an_ide_that_left_the_selection_is_retired_before_it_is_removed() {
-    let cli = Cli::compiled_in();
+    let cli = Cli::new();
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let bundles = workspace.join("plugins");
     let binaries = Path::new(env!("CARGO_BIN_EXE_tx")).parent().unwrap();
@@ -783,6 +760,23 @@ fn an_ide_that_left_the_selection_is_retired_before_it_is_removed() {
         "{out}"
     );
     assert!(!shipped.join("ide").exists());
+    // No `ide` is left to compose the config again: the core default stays.
+    assert_eq!(
+        out.lines().filter(|line| line.starts_with("ide: ")).count(),
+        1,
+        "{out}"
+    );
+    let conf = std::fs::read_to_string(cli.state().join("tmux.conf")).unwrap();
+    assert!(
+        conf.starts_with("# tx-core server config. Edit freely"),
+        "{conf}"
+    );
+    let listed = shipped_tx(&cli, &["plugins"]);
+    let listed = String::from_utf8_lossy(&listed.stdout);
+    assert!(
+        !listed.lines().any(|row| row.starts_with("ide\t")),
+        "{listed}"
+    );
 }
 
 #[test]
@@ -924,6 +918,7 @@ fn update_refuses_unsafe_paths() {
     let state = cli.dir.path().join("with space");
     let output = Command::new(env!("CARGO_BIN_EXE_tx"))
         .args(common::directory_flags(&state))
+        .args(common::plugin_flags(&cli.plugin_dirs))
         .args(["update"])
         .env_remove("TMUX")
         .output()
@@ -932,7 +927,7 @@ fn update_refuses_unsafe_paths() {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         format!(
-            "tx: update: ide: path contains unsafe characters: {}\n",
+            "tx: update: ide: path contains unsafe characters: {}\ntx: update: ide: exit 1\n",
             state.display()
         )
     );
@@ -991,8 +986,8 @@ fn ui_attach_lands_in_a_view_home() {
 /// `tx ui attach` is that call, and as a bundle it is the program `tx-ide`, which holds
 /// everything `tx` gave it: the core's coordinates, the roots the harness names for this one
 /// command (`TX_PROFILE_PATH`, `TX_PLUGIN_PATH`), its own `TX_PLUGIN_*`. None of that becomes
-/// the server's: it holds what the caller of `tx` held, as when `tx` links `ide`, and the
-/// `TX_BIN` the composed config sets.
+/// the server's: it holds what the caller of `tx` held, and the `TX_BIN` the composed config
+/// sets.
 #[test]
 fn the_server_ui_attach_starts_holds_what_the_caller_of_tx_held() {
     require_tmux!();
@@ -1005,31 +1000,27 @@ fn the_server_ui_attach_starts_holds_what_the_caller_of_tx_held() {
         .collect();
     expected.sort_unstable();
     expected.dedup();
-    for (way, cli) in [("bundle", Cli::new()), ("compiled in", Cli::compiled_in())] {
-        cli.write_yaml(&config_disabling("assistant"));
-        cli.ok(&["update"]);
-        cli.run(
-            &["ui", "attach"],
-            &[
-                ("SHELL", SUITE_SHELL),
-                ("TMUX", "/tmp/not-the-core.sock,1,0"),
-                ("TX_APPNAME", "tx-ide"),
-            ],
-            "",
-        );
-        assert!(
-            cli.tmux(&["has-session", "-t", "=home"]).status.success(),
-            "{way}"
-        );
-        let mut held: Vec<String> = cli
-            .tmux_out(&["show-environment", "-g"])
-            .lines()
-            .filter(|line| line.starts_with("TX_"))
-            .map(|line| line.split('=').next().unwrap().to_owned())
-            .collect();
-        held.sort_unstable();
-        assert_eq!(held, expected, "{way}");
-    }
+    let cli = Cli::new();
+    cli.write_yaml(&config_disabling("assistant"));
+    cli.ok(&["update"]);
+    cli.run(
+        &["ui", "attach"],
+        &[
+            ("SHELL", SUITE_SHELL),
+            ("TMUX", "/tmp/not-the-core.sock,1,0"),
+            ("TX_APPNAME", "tx-ide"),
+        ],
+        "",
+    );
+    assert!(cli.tmux(&["has-session", "-t", "=home"]).status.success());
+    let mut held: Vec<String> = cli
+        .tmux_out(&["show-environment", "-g"])
+        .lines()
+        .filter(|line| line.starts_with("TX_"))
+        .map(|line| line.split('=').next().unwrap().to_owned())
+        .collect();
+    held.sort_unstable();
+    assert_eq!(held, expected);
 }
 
 fn home_pane(cli: &Cli) -> String {

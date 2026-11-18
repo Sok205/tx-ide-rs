@@ -25,28 +25,6 @@ impl Plugin for IdePlugin {
         r.verb(Arc::new(install::UiVerb));
         r.updater(Arc::new(install::IdeUpdater));
         r.verb(Arc::new(install::ResourceVerb));
-        r.resource("conf/tmux.conf", include_bytes!("../conf/tmux.conf"))?;
-        r.resource("keys/ide.tmux", include_bytes!("../keys/ide.tmux"))?;
-        r.resource("bin/tmux-nav", include_bytes!("../bin/tmux-nav"))?;
-        r.resource(
-            "bin/tmux-system-resources",
-            include_bytes!("../bin/tmux-system-resources"),
-        )?;
-        r.resource(
-            "nvim/lua/tx-tour.lua",
-            include_bytes!("../nvim/lua/tx-tour.lua"),
-        )?;
-        r.resource(
-            "nvim/lua/tx-diffview-return.lua",
-            include_bytes!("../nvim/lua/tx-diffview-return.lua"),
-        )?;
-        r.resource(
-            "nvim/lua/tx-ask.lua",
-            include_bytes!("../nvim/lua/tx-ask.lua"),
-        )?;
-        r.resource(
-            "nvim/plugin/tx.lua",
-            include_bytes!("../nvim/plugin/tx.lua"),
-        )
+        Ok(())
     }
 }

@@ -1,54 +1,40 @@
-//! The plugin switchboard: the compiled-in manifest, and what `tx plugins` lists. The `plugins:`
-//! section of `config.yaml` is read by `tx_plugin::config`.
+//! The plugin switchboard: what `tx plugins` lists, and the warning about shipped plugins that
+//! are not this tx's. The `plugins:` section of `config.yaml` is read by `tx_plugin::config`.
 
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
-use tx_core::plugin::Manifest;
-use tx_core::{Plugin, PluginStatus};
-pub use tx_plugin::config::{Entry, RETIRED, plugin_config};
+use tx_core::plugin::{Index, Manifest, ShippedStamp};
+use tx_core::{Directories, PluginStatus, updates};
+pub use tx_plugin::config::{Entry, RETIRED};
 use tx_plugin::setup::Installation;
-
-/// Every plugin this binary links, in listing order. One that is also installed in a plugin
-/// root is left to the installed plugin.
-pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
-    || Box::new(tx_engine_claude::ClaudePlugin),
-    || Box::new(tx_engine_codex::CodexPlugin),
-    || Box::new(tx_chat::ChatPlugin),
-    || Box::new(tx_ide::IdePlugin),
-    || Box::new(tx_labels::LabelsPlugin),
-    || Box::new(tx_kill::KillPlugin),
-    || Box::new(tx_picker::PickerPlugin),
-    || Box::new(tx_edit::EditPlugin),
-    || Box::new(tx_spawn::SpawnPlugin),
-    || Box::new(tx_assistant::AssistantPlugin),
-    || Box::new(tx_mockup::MockupPlugin),
-    || Box::new(tx_tutor::TutorPlugin),
-    || Box::new(tx_artifacts::ArtifactsPlugin),
-    || Box::new(tx_tour::TourPlugin),
-    || Box::new(tx_timeline::TimelinePlugin),
-    || Box::new(tx_graph::GraphPlugin),
-    || Box::new(tx_home::HomePlugin),
-    || Box::new(tx_home_themes::HomeThemesPlugin),
-    || Box::new(tx_layouts::LayoutsPlugin),
-];
 
 /// The built-in verbs; a plugin may not provide one of these.
 pub const RESERVED: &[&str] = tx_plugin::RESERVED_VERBS;
 
-pub fn manifest() -> Vec<Box<dyn Plugin>> {
-    MANIFEST.iter().map(|make| make()).collect()
-}
-
-/// The manifest's ids.
-pub fn known_ids() -> Vec<&'static str> {
-    MANIFEST.iter().map(|make| make().id()).collect()
-}
-
-/// Where a listed plugin comes from: the first plugin root, any other root, or this binary.
+/// Where a listed plugin comes from: the first plugin root, or any other root.
 pub const SHIPPED: &str = "shipped";
 pub const USER: &str = "user";
-pub const BUILT_IN: &str = "built-in";
+
+/// On stderr, once: the shipped plugins were laid out by another tx, or an install that has
+/// data has none. They link the same core as `tx` and read the records directly, so they must
+/// come from the same build. Never refuses. Nothing is said when the plugin roots were
+/// replaced: the shipped plugins are then not what runs.
+pub fn warn_if_shipped_differ(index: &Index, directories: &Directories) {
+    match &index.shipped {
+        None => {}
+        Some(ShippedStamp::By(version)) if version == tx_plugin::VERSION => {}
+        Some(ShippedStamp::By(version)) => {
+            eprintln!("tx: shipped plugins are from tx {version}: run install --upgrade");
+        }
+        Some(ShippedStamp::Absent) => match updates::is_fresh(directories) {
+            Ok(true) => {}
+            Ok(false) => eprintln!("tx: no shipped plugins are installed: run install"),
+            Err(error) => eprintln!("tx: {error}"),
+        },
+        Some(ShippedStamp::Unreadable(why)) => eprintln!("tx: {why}"),
+    }
+}
 
 /// One row of `tx plugins`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,61 +88,30 @@ impl Row {
     }
 }
 
-/// What `tx plugins` lists: the installed plugins in plugin order, then the compiled-in ones no
-/// installed plugin replaces in `MANIFEST` order, then the entries of the config that name
-/// neither.
+/// What `tx plugins` lists: the installed plugins in plugin order, then the entries of the
+/// config that name none.
 pub fn rows(installation: &Installation) -> Vec<Row> {
     let index = &installation.index;
     let activation = &installation.activation;
-    let mut rows = Vec::new();
-    for state in &activation.plugins {
-        let Some(position) = state.installed else {
-            continue;
-        };
-        let installed = &index.plugins[position];
-        let shipped = index.roots.first() == Some(&installed.root);
-        rows.push(Row {
-            id: state.id.clone(),
-            status: state.status.clone(),
-            detail: activation.detail(state),
-            origin: Some(if shipped { SHIPPED } else { USER }),
-            directory: Some(installed.directory.clone()),
-            manifest: installed.manifest.as_ref().ok().cloned(),
-        });
-    }
-    let linked = known_ids();
-    for id in &linked {
-        if index.contains(id) {
-            continue;
-        }
-        let enabled = installation
-            .entries
-            .get(*id)
-            .is_none_or(|entry| entry.enabled);
-        rows.push(Row {
-            id: (*id).to_owned(),
-            status: if enabled {
-                PluginStatus::Active
-            } else {
-                PluginStatus::Disabled
-            },
-            detail: None,
-            origin: Some(BUILT_IN),
-            directory: None,
-            manifest: None,
-        });
-    }
-    for state in &activation.plugins {
-        if state.status == PluginStatus::Missing && !linked.contains(&state.id.as_str()) {
-            rows.push(Row {
+    activation
+        .plugins
+        .iter()
+        .map(|state| {
+            let installed = state.installed.map(|position| &index.plugins[position]);
+            Row {
                 id: state.id.clone(),
-                status: PluginStatus::Missing,
-                detail: None,
-                origin: None,
-                directory: None,
-                manifest: None,
-            });
-        }
-    }
-    rows
+                status: state.status.clone(),
+                detail: activation.detail(state),
+                origin: installed.map(|installed| {
+                    if index.roots.first() == Some(&installed.root) {
+                        SHIPPED
+                    } else {
+                        USER
+                    }
+                }),
+                directory: installed.map(|installed| installed.directory.clone()),
+                manifest: installed.and_then(|installed| installed.manifest.as_ref().ok().cloned()),
+            }
+        })
+        .collect()
 }

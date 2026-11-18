@@ -5,7 +5,7 @@ mod common;
 
 use std::process::Command;
 
-use common::{Cli, lists_verb, pane_id_of, state_of};
+use common::{Cli, pane_id_of, state_of};
 
 fn view_option(cli: &Cli, view: &str, option: &str) -> String {
     cli.tmux_out(&["show-options", "-vqt", &format!("={view}:"), option])
@@ -399,15 +399,4 @@ fn the_layouts_bundle_is_the_shipped_plugin_and_its_verb_is_its_program() {
             bundle.join("bin/tx-layouts").display()
         )
     );
-}
-
-/// Without the bundle the plugin runs compiled into `tx`, complete.
-#[test]
-fn without_the_bundle_layout_check_runs_compiled_into_tx() {
-    let cli = Cli::compiled_in();
-    assert_eq!(layouts_row(&cli)["origin"], "built-in");
-    assert!(lists_verb(&cli.ok(&["help"]), "layout"));
-    let (output, trace) = traced_layout_check(&cli);
-    assert_eq!(output, "demo ok: 2 panes\n");
-    assert_eq!(trace, "", "no plugin program was started");
 }

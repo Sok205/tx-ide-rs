@@ -36,7 +36,7 @@ impl Plugin for LabelsPlugin {
         r.verb(Arc::new(Whoami));
         r.verb(Arc::new(PaneLabel));
         r.verb(Arc::new(LabelProgram));
-        r.resource("keys/labels.tmux", include_bytes!("../keys/labels.tmux"))
+        Ok(())
     }
 }
 

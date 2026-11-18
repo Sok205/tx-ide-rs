@@ -1,10 +1,10 @@
 //! The artifacts plugin through the binary: `tx artifact …`, `tx group`, and prefix+a. Both
 //! `artifacts` and `tour` ship as bundles, so here their verbs run as the programs
-//! `tx-artifacts` and `tx-tour`; a sandbox without the bundles runs them compiled into `tx`.
+//! `tx-artifacts` and `tx-tour`.
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
 use common::{Cli, lists_verb};
@@ -160,34 +160,6 @@ fn the_bundles_are_the_shipped_plugins_and_their_verbs_are_their_programs() {
         trace,
         format!("verb\tartifacts\t{}\n", program("artifacts").display()),
         "one plugin program was started: tx became it"
-    );
-}
-
-#[test]
-fn without_the_bundles_the_plugins_run_compiled_into_tx() {
-    let cli = Cli::compiled_in();
-    for id in ["artifacts", "tour"] {
-        let row = row(&cli, id);
-        assert_eq!(row["origin"], "built-in", "{row}");
-        assert_eq!(row["status"], "active", "{row}");
-    }
-    let id = create(&cli, "user", "plan.md", "a\n");
-    let path = cli.ok(&["artifact", "path", &id]);
-    std::fs::write(Path::new(path.trim()).join("current.md"), "a\nb\n").unwrap();
-    let (output, trace) = traced(&cli, &["artifact", "modify", &id], &[]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        format!("Modified artifact {id} → rev 1\n")
-    );
-    assert_eq!(trace, "", "no plugin program was started");
-    assert_eq!(
-        cli.ok(&["artifact", "diff", &id]),
-        "--- rev0\n+++ rev1\n@@ -1 +1,2 @@\n a\n+b\n"
-    );
-    assert!(cli.ok(&["artifact", "ls"]).contains(&id[..8]));
-    assert!(
-        cli.ok(&["artifact", "show", &id])
-            .starts_with(&format!("plan.md  ({id})\n"))
     );
 }
 
@@ -654,19 +626,6 @@ fn artifact_open_of_a_tour_runs_the_tour_program() {
     assert_eq!(
         cli.fails(&["artifact", "open", &id], 1),
         "tx artifact: no opener for kind `tour` (expected verb `tx tour open`)\n"
-    );
-}
-
-#[test]
-fn compiled_in_artifact_open_of_a_tour_runs_tour_open_in_process() {
-    require_tmux!();
-    let cli = Cli::compiled_in();
-    let path = fake_nvim_path(&cli);
-    let id = create_tour(&cli, &path);
-    assert_eq!(
-        open_tour(&cli, &id, &path),
-        "",
-        "no plugin program was started"
     );
 }
 

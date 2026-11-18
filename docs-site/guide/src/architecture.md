@@ -1,42 +1,48 @@
 # Architecture
 
-The repository is one Cargo workspace. Its crates fall into three layers, and dependencies only
-point downwards.
+The repository is one Cargo workspace. `tx` and every plugin are separate programs built from
+it, and dependencies only point downwards.
 
 ## The crates
 
 ```text
-              tx-core-cli       (the tx and txi binaries; still links every plugin)
-                   |
-               plugins/*        (one package each, `ide` among them)
-              /         \
-       tx-client       tx-plugin
-   (the tmux and       (what a plugin program
-    nvim library)       shares with tx; the SDK)
-              \         /
-                tx-core         (the library)
+tx-core-cli        tx and txi: arguments, the built-in verbs, dispatch. It links no plugin.
+    |
+tx-plugin          resolves the directories from flags and environment, reads config.yaml, opens
+    |              the core with the installed plugins; the SDK `main` of a plugin program; the
+    |              installer `tx update` lays the shipped plugins out with
+tx-core            records, lifecycle, engines (the trait and the wire format), the plugin host:
+                   manifest, index, the proxies that stand for another program's verb, engine
+                   or sink
+
+plugins/<id>       one package per plugin: a library, the program tx-<id>, plugin.yaml, resources
+tx-client          the tmux and nvim library the IDE plugins and tx share
 ```
 
 - **`tx-core`** is the library: [`TxCore`](../internal/tx_core/core/struct.TxCore.html), opened
   once, owns the agent store, the private tmux server, the event log, the engine registry, role
   resolution and file locks. It depends on serde, thiserror, uuid and tempfile, and nothing in
   the workspace.
-- **`plugins/<id>`** are one crate each (package `tx-<id>`). The engine adapters
-  (`engine-claude`, `engine-codex`) depend on `tx-core` alone. The IDE plugins also depend on
+- **`tx-plugin`** is what any program that runs as tx shares with it: the global flags, the
+  directory resolution, the `config.yaml` reader and opening the core; it depends on `tx-core`
+  alone. For a plugin written in Rust it is the SDK: `tx_plugin::sdk::main` is the whole `main`
+  of the plugin's program (see [Writing plugins](writing-plugins.md)).
+- **`tx-core-cli`** builds the two binaries on `PATH`. `tx` holds the built-in verbs (`create`,
+  `ls`, `send`, `stop`, …) and is a dispatcher for every other verb: it finds the verb among the
+  installed plugins and replaces itself with that plugin's program. `txi` is the internal entry
+  point. Neither links a plugin, an engine adapter or a resource: the package depends on
+  `tx-core`, `tx-plugin` and `tx-client`, and nothing under `plugins/`.
+- **`plugins/<id>`** are one package each (`tx-<id>`): the plugin's library, a three-line program
+  that hosts it, its manifest and the files it publishes. The engine adapters (`engine-claude`,
+  `engine-codex`) depend on `tx-core` and `tx-plugin` alone. The IDE plugins also depend on
   `tx-client`, and a few reuse a sibling's library code: `home` and `timeline` use `tx-chat`'s
-  transcript readers, `tour` uses `tx-artifacts`' store.
+  transcript readers, `tour` uses `tx-artifacts`' store. `home-themes` has no program of its own:
+  `tx-home` hosts it. `setup` is not built on the SDK: it is the installer's wizard.
 - **`tx-client`** is the code the key plugins share: the socket-bound tmux helper, the views
   store, the row renderer, the modal editor, the fzf prompt and the colour palette. It is a
-  library only: it registers no plugin and, of the workspace, depends on `tx-core` alone. The
-  `ide` plugin, which owns `tx ui attach | view` and the updater that writes the IDE's server
-  config on `tx update`, is `plugins/ide` (package `tx-ide`), a plugin like the others.
-- **`tx-core-cli`** builds the binaries. `tx` is a thin CLI over the library that registers the
-  bundled plugins; `txi` is the internal entry point.
-- **`tx-plugin`** is what any program that runs as tx shares with it, so a plugin program can
-  depend on it without linking the other plugins: the global flags, the directory resolution,
-  the `config.yaml` reader and opening the core; it depends on `tx-core` alone. For a plugin
-  written in Rust it is the SDK: `tx_plugin::sdk::main` is the whole `main` of the plugin's
-  program (see [Writing plugins](writing-plugins.md)).
+  library only and, of the workspace, depends on `tx-core` alone. The `ide` plugin, which owns
+  `tx ui attach | view` and the updater that writes the IDE's server config on `tx update`, is
+  `plugins/ide`, a plugin like the others.
 
 ## The library never reads the environment
 
@@ -61,52 +67,50 @@ the child opens the same core. Inside tmux, key fragments read those words from 
 
 ## The plugin model
 
-Everything but the core is a plugin, and a plugin reaches `tx` in one of two ways.
+Everything but the core and the built-in verbs is a plugin, and **a plugin is a directory**:
+`<root>/<id>/plugin.yaml` plus the files it names. Its verbs, its engine, its updater and its
+event sink, if it has them, are programs under `bin/`, in any language. The roots are
+`<data>/shipped/` (the plugins tx ships, written by `tx update`) and then `<config>/plugins/`
+(your own, which tx never writes); `--plugin-dir`, repeatable, or `TX_PLUGIN_PATH` replaces
+both. Same format, same loader. [Writing plugins](writing-plugins.md) is the reference.
 
-**A directory with a manifest.** `<root>/<id>/plugin.yaml` plus the files it names is a plugin:
-its verbs, its engine and its event sink, if it has them, are programs under `bin/`, in any
-language. The roots are `<data>/shipped/` (the
-plugins tx ships, written by `tx update`) and then `<config>/plugins/` (your own, which tx never
-writes); `--plugin-dir`, repeatable, or `TX_PLUGIN_PATH` replaces both. `tx` finds the installed
-plugins through an index it caches in `<cache>/plugins-index.json` and trusts while every
-manifest and root still has the modification time and size it had, so a run reads that one file
-and costs a `stat` per plugin, whatever their number. When a verb is not built in, `tx` looks it up among the active plugins
-without opening the core and **replaces itself** with the plugin's program (`execve`): standard
-streams, the terminal, signals and the exit code are the plugin's own. [Writing
-plugins](writing-plugins.md) is the reference.
+`tx` finds the installed plugins through an index it caches in `<cache>/plugins-index.json` and
+trusts while every manifest and root still has the modification time and size it had, so a run
+reads that one file and costs a `stat` per plugin, whatever their number. When a verb is not
+built in, `tx` looks it up among the active plugins without opening the core and **replaces
+itself** with the plugin's program (`execve`): standard streams, the terminal, signals and the
+exit code are the plugin's own. A verb no active plugin has is `unknown verb`, exit 2. With no
+plugin installed `tx` still has its built-ins, and no engine: `tx create` then fails with
+`engine claude is not enabled (enabled: )`.
 
-**Compiled in.** A type implementing
-[`Plugin`](../internal/tx_core/plugin/trait.Plugin.html), with an `id` and a `register` method,
-listed in `MANIFEST` in `tx-core-cli/src/plugins.rs`. `register` receives a
-[`Registry`](../internal/tx_core/plugin/struct.Registry.html) and fills any of five slots:
+A manifest declares up to five things:
 
-- **verbs**: named commands with `name`, `usage` and `run(core, io, argv)`. `tx help` lists them;
-  names starting with `_` are internal (called by key bindings and hooks).
-- **engines**: an [`LlmEngine`](../internal/tx_core/engine/trait.LlmEngine.html) adapter for a
-  coding-agent CLI.
-- **event sinks**: receivers of the core's events, called in the process that emitted them. An
-  installed plugin's counterpart is its `on-event` program ([Event sinks](#event-sinks)).
-- **updaters**: what `tx update` runs for the plugin after the core's update steps, to bring the
-  files it owns up to this build. Each must be idempotent; its `retire` takes back what it
-  generated once the plugin stops being active. For an installed plugin the updater is a
-  program, its manifest's `update`: `tx update` runs it, and runs it again with
-  `TX_PLUGIN_RETIRE=1` to retire a plugin that is disabled or left the shipped selection.
-- **resources**: named static blobs the core stores and lists but never reads. By convention the
-  name is `<kind>/<file>`: `keys/<id>.tmux` (a key-binding fragment), `conf/<file>` (tmux config),
-  `bin/<file>` (a helper script), `agents/<file>` (a role or skill). `tx update` itself
-  publishes every active plugin's resources, in plugin order, into `bin`, `keys`, `conf`, `nvim`,
-  `roles` and `definitions` under the data directory, whether a plugin is compiled in or
-  installed (an installed one lists them under `resources` in its manifest); see
-  [Files](files.md).
+- **verbs**: named commands, each a program and the words put before the caller's arguments.
+  `tx help` lists them; names starting with `_` are internal (called by key bindings and hooks).
+- **an engine**: a program that speaks the engine protocol for a coding-agent CLI
+  ([below](#an-engine-that-is-its-own-program)).
+- **an event sink**, `on-event`: a program handed the core's events ([Event sinks](#event-sinks)).
+- **an updater**, `update`: what `tx update` runs for the plugin after the core's update steps,
+  to bring the files it owns up to this build. It must be idempotent. `tx update` runs it again
+  with `TX_PLUGIN_RETIRE=1` to retire a plugin that is disabled or left the shipped selection,
+  so that it takes back what it generated.
+- **resources**: files of the plugin that `tx update` publishes under the data directory. The
+  name is `<kind>/<path>`: `keys/<id>.tmux` (a key-binding fragment), `conf/<file>` (tmux
+  config), `bin/<file>` (a helper script), `nvim/…`, `agents/<file>` (a role),
+  `definitions/…`. `tx update` writes core's own roles and definitions, then every active
+  plugin's resources in plugin order, into `bin`, `keys`, `conf`, `nvim`, `roles` and
+  `definitions`; a later source replaces an earlier one of the same name; see [Files](files.md).
 
-The two ways are one API. A plugin crate keeps its `Plugin`, its verbs and its updater, and gains
-a manifest and a three-line program that hosts it (`tx_plugin::sdk::main`): the plugin runs
-compiled into `tx` where no bundle of its id is installed, and as its own program where one is.
-**An installed plugin always replaces the compiled-in one of the same id**, whether it is
-enabled, disabled or in error. `mockup` is the first to ship both ways; the others follow, and
-the compiled-in list goes once they all have.
+**A plugin written in Rust** is a crate with a type implementing
+[`Plugin`](../internal/tx_core/plugin/trait.Plugin.html): an `id` and a `register` method that
+fills a [`Registry`](../internal/tx_core/plugin/struct.Registry.html) with verbs
+(`run(core, io, argv)`), an engine ([`LlmEngine`](../internal/tx_core/engine/trait.LlmEngine.html)),
+event sinks and updaters. Its program is three lines, `tx_plugin::sdk::main`, which opens the
+core as `tx` would, with the plugins it hosts registered in-process and a proxy for every other
+active plugin's verb, engine and sink. So `core.verb("layout")` and `core.create_agent(…)` answer
+in a plugin program as they do in `tx`. This API is the SDK; `tx` links no plugin.
 
-Both kinds are switched in the `plugins:` block of `<config>/config.yaml`:
+Plugins are switched in the `plugins:` block of `<config>/config.yaml`:
 
 ```yaml
 plugins:
@@ -115,16 +119,47 @@ plugins:
     settings: { editor: nvim }
 ```
 
-No entry enables a plugin. A disabled plugin's verbs, engines and resources are all absent. An
-entry that names no plugin (a typo, a plugin that is not installed, a retired id) stops nothing:
-it is ignored and listed as `missing`. `tx plugins` prints one row per plugin, `<id>`, its status
-(`active`, `disabled`, `error`, `missing`) and, for an error, why: the installed ones in plugin
-order (root order, then id), then the compiled-in ones, then the missing entries;
-`tx plugins --json` adds where each comes from (`shipped`, `user` or `built-in`) and what its
-manifest declares. Plugin order also settles a clash: a verb two plugins declare stays with the
-first, as does an engine kind or the `ext` key of an engine, and a verb named like a built-in is
-never a plugin's; the plugin that lost one stays active and its row says so. Plugins keep per-agent data in the record's `ext.<id>` object through
-`TxCore::update_ext`; core never reads it.
+No entry enables a plugin: one that is installed is active unless its entry says
+`enabled: false`. A disabled plugin's verbs, engine, sink, updater and resources are all absent.
+An entry that names no plugin (a typo, a plugin that is not installed, a retired id) stops
+nothing: it is ignored and listed as `missing`. `tx plugins` prints one row per plugin, `<id>`,
+its status (`active`, `disabled`, `error`, `missing`) and, for an error, why: the installed ones
+in plugin order (root order, then id), then the missing entries; `tx plugins --json` adds where
+each comes from (`shipped` or `user`) and what its manifest declares. Plugin order also settles
+a clash: a verb two plugins declare stays with the first, as does an engine kind or the `ext`
+key of an engine, and a verb named like a built-in is never a plugin's; the plugin that lost one
+stays active and its row says so. Plugins keep per-agent data in the record's `ext.<id>` object
+through `TxCore::update_ext`; core never reads it.
+
+**Two versions.** A manifest's `api` is the contract between tx and any plugin; a manifest
+written for an `api` this tx does not support is an `error` row and nothing of it loads. The
+shipped plugins have a second one: they link the same `tx-core` as `tx` and read the records
+directly, so they must come from the same build. `tx update` stamps `<data>/shipped/.stamp`
+with its version, and a `tx` that finds another one there says so once on stderr and carries
+on, on every verb but `update` and the internal `_…` ones:
+`tx: shipped plugins are from tx 0.1.0: run install --upgrade`; or
+`tx: no shipped plugins are installed: run install` when there is no stamp and the install
+already has data. The stamp is one more input of the index, so the check is a `stat`. With the
+roots replaced the shipped plugins are not what runs, and nothing is said.
+
+## The processes
+
+There is no daemon. Every process that needs the core opens it itself on the same directories;
+the store's locks make that safe.
+
+| who runs | what starts | how |
+|---|---|---|
+| you, a key, an agent | `tx <built-in>` | one process |
+| the same | `tx <plugin verb>` | `tx` execs `bin/<program>`: one process after the exec |
+| core, in any process that opened it | an engine | a child process speaking JSON lines, kept until its parent exits |
+| the engine's CLI (a hook) | the engine's own program (`hook:`), else `txi hook` | one process; `txi` adds the engine child |
+| core, after an event | a plugin's `on-event` program | one short process per event |
+| `tx update` | a plugin's `update` program | one process per plugin |
+| a plugin, for another plugin's verb | that plugin's program, through `TxCore::verb()` | a child process, its output captured |
+
+A long-running screen (the home, the graph, the timeline) starts no process per refresh tick
+because of the plugin boundary, and nothing spawns a process while it holds an agent's session
+lock, with the one exception named under [engines](#an-engine-that-is-its-own-program).
 
 ## Plugins act through `tx`, not through each other
 
@@ -135,7 +170,7 @@ plugin's data files. There are two ways to run a verb, for two needs:
 
 - **`TxCore::verb(name)`**, when the plugin wants the output. In a core opened through
   `tx-plugin` it answers for every active plugin's verb, wherever that plugin runs: a verb of a
-  plugin linked into the process runs in-process, and any other is a proxy that starts the
+  plugin the program hosts runs in-process, and any other is a proxy that starts the
   plugin's program directly (not through `tx`) with standard input closed, and hands back its
   output, its error and its exit code. `tx ui attach` uses it to hand the home pane to the `home`
   plugin, the home to list layouts. `core.verb(name).is_some()` is the test for "is that feature
@@ -154,28 +189,31 @@ transcript parser in `tx-chat`) is fine.
 
 Both binaries share `tx-core-cli`'s library: argument parsing, the plugin switchboard and opening
 the core. `tx` is what people type. `txi` is what machines run: nothing in it is listed in
-`tx help`, and its one verb today is `txi hook <Event>`. When an engine adapter launches an agent
-it wires the engine CLI's own hook mechanism to run `txi hook <Event>` (Claude through
-`--settings`, Codex through `-c hooks.<Event>=…`). `txi` opens the same core from the `TX_*_DIR`
+`tx help`, and its one verb today is `txi hook <Event>`. When an engine launches an agent it
+wires the engine CLI's own hook mechanism (Claude through `--settings`, Codex through
+`-c hooks.<Event>=…`) to a hook command: its own program when its manifest names one, as both
+shipped engines do, else `txi hook <Event>`. `txi` opens the same core from the `TX_*_DIR`
 variables every session carries and hands the payload to `TxCore::hook`, which is how agent state
-moves (see [Agents and records](agents-and-records.md)). A hook must never fail the agent: anything that is
-not tx's (a call outside a session, an unknown id) exits 0. When the agent's engine runs as its
-own program, `txi` starts it before it takes the agent's lock (next section).
+moves (see [Agents and records](agents-and-records.md)). A hook must never fail the agent:
+anything that is not tx's (a call outside a session, an unknown id) exits 0. `txi` starts the
+agent's engine before it takes the agent's lock (next section). An agent launched before its
+engine had a hook entry of its own keeps the `txi hook` command it was started with, and that
+keeps working.
 
-The hook command is `txi`, next to the `tx` that launched the agent. `tx` names itself when it
-starts and `txi` names its sibling; a plugin program that launches an agent is told through
-`TX_BIN`, which every session and every plugin program carries.
+`txi` is the one next to the `tx` that launched the agent. `tx` names itself when it starts and
+`txi` names its sibling; a plugin program that launches an agent is told through `TX_BIN`, which
+every session and every plugin program carries.
 
 ## An engine that is its own program
 
 The `engine` section of a manifest names a program that speaks the engine protocol: one JSON
 request per line on its standard input, one response per line on its standard output ([Writing
 plugins](writing-plugins.md#an-engine) is the reference). In every core opened through
-`tx-plugin`, the engine of an active installed plugin is registered as a proxy,
-[`ProcessEngine`](../internal/tx_core/plugin/external/struct.ProcessEngine.html), next to the
-engines linked into the process, and the rest of core cannot tell the two apart. Engine kinds are
-open names: `tx engines` lists the ones an active engine provides, and a launch on any other fails
-as `engine X is not enabled`.
+`tx-plugin`, the engine of an active plugin is registered as a proxy,
+[`ProcessEngine`](../internal/tx_core/plugin/external/struct.ProcessEngine.html); only the
+engine's own program has the adapter in its process, and the rest of core cannot tell the two
+apart. Engine kinds are open names: `tx engines` lists the ones an active engine provides, and a
+launch on any other fails as `engine X is not enabled`.
 
 The proxy starts the program on the first call that needs it and keeps it for the life of the
 process. A command that launches or stops an agent starts one program and asks it for every call
@@ -206,8 +244,8 @@ and never per refresh tick, since the program is kept:
 - on `tx interrupt` and `tx send`, for an engine whose manifest lists the `interrupt` or the
   `receive_message` method. No shipped engine does.
 
-Until the shipped engines move, `claude` and `codex` are linked into `tx`; an engine plugin of
-your own, and the stand-in engine of the tests, run this way today.
+The shipped engines, `claude` and `codex`, run this way, each with a hook entry of its own; so
+do an engine plugin of your own and the stand-in engine of the tests.
 
 ## Event sinks
 

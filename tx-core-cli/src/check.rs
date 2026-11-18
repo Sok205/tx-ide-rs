@@ -2,18 +2,18 @@
 //! is only odd (a warning). It reads the installation and the files under it and opens no core:
 //! nothing is created and no plugin program runs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use tx_core::config::SHIPPED_PLUGINS_DIR;
 use tx_core::plugin::manifest::{BIN_DIR, MANIFEST_FILE};
-use tx_core::plugin::{Manifest, PluginStatus, Registry};
-use tx_core::{EngineKind, roles, updates};
+use tx_core::plugin::{Manifest, PluginStatus};
+use tx_core::{roles, updates};
 use tx_plugin::bundle::Stamp;
 use tx_plugin::config::RETIRED;
-use tx_plugin::setup::{Failure, Installation, Linked};
+use tx_plugin::setup::{Failure, Installation};
 
 /// What a plugin check found.
 pub struct Report {
@@ -32,17 +32,15 @@ pub fn unknown<'a>(installation: &Installation, ids: &'a [String]) -> Option<&'a
 
 /// Prints the problems and warnings of the installed plugins, in plugin order, one line each. With
 /// `ids`, only those plugins are checked, and not the config file or the shipped stamp, which
-/// belong to no plugin. `linked` are the plugins this binary still has compiled in.
+/// belong to no plugin.
 pub fn plugins(
     installation: &Installation,
-    linked: &Linked,
     config_file: &Path,
     ids: &[String],
     out: &mut dyn Write,
 ) -> Result<Report, Failure> {
     let mut checking = Checking {
         installation,
-        compiled: linked.plugins.iter().map(|plugin| plugin.id()).collect(),
         out,
         problems: 0,
     };
@@ -82,7 +80,7 @@ pub fn plugins(
         }
     }
     if ids.is_empty() {
-        checking.config(linked, config_file)?;
+        checking.config(config_file);
         checking.stamp()?;
     }
     Ok(Report {
@@ -93,9 +91,6 @@ pub fn plugins(
 
 struct Checking<'a> {
     installation: &'a Installation,
-    /// The ids of the plugins this binary has compiled in: until they are gone, such a plugin is
-    /// there for one that requires it, installed or not.
-    compiled: Vec<&'static str>,
     out: &'a mut dyn Write,
     problems: usize,
 }
@@ -163,12 +158,6 @@ impl Checking<'_> {
                 .iter()
                 .find(|state| state.installed.is_some() && state.id == *required);
             let why = match state.map(|state| &state.status) {
-                None if self.compiled.contains(&required.as_str()) => {
-                    match self.installation.entries.get(required) {
-                        Some(entry) if !entry.enabled => "which is disabled",
-                        _ => continue,
-                    }
-                }
                 None => "which is not installed",
                 Some(PluginStatus::Disabled) => "which is disabled",
                 Some(PluginStatus::Error(_)) => "which does not load",
@@ -185,12 +174,13 @@ impl Checking<'_> {
 
     /// `config.yaml`: the engine every launch defaults to must exist, and an entry that names no
     /// plugin is worth a word (never an error: a plugin may be installed on another machine).
-    fn config(&mut self, linked: &Linked, file: &Path) -> Result<(), Failure> {
+    fn config(&mut self, file: &Path) {
         let installation = self.installation;
-        let active = active_engines(installation, linked)?;
+        // The kinds of the active plugins' engines, sorted.
+        let active = &installation.activation.engines;
         let wanted = installation.file.agent.engine;
-        if !active.contains(&wanted) {
-            let names: Vec<String> = active.iter().map(ToString::to_string).collect();
+        if !active.contains_key(&wanted) {
+            let names: Vec<String> = active.keys().map(ToString::to_string).collect();
             self.problem(
                 file,
                 format!(
@@ -200,7 +190,7 @@ impl Checking<'_> {
             );
         }
         for state in &installation.activation.plugins {
-            if state.status != PluginStatus::Missing || self.compiled.contains(&state.id.as_str()) {
+            if state.status != PluginStatus::Missing {
                 continue;
             }
             let retired = match RETIRED.contains(&state.id.as_str()) {
@@ -212,7 +202,6 @@ impl Checking<'_> {
                 format!("plugins.{}: no such plugin{retired}", state.id),
             );
         }
-        Ok(())
     }
 
     /// The shipped plugins must come from this tx, and an install that has data must have them.
@@ -241,28 +230,6 @@ impl Checking<'_> {
         }
         Ok(())
     }
-}
-
-/// The kinds of the engines that would be active, sorted: those of the active installed
-/// plugins, and, until the linked plugins are gone, those the linked plugins that still run
-/// compiled in (no installed plugin has their id, and `config.yaml` does not disable them)
-/// register. Each is registered into a registry of its own: no core is opened.
-fn active_engines(
-    installation: &Installation,
-    linked: &Linked,
-) -> Result<BTreeSet<EngineKind>, Failure> {
-    let mut kinds: BTreeSet<EngineKind> = installation.activation.engines.keys().copied().collect();
-    for plugin in &linked.plugins {
-        let entry = installation.entries.get(plugin.id());
-        if installation.index.contains(plugin.id()) || entry.is_some_and(|entry| !entry.enabled) {
-            continue;
-        }
-        let settings = entry.map_or(serde_json::Value::Null, |entry| entry.settings.clone());
-        let mut registry = Registry::new(settings, installation.config.clone());
-        plugin.register(&mut registry).map_err(Failure::Plugin)?;
-        kinds.extend(registry.engines().iter().map(|engine| engine.kind()));
-    }
-    Ok(kinds)
 }
 
 /// Why an id that no plugin has any more was once one.

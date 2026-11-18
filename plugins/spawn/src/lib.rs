@@ -64,11 +64,6 @@ impl Plugin for SpawnPlugin {
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(NewAgent));
-        r.resource("keys/spawn.tmux", include_bytes!("../keys/spawn.tmux"))?;
-        r.resource(
-            "bin/tmux-new-agent",
-            include_bytes!("../bin/tmux-new-agent"),
-        )?;
         Ok(())
     }
 }

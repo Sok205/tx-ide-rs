@@ -26,7 +26,6 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
 pub use tx_core::AgentDefaults;
-use tx_core::PluginConfig;
 
 use crate::args::UsageError;
 
@@ -152,46 +151,9 @@ pub fn entries(plugins: &BTreeMap<String, Entry>) -> BTreeMap<String, tx_core::p
         .collect()
 }
 
-/// What the entries say of the plugins linked into the program, `known`: which are off and
-/// their settings. An entry for any other id is not theirs and is left out.
-pub fn linked_config(
-    plugins: &BTreeMap<String, Entry>,
-    known: &[&str],
-    reserved: &[&str],
-) -> PluginConfig {
-    let mut cfg = PluginConfig {
-        reserved: reserved.iter().map(|s| (*s).to_owned()).collect(),
-        ..Default::default()
-    };
-    for (id, entry) in plugins {
-        if !known.contains(&id.as_str()) {
-            continue;
-        }
-        if !entry.enabled {
-            cfg.disabled.insert(id.clone());
-        }
-        if let Some(settings) = &entry.settings {
-            cfg.settings.insert(id.clone(), settings.clone());
-        }
-    }
-    cfg
-}
-
-/// [`linked_config`], in the shape its first callers took it: nothing is refused any more, so
-/// the result is always `Ok` and `path`, which named the file in the error, is not read.
-pub fn plugin_config(
-    entries: BTreeMap<String, Entry>,
-    known: &[&str],
-    reserved: &[&str],
-    _path: &Path,
-) -> Result<PluginConfig, UsageError> {
-    Ok(linked_config(&entries, known, reserved))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
     use tx_core::EngineKind;
 
     fn parse_text(text: &str) -> Result<Config, UsageError> {
@@ -339,32 +301,6 @@ mod tests {
         assert!(error.0.starts_with("/c/config.yaml: "), "{error}");
     }
 
-    fn parse_plugins(text: &str) -> Result<PluginConfig, UsageError> {
-        let path = Path::new("/c/config.yaml");
-        let config = parse(text, path)?;
-        plugin_config(config.plugins, &["engine-codex", "labels"], &["ls"], path)
-    }
-
-    #[test]
-    fn an_entry_that_names_no_linked_plugin_is_left_out() {
-        let cfg = parse_plugins(
-            "plugins:\n  engine-cloud: {}\n  pikcer:\n    enabled: false\n    settings: { key: t }\n  labels: { enabled: false }\n",
-        )
-        .unwrap();
-        assert_eq!(cfg.disabled, BTreeSet::from(["labels".to_owned()]));
-        assert!(cfg.settings.is_empty());
-    }
-
-    #[test]
-    fn a_retired_id_is_left_out_like_any_other() {
-        let cfg = parse_plugins(
-            "plugins:\n  hooks:\n    enabled: false\n    settings: { stuck_after_seconds: 600 }\n  menu: { enabled: false }\n",
-        )
-        .unwrap();
-        assert!(cfg.disabled.is_empty());
-        assert!(cfg.settings.is_empty());
-    }
-
     #[test]
     fn the_activation_gets_every_entry_of_the_file() {
         let config = parse_text(
@@ -387,46 +323,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_yaml_enables_everything() {
-        for text in ["", "# nothing\n", "plugins:\n", "plugins: {}\n"] {
-            let cfg = parse_plugins(text).unwrap();
-            assert!(cfg.disabled.is_empty(), "{text:?}");
-            assert!(cfg.settings.is_empty(), "{text:?}");
-            assert_eq!(cfg.reserved, BTreeSet::from(["ls".to_owned()]));
-        }
-    }
-
-    #[test]
-    fn enabled_false_disables_and_settings_pass_through() {
-        let cfg = parse_plugins(
-            "plugins:\n  engine-codex: { enabled: false }\n  labels:\n    enabled: true\n    settings: { stuck_after_seconds: 5 }\n",
-        )
-        .unwrap();
-        assert_eq!(cfg.disabled, BTreeSet::from(["engine-codex".to_owned()]));
-        assert_eq!(
-            cfg.settings,
-            BTreeMap::from([(
-                "labels".to_owned(),
-                serde_json::json!({"stuck_after_seconds": 5})
-            )])
-        );
-    }
-
-    #[test]
-    fn enabled_defaults_to_true() {
-        let cfg = parse_plugins("plugins:\n  labels: {}\n").unwrap();
-        assert!(cfg.disabled.is_empty());
-    }
-
-    #[test]
     fn malformed_yaml_in_plugins_is_a_usage_error() {
-        let error = parse_plugins("plugins: [1, 2\n").unwrap_err();
+        let error = parse_text("plugins: [1, 2\n").unwrap_err();
         assert!(error.0.starts_with("/c/config.yaml: "), "{error}");
     }
 
     #[test]
     fn unknown_keys_on_an_entry_are_refused() {
-        let error = parse_plugins("plugins:\n  labels: { enabledd: true }\n").unwrap_err();
+        let error = parse_text("plugins:\n  labels: { enabledd: true }\n").unwrap_err();
         assert!(error.0.contains("enabledd"), "{error}");
     }
 }

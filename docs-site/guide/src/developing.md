@@ -15,22 +15,32 @@ never touched. Tests that need tmux skip themselves when it is not on `PATH`. Th
 enables every clippy lint group at warn level and the check runs with `-D warnings`, so a clean
 build means no clippy warnings at all.
 
-The CLI suites (`tx-core-cli/tests`) run the plugins that ship as bundles the way an install
-does, as their own programs. Cargo builds another package's program only for that package's own
-tests, so the harness (`tests/common/mod.rs`, `shipped()`) runs `cargo build --workspace --bins`
-once per test process, in the profile and target directory of the test itself, and links one
-plugin root under the target directory, `<target>/<profile>/tx-shipped/<id>/`, for every
-`plugins/<id>/plugin.yaml`: the manifest, each resource and each program. Every sandbox is given
-that root and then its own `<config>/plugins` with `--plugin-dir`; they are links, so a sandbox
-pays nothing for them. `Cli::compiled_in()` is a sandbox without the shared root, where every
-plugin runs compiled into `tx`. A test's own plugin is a directory it writes under its
-`<config>/plugins/` (`Cli::plugin`).
+The CLI suites (`tx-core-cli/tests`) run the plugins the way an install does, as their own
+programs: `tx` links none, so there is no other way. Cargo builds another package's program only
+for that package's own tests, so the harness (`tests/common/mod.rs`, `shipped()`) runs
+`cargo build --workspace --bins` once per test process, in the profile and target directory of
+the test itself, and links one plugin root under the target directory,
+`<target>/<profile>/tx-shipped/<id>/`, for every `plugins/<id>/plugin.yaml`: the manifest, each
+resource and each program. Every sandbox (`Cli::new()`) is given that root and then its own
+`<config>/plugins` with `--plugin-dir`; they are links, so a sandbox pays nothing for them. A
+test's own plugin is a directory it writes under its `<config>/plugins/` (`Cli::plugin`): a
+manifest and shell scripts. A sandbox whose roots are replaced this way is never told about the
+shipped stamp; the tests of that warning, and of `tx update --bundles`, run on the default roots.
 
-After rebuilding, run `./install --upgrade` before trying the IDE: it rebuilds the selected
-plugins in release, installs `tx` and `txi` and lays everything out again (the server's
-configuration names the `tx` binary by path). Or, from a checkout, run
-`tx update --bundles plugins --binaries target/debug --link` once: the shipped plugins are then
-links into the checkout and the build, after which a rebuild is live.
+**Running from a checkout.** `tx` alone is only the built-ins: the plugins have to be laid out
+where it looks for them. Build everything, then lay the shipped plugins out as links, once:
+
+```sh
+cargo build --workspace
+target/debug/tx update --bundles plugins --binaries target/debug --link
+```
+
+`<data>/shipped/` then holds links into the checkout and the build, so a rebuild is live; run
+the command again after adding a plugin, a program or a resource. To try the IDE as an install
+has it, run `./install --upgrade` instead: it rebuilds the selected plugins in release, installs
+`tx` and `txi` and lays everything out again (the server's configuration names the `tx` binary
+by path). A `tx` newer or older than the shipped plugins says so on every command:
+`tx: shipped plugins are from tx <version>: run install --upgrade`.
 
 ## Property tests and fuzzing
 
@@ -72,8 +82,25 @@ The GitHub workflow `docs-site.yml` builds and deploys the site on every push to
 
 ## Adding a plugin
 
-A plugin is a crate under `plugins/<id>`, package `tx-<id>`, depending on `tx-core` and, for
-anything that talks to tmux, `tx-client`. Its type implements `Plugin`:
+A plugin of this repository is a package under `plugins/<id>`, named `tx-<id>`: a library with
+the plugin, a program that hosts it, a manifest, and the files it publishes. Nothing outside the
+package names it but the workspace: add `plugins/<id>` to `members` in the root `Cargo.toml`.
+`tx` finds it, like any plugin, as a directory with a `plugin.yaml`; `plugins/kill` is the
+template and [Writing plugins](writing-plugins.md) the reference.
+
+```text
+plugins/notes/
+  Cargo.toml        package tx-notes; a [[bin]] named tx-notes; depends on tx-core, tx-plugin
+                    and, for anything that talks to tmux, tx-client
+  plugin.yaml       the manifest: id, description, tier, verbs, resources
+  src/lib.rs        the plugin: its `impl Plugin`, its verbs
+  src/main.rs       the program: three lines
+  keys/notes.tmux   a key fragment, listed under `resources`
+  tests/bundle.rs   the manifest against what the plugin registers
+```
+
+The library holds a type implementing `Plugin`, whose `register` adds the verbs (and an engine,
+sinks or an updater, when it has them):
 
 ```rust,ignore
 pub struct NotesPlugin;
@@ -83,38 +110,61 @@ impl Plugin for NotesPlugin {
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(NotesVerb));
-        r.resource("keys/notes.tmux", include_bytes!("../tmux/keys.tmux"))?;
         Ok(())
     }
 }
 ```
 
-A plugin that keeps files of its own up to date (generated config, materialised resources)
-registers an `Updater` with `r.updater(…)`: `tx update` runs every active plugin's updater after
-the core's update steps. It runs on every `tx update`, so it must be idempotent.
+The program hosts it:
 
-Wire it in with three edits: add `plugins/<id>` to `members` in the root `Cargo.toml`, add
-`tx-<id> = { path = "../plugins/<id>" }` to `tx-core-cli/Cargo.toml`, and add one line to
-`MANIFEST` in `tx-core-cli/src/plugins.rs`. A verb may not take a name from `RESERVED` there
-(the built-ins such as `create`, `send`, `stop`).
+```rust,ignore
+fn main() -> std::process::ExitCode {
+    tx_plugin::sdk::main(vec![Box::new(tx_notes::NotesPlugin)])
+}
+```
 
-**A key** is a `keys/<id>.tmux` resource: a script the server's config (written by `tx update`) runs. A
-comment near its top declares the prefix keys it binds, `# keys: <key>` (`none` for root-table
-binds only); if it sets global options or hooks it also declares `# unset: …` and `# unhook: …`
-so that disabling the plugin undoes them. It finds `tx` and its flags through the server options
-`@tx-bin` and `@tx-arguments`, as every bundled fragment does. Helper scripts go in as
-`bin/<file>` resources.
+And the manifest says what `tx` needs to know without starting it: each verb with its usage
+line, the program and the verb's own name as the first argument, and each file to publish.
 
-A plugin that ships as a bundle also has a `plugin.yaml`, a program (`src/main.rs`, a `[[bin]]`
-named `tx-<id>`, `tx_plugin::sdk::main`) and a `tests/bundle.rs` calling
-`tx_plugin::testing::check_bundle`; `plugins/mockup` is the template and
-[Writing plugins](writing-plugins.md) the reference. It stays in `MANIFEST` until every plugin
-has moved: it runs compiled in wherever its bundle is not installed.
+```yaml
+api: 1
+id: notes
+description: Notes on the agent in the active pane.
+tier: extra
 
-**Tests.** Give the plugin a `tests/resources.rs` that checks what it publishes, and that a
-disabled plugin publishes nothing (`plugins/kill/tests/resources.rs` is the template). Add a
-`tx-core-cli/tests/<id>.rs` that drives the real binary through the `tests/common` harness: one
-temporary directory for all five directories, a private server, and `shim_path` for stand-in
+verbs:
+  - name: notes
+    usage: "notes <name>   open the notes of a session"
+    bin: tx-notes
+    args: [notes]
+
+resources:
+  - keys/notes.tmux
+```
+
+A verb may not take the name of a built-in (`create`, `send`, `stop`, …): `tx check` reports it
+and the built-in stays. `tier` decides which presets install the plugin (`core`, `ide`, `extra`);
+`./install` builds the program of every selected plugin and `tx update` lays the bundle out.
+
+A plugin that keeps files of its own up to date (generated config, its own one-shot steps)
+registers an `Updater` with `r.updater(…)` and names the program under `update:` in the manifest
+(`args: [--tx-update]`): `tx update` runs every active plugin's updater after the core's update
+steps. It runs on every `tx update`, so it must be idempotent.
+
+**A key** is a `keys/<id>.tmux` resource: a script the server's config (written by `tx update`)
+runs through the interpreter its first line names, never by executing the file (the first direct
+run of a new executable file is slow on macOS). A comment near its top declares the prefix keys
+it binds, `# keys: <key>` (`none` for root-table binds only); if it sets global options or hooks
+it also declares `# unset: …` and `# unhook: …` so that disabling the plugin undoes them. It
+finds `tx` and its flags through the server options `@tx-bin` and `@tx-arguments`, as every
+shipped fragment does. Helper scripts go in as `bin/<file>` resources.
+
+**Tests.** `tests/bundle.rs` is one call, `tx_plugin::testing::check_bundle`: the manifest
+reads, every resource is a file of the package, every `bin` is a program it builds, and the
+verbs, their usages, the engine kind and the updater are what `register` produces. The plugin's
+own tests stay in-process (`core.plug(vec![Box::new(NotesPlugin)], …)`). Add a
+`tx-core-cli/tests/<id>.rs` that drives the real binaries through the `tests/common` harness:
+one temporary directory for all five directories, a private server, and `shim_path` for stand-in
 executables such as a `claude` that only sleeps. A plugin that publishes resources must also be
 listed in `tests/ide.rs::update_materialises_resources`; a new key means extending
 `expected_conf`, `start_server`, `update_fragment_loads` and

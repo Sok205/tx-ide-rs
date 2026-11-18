@@ -1,8 +1,8 @@
-//! The plugin host. One trait, [`Plugin`]; a [`Registry`] with five slots (engines, event
-//! sinks, verbs, updaters, resources); a [`PluginConfig`] the front end fills from its own
-//! config format.
+//! The plugin host. One trait, [`Plugin`]; a [`Registry`] with four slots (engines, event
+//! sinks, verbs, updaters); a [`PluginConfig`] the front end fills from its own config format.
 //! Core never parses arguments or reads the environment: a [`Verb`] receives argv already split.
-//! A resource is a named static blob the core stores and lists but never reads.
+//! What a plugin publishes under the data directory is the `resources` of its manifest, files
+//! of its own directory: nothing of it goes through the registry.
 //!
 //! A plugin reaches a core in one of two ways. Linked into the process, it is handed to
 //! [`TxCore::plug`]. Installed on disk as a directory with a [`Manifest`], it runs as its own
@@ -29,7 +29,9 @@ pub mod manifest;
 pub mod sink;
 
 pub use external::{ExecContext, Launcher};
-pub use index::{Activation, ActiveVerb, Entry, Index, Installed, PluginState, Problem};
+pub use index::{
+    Activation, ActiveVerb, Entry, Index, Installed, PluginState, Problem, ShippedStamp,
+};
 pub use manifest::{
     EngineMethod, Events, Manifest, ManifestEngine, ManifestError, ManifestInterrupt,
     ManifestOnEvent, ManifestProgram, ManifestVerb, PLUGIN_API, Tier,
@@ -49,7 +51,6 @@ pub struct Registry {
     sinks: Vec<Box<dyn EventSink>>,
     verbs: Vec<Arc<dyn Verb>>,
     updaters: Vec<Arc<dyn Updater>>,
-    resources: BTreeMap<&'static str, &'static [u8]>,
     settings: Value,
     config: CoreConfig,
 }
@@ -64,7 +65,6 @@ impl Registry {
             sinks: Vec::new(),
             verbs: Vec::new(),
             updaters: Vec::new(),
-            resources: BTreeMap::new(),
             settings,
             config,
         }
@@ -85,21 +85,6 @@ impl Registry {
     /// What `tx update` runs for this plugin, after the core's own update steps.
     pub fn updater(&mut self, updater: Arc<dyn Updater>) {
         self.updaters.push(updater);
-    }
-
-    /// Publishes a named static blob; the core stores and lists it, never reads it. `name` is
-    /// `[A-Za-z0-9_./-]+`, no leading `/`, no `..` segment, unique across plugins. Convention:
-    /// `<kind>/<file>`, e.g. `keys/kill.tmux`.
-    pub fn resource(
-        &mut self,
-        name: &'static str,
-        bytes: &'static [u8],
-    ) -> Result<(), PluginError> {
-        validate_resource_name(name)?;
-        if self.resources.insert(name, bytes).is_some() {
-            return Err(PluginError::DuplicateResource(name.to_owned()));
-        }
-        Ok(())
     }
 
     /// This plugin's settings block; `Null` when the config has none.
@@ -131,14 +116,6 @@ impl Registry {
     pub fn updaters(&self) -> &[Arc<dyn Updater>] {
         &self.updaters
     }
-}
-
-/// A named static blob published by a plugin, listed by [`TxCore::resources`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Resource {
-    pub plugin: String,
-    pub name: String,
-    pub bytes: &'static [u8],
 }
 
 /// A command a front end can dispatch to. `argv` is everything after the verb name. The name
@@ -230,8 +207,6 @@ pub enum PluginError {
     },
     #[error("plugin {plugin:?} registers verb {verb:?}, which the front end owns")]
     ReservedVerb { verb: String, plugin: String },
-    #[error("resource {0:?} is published twice")]
-    DuplicateResource(String),
     #[error(
         "invalid resource name {0:?} (allowed: [A-Za-z0-9_./-]+, no leading '/', no '..' segment)"
     )]
@@ -275,25 +250,7 @@ pub(crate) struct Host {
     verbs: BTreeMap<String, (String, Arc<dyn Verb>)>,
     /// (plugin id, updater), manifest order.
     updaters: Vec<(String, Arc<dyn Updater>)>,
-    /// Manifest order, then name order within a plugin.
-    resources: Vec<Resource>,
     status: Vec<(String, PluginStatus)>,
-}
-
-impl Host {
-    /// A host that already lists the core's shipped roles (`crate::roles::SHIPPED`), ahead of
-    /// whatever the plugins register.
-    pub(crate) fn with_shipped_roles() -> Self {
-        let mut host = Host::default();
-        for &(name, bytes) in crate::roles::SHIPPED {
-            host.resources.push(Resource {
-                plugin: crate::roles::PLUGIN_ID.to_owned(),
-                name: name.to_owned(),
-                bytes,
-            });
-        }
-        host
-    }
 }
 
 /// One plugin after `register`: `None` when the config disabled it.
@@ -369,25 +326,6 @@ fn insert_verb(
     Ok(())
 }
 
-/// The verbs [`TxCore::plug`] would expose for this manifest and config, without a core: for
-/// usage text and "is this verb known?" checks that must not create the state dir. Runs every
-/// enabled plugin's `register`; engines and sinks are dropped.
-pub fn preview_verbs(
-    plugins: &[Box<dyn Plugin>],
-    cfg: &PluginConfig,
-    config: &CoreConfig,
-) -> Result<Vec<Arc<dyn Verb>>, PluginError> {
-    let mut table = VerbTable::new();
-    for loaded in load(plugins, cfg, config)? {
-        if let Some(registry) = loaded.registry {
-            for verb in registry.verbs {
-                insert_verb(&mut table, cfg, &loaded.id, verb)?;
-            }
-        }
-    }
-    Ok(table.into_values().map(|(_, verb)| verb).collect())
-}
-
 impl TxCore {
     /// Registers every plugin not in `cfg.disabled`, in order. Fails on the first problem; the
     /// core may then hold a partial registration and the caller should exit.
@@ -416,16 +354,6 @@ impl TxCore {
             }
             for updater in registry.updaters {
                 self.host.updaters.push((loaded.id.clone(), updater));
-            }
-            for (name, bytes) in registry.resources {
-                if self.host.resources.iter().any(|r| r.name == name) {
-                    return Err(PluginError::DuplicateResource(name.to_owned()));
-                }
-                self.host.resources.push(Resource {
-                    plugin: loaded.id.clone(),
-                    name: name.to_owned(),
-                    bytes,
-                });
             }
             self.host.status.push((loaded.id, PluginStatus::Active));
         }
@@ -473,25 +401,6 @@ impl TxCore {
     /// The active plugins' updaters with their plugin id, in manifest order.
     pub fn updaters(&self) -> Vec<(String, Arc<dyn Updater>)> {
         self.host.updaters.clone()
-    }
-
-    /// Resources of active plugins whose name starts with `prefix`, in manifest order then name
-    /// order.
-    pub fn resources(&self, prefix: &str) -> Vec<Resource> {
-        self.host
-            .resources
-            .iter()
-            .filter(|r| r.name.starts_with(prefix))
-            .cloned()
-            .collect()
-    }
-
-    /// [`Self::resources`] without the core's own shipped roles: what the plugins registered.
-    pub fn plugin_resources(&self, prefix: &str) -> Vec<Resource> {
-        self.resources(prefix)
-            .into_iter()
-            .filter(|r| r.plugin != crate::roles::PLUGIN_ID)
-            .collect()
     }
 
     /// The plugins linked into this process in manifest order, then the installed ones that

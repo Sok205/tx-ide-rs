@@ -65,19 +65,14 @@ fn plugin_t(cli: &Cli, more: &str, programs: &[(&str, &str)]) -> PathBuf {
     cli.plugin("t", &manifest, programs).join("plugin.yaml")
 }
 
-/// How many installed plugins load: the entries of `tx plugins --json` that are installed (not
-/// built in) and not in error or missing.
+/// How many installed plugins load: the entries of `tx plugins --json` that are not in error or
+/// missing.
 fn loading(cli: &Cli) -> usize {
     let rows: serde_json::Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
     rows.as_array()
         .unwrap()
         .iter()
-        .filter(|row| {
-            row["origin"]
-                .as_str()
-                .is_some_and(|origin| origin != "built-in")
-                && !matches!(row["status"].as_str().unwrap(), "error" | "missing")
-        })
+        .filter(|row| !matches!(row["status"].as_str().unwrap(), "error" | "missing"))
         .count()
 }
 
@@ -370,7 +365,7 @@ fn a_program_not_on_the_path_is_a_warning_and_the_run_is_clean() {
 #[test]
 fn an_entry_that_names_no_plugin_is_a_warning_and_a_retired_one_says_why() {
     let cli = clean();
-    // `ide` is compiled in: it is a plugin, installed or not.
+    // `ide` is installed: its entry names a plugin.
     cli.write_yaml("plugins:\n  pikcer: {}\n  hooks: {}\n  ide: { enabled: true }\n");
     let outcome = check(&cli, &["check", "--plugins"]);
     assert_eq!(outcome.code, 0, "{}", outcome.out);

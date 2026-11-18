@@ -21,11 +21,7 @@ impl Plugin for KillPlugin {
 
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(Kill));
-        r.resource("keys/kill.tmux", include_bytes!("../keys/kill.tmux"))?;
-        r.resource(
-            "bin/tmux-kill-tx-session",
-            include_bytes!("../bin/tmux-kill-tx-session"),
-        )
+        Ok(())
     }
 }
 

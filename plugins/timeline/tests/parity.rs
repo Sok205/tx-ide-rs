@@ -3,14 +3,32 @@
 
 mod world;
 
+use std::path::PathBuf;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::Value;
 use tx_core::Agent;
 use tx_timeline::app::App;
-use tx_timeline::model::{Builder, Payload};
+use tx_timeline::model::{Builder, Payload, Transcripts};
 use tx_timeline::{run, ui};
+
+/// What `TxCore::conversation` answers for these records: each engine's recorded
+/// `transcript_path` (both engines name it the same way).
+fn transcripts(sessions: &[Agent]) -> Transcripts {
+    sessions
+        .iter()
+        .filter_map(|session| {
+            let path = session
+                .ext
+                .get(session.engine.as_str())?
+                .get("transcript_path")?
+                .as_str()?;
+            Some((session.id.clone(), PathBuf::from(path)))
+        })
+        .collect()
+}
 
 struct Built {
     payload: Payload,
@@ -29,7 +47,7 @@ fn build() -> Built {
     let dir = tempfile::tempdir().unwrap();
     let mut builder = Builder::new(dir.path().join("timeline"));
     let now = world["now"].as_f64().unwrap();
-    let transcripts = world::transcripts(&sessions);
+    let transcripts = transcripts(&sessions);
     let payload = builder.build(
         &sessions,
         &transcripts,

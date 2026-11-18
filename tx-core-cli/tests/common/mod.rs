@@ -1,7 +1,7 @@
 //! Shared harness for the CLI suites: one temp dir under /tmp holding all five directories (short socket path), helpers
 //! that run `tx` against it, and a kill-server on drop so no private server outlives its test.
-//! The plugins that ship as bundles run as bundles here: every sandbox names one plugin root
-//! linked from this build, [`shipped`], and then its own `<config>/plugins`.
+//! The shipped plugins run as their own programs here, as in an install: every sandbox names one
+//! plugin root linked from this build, [`shipped`], and then its own `<config>/plugins`.
 #![allow(dead_code)]
 
 use std::io::Write;
@@ -209,18 +209,8 @@ pub const STAND_IN_ROLES: [&str; 2] = ["COMMON", "REVIEWER"];
 
 impl Cli {
     /// A sandbox whose plugin roots are the shared [`shipped`] one and then its own
-    /// `<config>/plugins`: a plugin that has a bundle runs as its own program.
+    /// `<config>/plugins`: every shipped plugin runs as its own program.
     pub fn new() -> Self {
-        let mut cli = Self::compiled_in();
-        cli.plugin_dirs.insert(0, shipped().to_path_buf());
-        cli
-    }
-    /// A sandbox with only its own `<config>/plugins` as a root: no bundle is installed, so
-    /// every plugin runs compiled into `tx`.
-    pub fn compiled_in() -> Self {
-        // Not a root here, but its build replaces the binaries: no sandbox of this process
-        // runs `tx` before it is over.
-        shipped();
         let dir = tempfile::Builder::new()
             .prefix("tx")
             .tempdir_in("/tmp")
@@ -235,7 +225,10 @@ impl Cli {
         // Likewise the default agent definition (`agent.definition: developer`), which a real
         // install ships under `<data>/definitions`; `tx update` replaces this stand-in.
         stand_in_definition(&dir.path().join("state"));
-        let plugin_dirs = vec![dir.path().join("state").join("plugins")];
+        let plugin_dirs = vec![
+            shipped().to_path_buf(),
+            dir.path().join("state").join("plugins"),
+        ];
         Self { dir, plugin_dirs }
     }
     /// The sandbox's own plugin root, `<config>/plugins`: where a test writes a plugin.

@@ -1,21 +1,17 @@
-//! Claude and Codex as plugin programs, end to end through the binaries: the same commands in a
-//! sandbox where both engines are bundles (every engine call of core goes through the proxy to
-//! `tx-engine-<kind>`) and in one where they are compiled into `tx`, with a CLI on `PATH` that
-//! records its arguments. What each launch plan turned into must be the same: the arguments the
-//! launched program received and the engine data in the record, for a start, a fork and a
-//! resume. What differs between two sandboxes by construction is brought to placeholders first:
-//! the sandbox's directory, the agents' ids and worktrees, and the words of the hook command,
-//! which with a bundle are the plugin's own program. Each test that launches an agent skips
-//! itself without tmux.
+//! Claude and Codex as plugin programs, end to end through the binaries: both engines are
+//! bundles (every engine call of core goes through the proxy to `tx-engine-<kind>`), with a CLI
+//! on `PATH` that records its arguments. An agent of each is started, forked, stopped and
+//! resumed, and every hook it wired runs the plugin's own program. Each test that launches an
+//! agent skips itself without tmux.
 //!
-//! The same holds for what an engine adds to the definitions: `tx definitions`,
+//! What an engine adds to the definitions comes from the engine too: `tx definitions`,
 //! `tx definitions tools`, `tx check` and the warning of `tx create --agent` print what the
-//! engines report, byte for byte the same either way.
+//! engines report.
 
 mod common;
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use common::Cli;
@@ -80,10 +76,6 @@ fn wired_by_codex(arguments: &[String]) -> String {
     serde_json::from_str(command).unwrap()
 }
 
-/// One launch: which it was, the arguments the CLI received, and the engine data the record
-/// held once it ran.
-type Launch = (&'static str, Vec<String>, Value);
-
 impl Cli {
     /// Codex's own directory, inside the sandbox.
     fn codex_home(&self) -> PathBuf {
@@ -141,28 +133,6 @@ impl Cli {
     fn show(&self, name: &str) -> Value {
         serde_json::from_str(&self.ok(&["show", name])).unwrap()
     }
-
-    /// The names of this sandbox in what the agent `name` was launched with, each with its
-    /// placeholder: its worktree, as Claude spells it inside a transcript's path and as it is,
-    /// then its id.
-    fn names_of(&self, name: &str) -> Vec<(String, String)> {
-        let record = self.show(name);
-        let worktree = Path::new(record["working_directory"].as_str().unwrap())
-            .canonicalize()
-            .unwrap();
-        let worktree = worktree.to_str().unwrap();
-        vec![
-            (
-                worktree.replace(['/', '.'], "-"),
-                format!("<worktree-of-{name}>"),
-            ),
-            (worktree.to_owned(), format!("<worktree of {name}>")),
-            (
-                record["id"].as_str().unwrap().to_owned(),
-                format!("<id of {name}>"),
-            ),
-        ]
-    }
 }
 
 /// Runs a wired hook command the way the engine's CLI does: through a shell, the payload on
@@ -198,12 +168,13 @@ fn fire(cli: &Cli, command: &str, id: &str, payload: &Value) {
     assert!(child.wait().unwrap().success(), "{command}");
 }
 
-/// The life of an agent of `engine` in `cli`: created from the agent definition `developer`
-/// with a model, an effort and engine arguments; its wired `SessionStart` fired, which reports
-/// the conversation; forked; stopped and respawned. Its three launches, with the names of the
-/// sandbox as placeholders. `hook` is what this sandbox wires every hook to, a program and its
-/// first argument; that the engine did so is asserted here, on the arguments as they were.
-fn life(cli: &Cli, engine: &Engine, hook: [&str; 2]) -> Vec<Launch> {
+/// The life of an agent of `engine` as a plugin program: created from the agent definition
+/// `developer` with a model, an effort and engine arguments; its wired `SessionStart` fired,
+/// which reports the conversation; forked; stopped and respawned, each launch reaching the CLI.
+/// Every hook the engine wired is the program's own entry, `tx-engine-<kind> --tx-hook`.
+fn life(engine: &Engine) {
+    let cli = &Cli::new();
+    let program = common::shipped().join(format!("engine-{0}/bin/tx-engine-{0}", engine.kind));
     cli.write_yaml(CONFIG);
     let repository = cli.repository("repository");
     let data = |name: &str| cli.show(name)["ext"][engine.kind].clone();
@@ -229,21 +200,20 @@ fn life(cli: &Cli, engine: &Engine, hook: [&str; 2]) -> Vec<Launch> {
             "start",
         ],
     );
-    let started = (cli.launched(&id), data("a"));
+    let started = cli.launched(&id);
 
-    // Every hook the engine wired runs this sandbox's hook command, and no other.
-    let words = format!("'{}' '{}'", hook[0], hook[1]);
-    let wired = (engine.wired)(&started.0);
+    // Every hook the engine wired runs the program's own entry, and no other.
+    let words = format!("'{}' '--tx-hook'", program.display());
+    let wired = (engine.wired)(&started);
     assert_eq!(wired, format!("{words} 'SessionStart' || exit 1"));
     let count = |needle: &str| -> usize {
         started
-            .0
             .iter()
             .map(|argument| argument.matches(needle).count())
             .sum()
     };
-    assert!(count(&words) > 1, "{:?}", started.0);
-    assert_eq!(count(&words), count("|| exit 1"), "{:?}", started.0);
+    assert!(count(&words) > 1, "{started:?}");
+    assert_eq!(count(&words), count("|| exit 1"), "{started:?}");
 
     // The wired command works: it moves the agent and records the conversation it reports.
     let transcript = cli.dir.path().join(format!("{CONVERSATION}.jsonl"));
@@ -258,80 +228,29 @@ fn life(cli: &Cli, engine: &Engine, hook: [&str; 2]) -> Vec<Launch> {
     assert_eq!(data("a")["conversation_id"], CONVERSATION);
 
     let fork = cli.tx(engine, &["fork", "a", "--name", "b", "--prompt", "branch"]);
-    let forked = (cli.launched(&fork), data("b"));
+    cli.launched(&fork);
 
     cli.tx(engine, &["stop", "a"]);
     std::fs::remove_file(cli.launched_file(&id)).unwrap();
     cli.tx(engine, &["respawn", "a"]);
-    let resumed = (cli.launched(&id), data("a"));
-
-    // The longer names first: a worktree is inside the sandbox.
-    let sandbox = cli.dir.path().canonicalize().unwrap();
-    let mut names = vec![(words, "<hook>".to_owned())];
-    names.extend(cli.names_of("a"));
-    names.extend(cli.names_of("b"));
-    names.push((sandbox.to_str().unwrap().to_owned(), "<sandbox>".to_owned()));
-    names.push((
-        cli.dir.path().to_str().unwrap().to_owned(),
-        "<sandbox>".to_owned(),
-    ));
-    let placeholders = |text: &str| {
-        names
-            .iter()
-            .fold(text.to_owned(), |text, (name, placeholder)| {
-                text.replace(name, placeholder)
-            })
-    };
-    [("start", started), ("fork", forked), ("resume", resumed)]
-        .into_iter()
-        .map(|(launch, (arguments, data))| {
-            (
-                launch,
-                arguments
-                    .iter()
-                    .map(|argument| placeholders(argument))
-                    .collect(),
-                serde_json::from_str(&placeholders(&data.to_string())).unwrap(),
-            )
-        })
-        .collect()
-}
-
-/// The launches of `engine` as a plugin program are those of the adapter compiled into `tx`,
-/// but for the hook command: the program's own entry in place of `txi hook`.
-fn launches_the_same_as_compiled_in(engine: &Engine) {
-    let program = common::shipped().join(format!("engine-{0}/bin/tx-engine-{0}", engine.kind));
-    let as_a_program = life(
-        &Cli::new(),
-        engine,
-        [program.to_str().unwrap(), "--tx-hook"],
-    );
-    let compiled_in = life(
-        &Cli::compiled_in(),
-        engine,
-        [env!("CARGO_BIN_EXE_txi"), "hook"],
-    );
-    for (program, linked) in as_a_program.iter().zip(&compiled_in) {
-        assert_eq!(program, linked);
-    }
+    cli.launched(&id);
 }
 
 #[test]
-fn claude_as_a_plugin_program_launches_what_the_adapter_compiled_in_launches() {
+fn claude_as_a_plugin_program_lives_through_its_own_hook_entry() {
     require_tmux!();
-    launches_the_same_as_compiled_in(&CLAUDE);
+    life(&CLAUDE);
 }
 
 #[test]
-fn codex_as_a_plugin_program_launches_what_the_adapter_compiled_in_launches() {
+fn codex_as_a_plugin_program_lives_through_its_own_hook_entry() {
     require_tmux!();
-    launches_the_same_as_compiled_in(&CODEX);
+    life(&CODEX);
 }
 
 // What an engine adds to the definitions (`tx definitions`, `tx definitions tools`, `tx check`,
-// the warning of `tx create --agent`) comes from the engine, the same as a plugin program and
-// compiled in. A `claude` that answers `--version` and the probe, and a `codex` whose
-// `app-server` lists one tool: nothing real runs.
+// the warning of `tx create --agent`) comes from the engine. A `claude` that answers `--version`
+// and the probe, and a `codex` whose `app-server` lists one tool: nothing real runs.
 
 /// Answers `claude --version`, and the probe's headless run with its `system/init` event.
 const PROBED_CLAUDE: &str = r#"case "$1" in
@@ -394,29 +313,10 @@ fn reported(cli: &Cli, args: &[&str], codex: &str, env: &[(&str, &str)]) -> (i32
     )
 }
 
-/// The commands of acceptance line 1, but `tx check` on the one definition: the plugins it
-/// would also check differ between the two sandboxes by construction.
-const COMMANDS: [&[&str]; 5] = [
-    &["definitions"],
-    &["definitions", "tools"],
-    &["check", "mine"],
-    &["check", "--engine", "claude", "mine"],
-    &["check", "--engine", "codex", "mine"],
-];
-
 #[test]
-fn what_the_engines_add_reads_the_same_from_plugin_programs_and_compiled_in() {
-    let (as_programs, compiled_in) = (Cli::new(), Cli::compiled_in());
-    for cli in [&as_programs, &compiled_in] {
-        definitions(cli);
-    }
-    for args in COMMANDS {
-        assert_eq!(
-            reported(&as_programs, args, LISTING_CODEX, &[]),
-            reported(&compiled_in, args, LISTING_CODEX, &[]),
-            "tx {args:?}"
-        );
-    }
+fn what_the_engines_add_is_what_their_programs_report() {
+    let as_programs = Cli::new();
+    definitions(&as_programs);
     let mine = "<sandbox>/state/definitions/agents/mine.md";
 
     let (code, out, _) = reported(&as_programs, &["definitions"], LISTING_CODEX, &[]);
@@ -534,42 +434,34 @@ fn listing_definitions_starts_no_engine_and_a_check_starts_the_one_it_asks() {
 
 #[test]
 fn without_codex_no_engine_lists_mcp_tools_and_codex_cannot_be_checked() {
-    for cli in [Cli::new(), Cli::compiled_in()] {
-        definitions(&cli);
-        cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
-        let (code, out, _) = reported(&cli, &["definitions", "tools"], LISTING_CODEX, &[]);
-        assert_eq!(code, 0);
-        assert!(
-            out.ends_with(
-                "Skill, ToolSearch\n\n# no MCP tools listed: no active engine can list them\n"
-            ),
-            "{out}"
-        );
-        assert_eq!(
-            reported(&cli, &["check", "--engine", "codex"], LISTING_CODEX, &[]),
-            (
-                1,
-                String::new(),
-                "tx: engine codex is not enabled (enabled: claude)\n".to_owned()
-            )
-        );
-    }
+    let cli = Cli::new();
+    definitions(&cli);
+    cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
+    let (code, out, _) = reported(&cli, &["definitions", "tools"], LISTING_CODEX, &[]);
+    assert_eq!(code, 0);
+    assert!(
+        out.ends_with(
+            "Skill, ToolSearch\n\n# no MCP tools listed: no active engine can list them\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(
+        reported(&cli, &["check", "--engine", "codex"], LISTING_CODEX, &[]),
+        (
+            1,
+            String::new(),
+            "tx: engine codex is not enabled (enabled: claude)\n".to_owned()
+        )
+    );
 }
 
-/// The QA machine's stand-in `codex` refuses `app-server`: today's build prints both engines'
-/// sections, then fails the listing as a whole.
+/// The QA machine's stand-in `codex` refuses `app-server`: both engines' sections are printed,
+/// then the listing fails as a whole.
 #[test]
 fn an_mcp_listing_that_fails_as_a_whole_fails_after_every_engines_section() {
-    let (as_programs, compiled_in) = (Cli::new(), Cli::compiled_in());
-    for cli in [&as_programs, &compiled_in] {
-        definitions(cli);
-    }
-    let failed = reported(&as_programs, &["definitions", "tools"], REFUSING_CODEX, &[]);
-    assert_eq!(
-        failed,
-        reported(&compiled_in, &["definitions", "tools"], REFUSING_CODEX, &[])
-    );
-    let (code, out, err) = failed;
+    let cli = Cli::new();
+    definitions(&cli);
+    let (code, out, err) = reported(&cli, &["definitions", "tools"], REFUSING_CODEX, &[]);
     assert_eq!(code, 1);
     assert!(
         out.ends_with("ScheduleWakeup\t--disable sleep_tool\n"),
@@ -583,40 +475,38 @@ fn an_mcp_listing_that_fails_as_a_whole_fails_after_every_engines_section() {
 #[test]
 fn creating_an_agent_warns_as_its_engine_says_and_starts_that_engine_once() {
     require_tmux!();
-    for cli in [Cli::new(), Cli::compiled_in()] {
-        definitions(&cli);
-        let repository = cli.repository("repository");
-        let trace = cli.dir.path().join("trace");
-        let (code, _, err) = reported(
-            &cli,
-            &[
-                "create",
-                "x",
-                "--agent",
-                "mine",
-                "--engine",
-                "claude",
-                "--cwd",
-                repository.to_str().unwrap(),
-                "--prompt",
-                "hi",
-            ],
-            LISTING_CODEX,
-            &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
-        );
-        assert_eq!(code, 0, "{err}");
-        assert_eq!(
-            err,
-            "tx: warning: bundled skill pdf brings in all bundled skills: pdf, and any others \
-             this Claude version ships\n"
-        );
-        let engines = std::fs::read_to_string(&trace)
-            .unwrap_or_default()
-            .lines()
-            .filter(|line| line.starts_with("engine\t"))
-            .count();
-        let bundled = cli.plugin_dirs.len() > 1;
-        assert_eq!(engines, usize::from(bundled));
-        cli.ok(&["stop", "x"]);
-    }
+    let cli = Cli::new();
+    definitions(&cli);
+    let repository = cli.repository("repository");
+    let trace = cli.dir.path().join("trace");
+    let (code, _, err) = reported(
+        &cli,
+        &[
+            "create",
+            "x",
+            "--agent",
+            "mine",
+            "--engine",
+            "claude",
+            "--cwd",
+            repository.to_str().unwrap(),
+            "--prompt",
+            "hi",
+        ],
+        LISTING_CODEX,
+        &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        err,
+        "tx: warning: bundled skill pdf brings in all bundled skills: pdf, and any others \
+         this Claude version ships\n"
+    );
+    let engines = std::fs::read_to_string(&trace)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.starts_with("engine\t"))
+        .count();
+    assert_eq!(engines, 1);
+    cli.ok(&["stop", "x"]);
 }

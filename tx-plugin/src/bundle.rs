@@ -21,7 +21,7 @@ use tx_core::plugin::{Manifest, ManifestError};
 /// In the shipped root: which plugins `tx update` lays out. Only `tx setup` writes it.
 pub const SELECTION_FILE: &str = ".selection";
 /// In the shipped root: what `tx update` laid out last, and from where.
-pub const STAMP_FILE: &str = ".stamp";
+pub const STAMP_FILE: &str = tx_core::plugin::index::SHIPPED_STAMP_FILE;
 /// Under the data directory, among the published key fragments: the `ide` updater's record of
 /// the fragments it composed the server config from. No resource accounts for it, and it is
 /// never pruned.

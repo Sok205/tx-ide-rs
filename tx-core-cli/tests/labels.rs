@@ -184,16 +184,3 @@ fn the_label_program_is_the_bundles_program() {
     let program = cli.ok(&["_label-program"]);
     assert!(program.ends_with("/tx-labels\n"), "{program:?}");
 }
-
-#[test]
-fn without_the_bundle_labels_runs_compiled_into_tx() {
-    require_tmux!();
-    let cli = Cli::compiled_in();
-    assert_eq!(plugin_row(&cli, "labels")["origin"], "built-in");
-    let help = cli.ok(&["help"]);
-    assert!(lists_verb(&help, "_label-program"), "{help}");
-    let id = cli.create("a");
-    assert_eq!(cli.ok(&["_pane-info", &id]), "a\n\n");
-    let program = cli.ok(&["_label-program"]);
-    assert!(program.ends_with("/tx\n"), "{program:?}");
-}

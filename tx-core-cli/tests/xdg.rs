@@ -392,7 +392,6 @@ fn installed(output: &str) -> Vec<(String, String)> {
     rows.as_array()
         .unwrap()
         .iter()
-        .filter(|row| row["origin"] != "built-in")
         .map(|row| {
             (
                 row["id"].as_str().unwrap().to_owned(),

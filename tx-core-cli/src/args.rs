@@ -86,7 +86,7 @@ verbs:
                                                                     config file that names no plugin); --json: one array
                                                                     of {id, status, detail, origin, directory, description,
                                                                     tier, requires, needs, verbs, engine}, origin being
-                                                                    shipped, user or built-in
+                                                                    shipped or user
   update [--bundles DIR --binaries DIR [--link]]                    bring this machine up to this tx: run the update steps
                                                                     it has not had yet (<data>/update-version), then each
                                                                     plugin's updater (the IDE's tmux config, keys, shipped
@@ -617,7 +617,7 @@ fn parse_gc(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         match flag {
             "--older-than" => {
                 let raw = cursor.value(flag)?;
-                let minutes = tx_timeline::verbs::parse_duration_minutes(raw).ok_or_else(|| {
+                let minutes = crate::gc::parse_duration_minutes(raw).ok_or_else(|| {
                     usage(format!(
                         "--older-than takes a duration such as 30m, 2h or 1d, got {raw:?}"
                     ))

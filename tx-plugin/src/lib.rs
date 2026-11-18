@@ -15,7 +15,7 @@ pub mod testing;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The built-in verbs of `tx`. A plugin's verb of one of these names is never run: an installed
-/// plugin loses it with a problem, a linked one is refused.
+/// plugin loses it with a problem, one hosted in a program is refused.
 pub const RESERVED_VERBS: &[&str] = &[
     "help",
     "engines",

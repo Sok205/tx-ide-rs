@@ -27,11 +27,7 @@ impl Plugin for EditPlugin {
     fn register(&self, r: &mut Registry) -> Result<(), PluginError> {
         r.verb(Arc::new(EditSession));
         r.verb(Arc::new(EditTag));
-        r.resource("keys/edit.tmux", include_bytes!("../keys/edit.tmux"))?;
-        r.resource(
-            "bin/tmux-edit-tx-session",
-            include_bytes!("../bin/tmux-edit-tx-session"),
-        )
+        Ok(())
     }
 }
 

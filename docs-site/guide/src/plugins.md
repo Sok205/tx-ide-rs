@@ -1,8 +1,11 @@
 # Plugins catalogue
 
-Every bundled plugin, in the order `tx-core-cli/src/plugins.rs::MANIFEST` lists them, with its
-verbs and key. Verbs starting with `_` are internal: key bindings, hooks and popups call them.
-`tx plugins` shows which are active; the `plugins:` block of `<config>/config.yaml` switches them.
+Every plugin tx ships, with its verbs and key. Each is a directory under `<data>/shipped/` with
+a manifest and its program; `tx` links none of them. Verbs starting with `_` are internal: key
+bindings, hooks and popups call them. `tx plugins` lists the installed ones in plugin order (by
+id) with their status; the `plugins:` block of `<config>/config.yaml` switches them. Which of
+them an install has is decided by tier: the preset `headless` installs tier `core`, `ide` adds
+tier `ide`, and `full`, the default, adds tier `extra`.
 
 ## Engines
 

@@ -512,16 +512,14 @@ fn an_installed_plugins_updater_is_its_program_with_its_lines_under_its_id() {
         stdout(&output),
         format!(
             "update steps are at {}: nothing pending\n\
-             ide: {}\n\
              after: in {} for after\n\
              after: args: \n\
              hello: did x\n\
              respawn running agents to pick this up\n",
             tx_core::updates::latest(),
-            sandbox.data().join("tmux.conf").display(),
             sandbox.own().join("after").display(),
         ),
-        "the linked updaters, then the installed ones in plugin order; no input"
+        "the updaters in plugin order; no input"
     );
     assert!(sandbox.data().join("hello-made").is_file());
     assert_eq!(
@@ -549,13 +547,6 @@ fn an_updater_that_fails_is_named_and_the_others_still_run() {
     let output = sandbox.run(&["update"]);
     assert_eq!(output.status.code(), Some(1));
     let out = stdout(&output);
-    assert!(
-        out.contains(&format!(
-            "ide: {}\n",
-            sandbox.data().join("tmux.conf").display()
-        )),
-        "{out}"
-    );
     assert!(out.ends_with("hello: before\nlater: ran\n"), "{out}");
     let errors = stderr(&output);
     let mut lines = errors.lines();
@@ -648,25 +639,20 @@ fn a_retire_that_fails_is_named_and_the_directory_goes_all_the_same() {
 const FRAGMENT: &str = "#!/usr/bin/env bash\n# keys: H\ntmux bind H display-message hello\n";
 
 #[test]
-fn cores_roles_and_definitions_are_published_without_the_ide() {
+fn cores_roles_and_definitions_are_published_without_a_plugin() {
     let sandbox = Sandbox::new();
-    sandbox.write_yaml("plugins:\n  ide: { enabled: false }\n");
     let out = sandbox.ok(&["update"]);
     assert!(!out.contains("ide:"), "{out}");
     for file in [
         "roles/COMMON.md",
         "definitions/agents/developer.md",
         "definitions/mcp.json",
-        // What the other linked plugins register is published too.
-        "keys/kill.tmux",
-        "bin/tmux-kill-tx-session",
     ] {
         assert!(sandbox.data().join(file).is_file(), "{file}");
     }
-    assert!(
-        !sandbox.data().join("conf/tmux.conf").exists(),
-        "the ide's own"
-    );
+    for directory in ["keys", "bin", "conf", "nvim"] {
+        assert!(!sandbox.data().join(directory).exists(), "{directory}");
+    }
 }
 
 #[test]
@@ -686,8 +672,6 @@ fn an_installed_plugins_resources_are_published_and_go_when_it_is_disabled() {
     assert!(metadata.is_file(), "a copy, whatever the plugin holds");
     assert_eq!(metadata.mode() & 0o7777, 0o755);
     assert_eq!(sandbox.published("roles/NOTE.md"), "a note\n");
-    let line = format!("run-shell \"/usr/bin/env bash {}\"\n", fragment.display());
-    assert!(sandbox.published("tmux.conf").contains(&line));
 
     // Nothing changed: the files are left alone.
     let before = inode(&fragment);
@@ -698,7 +682,6 @@ fn an_installed_plugins_resources_are_published_and_go_when_it_is_disabled() {
     sandbox.ok(&["update"]);
     assert!(!fragment.exists());
     assert!(!sandbox.data().join("roles/NOTE.md").exists());
-    assert!(!sandbox.published("tmux.conf").contains("hello"));
     assert!(sandbox.data().join("roles/COMMON.md").is_file());
 }
 
@@ -741,6 +724,7 @@ fn a_resource_a_plugin_lists_and_lacks_is_named_and_the_rest_is_published() {
         ],
     );
     std::fs::remove_file(hello.join("agents/NOTE.md")).unwrap();
+    sandbox.updating(&sandbox.own(), "later", "echo ran");
     let output = sandbox.run(&["update"]);
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
@@ -749,10 +733,7 @@ fn a_resource_a_plugin_lists_and_lacks_is_named_and_the_rest_is_published() {
     );
     assert!(sandbox.data().join("keys/hello.tmux").is_file());
     assert!(
-        stdout(&output).contains(&format!(
-            "ide: {}\n",
-            sandbox.data().join("tmux.conf").display()
-        )),
+        stdout(&output).ends_with("later: ran\n"),
         "the updaters still ran"
     );
 }

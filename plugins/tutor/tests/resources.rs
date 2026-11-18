@@ -1,4 +1,4 @@
-//! The tutor plugin's packs: compiled into the program, published as no resource.
+//! The tutor plugin's packs: compiled into the program.
 
 use std::path::{Path, PathBuf};
 
@@ -60,9 +60,8 @@ fn the_lesson_lua_talks_to_the_cores_server() {
 }
 
 #[test]
-fn the_plugin_publishes_no_resource() {
+fn an_enabled_plugin_has_its_verb() {
     let (_dir, core) = core(&PluginConfig::default());
-    assert!(core.plugin_resources("").is_empty());
     assert!(core.verb("tutor").is_some());
 }
 
@@ -71,6 +70,5 @@ fn a_disabled_plugin_has_no_verb() {
     let mut config = PluginConfig::default();
     config.disabled.insert("tutor".to_owned());
     let (_dir, core) = core(&config);
-    assert!(core.plugin_resources("").is_empty());
     assert!(core.verb("tutor").is_none());
 }

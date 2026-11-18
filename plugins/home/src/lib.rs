@@ -35,6 +35,6 @@ impl Plugin for HomePlugin {
         for verb in verbs::verbs() {
             r.verb(verb);
         }
-        r.resource("keys/home.tmux", include_bytes!("../keys/home.tmux"))
+        Ok(())
     }
 }

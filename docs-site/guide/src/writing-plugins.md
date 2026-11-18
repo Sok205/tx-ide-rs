@@ -254,7 +254,7 @@ Problems:
 - `bin/<name> is missing` or `is not executable` (for every program the manifest names), and
   `resource <name> is missing`;
 - `requires "<id>", which is not installed` (or `is disabled`, or `does not load`: that plugin has
-  a line of its own). A plugin that `tx` still has compiled in counts as installed;
+  a line of its own);
 - in `config.yaml`: `agent.engine "<kind>" is not an active engine (active: …)`;
 - `<data>/shipped: plugins are from tx <a>, this is tx <b>: run install --upgrade`, or `no
   shipped plugins are installed: run install` for an install that has data.
@@ -640,6 +640,5 @@ name, and the verbs, their usages, the engine kind and the presence of an update
 `register` produces. `check_manifest` is the first three alone, for a plugin whose program is not
 built on the SDK or that has none.
 
-Until every plugin has a manifest, a plugin of this repository is also listed in `MANIFEST`
-(`tx-core-cli/src/plugins.rs`) and runs compiled into `tx` wherever its bundle is not installed;
-see [Architecture](architecture.md).
+Every plugin tx ships is built this way; [Developing](developing.md#adding-a-plugin) walks
+through adding one to this repository.

@@ -405,6 +405,7 @@ fn an_agent_reaches_its_own_core_through_the_session_environment() {
                 "--run-dir",
                 "run",
             ])
+            .args(common::plugin_flags(&cli.plugin_dirs))
             .args(cli.role_flags())
             .args(args)
             .env("PATH", &path)
@@ -595,4 +596,37 @@ fn help_names_the_config_file_and_a_bad_key_is_a_usage_error() {
     let stderr = cli.fails(&["engines"], 2);
     assert!(stderr.contains("config.yaml"), "{stderr}");
     assert!(stderr.contains("modle"), "{stderr}");
+}
+
+/// With no plugin installed `tx` is its built-ins and nothing else: no plugin verb, no engine.
+#[test]
+fn without_a_plugin_tx_has_its_built_ins_and_no_engine() {
+    let mut cli = Cli::new();
+    let empty = cli.dir.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    cli.plugin_dirs = vec![empty];
+    assert_eq!(cli.ok(&["plugins"]), "");
+    assert_eq!(cli.ok(&["engines"]), "");
+    assert_eq!(cli.ok(&["ls"]), "");
+    assert!(!cli.ok(&["help"]).contains("plugin verbs:"));
+    let stderr = cli.fails(&["home"], 2);
+    assert!(
+        stderr.starts_with("tx: unknown verb \"home\"\n"),
+        "{stderr}"
+    );
+    let repository = cli.repository("w");
+    assert_eq!(
+        cli.fails(
+            &[
+                "create",
+                "x",
+                "--cwd",
+                repository.to_str().unwrap(),
+                "--prompt",
+                "hi"
+            ],
+            1
+        ),
+        "tx: engine claude is not enabled (enabled: )\n"
+    );
 }

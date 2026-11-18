@@ -6,7 +6,7 @@ mod common;
 
 use std::path::Path;
 
-use common::{Cli, lists_verb};
+use common::Cli;
 use serde_json::{Value, json};
 
 impl Cli {
@@ -417,24 +417,4 @@ fn the_bundle_is_the_shipped_plugin_and_its_verbs_are_its_program() {
         format!("verb\tchat\t{}\n", bundle.join("bin/tx-chat").display()),
         "one plugin program was started: tx became it, and no engine"
     );
-}
-
-/// Without the bundle the plugin runs compiled into `tx`, complete.
-#[test]
-fn without_the_bundle_chat_ls_runs_compiled_into_tx() {
-    require_tmux!();
-    let cli = Cli::compiled_in();
-    assert_eq!(plugin_row(&cli)["origin"], "built-in");
-    assert!(lists_verb(&cli.ok(&["help"]), "chat"));
-    let id = cli.create_agent("a");
-    let transcript = cli.show("a")["ext"]["claude"]["transcript_path"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let (output, trace) = traced_chat_ls(&cli);
-    assert_eq!(
-        output,
-        format!("a — conversation {id}\n  transcript {transcript}\n")
-    );
-    assert!(!trace.contains("verb\tchat"), "{trace}");
 }

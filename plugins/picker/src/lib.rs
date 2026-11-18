@@ -51,7 +51,7 @@ impl Plugin for PickerPlugin {
         r.verb(Arc::new(Roles));
         r.verb(Arc::new(ToggleHide));
         r.verb(Arc::new(RolesPanel));
-        r.resource("keys/picker.tmux", include_bytes!("../keys/picker.tmux"))
+        Ok(())
     }
 }
 

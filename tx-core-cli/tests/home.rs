@@ -141,33 +141,6 @@ fn the_bundles_are_the_shipped_plugins_and_the_home_is_one_program() {
     );
 }
 
-/// With no bundle installed both plugins run compiled into `tx`, complete: the floor's TUI is
-/// `tx` itself.
-#[test]
-fn without_the_bundles_the_home_runs_compiled_into_tx() {
-    require_tmux!();
-    let cli = Cli::compiled_in();
-    for id in ["home", "home-themes"] {
-        let row = row(&cli, id);
-        assert_eq!(row["origin"], "built-in", "{row}");
-        assert_eq!(row["status"], "active", "{row}");
-    }
-    assert!(common::lists_verb(&cli.ok(&["help"]), "home"));
-    let (code, trace) = traced_home(&cli);
-    assert_eq!(code, Some(1));
-    assert_eq!(trace, "", "no plugin program was started");
-    installed_server(&cli, PLAIN_HOME);
-    hand_made_home(&cli, "sh");
-    assert_eq!(cli.ok(&["_home-install", "home"]), "");
-    assert!(
-        cli.wait_for(5, || home_command(&cli) == "tx"),
-        "{}",
-        home_command(&cli)
-    );
-    let hooks = cli.tmux_out(&["show-hooks", "-p", "-t", &home_pane(&cli)]);
-    assert!(hooks.contains("_home-perform"), "{hooks}");
-}
-
 const PLAIN_HOME: &str = "plugins:\n  assistant: { enabled: false }\n  home-themes: { enabled: false }\n  layouts: { enabled: false }\n";
 
 #[test]
