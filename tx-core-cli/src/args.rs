@@ -21,7 +21,7 @@ verbs:
                                                                     the engine validates every option. A flag not given
                                                                     comes from `agent:` in the config file.
                                                                     --agent A runs the agent definition A (see
-                                                                    `definitions`): its prompt, tools, MCP servers and
+                                                                    `harness ls`): its prompt, tools, MCP servers and
                                                                     skills, plus the --skill/--mcp/--tool extras, all kept
                                                                     on the record and resolved again at every respawn;
                                                                     with --agent, the roles are the --roles given, else
@@ -66,12 +66,13 @@ verbs:
                                                                     Worktree, branch, record and conversation stay, so
                                                                     respawn works. --dry-run: the same, nothing deleted
   engines                                                           the engines whose plugin is enabled (claude, codex)
-  definitions [agents|skills|mcp|tools]                             name and description of each definition, every kind
-                                                                    or one; yours (<config>/definitions) win by name over
-                                                                    the shipped ones (<data>/definitions). tools (only
-                                                                    when asked): the names `tools` can use, from the
-                                                                    engines, and each MCP server's tools
-  check [--engine ENGINE] [NAME]...                                 validate the definitions, all or those named (agents,
+  harness ls [agents|skills|mcp|tools]                              name and description of each agent, skill and MCP
+                                                                    server of the harness, every kind or one; yours
+                                                                    (<config>/harness) win by name over the shipped ones
+                                                                    (<data>/harness). tools (only when asked): the names
+                                                                    `tools` can use, from the engines, and each MCP
+                                                                    server's tools
+  harness check [--engine ENGINE] [NAME]...                         validate the harness, all of it or those named (agents,
                                                                     skills, MCP servers); path:line per problem, exit 1;
                                                                     --engine: also what ENGINE adds to each agent and what
                                                                     it carries that no flag removes
@@ -79,21 +80,21 @@ verbs:
   update                                                            bring this machine up to this tx: run the update steps
                                                                     it has not had yet (<data>/update-version), then each
                                                                     plugin's updater (the IDE's tmux config, keys, shipped
-                                                                    roles and definitions); one line per step, and whether
+                                                                    roles and harness); one line per step, and whether
                                                                     running agents need a respawn. Other verbs warn while
                                                                     one is pending
 
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
 else the XDG variable, else the XDG default:
-  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           config.yaml, roles/, definitions/ (your own)
-  data    $XDG_DATA_HOME/<app>, ~/.local/share/<app>        records, log, plugin data, roles/, definitions/ (shipped)
+  config  $XDG_CONFIG_HOME/<app>, ~/.config/<app>           config.yaml, roles/, harness/ (your own)
+  data    $XDG_DATA_HOME/<app>, ~/.local/share/<app>        records, log, plugin data, roles/, harness/ (shipped)
   state   $XDG_STATE_HOME/<app>, ~/.local/state/<app>       locks, profiles
   cache   $XDG_CACHE_HOME/<app>, ~/.cache/<app>
   run     $XDG_RUNTIME_DIR/<app>, $TMPDIR/<app>.<user>      tmux.sock
 Roles resolve from --profile-dir, else <data>/roles (written by `tx update`), then <config>/roles;
-skills from --skill-dir, else <data>/definitions/skills (written by `tx update`), then
-<config>/definitions/skills.
+skills from --skill-dir, else <data>/harness/skills (written by `tx update`), then
+<config>/harness/skills.
 The config file is <config>/config.yaml (--config FILE overrides); every key is optional:
   agent:                        defaults for create; a flag given replaces its key
     engine: claude              claude | codex
@@ -210,15 +211,15 @@ pub enum Verb {
     Plugins,
     /// `update`: the pending update steps, then every plugin's updater.
     Update,
-    /// `check [--engine E] [NAME]...`: validate the definitions, all of them or those named;
-    /// with an engine, also what it adds or cannot remove.
-    Check {
+    /// `harness ls [agents|skills|mcp|tools]`: list the harness, every kind or one.
+    HarnessList {
+        kind: Option<HarnessKind>,
+    },
+    /// `harness check [--engine E] [NAME]...`: validate the harness, all of it or the entries
+    /// named; with an engine, also what it adds or cannot remove.
+    HarnessCheck {
         engine: Option<EngineKind>,
         names: Vec<String>,
-    },
-    /// `definitions [agents|skills|mcp]`: list them, every kind or one.
-    Definitions {
-        kind: Option<DefinitionKind>,
     },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
     Plugin {
@@ -228,9 +229,9 @@ pub enum Verb {
     Help,
 }
 
-/// What `tx definitions` lists.
+/// What `tx harness ls` lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DefinitionKind {
+pub enum HarnessKind {
     Agents,
     Skills,
     Mcp,
@@ -238,19 +239,15 @@ pub enum DefinitionKind {
     Tools,
 }
 
-impl DefinitionKind {
-    pub const ALL: [DefinitionKind; 3] = [
-        DefinitionKind::Agents,
-        DefinitionKind::Skills,
-        DefinitionKind::Mcp,
-    ];
+impl HarnessKind {
+    pub const ALL: [HarnessKind; 3] = [HarnessKind::Agents, HarnessKind::Skills, HarnessKind::Mcp];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            DefinitionKind::Agents => "agents",
-            DefinitionKind::Skills => "skills",
-            DefinitionKind::Mcp => "mcp",
-            DefinitionKind::Tools => "tools",
+            HarnessKind::Agents => "agents",
+            HarnessKind::Skills => "skills",
+            HarnessKind::Mcp => "mcp",
+            HarnessKind::Tools => "tools",
         }
     }
 }
@@ -472,34 +469,42 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             target: target(&mut cursor, "respawn")?,
         },
         Some("gc") => parse_gc(&mut cursor)?,
-        Some("check") => {
-            let engine = match cursor.peek() {
-                Some("--engine") => {
-                    cursor.next();
-                    Some(engine_kind(cursor.value("--engine")?)?)
-                }
-                _ => None,
-            };
-            Verb::Check {
-                engine,
-                names: cursor.rest(),
-            }
-        }
-        Some("definitions") => Verb::Definitions {
-            kind: match cursor.next() {
-                None => None,
-                Some(text) => Some(
-                    DefinitionKind::ALL
-                        .into_iter()
-                        .chain([DefinitionKind::Tools])
-                        .find(|kind| kind.as_str() == text)
-                        .ok_or_else(|| {
-                            usage(format!(
-                                "definitions lists agents, skills, mcp or tools, got {text:?}"
-                            ))
-                        })?,
-                ),
+        Some("harness") => match cursor.next() {
+            Some("ls") => Verb::HarnessList {
+                kind: match cursor.next() {
+                    None => None,
+                    Some(text) => Some(
+                        HarnessKind::ALL
+                            .into_iter()
+                            .chain([HarnessKind::Tools])
+                            .find(|kind| kind.as_str() == text)
+                            .ok_or_else(|| {
+                                usage(format!(
+                                    "harness ls lists agents, skills, mcp or tools, got {text:?}"
+                                ))
+                            })?,
+                    ),
+                },
             },
+            Some("check") => {
+                let engine = match cursor.peek() {
+                    Some("--engine") => {
+                        cursor.next();
+                        Some(engine_kind(cursor.value("--engine")?)?)
+                    }
+                    _ => None,
+                };
+                Verb::HarnessCheck {
+                    engine,
+                    names: cursor.rest(),
+                }
+            }
+            other => {
+                return Err(usage(format!(
+                    "harness takes ls or check, got {}",
+                    other.map_or("nothing".to_owned(), |text| format!("{text:?}"))
+                )));
+            }
         },
         Some(other) => Verb::Plugin {
             name: other.to_owned(),
@@ -1103,30 +1108,41 @@ mod tests {
         assert_eq!(parse_str("update").unwrap().verb, Verb::Update);
         assert!(parse_str("update now").is_err());
         assert_eq!(
-            parse_str("check pm linear").unwrap().verb,
-            Verb::Check {
+            parse_str("harness check pm linear").unwrap().verb,
+            Verb::HarnessCheck {
                 engine: None,
                 names: vec!["pm".into(), "linear".into()]
             }
         );
         assert_eq!(
-            parse_str("check --engine codex pm").unwrap().verb,
-            Verb::Check {
+            parse_str("harness check --engine codex pm").unwrap().verb,
+            Verb::HarnessCheck {
                 engine: Some(EngineKind::Codex),
                 names: vec!["pm".into()]
             }
         );
         assert_eq!(
-            parse_str("definitions mcp").unwrap().verb,
-            Verb::Definitions {
-                kind: Some(DefinitionKind::Mcp)
+            parse_str("harness ls mcp").unwrap().verb,
+            Verb::HarnessList {
+                kind: Some(HarnessKind::Mcp)
             }
         );
         assert_eq!(
-            parse_str("definitions").unwrap().verb,
-            Verb::Definitions { kind: None }
+            parse_str("harness ls").unwrap().verb,
+            Verb::HarnessList { kind: None }
         );
-        assert!(parse_str("definitions roles").is_err());
+        assert!(parse_str("harness ls roles").is_err());
+        assert!(parse_str("harness").unwrap_err().0.contains("ls or check"));
+        assert!(
+            parse_str("harness list")
+                .unwrap_err()
+                .0
+                .contains("\"list\"")
+        );
+        assert!(matches!(
+            parse_str("definitions").unwrap().verb,
+            Verb::Plugin { ref name, .. } if name == "definitions"
+        ));
         assert_eq!(parse_str("help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("--help").unwrap().verb, Verb::Help);
         assert_eq!(parse_str("").unwrap_err().0, "missing verb");

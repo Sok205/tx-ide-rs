@@ -39,7 +39,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tx_core::definitions::{AUTHORIZATION_HEADER, McpServer, bearer_variable, variable_name};
+use tx_core::harness::{AUTHORIZATION_HEADER, McpServer, bearer_variable, variable_name};
 use tx_core::{
     Agent, Conversation, ENGINE_ARGS_OPTION, EngineError, EngineKind, IdleReason, Input, Key,
     LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
@@ -93,7 +93,7 @@ pub const BUILT_IN_SWITCHES: [(&[&str], &[&str]); 6] = [
     (&["ScheduleWakeup"], &[DISABLE_FLAG, "sleep_tool"]),
 ];
 /// What every launch carries that no switch removes (codex-cli 0.166.0): reported by
-/// `tx check --engine codex`, never silently accepted.
+/// `tx harness check --engine codex`, never silently accepted.
 pub const FORCED: [&str; 5] = [
     "the tools exec and wait, through which every other tool runs (the model's code mode)",
     "apply_patch (include_apply_patch_tool=false leaves it) and clock__curr_time",
@@ -122,7 +122,7 @@ const MAPPED_TOOLS: [&str; 12] = [
 
 /// What one agent definition gets on Codex that its file does not say: tools that cannot be
 /// separated or removed, and listed names with no Codex counterpart.
-pub fn definition_notes(agent: &tx_core::definitions::AgentDefinition) -> Vec<String> {
+pub fn definition_notes(agent: &tx_core::harness::AgentDefinition) -> Vec<String> {
     let lists = |tool: &str| agent.tools.iter().any(|listed| listed == tool);
     let cuts = |tool: &str| agent.disallowed_tools.iter().any(|cut| cut == tool);
     let mut notes = Vec::new();

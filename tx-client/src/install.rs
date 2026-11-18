@@ -27,7 +27,7 @@ const KINDS: [&str; 6] = [
     "conf",
     NVIM_RESOURCE,
     ROLES_RESOURCE,
-    tx_core::config::SHIPPED_DEFINITIONS_DIR,
+    tx_core::config::SHIPPED_HARNESS_DIR,
 ];
 /// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
 /// view's runtimepath by `views::open`.
@@ -239,7 +239,7 @@ fn kind_dir(data: &Path, kind: &str) -> PathBuf {
     }
 }
 
-/// Writes every `bin/`, `keys/`, `conf/`, `nvim/`, `agents/` and `definitions/` resource under
+/// Writes every `bin/`, `keys/`, `conf/`, `nvim/`, `agents/` and `harness/` resource under
 /// `data` and deletes files in those directories that no resource accounts for. `bin/` and
 /// `keys/` files are executable: scripts, and fragments that `run-shell` executes.
 fn materialise(data: &Path, resources: &[Resource]) -> Result<(), VerbError> {
@@ -557,8 +557,8 @@ mod tests {
         assert_eq!(kind_dir(data, "agents"), Path::new("/d/roles"));
         assert_eq!(kind_dir(data, "keys"), Path::new("/d/keys"));
         assert_eq!(
-            install_path(data, "definitions/skills/x/SKILL.md"),
-            Path::new("/d/definitions/skills/x/SKILL.md")
+            install_path(data, "harness/skills/x/SKILL.md"),
+            Path::new("/d/harness/skills/x/SKILL.md")
         );
         assert_eq!(
             install_path(data, "bin/tmux-nav"),

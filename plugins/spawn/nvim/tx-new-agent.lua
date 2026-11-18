@@ -10,7 +10,7 @@
 --
 -- spec.project is preselected among the projects (the answers carry its path as cwd). Each model
 -- list starts with the engine's default, which is what the form preselects; the agents are the
--- agent definitions, and spec.agent (the configured default) is preselected.
+-- harness's agent definitions, and spec.agent (the configured default) is preselected.
 --
 -- Panels: [1] Name  [2] Tags  [3] Project  [4] Prompt  [5] Engine  [6] Model  [7] Effort
 -- [8] Agent. The form opens in normal mode on Name (i to type), and moving between panels keeps

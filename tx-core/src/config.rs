@@ -23,16 +23,16 @@ pub const PLUGINS_DIR: &str = "plugins";
 pub const WORKTREES_DIR: &str = "worktrees";
 /// Under an agent's directory: the engine's archive of its conversations (`LlmEngine::archive`).
 pub const ARCHIVE_DIR: &str = "archive";
-/// Under the data directory: the definitions tx ships (`agents/`, `skills/`, `mcp.json`), written
+/// Under the data directory: the harness tx ships (`agents/`, `skills/`, `mcp.json`), written
 /// by `tx update`. Not `<data>/agents/`, which holds the agent records.
-pub const SHIPPED_DEFINITIONS_DIR: &str = "definitions";
-/// Under the config directory: the user's own definitions, in the same layout; they win by name.
-pub const USER_DEFINITIONS_DIR: &str = "definitions";
+pub const SHIPPED_HARNESS_DIR: &str = "harness";
+/// Under the config directory: the user's own harness, in the same layout; they win by name.
+pub const USER_HARNESS_DIR: &str = "harness";
 
 /// The five directories tx keeps its files in, resolved by the front end (XDG, `TX_APPNAME`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Directories {
-    /// Written by the user: `config.yaml`, `roles/`, `definitions/`.
+    /// Written by the user: `config.yaml`, `roles/`, `harness/`.
     pub config: PathBuf,
     /// Must survive: records, the log, plugin data, the files `tx update` generates.
     pub data: PathBuf,
@@ -68,12 +68,12 @@ impl Directories {
         ]
     }
 
-    /// The definition layers, lowest first: the shipped `<data>/definitions/`, then the user's
-    /// `<config>/definitions/`, which wins by name.
-    pub fn definition_roots(&self) -> [PathBuf; 2] {
+    /// The harness layers, lowest first: the shipped `<data>/harness/`, then the user's
+    /// `<config>/harness/`, which wins by name.
+    pub fn harness_roots(&self) -> [PathBuf; 2] {
         [
-            self.data.join(SHIPPED_DEFINITIONS_DIR),
-            self.config.join(USER_DEFINITIONS_DIR),
+            self.data.join(SHIPPED_HARNESS_DIR),
+            self.config.join(USER_HARNESS_DIR),
         ]
     }
 
@@ -191,7 +191,7 @@ pub struct CoreConfig {
     /// Base environment for every session, applied before the per-session env.
     pub env: Vec<(String, String)>,
     /// `config.yaml`'s `agent:` block. Its `definition` is what a launch without one of its own
-    /// runs (create, fork, and the respawn of a record from before definitions); the rest is
+    /// runs (create, fork, and the respawn of a record from before agent definitions); the rest is
     /// applied by [`AgentDefaults::launch`]. [`AgentDefaults::none`] until the caller sets it.
     pub agent_defaults: AgentDefaults,
     /// The caller's environment. Never passed into a session whole: a launch takes from it only

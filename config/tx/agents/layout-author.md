@@ -23,7 +23,7 @@ and `size: N%|cells`. Read that section before you write anything.
 
 1. Read the description. When it leaves the arrangement open (which pane goes where, which
    agent, what a command runs), ask the operator before you write; don't guess.
-2. Run `tx definitions agents`. Every `agent:` value must be a name it lists: `tx layout check`
+2. Run `tx harness ls agents`. Every `agent:` value must be a name it lists: `tx layout check`
    does not check definitions, and `open` fails on an unknown one. If the description names an
    agent that isn't listed, ask which listed definition to use.
 3. Write exactly one file, `"$(tx layout path NAME)"`. Create its directory if it is missing.

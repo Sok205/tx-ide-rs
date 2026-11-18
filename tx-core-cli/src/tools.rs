@@ -1,4 +1,4 @@
-//! `tx definitions tools`: the names an agent definition's `tools` and `disallowedTools` can use.
+//! `tx harness ls tools`: the names an agent definition's `tools` and `disallowedTools` can use.
 //! Read from the engines, never hard-coded where an engine can tell:
 //! - Claude's built-in tools from `tx_engine_claude::probe` (no model call, no login), cached per
 //!   Claude version under `<cache>/tools/`;
@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tx_core::Directories;
-use tx_core::definitions::{Definitions, McpServer};
+use tx_core::harness::{Harness, McpServer};
 
 const CODEX_BIN: &str = "codex";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -168,7 +168,7 @@ fn server_tools(name: &str, message: &Value) -> ServerTools {
     Ok(tools)
 }
 
-/// The rows of `tx definitions tools`: Claude's built-ins, the baseline, the Codex switches, then
+/// The rows of `tx harness ls tools`: Claude's built-ins, the baseline, the Codex switches, then
 /// each MCP server's tools.
 pub fn list(directories: &Directories, out: &mut dyn Write) -> Result<(), String> {
     let claude = claude_built_ins(directories)?;
@@ -197,7 +197,7 @@ pub fn list(directories: &Directories, out: &mut dyn Write) -> Result<(), String
             writeln!(out, "{name}\t{}", switch.join(" ")).ok();
         }
     }
-    let servers: BTreeMap<String, McpServer> = Definitions::new(directories.definition_roots())
+    let servers: BTreeMap<String, McpServer> = Harness::new(directories.harness_roots())
         .mcp_servers()
         .map_err(|error| error.to_string())?
         .into_iter()

@@ -23,7 +23,7 @@ pub fn tmux_available() -> bool {
 /// their paths stay `<dir>/sessions`, `<dir>/tmux.sock`, … (the XDG suite separates them).
 /// A stand-in for the shipped default agent definition, `developer`, under `config_dir`.
 pub fn stand_in_definition(config_dir: &std::path::Path) {
-    let agents = config_dir.join("definitions/agents");
+    let agents = config_dir.join("harness/agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
         agents.join("developer.md"),
@@ -81,8 +81,15 @@ impl Cli {
             std::fs::write(roles.join(format!("{role}.md")), "stand-in role\n").unwrap();
         }
         // Likewise the default agent definition (`agent.definition: developer`), which a real
-        // install ships under `<data>/definitions`; `tx update` replaces this stand-in.
+        // install ships under `<data>/harness`; `tx update` replaces this stand-in.
         stand_in_definition(&dir.path().join("state"));
+        // That stand-in makes the directories look used: stamp them up to date, as `tx update`
+        // would, so no verb warns of a pending update step.
+        std::fs::write(
+            dir.path().join("state").join(tx_core::updates::STAMP_FILE),
+            format!("{}\n", tx_core::updates::latest()),
+        )
+        .unwrap();
         Self { dir }
     }
     /// `--profile-dir` for the stand-in default roles, then the state dir's own roles, which win.

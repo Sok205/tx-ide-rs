@@ -4,11 +4,11 @@
 pub mod agent;
 pub mod config;
 pub mod core;
-pub mod definitions;
 pub mod effort;
 pub mod engine;
 pub mod error;
 pub mod events;
+pub mod harness;
 /// Internal; no stability promise for plugin authors.
 #[doc(hidden)]
 pub mod locks;

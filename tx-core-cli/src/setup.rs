@@ -17,7 +17,7 @@ pub const DEFAULT_APPNAME: &str = "tx-ide";
 /// Under the data dir the roles plugins ship (written by `tx update`); under the config dir
 /// the user's own.
 pub const ROLES_DIR: &str = "roles";
-/// Under each definition root: the skills, the shipped ones and then the user's.
+/// Under each harness root: the skills, the shipped ones and then the user's.
 pub const SKILLS_DIR: &str = "skills";
 /// The internal binary the wired hooks run; installed next to `tx`.
 pub const TXI: &str = "txi";
@@ -32,7 +32,7 @@ pub enum Failure {
     /// The environment names an invalid application or leaves a directory unresolvable.
     Environment(String),
     /// A definition file that cannot be read where a listing needs it.
-    Definition(tx_core::definitions::DefinitionError),
+    Harness(tx_core::harness::HarnessError),
     /// An update step, or the stamp it keeps, failed.
     Update(tx_core::updates::UpdateError),
 }
@@ -51,7 +51,7 @@ impl std::fmt::Display for Failure {
             Failure::Plugin(error) => error.fmt(f),
             Failure::Verb(error) => error.fmt(f),
             Failure::Environment(text) => f.write_str(text),
-            Failure::Definition(error) => error.fmt(f),
+            Failure::Harness(error) => error.fmt(f),
             Failure::Update(error) => error.fmt(f),
         }
     }
@@ -190,11 +190,11 @@ fn default_profile_dirs(directories: &Directories) -> Vec<PathBuf> {
     ]
 }
 
-/// Without `--skill-dir`: `skills/` under each definition root, the shipped ones and then the
+/// Without `--skill-dir`: `skills/` under each harness root, the shipped ones and then the
 /// user's.
 fn default_skill_dirs(directories: &Directories) -> Vec<PathBuf> {
     directories
-        .definition_roots()
+        .harness_roots()
         .into_iter()
         .map(|dir| dir.join(SKILLS_DIR))
         .collect()

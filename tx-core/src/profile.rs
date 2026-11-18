@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::definitions::McpServer;
+use crate::harness::McpServer;
 
 pub const ROLE_SUFFIX: &str = ".md";
 pub const LOCAL_SUFFIX: &str = ".local.md";
