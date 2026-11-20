@@ -1,23 +1,25 @@
 //! Drawing the board: a header, the three columns, the detail drawer of the selected card and a
-//! footer of keys (or the notice). Colours go through the tx palette.
+//! footer of keys (or the query being typed, or the notice); the label picker over it all.
+//! Labels wear GitHub's own colours; everything else goes through the tx palette.
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use tx_client::palette::{self, palette};
 use tx_core::LlmEngineState;
 
-use super::app::App;
-use super::github::{Issue, age};
+use super::app::{App, Picker};
+use super::github::{Issue, age, rgb_of};
 use super::model::{Card, CardAgent, ColumnKind};
 
 /// Each card takes two rows: the number and title, then labels and agents.
 pub const CARD_ROWS: u16 = 2;
 const CURSOR_BG: Color = Color::Indexed(236);
-const KEYS: &str = "j/k h/l move  s start agent  Enter show agent  o browser  c comment  n new  x close  m assign  r refresh  ? keys  q quit";
+const KEYS: &str =
+    "j/k h/l move  / filter  L labels  s start agent  Enter show agent  ? all keys  q quit";
 
 fn accent() -> Style {
     Style::new().fg(palette(palette::ACCENT))
@@ -33,15 +35,24 @@ fn text() -> Style {
     Style::new().fg(palette(palette::FG))
 }
 
-fn label_style() -> Style {
-    Style::new().fg(palette(palette::WARN))
+fn info() -> Style {
+    Style::new().fg(palette(palette::INFO))
+}
+
+/// A label in its GitHub colour; the palette's warn colour when it has none.
+pub fn label_style(color: &str) -> Style {
+    let color = match rgb_of(color) {
+        Some((red, green, blue)) => Color::Rgb(red, green, blue),
+        None => palette::WARN,
+    };
+    Style::new().fg(palette(color))
 }
 
 pub fn state_style(state: LlmEngineState) -> Style {
     match state {
         LlmEngineState::Working => Style::new().fg(palette(palette::GREEN)),
         LlmEngineState::Starting => Style::new().fg(palette(palette::WARN)),
-        LlmEngineState::Idle => Style::new().fg(palette(palette::INFO)),
+        LlmEngineState::Idle => info(),
         LlmEngineState::Ended => dim(),
     }
 }
@@ -88,26 +99,47 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let visible = usize::from(columns.height.saturating_sub(2) / CARD_ROWS);
     app.keep_cursor_visible(visible);
 
-    frame.render_widget(header_line(app), header);
+    frame.render_widget(header_line(app, header.width), header);
     let thirds = Layout::horizontal([Constraint::Ratio(1, 3); 3]).split(columns);
     for (index, kind) in ColumnKind::ALL.into_iter().enumerate() {
         draw_column(app, kind, thirds[index], frame);
     }
     draw_drawer(app, drawer, frame);
     frame.render_widget(footer_line(app, footer.width), footer);
+    if let Some(picker) = app.picker.as_mut() {
+        draw_picker(picker, body, frame);
+    }
 }
 
-fn header_line(app: &App) -> Line<'static> {
+fn header_line(app: &App, width: u16) -> Line<'static> {
     let fetched = match (app.refreshing, app.fetched_at) {
         (true, _) => "refreshing…".to_owned(),
         (false, Some(at)) => format!("refreshed {}", ago(app.now - at)),
         (false, None) => "not fetched".to_owned(),
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(" tx-board ", accent().add_modifier(Modifier::BOLD)),
         Span::styled(app.board.repository.slug(), text()),
         Span::styled(format!("   {fetched}"), dim()),
-    ])
+    ];
+    if !app.query.is_empty() {
+        let room = usize::from(width).saturating_sub(
+            spans
+                .iter()
+                .map(|span| span.content.chars().count())
+                .sum::<usize>()
+                + 3,
+        );
+        let hidden = format!("  ({} hidden, Esc clears)", app.board.hidden);
+        let query = truncate(
+            &app.query.text,
+            room.saturating_sub(hidden.len() + "filter: ".len()),
+        );
+        spans.push(Span::styled("   filter: ", dim()));
+        spans.push(Span::styled(query, info()));
+        spans.push(Span::styled(hidden, dim()));
+    }
+    Line::from(spans)
 }
 
 fn ago(seconds: f64) -> String {
@@ -184,11 +216,11 @@ fn card_tail(card: &Card, width: usize) -> Line<'static> {
     let mut used = 3;
     for label in &card.issue.labels {
         let word = format!("{} ", label.name);
-        if used + word.len() > width {
+        if used + word.chars().count() > width {
             break;
         }
-        used += word.len();
-        spans.push(Span::styled(word, label_style()));
+        used += word.chars().count();
+        spans.push(Span::styled(word, label_style(&label.color)));
     }
     if let Some(agent) = card.agents.first() {
         let word = format!("{} {}", state_mark(agent.state), agent.name);
@@ -212,7 +244,11 @@ fn draw_drawer(app: &App, area: Rect, frame: &mut Frame) {
         (false, None) => (
             " board ".to_owned(),
             vec![Line::from(Span::styled(
-                "no issue in this column (h/l to move, n files one)",
+                if app.query.is_empty() {
+                    "no issue in this column (h/l to move, n files one)"
+                } else {
+                    "no issue in this column matches the filter (Esc clears it)"
+                },
                 dim(),
             ))],
         ),
@@ -238,7 +274,10 @@ fn detail_lines(card: &Card, now: f64) -> Vec<Line<'static>> {
     let issue: &Issue = &card.issue;
     let mut first = vec![Span::styled(" ", text())];
     for label in &issue.labels {
-        first.push(Span::styled(format!("{} ", label.name), label_style()));
+        first.push(Span::styled(
+            format!("{} ", label.name),
+            label_style(&label.color),
+        ));
     }
     if let Some(milestone) = &issue.milestone {
         first.push(Span::styled(format!("◆ {} ", milestone.title), accent()));
@@ -299,30 +338,23 @@ fn agent_span(agent: &CardAgent) -> Span<'static> {
 
 fn help_lines() -> Vec<Line<'static>> {
     [
-        (
-            "j/k  h/l",
-            "move between cards and columns; g/G first and last card",
-        ),
+        ("j/k  h/l", "move between cards and columns; g/G first and last card"),
         ("J/K", "scroll the issue body"),
         (
-            "s",
-            "start a developer agent on the issue (tagged issue-<n>), in this checkout",
+            "/",
+            "filter in GitHub's search language: label:bug -label:wip assignee:me no:assignee author:ada milestone:0.2 is:open \"free text\"; Enter keeps it, Esc clears it",
         ),
+        ("L", "the issue's labels: space ticks, Enter applies, Esc cancels"),
+        ("s", "start a developer agent on the issue (tagged issue-<n>), in this checkout"),
         (
             "Enter  a  p",
             "show the agent working on it: focus its pane, attach it into a pane, popup",
         ),
         ("o", "open the issue in the browser"),
-        (
-            "c  n",
-            "comment on the issue; file a new issue (gh opens your editor)",
-        ),
+        ("c  n", "comment on the issue; file a new issue (gh opens your editor)"),
         ("x", "close the issue, or reopen a closed one"),
         ("m", "assign yourself, or unassign"),
-        (
-            "r",
-            "fetch again now (every 60 s otherwise; agents every 3 s)",
-        ),
+        ("r", "fetch again now (every 60 s otherwise; agents every 3 s)"),
         ("?  q", "this list; quit (the popup's resident stays warm)"),
     ]
     .into_iter()
@@ -336,16 +368,96 @@ fn help_lines() -> Vec<Line<'static>> {
 }
 
 fn footer_line(app: &App, width: u16) -> Line<'static> {
+    let width = usize::from(width);
+    if app.searching {
+        return Line::from(vec![
+            Span::styled(" / ", accent().add_modifier(Modifier::BOLD)),
+            Span::styled(app.query.text.clone(), text()),
+            Span::styled("█", accent()),
+            Span::styled(
+                "   label:  assignee:  no:assignee  author:  milestone:  is:open  -not  \"text\"   Enter keeps  Esc clears",
+                dim(),
+            ),
+        ]);
+    }
     match &app.notice {
         Some(notice) => Line::from(Span::styled(
-            truncate(&format!(" {notice}"), usize::from(width)),
+            truncate(&format!(" {notice}"), width),
             Style::new().fg(palette(palette::WARN)),
         )),
-        None => Line::from(Span::styled(
-            truncate(&format!(" {KEYS}"), usize::from(width)),
-            dim(),
-        )),
+        None => Line::from(Span::styled(truncate(&format!(" {KEYS}"), width), dim())),
     }
+}
+
+/// The label picker, centred over `area`: one row per label of the repository.
+fn draw_picker(picker: &mut Picker, area: Rect, frame: &mut Frame) {
+    let longest = picker
+        .choices
+        .iter()
+        .map(|choice| choice.label.name.chars().count() + choice.label.description.chars().count())
+        .max()
+        .unwrap_or(0) as u16;
+    let width = (longest + 12).clamp(40, area.width.saturating_sub(4).max(20));
+    let rows = picker.choices.len() as u16 + 3;
+    let height = rows.clamp(5, area.height.saturating_sub(2).max(5));
+    let popup = Rect::new(
+        area.x + (area.width.saturating_sub(width)) / 2,
+        area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(accent())
+        .title(Span::styled(
+            format!(" labels of #{} ", picker.number),
+            accent().add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    let visible = usize::from(inner.height.saturating_sub(1));
+    picker.keep_cursor_visible(visible);
+    let name_width = picker
+        .choices
+        .iter()
+        .map(|choice| choice.label.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut lines: Vec<Line<'static>> = picker
+        .choices
+        .iter()
+        .enumerate()
+        .skip(picker.scroll)
+        .take(visible)
+        .map(|(index, choice)| {
+            let tick = if choice.checked { "[x] " } else { "[ ] " };
+            let name = format!("{:<name_width$}", choice.label.name);
+            let description = truncate(
+                &format!("  {}", choice.label.description),
+                usize::from(inner.width).saturating_sub(name_width + 6),
+            );
+            let mut line = Line::from(vec![
+                Span::styled(" ", text()),
+                Span::styled(tick, if choice.checked { text() } else { dim() }),
+                Span::styled("● ", label_style(&choice.label.color)),
+                Span::styled(name, text()),
+                Span::styled(description, dim()),
+            ]);
+            if index == picker.cursor {
+                line.style = Style::new().bg(CURSOR_BG);
+            }
+            line
+        })
+        .collect();
+    while lines.len() < visible {
+        lines.push(Line::default());
+    }
+    lines.push(Line::from(Span::styled(
+        " space ticks  Enter applies  Esc cancels",
+        dim(),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The frame as plain text, trailing blanks trimmed: what `--snapshot` prints.
@@ -371,5 +483,14 @@ mod tests {
         assert_eq!(truncate("abc", 3), "abc");
         assert_eq!(truncate("abcd", 3), "ab…");
         assert_eq!(truncate("abcd", 0), "");
+    }
+
+    #[test]
+    fn labels_wear_their_github_colour() {
+        assert_eq!(
+            label_style("d73a4a").fg,
+            Some(palette(Color::Rgb(0xd7, 0x3a, 0x4a)))
+        );
+        assert_eq!(label_style("").fg, Some(palette(palette::WARN)));
     }
 }

@@ -15,7 +15,7 @@ use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
 use crate::github::{self, Repository};
-use crate::model::{Board, load_agents};
+use crate::model::{Board, Query, load_agents};
 use crate::{PLUGIN_ID, run};
 
 pub const RESIDENT_VERB: &str = "_board-resident";
@@ -32,9 +32,10 @@ const POPUP_INSIDE_COLUMNS: &str = "116";
 const POPUP_INSIDE_ROWS: &str = "32";
 
 const USAGE: &str = "\
-usage: tx board [--repo OWNER/NAME] [--cwd DIR] [--snapshot [--cols N] [--rows N] [--issues FILE] [--now EPOCH]]
+usage: tx board [--repo OWNER/NAME] [--cwd DIR] [--snapshot [--cols N] [--rows N] [--issues FILE] [--query Q] [--now EPOCH]]
 ";
-const JSON_USAGE: &str = "usage: tx _board-json [--repo OWNER/NAME] [--cwd DIR] [--issues FILE]\n";
+const JSON_USAGE: &str =
+    "usage: tx _board-json [--repo OWNER/NAME] [--cwd DIR] [--issues FILE] [--query Q]\n";
 
 /// `plugins.board.settings`: the repository to fall back on when the checkout has no GitHub
 /// `origin`.
@@ -99,6 +100,8 @@ pub struct Options {
     pub rows: u16,
     /// A file of issues as `gh issue list --json` prints them, instead of asking GitHub.
     pub issues: Option<PathBuf>,
+    /// A filter in GitHub's search language, as `/` takes it.
+    pub query: Option<String>,
     /// Epoch seconds the view takes as now; the clock unless given (reproducible output).
     pub now: Option<f64>,
 }
@@ -130,6 +133,7 @@ pub fn parse_options(argv: &[String], allowed: &[&str]) -> Result<Options, Strin
             }
             "--cwd" => options.cwd = Some(PathBuf::from(value)),
             "--issues" => options.issues = Some(PathBuf::from(value)),
+            "--query" => options.query = Some(value.clone()),
             "--cols" | "--rows" => {
                 let number: i64 = value.parse().map_err(|_| bad("expected an integer"))?;
                 if flag == "--cols" {
@@ -208,7 +212,7 @@ fn issues(options: &Options, repository: &Repository) -> Result<Vec<github::Issu
                 .map_err(|error| failed(format!("{}: {error}", path.display())))?;
             github::parse_issues(&text).map_err(failed)
         }
-        None => github::fetch(repository).map_err(failed),
+        None => github::fetch_issues(repository).map_err(failed),
     }
 }
 
@@ -242,6 +246,7 @@ impl Verb for BoardVerb {
             "--cols",
             "--rows",
             "--issues",
+            "--query",
             "--now",
         ];
         let options = match parse_options(argv, &allowed) {
@@ -268,8 +273,9 @@ impl Verb for BoardVerb {
         if options.snapshot {
             let now = options.now.unwrap_or_else(tx_core::events::now);
             let issues = issues(&options, &place.repository)?;
-            let board = Board::build(place.repository, issues, &load_agents(core)?);
-            let text = run::snapshot(board, now, now, options.columns, options.rows);
+            let query = Query::parse(options.query.as_deref().unwrap_or(""));
+            let board = Board::build(place.repository, issues, &load_agents(core)?, &query);
+            let text = run::snapshot(board, query, now, now, options.columns, options.rows);
             writeln!(io.stdout, "{text}").map_err(failed)?;
             return Ok(0);
         }
@@ -502,11 +508,11 @@ impl Verb for BoardJson {
     }
 
     fn usage(&self) -> &'static str {
-        "_board-json [--repo OWNER/NAME] [--cwd DIR]   the board as JSON (internal)"
+        "_board-json [--repo OWNER/NAME] [--cwd DIR] [--query Q]   the board as JSON (internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        let options = match parse_options(argv, &["--repo", "--cwd", "--issues"]) {
+        let options = match parse_options(argv, &["--repo", "--cwd", "--issues", "--query"]) {
             Ok(options) => options,
             Err(message) => {
                 say(
@@ -523,7 +529,8 @@ impl Verb for BoardJson {
         let place =
             place(&self.settings, options.repository.as_deref(), &directory).map_err(failed)?;
         let issues = issues(&options, &place.repository)?;
-        let board = Board::build(place.repository, issues, &load_agents(core)?);
+        let query = Query::parse(options.query.as_deref().unwrap_or(""));
+        let board = Board::build(place.repository, issues, &load_agents(core)?, &query);
         let text = serde_json::to_string_pretty(&board.to_json()).map_err(failed)?;
         writeln!(io.stdout, "{text}").map_err(failed)?;
         Ok(0)
@@ -538,13 +545,14 @@ mod tests {
         words.iter().map(|word| (*word).to_owned()).collect()
     }
 
-    const ALL: [&str; 7] = [
+    const ALL: [&str; 8] = [
         "--repo",
         "--cwd",
         "--snapshot",
         "--cols",
         "--rows",
         "--issues",
+        "--query",
         "--now",
     ];
 
@@ -570,6 +578,8 @@ mod tests {
                 "9",
                 "--issues",
                 "f",
+                "--query",
+                "label:bug",
             ]),
             &ALL,
         )
@@ -578,6 +588,7 @@ mod tests {
         assert!(options.snapshot);
         assert_eq!((options.columns, options.now), (20, Some(9.0)));
         assert_eq!(options.issues, Some(PathBuf::from("f")));
+        assert_eq!(options.query.as_deref(), Some("label:bug"));
     }
 
     #[test]

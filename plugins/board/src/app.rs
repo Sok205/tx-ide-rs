@@ -1,10 +1,12 @@
 //! Board state and input, pure: keys in, state and requests out; [`super::ui`] draws it and
-//! [`super::run`] carries the requests out.
+//! [`super::run`] carries the requests out. Three modes: the board, the filter line (`/`,
+//! GitHub's search language, applied as it is typed) and the label picker (`L`).
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tx_client::show::Show;
 
-use super::model::{Board, Card, ColumnKind};
+use super::github::RepoLabel;
+use super::model::{Board, Card, ColumnKind, Query};
 
 /// What a key asked for; the event loop does it and clears it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,14 +27,104 @@ pub enum Request {
     Reopen(u64),
     /// `m`: assign yourself, or unassign if you are.
     ToggleAssignee(u64),
+    /// The label picker, applied.
+    SetLabels {
+        number: u64,
+        add: Vec<String>,
+        remove: Vec<String>,
+    },
     /// `r`.
     Refresh,
 }
 
+/// One row of the label picker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice {
+    pub label: RepoLabel,
+    pub checked: bool,
+    /// Whether the issue had it when the picker opened.
+    pub initial: bool,
+}
+
+/// The label picker: the repository's labels, ticked where the issue has them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Picker {
+    pub number: u64,
+    pub choices: Vec<Choice>,
+    pub cursor: usize,
+    pub scroll: usize,
+}
+
+impl Picker {
+    pub fn new(card: &Card, labels: &[RepoLabel]) -> Self {
+        let choices = labels
+            .iter()
+            .map(|label| {
+                let has = card.issue.has_label(&label.name);
+                Choice {
+                    label: label.clone(),
+                    checked: has,
+                    initial: has,
+                }
+            })
+            .collect();
+        Self {
+            number: card.issue.number,
+            choices,
+            cursor: 0,
+            scroll: 0,
+        }
+    }
+
+    fn toggle(&mut self) {
+        if let Some(choice) = self.choices.get_mut(self.cursor) {
+            choice.checked = !choice.checked;
+        }
+    }
+
+    fn step(&mut self, delta: i64) {
+        let last = self.choices.len().saturating_sub(1) as i64;
+        self.cursor = (self.cursor as i64 + delta).clamp(0, last) as usize;
+    }
+
+    /// The request the picker amounts to; `None` when nothing changed.
+    pub fn request(&self) -> Option<Request> {
+        let names = |wanted: bool| -> Vec<String> {
+            self.choices
+                .iter()
+                .filter(|choice| choice.checked != choice.initial && choice.checked == wanted)
+                .map(|choice| choice.label.name.clone())
+                .collect()
+        };
+        let (add, remove) = (names(true), names(false));
+        (!add.is_empty() || !remove.is_empty()).then_some(Request::SetLabels {
+            number: self.number,
+            add,
+            remove,
+        })
+    }
+
+    /// Keeps the cursor inside a window of `visible` rows.
+    pub fn keep_cursor_visible(&mut self, visible: usize) {
+        let visible = visible.max(1);
+        if self.cursor < self.scroll {
+            self.scroll = self.cursor;
+        } else if self.cursor >= self.scroll + visible {
+            self.scroll = self.cursor + 1 - visible;
+        }
+    }
+}
+
 pub struct App {
     pub board: Board,
+    /// The repository's labels, for the picker; empty until the first fetch.
+    pub labels: Vec<RepoLabel>,
     /// The login `gh` is signed in as; `m` toggles it.
     pub viewer: Option<String>,
+    pub query: Query,
+    /// `/` is being typed into the query.
+    pub searching: bool,
+    pub picker: Option<Picker>,
     pub column: usize,
     pub cursor: [usize; 3],
     pub scroll: [usize; 3],
@@ -40,6 +132,8 @@ pub struct App {
     pub help: bool,
     pub quit: bool,
     pub request: Option<Request>,
+    /// The query changed: the board wants rebuilding from the issues in hand.
+    pub dirty: bool,
     /// A one-shot line for the footer; the next key clears it.
     pub notice: Option<String>,
     /// A fetch is in flight.
@@ -53,7 +147,11 @@ impl App {
     pub fn new(board: Board, now: f64) -> Self {
         let mut app = Self {
             board,
+            labels: Vec::new(),
             viewer: None,
+            query: Query::default(),
+            searching: false,
+            picker: None,
             column: 0,
             cursor: [0; 3],
             scroll: [0; 3],
@@ -61,6 +159,7 @@ impl App {
             help: false,
             quit: false,
             request: None,
+            dirty: false,
             notice: None,
             refreshing: false,
             fetched_at: None,
@@ -146,18 +245,87 @@ impl App {
         }
     }
 
-    fn card_request(&self, make: impl FnOnce(&Card) -> Option<Request>) -> Option<Request> {
-        self.selected().and_then(make)
+    fn card_request(&self, make: impl FnOnce(&Card) -> Request) -> Option<Request> {
+        self.selected().map(make)
+    }
+
+    fn set_query(&mut self, text: String) {
+        self.query = Query::parse(&text);
+        self.dirty = true;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        let control = key.modifiers.contains(KeyModifiers::CONTROL);
         self.notice = None;
+        if self.searching {
+            self.handle_search_key(key);
+        } else if self.picker.is_some() {
+            self.handle_picker_key(key);
+        } else {
+            self.handle_board_key(key);
+        }
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) {
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Char('c') if control => self.quit = true,
+            KeyCode::Char('u') if control => self.set_query(String::new()),
+            KeyCode::Enter => self.searching = false,
+            KeyCode::Esc => {
+                self.searching = false;
+                self.set_query(String::new());
+            }
+            KeyCode::Backspace => {
+                let mut text = self.query.text.clone();
+                text.pop();
+                self.set_query(text);
+            }
+            KeyCode::Char(character) => {
+                let mut text = self.query.text.clone();
+                text.push(character);
+                self.set_query(text);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_picker_key(&mut self, key: KeyEvent) {
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        let Some(picker) = self.picker.as_mut() else {
+            return;
+        };
+        match key.code {
+            KeyCode::Char('c') if control => self.quit = true,
+            KeyCode::Char('q') | KeyCode::Esc => self.picker = None,
+            KeyCode::Char('j') | KeyCode::Down => picker.step(1),
+            KeyCode::Char('k') | KeyCode::Up => picker.step(-1),
+            KeyCode::Char(' ') | KeyCode::Char('x') => picker.toggle(),
+            KeyCode::Enter => {
+                self.request = picker.request();
+                if self.request.is_none() {
+                    self.notice = Some(format!("#{}: labels unchanged", picker.number));
+                }
+                self.picker = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_board_key(&mut self, key: KeyEvent) {
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('c') if control => self.quit = true,
-            KeyCode::Esc => self.help = false,
+            KeyCode::Esc => {
+                if self.help {
+                    self.help = false;
+                } else if !self.query.is_empty() {
+                    self.set_query(String::new());
+                }
+            }
             KeyCode::Char('?') => self.help = !self.help,
+            KeyCode::Char('/') => self.searching = true,
+            KeyCode::Char('L') => self.open_picker(),
             KeyCode::Char('h') | KeyCode::Left => self.move_column(-1),
             KeyCode::Char('l') | KeyCode::Right => self.move_column(1),
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
@@ -173,26 +341,24 @@ impl App {
             KeyCode::Char('r') => self.request = Some(Request::Refresh),
             KeyCode::Char('n') => self.request = Some(Request::NewIssue),
             KeyCode::Char('s') => {
-                self.request =
-                    self.card_request(|card| Some(Request::StartAgent(card.issue.number)));
+                self.request = self.card_request(|card| Request::StartAgent(card.issue.number));
             }
             KeyCode::Char('o') => {
-                self.request = self.card_request(|card| Some(Request::Browser(card.issue.number)));
+                self.request = self.card_request(|card| Request::Browser(card.issue.number));
             }
             KeyCode::Char('c') => {
-                self.request = self.card_request(|card| Some(Request::Comment(card.issue.number)));
+                self.request = self.card_request(|card| Request::Comment(card.issue.number));
             }
             KeyCode::Char('m') => {
-                self.request =
-                    self.card_request(|card| Some(Request::ToggleAssignee(card.issue.number)));
+                self.request = self.card_request(|card| Request::ToggleAssignee(card.issue.number));
             }
             KeyCode::Char('x') => {
                 self.request = self.card_request(|card| {
-                    Some(if card.issue.is_open() {
+                    if card.issue.is_open() {
                         Request::Close(card.issue.number)
                     } else {
                         Request::Reopen(card.issue.number)
-                    })
+                    }
                 });
             }
             KeyCode::Enter => self.show(Show::Focus),
@@ -200,6 +366,17 @@ impl App {
             KeyCode::Char('p') => self.show(Show::Popup),
             _ => {}
         }
+    }
+
+    fn open_picker(&mut self) {
+        let Some(card) = self.selected() else {
+            return;
+        };
+        if self.labels.is_empty() {
+            self.notice = Some("the repository's labels are not fetched yet".to_owned());
+            return;
+        }
+        self.picker = Some(Picker::new(card, &self.labels));
     }
 
     fn show(&mut self, show: Show) {
@@ -212,7 +389,7 @@ impl App {
                 self.notice = Some(format!(
                     "#{}: no agent running on it (s starts one)",
                     card.issue.number
-                ))
+                ));
             }
         }
     }
@@ -221,7 +398,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{Issue, Repository};
+    use crate::github::{Issue, Label, Repository};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -231,13 +408,29 @@ mod tests {
         let issue = |number: u64, open: bool| Issue {
             number,
             state: if open { "OPEN" } else { "CLOSED" }.to_owned(),
+            labels: vec![Label {
+                name: "bug".to_owned(),
+                color: "d73a4a".to_owned(),
+            }],
             ..Issue::default()
         };
         Board::build(
             Repository::parse("o/n").unwrap(),
             vec![issue(1, true), issue(2, true), issue(3, false)],
             &[],
+            &Query::default(),
         )
+    }
+
+    fn labels() -> Vec<RepoLabel> {
+        ["bug", "feature"]
+            .into_iter()
+            .map(|name| RepoLabel {
+                name: name.to_owned(),
+                color: "a2eeef".to_owned(),
+                description: String::new(),
+            })
+            .collect()
     }
 
     #[test]
@@ -282,5 +475,62 @@ mod tests {
             App::new(Board::empty(Repository::parse("o/n").unwrap()), 0.0).column,
             0
         );
+    }
+
+    #[test]
+    fn slash_types_a_query_and_escape_clears_it() {
+        let mut app = App::new(board(), 0.0);
+        app.handle_key(key(KeyCode::Char('/')));
+        assert!(app.searching);
+        for character in "is:open".chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        assert_eq!(app.query.text, "is:open");
+        assert!(app.dirty);
+        app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(app.query.text, "is:ope");
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.searching && !app.query.is_empty());
+        // q on the board quits; while typing it is a letter
+        app.handle_key(key(KeyCode::Char('/')));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(!app.quit);
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.searching && app.query.is_empty());
+        app.set_query("bug".to_owned());
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.query.is_empty());
+    }
+
+    #[test]
+    fn the_picker_asks_for_what_changed() {
+        let mut app = App::new(board(), 0.0);
+        app.handle_key(key(KeyCode::Char('L')));
+        assert!(app.picker.is_none());
+        assert!(app.notice.is_some());
+        app.labels = labels();
+        app.handle_key(key(KeyCode::Char('L')));
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!((picker.number, picker.choices[0].checked), (1, true));
+        assert!(!picker.choices[1].checked);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.request, None);
+        assert!(app.picker.is_none());
+        app.handle_key(key(KeyCode::Char('L')));
+        app.handle_key(key(KeyCode::Char(' ')));
+        app.handle_key(key(KeyCode::Char('j')));
+        app.handle_key(key(KeyCode::Char(' ')));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.request,
+            Some(Request::SetLabels {
+                number: 1,
+                add: vec!["feature".to_owned()],
+                remove: vec!["bug".to_owned()],
+            })
+        );
+        app.handle_key(key(KeyCode::Char('L')));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.picker.is_none());
     }
 }

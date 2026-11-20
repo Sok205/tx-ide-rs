@@ -183,12 +183,16 @@ repository is `--repo OWNER/NAME`, else the checkout's `git config tx.board.repo
 checkout whose issues live in another repository), else its GitHub `origin`, else
 `plugins.board.settings.repository`. The columns: Backlog (open,
 unassigned), In progress (assigned, or with a tx agent on it), Done (closed, the 20 most recent),
-and the body of the selected issue below. A card shows the agents tagged `issue-<n>` and their
-state. `s` starts a `developer` agent on the issue in that checkout, tagged and prompted with it;
-Enter, a and p show the agent working on it as the timeline shows a lane; `o` opens the issue in
-the browser, `c` comments and `n` files an issue (`gh` opens your editor in the view), `x` closes
-or reopens, `m` assigns you or unassigns you, `r` fetches now (every 60 s otherwise), `?` lists
-the keys. prefix+b opens the resident board of the pane's checkout in a popup (q detaches, it
+and the body of the selected issue below. Labels wear their GitHub colours. A card shows the
+agents tagged `issue-<n>` and their state. `/` filters in GitHub's own search language, applied
+as you type to the issues in hand (`label:bug -label:wip assignee:sok no:assignee author:ada
+milestone:0.2 is:open "free text"`; Enter keeps the filter, Esc clears it; the header counts
+what it hides). `L` opens the issue's labels, the repository's list ticked where the issue has
+them: space ticks, Enter applies. `s` starts a `developer` agent on the issue in that checkout,
+tagged and prompted with it; Enter, a and p show the agent working on it as the timeline shows a
+lane; `o` opens the issue in the browser, `c` comments and `n` files an issue (`gh` opens your
+editor in the view), `x` closes or reopens, `m` assigns you or unassigns you, `r` fetches now
+(every 60 s otherwise), `?` lists the keys. prefix+b opens the resident board of the pane's checkout in a popup (q detaches, it
 stays warm; one resident per repository). `--snapshot` prints one frame as text. Tier `ide` (it
 requires `ide` and needs `gh` and `git`). Its verbs run as the program `tx-board`
 (`plugins/board/plugin.yaml`).
