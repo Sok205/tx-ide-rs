@@ -10,6 +10,8 @@ pub mod install;
 pub mod palette;
 pub mod prompt;
 pub mod render;
+pub mod show;
+pub mod show_verb;
 pub mod tmux;
 pub mod view_verb;
 pub mod views;
@@ -32,6 +34,8 @@ impl Plugin for IdePlugin {
         r.verb(Arc::new(install::UiVerb));
         r.updater(Arc::new(install::IdeUpdater));
         r.verb(Arc::new(install::ResourceVerb));
+        r.verb(Arc::new(show_verb::ShowVerb));
+        r.verb(Arc::new(show_verb::AttachIntoVerb));
         r.resource("conf/tmux.conf", include_bytes!("../conf/tmux.conf"))?;
         r.resource("keys/ide.tmux", include_bytes!("../tmux/keys.tmux"))?;
         r.resource("bin/tmux-nav", include_bytes!("../bin/tmux-nav"))?;
