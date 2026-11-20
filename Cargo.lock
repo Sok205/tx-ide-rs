@@ -1749,6 +1749,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tx-client",
  "tx-core",
+ "tx-plugin",
  "uuid",
 ]
 
@@ -1762,6 +1763,7 @@ dependencies = [
  "tx-client",
  "tx-core",
  "tx-engine-claude",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1775,6 +1777,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tx-client",
  "tx-core",
+ "tx-plugin",
  "uuid",
 ]
 
@@ -1810,32 +1813,13 @@ dependencies = [
 name = "tx-core-cli"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
- "serde_norway",
  "shlex",
  "tempfile",
  "thiserror 2.0.21",
- "tx-artifacts",
- "tx-assistant",
- "tx-chat",
  "tx-client",
  "tx-core",
- "tx-edit",
- "tx-engine-claude",
- "tx-engine-codex",
- "tx-graph",
- "tx-home",
- "tx-home-themes",
- "tx-kill",
- "tx-labels",
- "tx-layouts",
- "tx-mockup",
- "tx-picker",
- "tx-spawn",
- "tx-timeline",
- "tx-tour",
- "tx-tutor",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1847,6 +1831,7 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1858,6 +1843,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1870,6 +1856,7 @@ dependencies = [
  "thiserror 2.0.21",
  "toml",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1882,6 +1869,7 @@ dependencies = [
  "tx-chat",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1894,6 +1882,17 @@ dependencies = [
  "tx-chat",
  "tx-client",
  "tx-core",
+ "tx-home-backdrop",
+ "tx-home-themes",
+ "tx-plugin",
+]
+
+[[package]]
+name = "tx-home-backdrop"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "tx-client",
 ]
 
 [[package]]
@@ -1906,7 +1905,18 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
- "tx-home",
+ "tx-home-backdrop",
+ "tx-plugin",
+]
+
+[[package]]
+name = "tx-ide"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "tx-client",
+ "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1916,6 +1926,7 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1925,6 +1936,7 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1936,6 +1948,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1949,6 +1962,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1959,6 +1973,32 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-plugin",
+]
+
+[[package]]
+name = "tx-plugin"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tx-core",
+]
+
+[[package]]
+name = "tx-setup"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "tempfile",
+ "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1970,6 +2010,7 @@ dependencies = [
  "tempfile",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1984,6 +2025,7 @@ dependencies = [
  "tx-chat",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -1995,6 +2037,7 @@ dependencies = [
  "tx-artifacts",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]
@@ -2009,6 +2052,7 @@ dependencies = [
  "toml",
  "tx-client",
  "tx-core",
+ "tx-plugin",
 ]
 
 [[package]]

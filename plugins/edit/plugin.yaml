@@ -1,0 +1,20 @@
+api: 1
+id: edit
+description: Prefix+e, edit the name, tags and group of the session in the active pane.
+tier: ide
+requires: [ide]
+needs: [fzf]
+
+verbs:
+  - name: _edit-session
+    usage: "_edit-session <pane> <client>   modal session editor (prefix+e, internal)"
+    bin: tx-edit
+    args: [_edit-session]
+  - name: _edit-tag
+    usage: "_edit-tag <name>   prefilled tag editor for the picker's Ctrl-T popup (internal)"
+    bin: tx-edit
+    args: [_edit-tag]
+
+resources:
+  - keys/edit.tmux
+  - bin/tmux-edit-tx-session

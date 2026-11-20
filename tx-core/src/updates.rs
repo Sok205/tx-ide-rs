@@ -9,7 +9,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::config::{Directories, USER_HARNESS_DIR};
+use crate::config::{Directories, SHIPPED_PLUGINS_DIR, USER_HARNESS_DIR};
 
 /// Under the data directory: the last update step applied, one integer and a newline.
 pub const STAMP_FILE: &str = "update-version";
@@ -29,11 +29,18 @@ pub struct UpdateStep {
 }
 
 /// Every update step, in order. Append only.
-pub const UPDATE_STEPS: &[UpdateStep] = &[UpdateStep {
-    version: 1,
-    description: "the harness: move <config>/definitions to <config>/harness, remove <data>/definitions",
-    run: definitions_to_harness,
-}];
+pub const UPDATE_STEPS: &[UpdateStep] = &[
+    UpdateStep {
+        version: 1,
+        description: "the harness: move <config>/definitions to <config>/harness, remove <data>/definitions",
+        run: definitions_to_harness,
+    },
+    UpdateStep {
+        version: 2,
+        description: "plugins run as their own programs",
+        run: plugins_run_as_their_own_programs,
+    },
+];
 
 /// The harness directories' name before step 1.
 const DEFINITIONS_DIR: &str = "definitions";
@@ -64,6 +71,14 @@ fn definitions_to_harness(directories: &Directories) -> io::Result<Outcome> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
+    Ok(Outcome {
+        respawn_agents: true,
+    })
+}
+
+/// Step 2. Changes no file. Agents started before the upgrade keep reporting through `txi hook`;
+/// one respawned wires its engine's own program as its hook command.
+fn plugins_run_as_their_own_programs(_: &Directories) -> io::Result<Outcome> {
     Ok(Outcome {
         respawn_agents: true,
     })
@@ -123,9 +138,13 @@ fn read_stamp(directories: &Directories) -> Result<Option<u32>, UpdateError> {
 }
 
 /// Nothing to update: `<data>` is absent or empty, and `<config>` holds no subdirectory (a lone
-/// `config.yaml` is the operator's settings, not tx's files).
+/// `config.yaml` is the operator's settings, not tx's files). `<data>/shipped` does not count:
+/// `tx setup` and `tx update` lay the shipped plugins out there before any step runs. Nor does
+/// the stamp: it is tx's own note about the install, not data.
 pub fn is_fresh(directories: &Directories) -> Result<bool, UpdateError> {
-    let data_empty = entries(&directories.data)?.is_empty();
+    let data_empty = entries(&directories.data)?
+        .iter()
+        .all(|path| path.ends_with(SHIPPED_PLUGINS_DIR) || path.ends_with(STAMP_FILE));
     let config_has_directory = entries(&directories.config)?
         .iter()
         .any(|path| path.is_dir());
@@ -308,6 +327,21 @@ mod tests {
     }
 
     #[test]
+    fn step_two_changes_no_file_and_asks_for_a_respawn() {
+        let (_root, directories) = used_layout();
+        let before = entries(&directories.data).unwrap();
+        let applied = collect(&directories, UPDATE_STEPS);
+        assert_eq!(applied.len(), 2);
+        assert_eq!(applied[1].version, 2);
+        assert_eq!(applied[1].description, "plugins run as their own programs");
+        assert!(applied[1].outcome.respawn_agents);
+        let mut after = entries(&directories.data).unwrap();
+        after.retain(|path| !path.ends_with(STAMP_FILE));
+        assert_eq!(after, before);
+        assert_eq!(stamp(&directories), "2\n");
+    }
+
+    #[test]
     fn an_absent_stamp_reads_zero() {
         let (_root, directories) = layout();
         assert_eq!(current(&directories).unwrap(), 0);
@@ -419,6 +453,18 @@ mod tests {
     }
 
     #[test]
+    fn shipped_plugins_laid_out_first_leave_the_install_fresh() {
+        let (_root, directories) = layout();
+        let shipped = directories.data.join(SHIPPED_PLUGINS_DIR);
+        std::fs::create_dir_all(shipped.join("mockup")).unwrap();
+        std::fs::write(shipped.join(".selection"), "{}").unwrap();
+        assert!(is_fresh(&directories).unwrap());
+        assert!(collect(&directories, TWO).is_empty());
+        assert_eq!(stamp(&directories), "2\n");
+        assert!(!directories.data.join("first").exists());
+    }
+
+    #[test]
     fn a_lost_stamp_with_nothing_pending_is_written_back() {
         let (_root, directories) = used_layout();
         assert!(collect(&directories, &[]).is_empty());
@@ -440,7 +486,7 @@ mod tests {
     fn step_one_moves_the_users_definitions_and_drops_the_shipped_ones() {
         let (_root, directories) = old_layout();
         let applied = collect(&directories, UPDATE_STEPS);
-        assert_eq!(applied.len(), 1);
+        assert_eq!(applied.len(), 2);
         assert_eq!(applied[0].version, 1);
         assert!(applied[0].outcome.respawn_agents);
         assert_eq!(
@@ -449,7 +495,7 @@ mod tests {
         );
         assert!(!directories.config.join("definitions").exists());
         assert!(!directories.data.join("definitions").exists());
-        assert_eq!(stamp(&directories), "1\n");
+        assert_eq!(stamp(&directories), "2\n");
         assert!(
             collect(&directories, UPDATE_STEPS).is_empty(),
             "a rerun does nothing"
@@ -462,7 +508,7 @@ mod tests {
         collect(&directories, UPDATE_STEPS);
         std::fs::remove_file(stamp_path(&directories)).unwrap();
         std::fs::create_dir_all(directories.data.join("harness")).unwrap();
-        assert_eq!(collect(&directories, UPDATE_STEPS).len(), 1);
+        assert_eq!(collect(&directories, UPDATE_STEPS).len(), 2);
         assert!(directories.config.join("harness/agents/x.md").exists());
         assert!(directories.data.join("harness").exists());
     }
@@ -505,6 +551,13 @@ mod tests {
                 .is_err()
         );
         assert!(target.join("kept").exists());
+    }
+
+    #[test]
+    fn a_data_directory_holding_only_the_stamp_is_fresh() {
+        let (_root, directories) = layout();
+        write_stamp(&directories, 1).unwrap();
+        assert!(is_fresh(&directories).unwrap());
     }
 
     #[test]

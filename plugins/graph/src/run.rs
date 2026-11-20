@@ -191,7 +191,7 @@ pub fn run(core: &TxCore, filter: Filter, window: f64, resident: Option<&str>) -
     app.brand = brand();
     let mut terminal = ratatui::try_init()?;
     execute!(io::stdout(), EnableMouseCapture)?;
-    let tx = Tx::current(core)?;
+    let tx = Tx::current(core);
     let runner = Runner::new(tx.clone());
     let result = event_loop(
         &mut terminal,

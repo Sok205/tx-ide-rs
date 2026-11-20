@@ -366,7 +366,7 @@ panes:
             Content::Agent(AgentPane {
                 definition: "qa".to_owned(),
                 effort: Some("high".to_owned()),
-                engine: Some(EngineKind::Codex),
+                engine: Some(EngineKind::CODEX),
                 tags: Some(vec!["a".to_owned(), "b".to_owned()]),
                 name: Some("q1".to_owned()),
                 ..AgentPane::default()
@@ -514,7 +514,7 @@ panes:
     fn a_bad_value_names_the_file_and_line() {
         for text in [
             "panes:\n  - split: left\n",
-            "panes:\n  - agent: qa\n    engine: gpt\n",
+            "panes:\n  - agent: qa\n    engine: GPT 4\n",
             "panes:\n  - agent: qa\n    effort: [1]\n",
             "panes:\n  - {}\n  - split: right\n    of: -1\n    size: 10\n",
         ] {

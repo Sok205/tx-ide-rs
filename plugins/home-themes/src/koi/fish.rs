@@ -5,7 +5,7 @@ use std::f32::consts::{PI, TAU};
 
 use fastrand::Rng;
 use ratatui::style::Color;
-use tx_home::backdrop::{Pixels, dim};
+use tx_home_backdrop::{Pixels, dim};
 
 use crate::common::{angle, bearing, distance};
 

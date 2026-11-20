@@ -79,10 +79,6 @@ impl Plugin for ArtifactsPlugin {
             editor: Arc::clone(&editor),
         }));
         r.verb(Arc::new(verbs::GoVerb { editor }));
-        r.resource("keys/artifacts.tmux", include_bytes!("../tmux/keys.tmux"))?;
-        r.resource(
-            "bin/tmux-artifact-menu",
-            include_bytes!("../bin/tmux-artifact-menu"),
-        )
+        Ok(())
     }
 }

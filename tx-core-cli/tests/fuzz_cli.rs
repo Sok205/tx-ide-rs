@@ -35,6 +35,14 @@ impl Cli {
         Self { dir, path }
     }
 
+    /// A sandbox for the tests that launch an agent: with the stand-in for the default
+    /// agent definition, which every launch without `--agent` reads.
+    fn with_default_agent() -> Self {
+        let cli = Self::new();
+        common::stand_in_definition(&cli.state());
+        cli
+    }
+
     fn state(&self) -> PathBuf {
         self.dir.path().join("state")
     }
@@ -43,6 +51,11 @@ impl Cli {
         let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .args(directory_flags(&self.state()))
+            // The shipped bundles, then the sandbox's own plugins: as every other suite.
+            .args(common::plugin_flags(&[
+                common::shipped().to_path_buf(),
+                self.state().join("plugins"),
+            ]))
             .arg("--profile-dir")
             .arg(self.dir.path().join("default-roles"))
             .arg("--profile-dir")
@@ -253,6 +266,7 @@ fn token_pool() -> Vec<String> {
         "--socket",
         "--profile-dir",
         "--skill-dir",
+        "--plugin-dir",
         "--env",
         "--parent",
         "--tag",
@@ -483,7 +497,7 @@ fn create_boundary_names_and_relative_cwd() {
     if !has_tmux() {
         return;
     }
-    let cli = Cli::new();
+    let cli = Cli::with_default_agent();
     let base = cli.workdir("base");
     repository_at(&base.join("rel"));
     std::fs::create_dir_all(base.join("rel/./deeper/..")).unwrap();
@@ -550,7 +564,7 @@ fn env_and_tags_pass_through_verbatim() {
     if !has_tmux() {
         return;
     }
-    let cli = Cli::new();
+    let cli = Cli::with_default_agent();
     let cwd = cli.repository("w");
     let id = cli.capture_session(
         "p",
@@ -617,7 +631,7 @@ fn send_text_edge_cases_arrive_verbatim_inside_the_envelope() {
     if !has_tmux() {
         return;
     }
-    let cli = Cli::new();
+    let cli = Cli::with_default_agent();
     let cwd = cli.repository("w");
     cli.capture_session("s", &cwd, &[]);
     let input = cli.cwd_of("s").join("input.txt");
@@ -668,7 +682,7 @@ fn sender_from_env_matrix() {
     if !has_tmux() {
         return;
     }
-    let cli = Cli::new();
+    let cli = Cli::with_default_agent();
     let cwd = cli.repository("w");
     let id = cli.capture_session("agent-1", &cwd, &[]);
     let input = cli.cwd_of("agent-1").join("input.txt");
@@ -732,7 +746,7 @@ fn sender_from_env_matrix() {
 
 #[test]
 fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
-    let cli = Cli::new();
+    let cli = Cli::with_default_agent();
     assert_eq!(
         cli.fails(&["attach", "nope"], 1),
         "tx: no session \"nope\"\n"
@@ -793,7 +807,7 @@ fn attach_to_unknown_or_stopped_targets_exits_1_without_exec() {
 
 #[test]
 fn ls_is_four_tab_fields_and_show_is_json_for_every_session() {
-    let cli = Cli::new();
+    let cli = Cli::with_default_agent();
     assert_eq!(cli.ok(&["engines"]), "claude\ncodex\n");
     assert_eq!(cli.ok(&["ls"]), "");
     if !has_tmux() {
@@ -1068,7 +1082,7 @@ fn six_concurrent_creates_with_distinct_names_all_succeed() {
     if !has_tmux() {
         return;
     }
-    let cli = Cli::new();
+    let cli = Cli::with_default_agent();
     let cwd = cli.repository("w");
     let names: Vec<String> = (0..6).map(|i| format!("c{i}")).collect();
     let outputs = spawn_creates(&cli, &cwd, &names);
@@ -1102,7 +1116,7 @@ fn six_concurrent_creates_with_the_same_name_get_distinct_suffixed_names() {
     if !has_tmux() {
         return;
     }
-    let cli = Cli::new();
+    let cli = Cli::with_default_agent();
     let cwd = cli.repository("w");
     let names: Vec<String> = vec!["same".to_owned(); 6];
     let outputs = spawn_creates(&cli, &cwd, &names);

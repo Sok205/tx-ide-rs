@@ -1,20 +1,78 @@
-//! `tx harness ls` and `tx harness check`: list and validate the harness: the agent, skill and MCP
-//! definitions. Both read only the harness roots, never the core's state.
+//! `tx harness ls` and `tx harness check`: list and validate the harness: the agent, skill and
+//! MCP definitions, and print what the active engines add to them. Both read only the harness
+//! roots and `config.yaml`, never the core's state; an engine that runs as its own program is
+//! asked over the protocol.
 
+use std::collections::BTreeMap;
 use std::io::Write;
+use std::sync::Arc;
 
-use tx_core::harness::{Harness, HarnessError, McpServer, read_agent, read_skill};
+use tx_core::engine::{AgentSummary, DefinitionsRequest, Finding};
+use tx_core::harness::{AgentDefinition, Harness, HarnessError, McpServer, read_agent, read_skill};
+use tx_core::plugin::external::{ProcessEngine, engine_proxies};
 use tx_core::profile::Profiles;
-use tx_core::{Directories, EngineKind, SkillProvider};
+use tx_core::{Directories, EngineKind, LlmEngine, SkillProvider};
 
-use crate::args::HarnessKind;
+use crate::args::{Global, HarnessKind};
+use crate::setup::{Installation, exec_context};
 
-/// The one line saying what Claude adds to every agent's tools, shown wherever agents are.
-fn baseline_line() -> String {
-    format!(
-        "# claude adds to every agent's tools: {}",
-        tx_engine_claude::BASELINE_TOOLS.join(", ")
-    )
+/// The engines a core of this installation would have, without opening one: a proxy for the
+/// engine of every active plugin.
+pub struct Engines {
+    installed: Vec<ProcessEngine>,
+}
+
+impl Engines {
+    pub fn read(global: &Global, installation: &Installation) -> Self {
+        let context = Arc::new(exec_context(global, &installation.config));
+        let installed = engine_proxies(
+            &installation.index,
+            &installation.activation,
+            &context,
+            &installation.config,
+            &[],
+        )
+        .into_iter()
+        .map(|(_, engine)| engine)
+        .collect();
+        Self { installed }
+    }
+
+    /// Every active engine, in kind order.
+    pub fn all(&self) -> BTreeMap<EngineKind, &dyn LlmEngine> {
+        self.installed
+            .iter()
+            .map(|engine| (engine.kind(), engine as &dyn LlmEngine))
+            .collect()
+    }
+
+    /// What every active engine adds to every agent, in kind order.
+    pub fn notes(&self) -> Vec<String> {
+        self.all()
+            .values()
+            .flat_map(|engine| engine.notes())
+            .collect()
+    }
+}
+
+/// Every skill of the definition roots that an engine provides, by name, from its reference
+/// `SKILL.md`.
+pub fn provided_skills(
+    directories: &Directories,
+) -> Result<BTreeMap<String, SkillProvider>, HarnessError> {
+    Ok(Harness::new(directories.harness_roots())
+        .skill_directories()?
+        .into_iter()
+        .filter_map(|(name, directory)| Some((name, read_skill(&directory).ok()?.provided_by?)))
+        .collect())
+}
+
+/// `<path>:<line>`, or `<path>` for a finding without a line.
+fn place(finding: &Finding) -> String {
+    match finding.line {
+        Some(line) => format!("{}:{line}", finding.path.display()),
+        None => finding.path.display().to_string(),
+    }
 }
 
 /// `name<TAB>description` per definition (for a server: its type and URL or command). One kind
@@ -23,6 +81,7 @@ fn baseline_line() -> String {
 pub fn list(
     directories: &Directories,
     kind: Option<HarnessKind>,
+    notes: &[String],
     out: &mut dyn Write,
 ) -> Result<(), HarnessError> {
     let harness = Harness::new(directories.harness_roots());
@@ -30,10 +89,6 @@ pub fn list(
         Some(kind) => vec![kind],
         None => HarnessKind::ALL.to_vec(),
     };
-    if kind == Some(HarnessKind::Tools) {
-        return crate::tools::list(directories, out)
-            .map_err(|message| HarnessError::new(&directories.cache, None, message));
-    }
     for (index, kind) in kinds.iter().enumerate() {
         let rows = rows(&harness, *kind)?;
         if kinds.len() > 1 {
@@ -46,7 +101,9 @@ pub fn list(
             writeln!(out, "{name}\t{description}").ok();
         }
         if *kind == HarnessKind::Agents {
-            writeln!(out, "{}", baseline_line()).ok();
+            for note in notes {
+                writeln!(out, "# {note}").ok();
+            }
         }
     }
     Ok(())
@@ -97,169 +154,82 @@ fn described(description: Result<String, HarnessError>) -> String {
 
 const INVALID: &str = "(invalid: see `tx harness check`)";
 
-/// The engine-provided skills among `skills`, by name, from their reference `SKILL.md`.
-fn provided_skills(
-    directories: &Directories,
-    skills: &[String],
-) -> Result<Vec<(String, SkillProvider)>, HarnessError> {
-    let directories = Harness::new(directories.harness_roots()).skill_directories()?;
-    Ok(skills
-        .iter()
-        .filter_map(|name| {
-            let skill = read_skill(directories.get(name)?).ok()?;
-            Some((name.clone(), skill.provided_by?))
-        })
-        .collect())
+/// What [`check`] found: whether there were no problems, and what was checked, for the caller to
+/// close with `ok: <summary>` (and more, when it checked more).
+pub struct Checked {
+    pub clean: bool,
+    /// `<a> agents, <s> skills, <m> MCP servers`.
+    pub summary: String,
 }
 
-/// Claude turns its bundled skills on all at once: listing one brings in every one. The known
-/// names are the shipped `claude-bundled` references; the version may ship more.
-pub fn bundle_warning(
-    directories: &Directories,
-    skills: &[String],
-) -> Result<Option<String>, HarnessError> {
-    let listed: Vec<String> = provided_skills(directories, skills)?
-        .into_iter()
-        .filter(|(_, provider)| *provider == SkillProvider::ClaudeBundled)
-        .map(|(name, _)| name)
-        .collect();
-    if listed.is_empty() {
-        return Ok(None);
-    }
-    let all: Vec<String> = Harness::new(directories.harness_roots())
-        .skill_directories()?
-        .into_iter()
-        .filter(|(_, directory)| {
-            read_skill(directory)
-                .is_ok_and(|skill| skill.provided_by == Some(SkillProvider::ClaudeBundled))
-        })
-        .map(|(name, _)| name)
-        .collect();
-    Ok(Some(format!(
-        "bundled skill {} brings in all bundled skills: {}, and any others this Claude version \
-         ships",
-        listed.join(", "),
-        all.join(", ")
-    )))
-}
-
-/// Prints `path:line: message` per problem and returns whether there were none; on success, one
-/// line saying what was checked. With an engine, it also prints what that engine carries on
-/// every launch that no flag removes, then per agent what it gets that its file does not say.
-/// The Claude baseline is shown unless the engine is Codex, which has none.
+/// Prints `path:line: message` per problem and returns whether there were none, with what was
+/// checked; the caller prints the closing line. Then what the consulted engines say: every
+/// active engine, or only `engine` (which the caller made sure is active). Their notes, as
+/// `# <note>`, and their warnings; with an engine, what it carries on every launch that no flag
+/// removes, its problems (each fails the check) and per agent what it gets that its file does
+/// not say.
 pub fn check(
     directories: &Directories,
     profiles: &Profiles,
+    engines: &Engines,
     engine: Option<EngineKind>,
     names: &[String],
     out: &mut dyn Write,
-) -> Result<bool, HarnessError> {
+) -> Result<Checked, HarnessError> {
     let report = Harness::new(directories.harness_roots()).check(names, profiles)?;
-    let mut engine_problems = 0;
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
     }
-    if engine != Some(EngineKind::Codex) {
-        writeln!(out, "{}", baseline_line()).ok();
-        for agent in &report.agent_definitions {
-            if let Some(warning) = bundle_warning(directories, &agent.skills)? {
-                writeln!(
-                    out,
-                    "{}:{}: warning: {warning}",
-                    agent.path.display(),
-                    agent.line_of("skills").unwrap_or(1)
-                )
-                .ok();
-            }
+    let consulted: Vec<(EngineKind, &dyn LlmEngine)> = engines
+        .all()
+        .into_iter()
+        .filter(|(kind, _)| engine.is_none_or(|wanted| wanted == *kind))
+        .collect();
+    let agents: Vec<AgentSummary> = report
+        .agent_definitions
+        .iter()
+        .map(AgentDefinition::summary)
+        .collect();
+    let provided = provided_skills(directories)?;
+    let request = DefinitionsRequest {
+        agents: &agents,
+        provided_skills: &provided,
+        cache: &directories.cache,
+    };
+    for (_, consulted) in &consulted {
+        for note in consulted.notes() {
+            writeln!(out, "# {note}").ok();
         }
     }
-    if let Some(engine) = engine {
-        let (forced, notes): (&[&str], fn(&_) -> Vec<String>) = match engine {
-            EngineKind::Claude => (
-                &tx_engine_claude::FORCED,
-                tx_engine_claude::definition_notes,
-            ),
-            EngineKind::Codex => (&tx_engine_codex::FORCED, tx_engine_codex::definition_notes),
-        };
-        for item in forced {
-            writeln!(out, "{engine}: always present: {item}").ok();
+    for (_, consulted) in &consulted {
+        for warning in consulted.warnings(&request) {
+            writeln!(out, "{}: warning: {}", place(&warning), warning.message).ok();
         }
-        // Claude drops a `tools` name it does not know without a word: refuse it here.
-        if engine == EngineKind::Claude {
-            let built_ins = crate::tools::claude_built_ins(directories)
-                .map_err(|message| HarnessError::new(&directories.cache, None, message))?;
-            for agent in &report.agent_definitions {
-                let unknown: Vec<&str> = agent
-                    .tools
-                    .iter()
-                    .chain(
-                        agent
-                            .disallowed_tools
-                            .iter()
-                            .filter(|tool| !tool.starts_with("mcp__")),
-                    )
-                    .map(String::as_str)
-                    .filter(|tool| {
-                        *tool != "Task" && !built_ins.tools.iter().any(|known| known == tool)
-                    })
-                    .collect();
-                if !unknown.is_empty() {
-                    engine_problems += 1;
-                    writeln!(
-                        out,
-                        "{}:{}: not a Claude Code {} tool, which it would drop silently: {}",
-                        agent.path.display(),
-                        agent.line_of("tools").unwrap_or(1),
-                        built_ins.version,
-                        unknown.join(", ")
-                    )
-                    .ok();
-                }
-            }
+    }
+    let mut engine_problems = 0;
+    if let Some((kind, consulted)) = consulted.first()
+        && engine.is_some()
+    {
+        let checked = consulted
+            .check(&request)
+            .map_err(|error| HarnessError::new(&directories.cache, None, error.to_string()))?;
+        for item in &checked.always_present {
+            writeln!(out, "{kind}: always present: {item}").ok();
         }
-        // Reference skills: a synced one must be on this machine; Codex has none of them.
-        for agent in &report.agent_definitions {
-            for (name, provider) in provided_skills(directories, &agent.skills)? {
-                let problem = match (engine, provider) {
-                    (EngineKind::Codex, provider) => Some(format!(
-                        "skill {name:?} is provided by {}: not on codex",
-                        provider.as_str()
-                    )),
-                    (EngineKind::Claude, SkillProvider::ClaudeSynced)
-                        if !tx_engine_claude::synced_skill_exists(&name) =>
-                    {
-                        Some(format!(
-                            "no claude.ai-synced skill {name:?} on this machine"
-                        ))
-                    }
-                    _ => None,
-                };
-                if let Some(problem) = problem {
-                    engine_problems += 1;
-                    writeln!(
-                        out,
-                        "{}:{}: {problem}",
-                        agent.path.display(),
-                        agent.line_of("skills").unwrap_or(1)
-                    )
-                    .ok();
-                }
-            }
+        for problem in &checked.problems {
+            writeln!(out, "{}: {}", place(problem), problem.message).ok();
         }
-        for agent in &report.agent_definitions {
-            for note in notes(agent) {
-                writeln!(out, "{}: {engine}: {note}", agent.path.display()).ok();
-            }
+        engine_problems = checked.problems.len();
+        for note in &checked.notes {
+            writeln!(out, "{}: {kind}: {}", note.path.display(), note.message).ok();
         }
     }
     let clean = report.problems.is_empty() && engine_problems == 0;
-    if clean {
-        writeln!(
-            out,
-            "ok: {} agents, {} skills, {} MCP servers",
+    Ok(Checked {
+        clean,
+        summary: format!(
+            "{} agents, {} skills, {} MCP servers",
             report.agents, report.skills, report.servers
-        )
-        .ok();
-    }
-    Ok(clean)
+        ),
+    })
 }

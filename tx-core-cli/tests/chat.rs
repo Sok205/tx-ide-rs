@@ -43,12 +43,15 @@ impl Cli {
     /// A `claude` that writes its argv one per line to `argv/<pid>`, then stays alive.
     fn argv_path(&self) -> String {
         let dir = self.dir.path().join("argv");
+        let staging = self.dir.path().join("argv.tmp");
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
         self.shim_path(&[(
             "claude",
             &format!(
-                "printf '%s\\n' \"$@\" > '{}/'$$\nexec sleep 60",
-                dir.display()
+                "printf '%s\\n' \"$@\" > '{1}/'$$ && mv '{1}/'$$ '{0}/'$$\nexec sleep 60",
+                dir.display(),
+                staging.display()
             ),
         )])
     }
@@ -355,5 +358,63 @@ fn update_binds_prefix_f() {
     assert!(
         !cli.tmux_out(&["list-keys", "-T", "prefix", "f"])
             .contains("tmux-fork-tx-session")
+    );
+}
+
+/// The one row of `chat` in `tx plugins --json`.
+fn plugin_row(cli: &Cli) -> Value {
+    let rows: Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let found: Vec<&Value> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == "chat")
+        .collect();
+    assert_eq!(found.len(), 1, "{rows}");
+    found[0].clone()
+}
+
+/// `tx chat ls a` with every plugin program it starts traced: its output, and the trace.
+fn traced_chat_ls(cli: &Cli) -> (String, String) {
+    let trace = cli.dir.path().join("trace");
+    let output = cli.run(
+        &["chat", "ls", "a"],
+        &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+        "",
+    );
+    assert!(output.status.success());
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        std::fs::read_to_string(&trace).unwrap_or_default(),
+    )
+}
+
+#[test]
+fn the_bundle_is_the_shipped_plugin_and_its_verbs_are_its_program() {
+    require_tmux!();
+    let cli = Cli::new();
+    let bundle = common::shipped().join("chat");
+    let row = plugin_row(&cli);
+    assert_eq!(row["origin"], "shipped");
+    assert_eq!(row["directory"], bundle.to_str().unwrap());
+    assert_eq!(row["tier"], "core");
+    assert_eq!(row["needs"], json!(["fzf"]));
+    assert_eq!(row["verbs"], json!(["chat", "doctor", "_fork-pane"]));
+    let help = cli.ok(&["help"]);
+    for verb in ["chat", "doctor", "_fork-pane"] {
+        assert_eq!(
+            help.lines()
+                .filter(|line| line.starts_with(&format!("  {verb} ")))
+                .count(),
+            1,
+            "{help}"
+        );
+    }
+    cli.create_agent("a");
+    let (_, trace) = traced_chat_ls(&cli);
+    assert_eq!(
+        trace,
+        format!("verb\tchat\t{}\n", bundle.join("bin/tx-chat").display()),
+        "one plugin program was started: tx became it, and no engine"
     );
 }

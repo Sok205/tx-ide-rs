@@ -33,25 +33,66 @@ API docs. `tx help` lists every verb and flag.
 
 ```sh
 git clone <this-repo> ~/tx-ide-rs
-~/tx-ide-rs/install --dry-run   # print every change, change nothing
-~/tx-ide-rs/install
+~/tx-ide-rs/install --dry-run   # print what every step would do, change nothing
+~/tx-ide-rs/install             # on a terminal: a checklist of the shipped plugins, all ticked
 tx ui attach                    # the IDE: the home
 ```
 
-Needs Rust 1.92+, tmux, git, fzf, curl, at least one engine CLI (`claude`, the default engine and
-the assistant's, or `codex`) and `nvim` for views; `install` also needs `jq`. It installs `tx` and
-`txi` with cargo, runs `tx update` (the pending update steps, then each plugin's updater: the IDE's
-tmux config, its keys, and the shipped roles and harness, under the data directory), links
-`~/.config/nvim` and `~/.tmux.conf` to this repository's `config/nvim` and `config/tmux.conf`
-(moving what was there to `<path>.bak.<stamp>`), and writes `~/.config/tx-ide/config.yaml` with every default spelled out, once. It is safe to
-re-run. After rebuilding `tx` by hand, run `tx update`: it runs the update steps a newer tx
-needs, such as moving files (the last one run is in `<data>/update-version`; other verbs warn
-while one is pending), then reinstalls the tmux config, which names the binary's path.
+Needs Rust 1.92+, tmux, jq and git. What else depends on the plugins you take: each one names the
+programs it runs (`fzf`, `nvim`, an engine CLI: `claude`, the default engine and the assistant's,
+or `codex`), and `install` warns about every one that a selected plugin needs and `PATH` does
+not have.
+
+**Which plugins.** tx's features are plugins, and an install takes a selection of them. A plugin
+outside the selection is not built and not installed. Three presets ship: `headless` (what an
+agent needs without the IDE: the engines, artifacts, chat, the pane labels, `tx setup` itself),
+`ide` (that and the IDE) and `full` (everything, the default).
+
+```sh
+install                          # on a terminal: the checklist; 1, 2, 3 tick a preset, space a row
+install --preset headless        # a preset: headless, ide, full, or one of your own
+install --plugins mockup,tour    # exactly these, and the plugins they require
+install --yes                    # ask nothing: full
+install --link-dotfiles          # also link ~/.config/nvim and ~/.tmux.conf to config/
+install --upgrade                # after a git pull: the same selection, rebuilt
+```
+
+Without a terminal, and with `--yes`, the selection is `full`. A preset of your own is
+`~/.config/tx-ide/presets/<name>.yaml` (see the guide's Files page). A plugin outside the
+selection is not installed: its verbs are unknown to `tx`.
+
+**What lands where.**
+
+- `tx` and `txi` in cargo's bin directory (`~/.cargo/bin`): the only two programs on `PATH`.
+- The selected plugins under `<data>/shipped/<id>/` (the manifest, the program, the resources),
+  built with `cargo build --release` and laid out by
+  `tx update --bundles plugins --binaries target/release`; the selection itself is recorded in
+  `<data>/shipped/.selection`. The same `tx update` runs the pending update steps, publishes the
+  shipped roles and harness and every plugin's keys and scripts under the data directory, and
+  runs each plugin's updater (the IDE's tmux config).
+- `~/.config/tx-ide/config.yaml`, written once by `tx setup` with every default spelled out and
+  the selected plugins. A file that exists is never touched.
+- Your dotfiles are left alone unless you ask: with `--link-dotfiles`, or the checklist's last
+  row, `~/.config/nvim` and `~/.tmux.conf` become links to this repository's `config/nvim` and
+  `config/tmux.conf` (what was there moves to `<path>.bak.<stamp>`).
+
+It is safe to re-run; a run with another `--preset` or `--plugins` changes the selection, and
+`tx update` removes the plugins that left it.
+
+**Upgrading.** `git pull`, then `install --upgrade`. It asks nothing, resolves the recorded
+preset again (so a plugin that is new in `full` arrives), rebuilds and lays everything out, and
+never writes `config.yaml` or a dotfile. After rebuilding `tx` by hand, run `tx update`: it runs
+the update steps a newer tx needs, such as moving files (the last one run is in
+`<data>/update-version`; other verbs warn while one is pending), publishes the roles, harness
+and plugin resources again, then reinstalls the tmux config, which names the binary's path. With
+`tx update --bundles plugins --binaries target/debug --link` the shipped plugins are links into
+the checkout and the build, so a rebuild is live.
 
 Coming from the previous `tx` (removed on 2026-11-02; its last tree is commit `7607347`),
 `install` also switches the machine once: the old install stays runnable as `tx-old`, its hook
 entries leave `~/.claude/settings.json` and `~/.codex/hooks.json` after a backup, and
-`tx doctor --fix-hooks` removes what older versions wired.
+`tx doctor --fix-hooks` removes what older versions wired (it is the `chat` plugin's verb, so
+that last step runs when `chat` is selected).
 
 ## First steps
 
@@ -117,7 +158,9 @@ the popup. The graph lists its keys on `?`.
 | `tx show NAME`, `tx where NAME`, `tx attach NAME` | its record as JSON; its tmux socket, session and pane; attach this terminal to it |
 | `tx rename NAME NEW`, `tx tag NAME TAG…` | rename it; replace its tags |
 | `tx gc [--older-than 1d] [--dry-run]` | delete the build output (`worktree.build_outputs`) in the worktrees of agents that ended longer ago than that |
-| `tx harness ls`, `tx harness check` | list and validate the agent definitions, skills and MCP servers |
+| `tx setup [--bundles DIR] [--preset NAME \| --plugins a,b,c \| --upgrade] [--list]` | choose which shipped plugins this machine has (a preset, ids, or a checklist on a terminal), record the selection in `<data>/shipped/.selection` and seed `config.yaml` when there is none |
+| `tx harness ls`, `tx harness check [--plugins [ID…]]` | list and validate the agent definitions, skills and MCP servers; `tx harness check` then validates the installed plugins (manifests, programs, resources, clashes, `requires`, the config, the shipped stamp), and `--plugins` checks only those |
+| `tx update [--bundles DIR --binaries DIR [--link]]` | bring this machine up to this tx: lay the shipped plugins out from a checkout's `plugins/` and its build (with `--bundles`), run the pending update steps, publish the roles, harness and plugin resources under the data directory, run each plugin's updater |
 | `tx engines`, `tx plugins` | the enabled engines; every plugin and whether it is on |
 
 Plugins add `ui`, `home`, `pick`, `kill`, `whoami`, `chat`, `doctor`, `assistant`, `artifact`,
@@ -148,8 +191,9 @@ agent definitions, the tx skills (`tx-sessions`, `tx-artifacts`, `tx-diff-review
 
 ## Configuration
 
-One file, `~/.config/tx-ide/config.yaml` (`tx help` prints the path in use). `install` writes it
-once with every default spelled out; after that it is yours. Every key is optional:
+One file, `~/.config/tx-ide/config.yaml` (`tx help` prints the path in use). It is written
+once, when there is none, with every default spelled out; after that it is yours. Every key is
+optional:
 
 ```yaml
 agent:                         # defaults for `tx create`; a flag given replaces its key
@@ -171,6 +215,15 @@ plugins:                       # one entry per plugin (`tx plugins`); a missing 
   home-themes:
     settings: { theme: koi }                    # the home's backdrop; `b` in the home picks another
 ```
+
+The `plugins:` block of a new file comes from `tx setup`, the verb that chooses which shipped
+plugins an install takes: it lists the plugins that were selected, one `<id>: { enabled: true }`
+each, with the default settings a plugin's `plugin.yaml` declares spelled out under it.
+`tx setup --bundles <repo>/plugins --preset headless | ide | full` selects by preset (the plugins
+of tier `core`; `core` and `ide`; all of them), `--plugins a,b,c` by id, and on a terminal with
+neither it shows a checklist. `--list` prints every preset with its plugins, among them your own
+in `~/.config/tx-ide/presets/<name>.yaml`. The file that exists is never written again: a plugin
+selected later has no entry, which means on.
 
 `model` applies only to `agent.engine`: with `--engine codex`, Codex runs its own default.
 `engine-claude` also takes `claude_settings`, Claude settings merged into every launch.

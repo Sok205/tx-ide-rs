@@ -1,29 +1,49 @@
 #!/usr/bin/env bash
-# install — make tx the daily driver. Idempotent, safe to re-run; --dry-run prints every
-# file change and changes nothing.
+# install — make tx the daily driver. Idempotent, safe to re-run; --dry-run prints what every
+# step would do and changes nothing (it runs no cargo, no tx and no tmux).
 #
-#   1. cargo install --path tx-core-cli            tx and txi into $CARGO_INSTALL_ROOT/bin (default ~/.cargo/bin)
-#   2. tx update                                   the pending update steps, then each plugin's updater
-#                                                  (the IDE's tmux config from the plugins' resources)
-#   2b. ~/.config/nvim and ~/.tmux.conf             links to config/{nvim,tmux.conf}; a real
-#                                                  directory or file there is moved to <path>.bak.<stamp>
-#   2c. ~/.config/tx-ide/config.yaml               tx's config with every default spelled out, copied
-#                                                  from config/tx-ide/config.yaml; an existing file
-#                                                  is yours and is never touched
-#   3. the switch (once; a second run finds nothing to do):
+#   install [--dry-run] [--preset NAME | --plugins a,b,c] [--upgrade] [--link-dotfiles] [--yes]
+#
+#   --preset NAME     the shipped plugins to install: headless (what an agent needs without the
+#                     IDE), ide, full (the default), or a preset of your own in <config>/presets/
+#   --plugins a,b,c   exactly these plugins, and what they require
+#   --upgrade         after a `git pull`: the selection recorded by the last install, resolved
+#                     again and rebuilt. It asks nothing and never writes config.yaml or a dotfile
+#                     (so it takes no --preset, --plugins or --link-dotfiles)
+#   --link-dotfiles   link ~/.config/nvim and ~/.tmux.conf to this checkout's config/
+#   --yes             ask nothing: without --preset or --plugins the selection is full
+#
+#   1. needs cargo, tmux and jq
+#   2. the plugins: builds tx-setup and runs it (`tx setup --bundles <repo>/plugins`). On a
+#      terminal, with no flag that chooses, it shows a checklist of the shipped plugins; it
+#      records the selection in <data>/shipped/.selection and writes <config>/config.yaml when
+#      there is none (an existing file is yours and is never touched)
+#   3. cargo build --release: tx, txi and the program of every selected plugin, into
+#      $CARGO_TARGET_DIR (default <repo>/target)
+#   4. cargo install --path tx-core-cli --locked: tx and txi into $CARGO_INSTALL_ROOT/bin
+#      (default ~/.cargo/bin), from the versions Cargo.lock pins. Nothing else goes on PATH
+#   5. tx update --bundles <repo>/plugins --binaries <target>/release: the selected plugins under
+#      <data>/shipped, the pending update steps, the published resources, each plugin's updater
+#   6. the programs the selected plugins need and PATH does not have: a warning each
+#   7. only with --link-dotfiles (or the checklist's last row): ~/.config/nvim and ~/.tmux.conf
+#      become links to config/{nvim,tmux.conf}; a real directory or file there is moved to
+#      <path>.bak.<stamp>
+#   8. config.yaml: reported only (step 2 wrote it, or it was there and is left as it is)
+#   9. the switch from the old install (once; a second run finds nothing to do):
 #      - the old install's `tx` (~/.local/bin/tx) becomes `tx-old`, and ~/.tx-ide/tmux.conf sets
 #        @tx-ide-bin tx-old so the old fragment's prefix+t / prefix+T popups keep working;
 #      - the old install's hook entries (commands under ~/.tx-ide/hooks/) leave
 #        ~/.claude/settings.json and ~/.codex/hooks.json; both files are backed up to
 #        <file>.bak.<stamp> first, everything else in them (the Claude statusLine included)
 #        stays as it is;
-#      - tx doctor --fix-hooks removes what older tx versions wired.
-#   4. what is left for you to do, printed at the end.
+#      - tx doctor --fix-hooks removes what older tx versions wired (when chat is selected).
+#   What is left for you to do is printed at the end.
 #
-# Honoured: $HOME, $CARGO_INSTALL_ROOT, $TX_APPNAME, $TX_CONFIG_DIR, $XDG_CONFIG_HOME (tx's directories), $TX_IDE_HOME (the old
-# home, default ~/.tx-ide), $CLAUDE_CONFIG_DIR, $CODEX_HOME. Nothing here talks to a tmux server;
-# reload your old server yourself (the last section says how). Needs cargo, tmux and jq. A run
-# with a sandboxed $HOME (QA) also needs $RUSTUP_HOME and $CARGO_HOME, or rustup finds no toolchain.
+# Honoured: $HOME, $CARGO_INSTALL_ROOT, $CARGO_TARGET_DIR, $TX_APPNAME, $TX_CONFIG_DIR,
+# $TX_DATA_DIR, $XDG_CONFIG_HOME, $XDG_DATA_HOME (tx's directories), $TX_IDE_HOME (the old home,
+# default ~/.tx-ide), $CLAUDE_CONFIG_DIR, $CODEX_HOME. Nothing here talks to a tmux server;
+# reload your old server yourself (the last section says how). A run with a sandboxed $HOME (QA)
+# also needs $RUSTUP_HOME and $CARGO_HOME, or rustup finds no toolchain.
 #
 # Not touched: ~/.tx-ide's data (sessions, history, artifacts), the repository's agents/, the hook
 # shims under ~/.tx-ide/hooks, the global tmux session-closed hook of the old server, the other
@@ -39,6 +59,7 @@ TX_DATA="${TX_DATA_DIR:-${XDG_DATA_HOME:-$HOME_DIR/.local/share}/${TX_APPNAME:-t
 TX_DATA="$(cd "$TX_DATA" 2>/dev/null && pwd -P || printf '%s' "$TX_DATA")"
 # tx's config dir, by the same rule.
 TX_CONFIG="${TX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME_DIR/.config}/${TX_APPNAME:-tx-ide}}"
+TX_CONFIG_FILE="$TX_CONFIG/config.yaml"
 LOCAL_BIN="$HOME_DIR/.local/bin"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}"
 CODEX_DIR="${CODEX_HOME:-$HOME_DIR/.codex}"
@@ -46,16 +67,55 @@ TX_IDE_DIR="${TX_IDE_HOME:-$HOME_DIR/.tx-ide}"
 TX_IDE_DIR="${TX_IDE_DIR/#\~/$HOME_DIR}"
 CARGO_BIN="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME_DIR/.cargo}}/bin"
 TX_BIN="$CARGO_BIN/tx"
+# Where cargo builds: the plugins' programs are taken from its release directory.
+TARGET="${CARGO_TARGET_DIR:-$REPO/target}"
+MANIFEST="$REPO/Cargo.toml"
+# The checkout's bundles: one <id>/plugin.yaml per shipped plugin.
+BUNDLES="$REPO/plugins"
+SETUP="$TARGET/release/tx-setup"
+# What `tx setup` records, and `tx update` installs.
+SELECTION_FILE="$TX_DATA/shipped/.selection"
 STAMP=$(date +%Y%m%d%H%M%S)
 
+SYNOPSIS="usage: install [--dry-run] [--preset NAME | --plugins a,b,c] [--upgrade] [--link-dotfiles] [--yes]"
+misuse() {
+  printf 'install: %s\n%s\n' "$1" "$SYNOPSIS" >&2
+  exit 2
+}
+
 DRY_RUN=0
-for argument in "$@"; do
-  case "$argument" in
+PRESET=""
+PLUGINS=""
+UPGRADE=0
+LINK_DOTFILES=0
+YES=0
+while (($#)); do
+  case "$1" in
     --dry-run) DRY_RUN=1 ;;
-    -h | --help) sed -n '2,21p' "$0"; exit 0 ;;
-    *) printf 'install: unknown argument: %s\n' "$argument" >&2; exit 2 ;;
+    --preset)
+      [[ -n "${2:-}" ]] || misuse "--preset needs a name"
+      PRESET="$2"
+      shift
+      ;;
+    --plugins)
+      [[ -n "${2:-}" ]] || misuse "--plugins needs a list"
+      PLUGINS="$2"
+      shift
+      ;;
+    --upgrade) UPGRADE=1 ;;
+    --link-dotfiles) LINK_DOTFILES=1 ;;
+    --yes) YES=1 ;;
+    -h | --help)
+      awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"
+      exit 0
+      ;;
+    *) misuse "unknown argument: $1" ;;
   esac
+  shift
 done
+[[ -n "$PRESET" && -n "$PLUGINS" ]] && misuse "--preset and --plugins exclude each other"
+((UPGRADE)) && [[ -n "$PRESET$PLUGINS" ]] && misuse "--upgrade takes the recorded selection: no --preset, no --plugins"
+((UPGRADE)) && ((LINK_DOTFILES)) && misuse "--upgrade never writes a dotfile: run install --upgrade alone; install --link-dotfiles, with your --preset or --plugins, links them"
 
 B=$'\e[1m'
 G=$'\e[32m'
@@ -76,16 +136,91 @@ real_path() {
   readlink -f "$1" 2>/dev/null || printf '%s' "$1"
 }
 
+# An agent's worktree is deleted when the agent is archived, and a link into it would go with it:
+# the links must point at the main checkout.
+refuse_an_agent_worktree() {
+  case "$REPO/" in
+  "$TX_DATA/worktrees/"*)
+    fail "$REPO" "is an agent worktree under $TX_DATA/worktrees — run install from the main checkout to link the dotfiles"
+    exit 1
+    ;;
+  esac
+}
+
+# The bundles as the manifests name them. A dry run reads these instead of running tx-setup,
+# and the `needs` of step 6 come from here.
+
+# The ids: every directory of $BUNDLES that holds a plugin.yaml.
+bundle_ids() {
+  local manifest
+  for manifest in "$BUNDLES"/*/plugin.yaml; do
+    [[ -f "$manifest" ]] && basename "$(dirname "$manifest")"
+  done
+  return 0
+}
+
+# tier_of <id>: the manifest's `tier:` line; without one a plugin is `extra`, as tx reads it.
+tier_of() {
+  local tier
+  tier=$(sed -n '/^tier:/{s/^tier:[[:space:]]*\([a-z]*\).*$/\1/p;q;}' "$BUNDLES/$1/plugin.yaml")
+  printf '%s' "${tier:-extra}"
+}
+
+# needs_of <id>: the programs of the manifest's `needs`, one per line. Both ways of writing a
+# list: `needs: [git, nvim]`, and one `- git` per line under `needs:`.
+needs_of() {
+  awk -v quote="'" '
+    /^needs:/ {
+      sub(/^needs:[ \t]*/, ""); sub(/[ \t]*#.*$/, "")
+      if ($0 != "") {
+        gsub("[][,\"" quote "]", " ")
+        count = split($0, programs, " ")
+        for (position = 1; position <= count; position++) print programs[position]
+        exit
+      }
+      block = 1; next
+    }
+    block && /^[ \t]*-[ \t]*/ {
+      sub(/^[ \t]*-[ \t]*/, ""); sub(/[ \t]*#.*$/, ""); gsub("[\"" quote "]", ""); print; next
+    }
+    block { exit }
+  ' "$BUNDLES/$1/plugin.yaml"
+}
+
+# of_tiers <tier>…: the bundles of those tiers.
+of_tiers() {
+  local id
+  for id in $(bundle_ids); do
+    case " $* " in *" $(tier_of "$id") "*) printf '%s\n' "$id" ;; esac
+  done
+}
+
+# preset_plugins <name>: what a shipped preset selects; any other name is tx setup's to resolve.
+preset_plugins() {
+  case "$1" in
+    headless) of_tiers core ;;
+    ide) of_tiers core ide ;;
+    full) bundle_ids ;;
+    *) return 1 ;;
+  esac
+}
+
+# selected <id>: whether the plugin is in the selection.
+selected() { grep -qx -- "$1" <<<"$SELECTED"; }
+
 cat <<EOF
 ${B}=== tx-ide install ===${X}$( ((DRY_RUN)) && printf '  %s(dry run: nothing is changed)%s' "$Y" "$X")
 
 repo:       $REPO
+build:      $TARGET
 binaries:   $CARGO_BIN/{tx,txi}
+plugins:    $TX_DATA/shipped
+config:     $TX_CONFIG_FILE
 old home:   $TX_IDE_DIR
 hook files: $CLAUDE_DIR/settings.json, $CODEX_DIR/hooks.json
 EOF
 
-# === 0: Dependencies ===
+# === 1: Dependencies ===
 header "Dependencies"
 missing=0
 for tool in cargo tmux jq; do
@@ -97,26 +232,142 @@ for tool in cargo tmux jq; do
   fi
 done
 ((missing)) && exit 1
-for tool in claude nvim fzf; do
-  if command -v "$tool" >/dev/null 2>&1; then
-    ok "$tool" "found"
-  else
-    warn "$tool" "missing — the IDE needs it (claude for the assistant, nvim for views, fzf for the picker)"
-  fi
-done
-
-# === 1: tx and txi ===
-# The old install's `tx` must be renamed (3a) before a cargo install into the same directory
-# would overwrite it.
+# The old install's `tx` must be renamed (the switch, below) before a cargo install into the
+# same directory would overwrite it.
 if [[ "$CARGO_BIN" -ef "$LOCAL_BIN" && -L "$LOCAL_BIN/tx" && "$(readlink "$LOCAL_BIN/tx")" == */bin/tx ]]; then
   fail "$LOCAL_BIN/tx" "the old install's tx is where cargo installs the new one — mv it to tx-old first"
   exit 1
 fi
+# The dotfiles are linked only when asked: the flag, or the last row of the checklist (step 2).
+((LINK_DOTFILES)) && refuse_an_agent_worktree
+
+# === 2: the plugins ===
+# tx-setup alone resolves a preset and records the selection; its `plugin` lines are what the
+# rest of the install builds and reports on.
+header "Plugins (tx setup --bundles $BUNDLES)"
+CONFIG_EXISTED=0
+[[ -e "$TX_CONFIG_FILE" || -L "$TX_CONFIG_FILE" ]] && CONFIG_EXISTED=1
+# The selected ids, one per line.
+SELECTED=""
+# 0 only in a dry run of a preset that is not a shipped one: tx setup would resolve it.
+SELECTION_KNOWN=1
+WIZARD=0
+setup_arguments=(--bundles "$BUNDLES")
+if ((UPGRADE)); then
+  setup_arguments+=(--upgrade)
+elif [[ -n "$PRESET" ]]; then
+  setup_arguments+=(--preset "$PRESET")
+elif [[ -n "$PLUGINS" ]]; then
+  setup_arguments+=(--plugins "$PLUGINS")
+elif [[ -t 0 ]] && ! ((YES)); then
+  # No flag: tx-setup shows its checklist, on stderr.
+  WIZARD=1
+else
+  setup_arguments+=(--preset full)
+fi
+
+# dry_preset <name>: a shipped preset is named from the manifests' tiers.
+dry_preset() {
+  if SELECTED=$(preset_plugins "$1"); then
+    ok "preset" "$1"
+  else
+    SELECTION_KNOWN=0
+    would "preset $1" "resolve preset $1 with tx setup"
+  fi
+}
+
+if ((DRY_RUN)); then
+  would "$SETUP" "run: cargo build --release --manifest-path $MANIFEST -p tx-setup"
+  would "the selection" "run: $SETUP ${setup_arguments[*]}"
+  if ((UPGRADE)); then
+    if [[ ! -f "$SELECTION_FILE" ]]; then
+      info "no $SELECTION_FILE: an upgrade takes full"
+      dry_preset full
+    elif ! recorded=$(jq -r '.preset // ""' "$SELECTION_FILE"); then
+      fail "$SELECTION_FILE" "not valid JSON"
+      exit 1
+    elif [[ -n "$recorded" ]]; then
+      dry_preset "$recorded"
+    else
+      ok "recorded" "a list of plugins"
+      SELECTED=$(jq -r '.plugins[]' "$SELECTION_FILE")
+    fi
+  elif [[ -n "$PRESET" ]]; then
+    dry_preset "$PRESET"
+  elif [[ -n "$PLUGINS" ]]; then
+    ok "plugins" "as given"
+    SELECTED=$(printf '%s\n' "$PLUGINS" | tr ',' '\n' | sed '/^$/d')
+  else
+    dry_preset full
+    ((WIZARD)) && info "on a terminal a real run asks with the wizard first, with full ticked"
+  fi
+  named=""
+  for id in $SELECTED; do
+    if [[ -f "$BUNDLES/$id/plugin.yaml" ]]; then
+      ok "$id" "$(tier_of "$id")"
+    elif ((UPGRADE)); then
+      warn "$id" "no bundle in $BUNDLES: tx setup will drop it"
+      continue
+    else
+      warn "$id" "no bundle in $BUNDLES: tx setup will refuse it"
+    fi
+    named+="$id"$'\n'
+  done
+  SELECTED="$named"
+else
+  if cargo build --release --manifest-path "$MANIFEST" -p tx-setup 2>&1 | sed 's/^/    /'; then
+    ok "$SETUP" "built"
+  else
+    fail "cargo build -p tx-setup" "failed"
+    exit 1
+  fi
+  # Only its stdout is taken: the checklist and its notes are on stderr.
+  if ! chosen=$("$SETUP" "${setup_arguments[@]}"); then
+    fail "tx setup" "no selection — nothing is installed"
+    exit 1
+  fi
+  while IFS=$'\t' read -r kind name value; do
+    case "$kind" in
+      plugin) SELECTED+="$name"$'\n' ;;
+      option) [[ "$name" == link-dotfiles && "$value" == true ]] && LINK_DOTFILES=1 ;;
+    esac
+  done <<<"$chosen"
+  ok "preset" "$(jq -r '.preset // "none: a list of plugins"' "$SELECTION_FILE")"
+  for id in $SELECTED; do
+    ok "$id" "$(tier_of "$id")"
+  done
+  # The checklist's last row asks for the links: the same refusal as with the flag.
+  ((WIZARD)) && ((LINK_DOTFILES)) && refuse_an_agent_worktree
+fi
+
+# === 3: build ===
+# Everything is built before `tx` is replaced, so the time in which the new `tx` has no plugins
+# yet is the copy and the update.
+header "Build (cargo build --release, into $TARGET)"
+build_arguments=(build --release --manifest-path "$MANIFEST" -p tx-core-cli)
+for id in $SELECTED; do
+  build_arguments+=(-p "tx-$id")
+done
+if ! ((SELECTION_KNOWN)); then
+  would "tx, txi and the selected plugins" "run: cargo ${build_arguments[*]} and -p tx-<id> for each plugin tx setup selects"
+elif ((DRY_RUN)); then
+  would "tx, txi and the selected plugins" "run: cargo ${build_arguments[*]}"
+elif cargo "${build_arguments[@]}" 2>&1 | sed 's/^/    /'; then
+  ok "tx, txi and the selected plugins" "built"
+else
+  fail "cargo build" "failed"
+  exit 1
+fi
+
+# === 4: tx and txi ===
+# --locked: without it `cargo install --path` ignores Cargo.lock and resolves the dependencies
+# afresh, and tx would be built from other versions than the plugins' programs of step 3. With
+# it the step also reuses what step 3 built.
 header "tx and txi (cargo install --path $REPO/tx-core-cli)"
 if ((DRY_RUN)); then
-  would "$CARGO_BIN/tx, $CARGO_BIN/txi" "run: cargo install --path $REPO/tx-core-cli --force"
+  would "$CARGO_BIN/tx, $CARGO_BIN/txi" "run: cargo install --path $REPO/tx-core-cli --force --locked"
 else
-  if cargo install --path "$REPO/tx-core-cli" --force 2>&1 | sed 's/^/    /'; then
+  if cargo install --path "$REPO/tx-core-cli" --force --locked 2>&1 | sed 's/^/    /'; then
     ok "$CARGO_BIN/tx, $CARGO_BIN/txi" "installed"
   else
     fail "cargo install" "failed"
@@ -128,30 +379,39 @@ case ":${PATH:-}:" in
 *) warn "$CARGO_BIN" "not on PATH — add it to your shell rc" ;;
 esac
 
-# === 2: tx update ===
+# === 5: tx update ===
 header "tx update${TX_APPNAME:+ (TX_APPNAME=$TX_APPNAME)}"
 if ((DRY_RUN)); then
-  would "the update steps, the IDE's tmux config and helper scripts" "run: $TX_BIN update"
-elif "$TX_BIN" update 2>&1 | sed 's/^/    /'; then
+  would "the shipped plugins, the resources, the updaters" "run: $TX_BIN update --bundles $BUNDLES --binaries $TARGET/release"
+elif "$TX_BIN" update --bundles "$BUNDLES" --binaries "$TARGET/release" 2>&1 | sed 's/^/    /'; then
   ok "tx update" "done"
 else
   fail "tx update" "failed"
   exit 1
 fi
 
-# === 2b: the operator's nvim and tmux config ===
+# === 6: what the plugins need ===
+header "What the plugins need"
+if ! ((SELECTION_KNOWN)); then
+  info "known once tx setup has resolved the preset"
+else
+  missing=0
+  for id in $SELECTED; do
+    [[ -f "$BUNDLES/$id/plugin.yaml" ]] || continue
+    for program in $(needs_of "$id"); do
+      command -v "$program" >/dev/null 2>&1 && continue
+      warn "$program" "missing — $id needs it"
+      missing=1
+    done
+  done
+  ((missing)) || ok "the programs the selected plugins need" "found"
+fi
+
+# === 7: the operator's nvim and tmux config ===
 # config/ holds the editor and default-server tmux config; the links make them live. A link
 # already pointing there is left alone; a link elsewhere is replaced; a real directory or file is
 # moved aside first.
-header "Link ~/.config/nvim and ~/.tmux.conf to $REPO/config"
-# An agent's worktree is deleted when the agent is archived, and a link into it would go with it:
-# the links must point at the main checkout.
-case "$REPO/" in
-"$TX_DATA/worktrees/"*)
-  fail "$REPO" "is an agent worktree under $TX_DATA/worktrees — run install from the main checkout"
-  exit 1
-  ;;
-esac
+header "Dotfiles (~/.config/nvim and ~/.tmux.conf)"
 link_config() {
   local target="$1" link="$2" current
   if [[ -L "$link" ]]; then
@@ -184,25 +444,28 @@ link_config() {
     fi
   fi
 }
-link_config "$REPO/config/nvim" "$HOME_DIR/.config/nvim"
-link_config "$REPO/config/tmux.conf" "$HOME_DIR/.tmux.conf"
-
-# === 2c: tx's config file ===
-# A copy, not a link: the values are the operator's to change, and a later install must never
-# undo them. A missing key falls back to the same default, so an older copy keeps working.
-header "Write tx's config file"
-TX_CONFIG_FILE="$TX_CONFIG/config.yaml"
-if [[ -e "$TX_CONFIG_FILE" || -L "$TX_CONFIG_FILE" ]]; then
-  ok "$TX_CONFIG_FILE" "exists — left as it is"
-elif ((DRY_RUN)); then
-  would "$TX_CONFIG_FILE" "write the defaults from $REPO/config/tx-ide/config.yaml"
+if ((LINK_DOTFILES)); then
+  link_config "$REPO/config/nvim" "$HOME_DIR/.config/nvim"
+  link_config "$REPO/config/tmux.conf" "$HOME_DIR/.tmux.conf"
 else
-  mkdir -p "$TX_CONFIG"
-  cp "$REPO/config/tx-ide/config.yaml" "$TX_CONFIG_FILE"
-  ok "$TX_CONFIG_FILE" "written with the defaults"
+  info "not linked (use --link-dotfiles)"
 fi
 
-# === 3a: the old install becomes tx-old ===
+# === 8: tx's config file ===
+# tx setup seeds it in step 2, with the selected plugins, when there is none. The values are the
+# operator's to change, and a later install never undoes them.
+header "tx's config file"
+if ((CONFIG_EXISTED)); then
+  ok "$TX_CONFIG_FILE" "exists: left as it is"
+elif ((UPGRADE)); then
+  warn "$TX_CONFIG_FILE" "absent: --upgrade does not write it"
+elif ((DRY_RUN)); then
+  would "$TX_CONFIG_FILE" "be written by tx setup"
+else
+  ok "$TX_CONFIG_FILE" "written by tx setup"
+fi
+
+# === 9a: the old install becomes tx-old ===
 header "Rename the old install to tx-old"
 # The old installer links ~/.local/bin/tx to <repo>/bin/tx; only that entry is renamed (a
 # sandbox's stand-in sits there too, as a link or a file).
@@ -258,7 +521,7 @@ else
   info "no $OLD_TMUX_CONF — no old tmux bindings to rewrite"
 fi
 
-# === 3b: the old hook entries ===
+# === 9b: the old hook entries ===
 header "Remove the old install's hooks from the agents' settings"
 OLD_HOOKS_PREFIX="$TX_IDE_DIR/hooks/"
 # jq: drop every hook command under the old home's hooks/ (the resolved directory, or any
@@ -320,9 +583,14 @@ strip_old_hooks() {
 strip_old_hooks "$CLAUDE_DIR/settings.json"
 strip_old_hooks "$CODEX_DIR/hooks.json"
 
-# === 3c: what older tx versions wired ===
+# === 9c: what older tx versions wired ===
+# `tx doctor` is the chat plugin's verb.
 header "tx doctor --fix-hooks"
-if ((DRY_RUN)); then
+if ! ((SELECTION_KNOWN)); then
+  would "the entries older tx versions added" "run: $TX_BIN doctor --fix-hooks, when chat is selected"
+elif ! selected chat; then
+  info "chat is not selected: skipped"
+elif ((DRY_RUN)); then
   would "the entries older tx versions added" "run: $TX_BIN doctor --fix-hooks"
 elif "$TX_BIN" doctor --fix-hooks 2>&1 | sed 's/^/    /'; then
   ok "tx doctor --fix-hooks" "done"
@@ -331,12 +599,24 @@ else
 fi
 
 # === Final ===
+if ((LINK_DOTFILES)); then
+  DOTFILES="~/.config/nvim and ~/.tmux.conf link to $REPO/config; edit them there, they are versioned."
+else
+  DOTFILES="~/.config/nvim and ~/.tmux.conf are yours and were left alone; $REPO/install --link-dotfiles
+    makes them links to $REPO/config."
+fi
 cat <<EOF
 
 ${B}=== Done ===${X}$( ((DRY_RUN)) && printf ' %s(dry run)%s' "$Y" "$X")
 
 ${B}Start the IDE:${X}
   ${D}tx ui attach${X}             the home view, nested into the tx-assistant; prefix+/ asks it from any pane
+
+${B}Later:${X}
+  ${D}git pull && $REPO/install --upgrade${X}
+                           the same selection, resolved again and rebuilt; it asks nothing and
+                           leaves config.yaml and the dotfiles alone
+  ${D}$REPO/install --preset NAME${X}   (or --plugins a,b,c) another selection: headless, ide, full
 
 ${B}The old install, as tx-old:${X}
   ${D}tmux source-file ~/.tmux.conf${X}   in your old tmux server, so prefix+t / prefix+T there run tx-old
@@ -346,8 +626,9 @@ ${B}The old install, as tx-old:${X}
   - the settings keys the old install set (disableWorkflows, skillOverrides, …) were left alone.
 
 ${B}Your own config:${X}
-  - ~/.config/nvim and ~/.tmux.conf link to $REPO/config; edit them there, they are versioned.
-  - tx's settings are in $TX_CONFIG_FILE (agent defaults for tx create, plugins); a copy, edit it in place.
+  - $DOTFILES
+  - tx's settings are in $TX_CONFIG_FILE (agent defaults for tx create, the plugins);
+    it is written once, by tx setup, and is yours to edit in place.
   - restart your default tmux server once (tmux kill-server on the default socket) so it stops
     sourcing the old fragment; the IDE's server is unaffected.
   - terminal profile: unchanged. The IDE's M-1..9 / Cmd-Opt-digit keys come from the keymap

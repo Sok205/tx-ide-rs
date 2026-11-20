@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use tx_core::{Plugin, PluginError, Registry};
-use tx_home::backdrop::{Catalogue, Constructor, install};
+use tx_home_backdrop::{Catalogue, Constructor, install};
 
 pub mod abyss;
 pub mod campfire;

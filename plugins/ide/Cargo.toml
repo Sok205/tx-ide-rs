@@ -1,0 +1,23 @@
+[package]
+name = "tx-ide"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "tx-core plugin: the tmux IDE: the server config `tx update` composes, `ui attach` and `ui view`."
+
+# The plugin as its own program: what `plugin.yaml` names for its verbs and its updater.
+[[bin]]
+name = "tx-ide"
+path = "src/main.rs"
+
+[dependencies]
+tx-core.workspace = true
+tx-client.workspace = true
+tx-plugin.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

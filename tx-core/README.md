@@ -48,7 +48,7 @@ core.register_engine(Box::new(tx_engine_claude::Claude))?;
 let id = core.create_agent(CreateOptions::new(
     "worker-1",
     "/repo",
-    LaunchOptions::agent(EngineKind::Claude)
+    LaunchOptions::agent(EngineKind::CLAUDE)
         .profile(["dev"])
         .initial_prompt("start with the failing test"),
 ))?;
@@ -62,9 +62,9 @@ let at = core.get_execution_location(&id)?;   // tmux -S <socket> attach -t <ses
 struct Aider;
 
 impl LlmEngine for Aider {
-    // The kinds are a closed set (`EngineKind { Claude, Codex }`): a new engine first adds its
-    // variant there, then declares it here. The registry is keyed by it.
-    fn kind(&self) -> EngineKind { EngineKind::Aider }
+    // A kind is an open name, `[a-z0-9-]{1,31}`: an engine declares the one it provides, a
+    // record names the one it runs on. The registry is keyed by it.
+    fn kind(&self) -> EngineKind { "aider".parse().unwrap() }
     // Wires no hooks, so its sessions stay `starting`; see tx-engine-claude for real rules.
     fn on_hook(&self, _: LlmEngineState, _: &LlmEngineHook) -> Option<LlmEngineState> { None }
     fn start(&self, r: &LaunchRequest<'_>, prompt: &str) -> Result<LaunchPlan, EngineError> {

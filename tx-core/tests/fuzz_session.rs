@@ -42,7 +42,8 @@ fn arb_session_id() -> impl Strategy<Value = AgentId> {
 }
 
 fn arb_engine() -> impl Strategy<Value = EngineKind> {
-    prop::sample::select(EngineKind::ALL.to_vec())
+    // Any name of the grammar is a kind, whether or not an engine provides it.
+    "[a-z0-9-]{1,31}".prop_map(|name| name.parse().unwrap())
 }
 
 fn arb_state() -> impl Strategy<Value = LlmEngineState> {
@@ -106,6 +107,7 @@ fn arb_session_with(
                 roles,
                 definition: None,
                 state,
+                idle_reason: None,
                 created_at,
                 last_modified_at: created_at,
                 last_activity_at,
@@ -263,7 +265,7 @@ fn sample() -> Agent {
     Agent {
         id: sid("x"),
         name: "shell".into(),
-        engine: EngineKind::Claude,
+        engine: EngineKind::CLAUDE,
         working_directory: PathBuf::from("/"),
         roles: vec![],
         definition: None,

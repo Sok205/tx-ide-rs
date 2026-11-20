@@ -1,14 +1,16 @@
 //! Hand-rolled argument parsing: no dependency, exact error texts, exit code 2 on misuse.
 
-use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use tx_core::{CoreError, EngineKind};
+pub use tx_plugin::args::{Global, UsageError};
+use tx_plugin::args::{env_pair, parse_global};
 
 pub const USAGE: &str = "\
 usage: tx [--config-dir DIR] [--data-dir DIR] [--state-dir DIR] [--cache-dir DIR] [--run-dir DIR] [--socket PATH]
-           [--config FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--env KEY=VALUE]... <verb> ...
+           [--config FILE] [--profile-dir DIR]... [--skill-dir DIR]... [--plugin-dir DIR]... [--env KEY=VALUE]...
+           <verb> ...
 
 verbs:
   create NAME --cwd DIR --prompt T [--engine ENGINE] [--role R]... [--option KEY=VALUE]... [--model M]
@@ -65,24 +67,36 @@ verbs:
                                                                     minutes); size freed per worktree, then the total.
                                                                     Worktree, branch, record and conversation stay, so
                                                                     respawn works. --dry-run: the same, nothing deleted
-  engines                                                           the engines whose plugin is enabled (claude, codex)
+  engines                                                           the kinds of the active engines, one per line
   harness ls [agents|skills|mcp|tools]                              name and description of each agent, skill and MCP
                                                                     server of the harness, every kind or one; yours
                                                                     (<config>/harness) win by name over the shipped ones
                                                                     (<data>/harness). tools (only when asked): the names
                                                                     `tools` can use, from the engines, and each MCP
                                                                     server's tools
-  harness check [--engine ENGINE] [NAME]...                         validate the harness, all of it or those named (agents,
-                                                                    skills, MCP servers); path:line per problem, exit 1;
+  harness check [--engine ENGINE | --plugins] [NAME|ID]...          validate the harness (agents, skills, MCP servers),
+                                                                    all of it or those named, and with no name the
+                                                                    installed plugins too; path:line per problem, exit 1;
                                                                     --engine: also what ENGINE adds to each agent and what
-                                                                    it carries that no flag removes
-  plugins                                                           id and active|disabled per plugin
-  update                                                            bring this machine up to this tx: run the update steps
+                                                                    it carries that no flag removes; --plugins [ID]...:
+                                                                    only the plugins, all or those named (manifests, bins,
+                                                                    resources, clashes, requires, the config, the shipped
+                                                                    stamp), warnings apart
+  plugins [--json]                                                  id and status per plugin, and why for one in error:
+                                                                    active | disabled | error | missing (an entry of the
+                                                                    config file that names no plugin); --json: one array
+                                                                    of {id, status, detail, origin, directory, description,
+                                                                    tier, requires, needs, verbs, engine}, origin being
+                                                                    shipped or user
+  update [--bundles DIR --binaries DIR [--link]]                    bring this machine up to this tx: run the update steps
                                                                     it has not had yet (<data>/update-version), then each
                                                                     plugin's updater (the IDE's tmux config, keys, shipped
                                                                     roles and harness); one line per step, and whether
                                                                     running agents need a respawn. Other verbs warn while
-                                                                    one is pending
+                                                                    one is pending. --bundles, --binaries: lay the shipped
+                                                                    plugins of DIR out under <data>/shipped, their programs
+                                                                    taken from DIR/<id>/bin or the binaries DIR; --link:
+                                                                    as links, not copies
 
 TARGET is a session id or name. Files live in five directories named after the application,
 $TX_APPNAME, else tx-ide; each is its flag, else $TX_<NAME>_DIR (every session carries these),
@@ -94,10 +108,13 @@ else the XDG variable, else the XDG default:
   run     $XDG_RUNTIME_DIR/<app>, $TMPDIR/<app>.<user>      tmux.sock
 Roles resolve from --profile-dir, else <data>/roles (written by `tx update`), then <config>/roles;
 skills from --skill-dir, else <data>/harness/skills (written by `tx update`), then
-<config>/harness/skills.
+<config>/harness/skills; plugins are the directories under --plugin-dir, else <data>/shipped
+(written by `tx update`), then <config>/plugins (your own).
+A flag left out is read from its variable: $TX_PROFILE_PATH, $TX_SKILL_PATH, $TX_PLUGIN_PATH
+(colon-separated), $TX_CONFIG_FILE, $TX_SESSION_ENV (a JSON object, for --env).
 The config file is <config>/config.yaml (--config FILE overrides); every key is optional:
   agent:                        defaults for create; a flag given replaces its key
-    engine: claude              claude | codex
+    engine: claude              an engine kind (see `engines`)
     roles: []                   empty: the definition's `roles`; any --role replaces the list
     definition: developer       the agent definition without --agent (null: roles alone)
     model: claude-opus-5-5      null: the engine's own default
@@ -107,29 +124,6 @@ The config file is <config>/config.yaml (--config FILE overrides); every key is 
   plugins:                      one entry per plugin id (see `plugins`)
     <id>: { enabled: true, settings: {...} }
 ";
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct UsageError(pub String);
-
-impl fmt::Display for UsageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Global {
-    pub config_dir: Option<PathBuf>,
-    pub data_dir: Option<PathBuf>,
-    pub state_dir: Option<PathBuf>,
-    pub cache_dir: Option<PathBuf>,
-    pub run_dir: Option<PathBuf>,
-    pub socket: Option<PathBuf>,
-    pub profile_dirs: Vec<PathBuf>,
-    pub skill_dirs: Vec<PathBuf>,
-    pub env: Vec<(String, String)>,
-    pub config: Option<PathBuf>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verb {
@@ -143,8 +137,9 @@ pub enum Verb {
         engine: Option<EngineKind>,
         /// Empty: the config file's `agent.roles`, or with `--agent` the definition's `roles:`.
         roles: Vec<String>,
-        /// `--agent A` and its `--skill`/`--mcp`/`--tool` extras.
-        definition: Option<tx_core::DefinitionChoice>,
+        /// `--agent A` and its `--skill`/`--mcp`/`--tool` extras. Boxed: it is the one large
+        /// field, and most invocations have none.
+        definition: Option<Box<tx_core::DefinitionChoice>>,
         /// Engine options in command-line order (`--option KEY=VALUE`, `--model`, `--effort`);
         /// a repeated key is settled by the engine's options object, last one wins.
         options: Vec<(String, String)>,
@@ -208,17 +203,25 @@ pub enum Verb {
         dry_run: bool,
     },
     Engines,
-    Plugins,
-    /// `update`: the pending update steps, then every plugin's updater.
-    Update,
+    /// `plugins [--json]`: every plugin and its status.
+    Plugins {
+        json: bool,
+    },
+    /// `update`: the pending update steps, then every plugin's updater. Its arguments are
+    /// `update`'s own to read.
+    Update {
+        arguments: Vec<String>,
+    },
     /// `harness ls [agents|skills|mcp|tools]`: list the harness, every kind or one.
     HarnessList {
         kind: Option<HarnessKind>,
     },
-    /// `harness check [--engine E] [NAME]...`: validate the harness, all of it or the entries
-    /// named; with an engine, also what it adds or cannot remove.
+    /// `harness check [--engine E | --plugins] [NAME]...`: validate the harness, all of it or
+    /// the entries named, and with no name the plugins too; with an engine, also what it adds or
+    /// cannot remove. With `--plugins`, only the plugins, and `names` are plugin ids.
     HarnessCheck {
         engine: Option<EngineKind>,
+        plugins: bool,
         names: Vec<String>,
     },
     /// Anything the built-ins do not know: looked up among the plugin verbs at run time.
@@ -262,8 +265,8 @@ fn usage(text: impl Into<String>) -> UsageError {
     UsageError(text.into())
 }
 
-/// `--engine ENGINE`: one of the kinds this build knows; anything else is a misuse that names
-/// them.
+/// `--engine ENGINE`: the name of an engine kind; anything that cannot be one is a misuse.
+/// Whether an active engine provides the kind is settled when something is launched with it.
 fn engine_kind(text: &str) -> Result<EngineKind, UsageError> {
     text.parse()
         .map_err(|error: CoreError| usage(format!("--engine: {error}")))
@@ -301,13 +304,6 @@ fn option_pair(text: &str) -> Result<(String, String), UsageError> {
 /// `--engine-args ARGS` as the words a shell would split it into: `--chrome -c "a b"` is three.
 fn engine_args_words(text: &str) -> Result<Vec<String>, UsageError> {
     shlex::split(text).ok_or_else(|| usage(format!("--engine-args: unbalanced quotes in {text:?}")))
-}
-
-fn env_pair(text: &str) -> Result<(String, String), UsageError> {
-    text.split_once('=')
-        .filter(|(key, _)| !key.is_empty())
-        .map(|(key, value)| (key.to_owned(), value.to_owned()))
-        .ok_or_else(|| usage(format!("--env expects KEY=VALUE, got {text:?}")))
 }
 
 /// `--via NAME` goes verbatim into the envelope's `session="…"` attribute, so it may not be
@@ -355,61 +351,22 @@ impl<'a> Cursor<'a> {
 }
 
 pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
-    let mut cursor = Cursor { args, index: 0 };
-    let mut global = Global::default();
-    loop {
-        match cursor.peek() {
-            Some("--config-dir") => {
-                cursor.next();
-                global.config_dir = Some(cursor.value("--config-dir")?.into());
-            }
-            Some("--data-dir") => {
-                cursor.next();
-                global.data_dir = Some(cursor.value("--data-dir")?.into());
-            }
-            Some("--state-dir") => {
-                cursor.next();
-                global.state_dir = Some(cursor.value("--state-dir")?.into());
-            }
-            Some("--cache-dir") => {
-                cursor.next();
-                global.cache_dir = Some(cursor.value("--cache-dir")?.into());
-            }
-            Some("--run-dir") => {
-                cursor.next();
-                global.run_dir = Some(cursor.value("--run-dir")?.into());
-            }
-            Some("--socket") => {
-                cursor.next();
-                global.socket = Some(cursor.value("--socket")?.into());
-            }
-            Some("--profile-dir") => {
-                cursor.next();
-                global
-                    .profile_dirs
-                    .push(cursor.value("--profile-dir")?.into());
-            }
-            Some("--skill-dir") => {
-                cursor.next();
-                global.skill_dirs.push(cursor.value("--skill-dir")?.into());
-            }
-            Some("--env") => {
-                cursor.next();
-                global.env.push(env_pair(cursor.value("--env")?)?);
-            }
-            Some("--config") => {
-                cursor.next();
-                global.config = Some(cursor.value("--config")?.into());
-            }
-            _ => break,
-        }
-    }
+    let (global, index) = parse_global(args)?;
+    let mut cursor = Cursor { args, index };
     let verb = match cursor.next() {
         None => return Err(usage("missing verb")),
         Some("help" | "--help" | "-h") => Verb::Help,
         Some("engines") => Verb::Engines,
-        Some("plugins") => Verb::Plugins,
-        Some("update") => Verb::Update,
+        Some("plugins") => {
+            let json = cursor.peek() == Some("--json");
+            if json {
+                cursor.next();
+            }
+            Verb::Plugins { json }
+        }
+        Some("update") => Verb::Update {
+            arguments: cursor.rest(),
+        },
         Some("create") => parse_create(&mut cursor)?,
         Some("fork") => parse_fork(&mut cursor)?,
         Some("ls") => parse_ls(&mut cursor)?,
@@ -486,19 +443,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     ),
                 },
             },
-            Some("check") => {
-                let engine = match cursor.peek() {
-                    Some("--engine") => {
-                        cursor.next();
-                        Some(engine_kind(cursor.value("--engine")?)?)
-                    }
-                    _ => None,
-                };
-                Verb::HarnessCheck {
-                    engine,
-                    names: cursor.rest(),
-                }
-            }
+            Some("check") => parse_check(&mut cursor)?,
             other => {
                 return Err(usage(format!(
                     "harness takes ls or check, got {}",
@@ -522,6 +467,33 @@ fn target(cursor: &mut Cursor<'_>, verb: &str) -> Result<String, UsageError> {
         .next()
         .map(str::to_owned)
         .ok_or_else(|| usage(format!("{verb} needs a session id or name")))
+}
+
+/// `harness check [--engine E | --plugins] [NAME]...`.
+fn parse_check(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
+    let mut engine = None;
+    let mut plugins = false;
+    loop {
+        match cursor.peek() {
+            Some("--engine") => {
+                cursor.next();
+                engine = Some(engine_kind(cursor.value("--engine")?)?);
+            }
+            Some("--plugins") => {
+                cursor.next();
+                plugins = true;
+            }
+            _ => break,
+        }
+    }
+    if plugins && engine.is_some() {
+        return Err(usage("--plugins takes no --engine"));
+    }
+    Ok(Verb::HarnessCheck {
+        engine,
+        plugins,
+        names: cursor.rest(),
+    })
 }
 
 fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
@@ -564,7 +536,7 @@ fn parse_create(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
     let cwd = cwd.ok_or_else(|| usage("create needs --cwd DIR"))?;
     let prompt = prompt.ok_or_else(|| usage("create needs --prompt T"))?;
     let definition = match agent {
-        Some(agent) => Some(tx_core::DefinitionChoice { agent, ..extras }),
+        Some(agent) => Some(Box::new(tx_core::DefinitionChoice { agent, ..extras })),
         None if extras == tx_core::DefinitionChoice::default() => None,
         None => return Err(usage("--skill, --mcp and --tool extend an --agent")),
     };
@@ -650,7 +622,7 @@ fn parse_gc(cursor: &mut Cursor<'_>) -> Result<Verb, UsageError> {
         match flag {
             "--older-than" => {
                 let raw = cursor.value(flag)?;
-                let minutes = tx_timeline::verbs::parse_duration_minutes(raw).ok_or_else(|| {
+                let minutes = crate::gc::parse_duration_minutes(raw).ok_or_else(|| {
                     usage(format!(
                         "--older-than takes a duration such as 30m, 2h or 1d, got {raw:?}"
                     ))
@@ -696,7 +668,23 @@ mod tests {
                 argv: vec!["a".into(), "b".into()]
             }
         );
-        assert_eq!(parse_str("plugins").unwrap().verb, Verb::Plugins);
+        assert_eq!(
+            parse_str("plugins").unwrap().verb,
+            Verb::Plugins { json: false }
+        );
+        assert_eq!(
+            parse_str("plugins --json").unwrap().verb,
+            Verb::Plugins { json: true }
+        );
+        for bad in ["plugins --yaml", "plugins --json x", "plugins x"] {
+            assert!(
+                parse_str(bad)
+                    .unwrap_err()
+                    .0
+                    .contains("unexpected argument"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
@@ -730,8 +718,14 @@ mod tests {
             ]
         );
         assert!(matches!(inv.verb, Verb::Ls { .. }));
+        let inv = parse_str("--plugin-dir /shipped --plugin-dir /mine ls").unwrap();
+        assert_eq!(
+            inv.global.plugin_dirs,
+            [PathBuf::from("/shipped"), PathBuf::from("/mine")]
+        );
         let inv = parse_str("ls").unwrap();
         assert!(inv.global.state_dir.is_none() && inv.global.env.is_empty());
+        assert!(inv.global.plugin_dirs.is_empty());
     }
 
     #[test]
@@ -760,7 +754,7 @@ mod tests {
         assert_eq!(parent.as_deref(), Some("p-1"));
         assert_eq!(tags, ["a", "b"]);
         assert_eq!(env, [("K".to_owned(), "V".to_owned())]);
-        assert_eq!(engine, Some(EngineKind::Claude));
+        assert_eq!(engine, Some(EngineKind::CLAUDE));
         assert_eq!(roles, ["dev", "ops"]);
         assert_eq!(
             options,
@@ -817,12 +811,12 @@ mod tests {
         };
         assert_eq!(
             definition,
-            Some(tx_core::DefinitionChoice {
+            Some(Box::new(tx_core::DefinitionChoice {
                 agent: "pm".into(),
                 skills: vec!["s1".into(), "s2".into()],
                 mcp_servers: vec!["probe".into()],
                 tools: vec!["WebFetch".into()],
-            })
+            }))
         );
         assert_eq!(
             parse_str("create w --cwd /w --prompt go --skill s")
@@ -1105,22 +1099,61 @@ mod tests {
             assert!(parse_str(bad).is_err(), "{bad}");
         }
         assert_eq!(parse_str("engines").unwrap().verb, Verb::Engines);
-        assert_eq!(parse_str("update").unwrap().verb, Verb::Update);
-        assert!(parse_str("update now").is_err());
+        assert_eq!(
+            parse_str("update").unwrap().verb,
+            Verb::Update { arguments: vec![] }
+        );
+        // `update` reads its own arguments.
+        assert_eq!(
+            parse_str("update --bundles b now").unwrap().verb,
+            Verb::Update {
+                arguments: vec!["--bundles".into(), "b".into(), "now".into()]
+            }
+        );
         assert_eq!(
             parse_str("harness check pm linear").unwrap().verb,
             Verb::HarnessCheck {
                 engine: None,
+                plugins: false,
                 names: vec!["pm".into(), "linear".into()]
             }
         );
         assert_eq!(
             parse_str("harness check --engine codex pm").unwrap().verb,
             Verb::HarnessCheck {
-                engine: Some(EngineKind::Codex),
+                engine: Some(EngineKind::CODEX),
+                plugins: false,
                 names: vec!["pm".into()]
             }
         );
+        assert_eq!(
+            parse_str("harness check --plugins mockup nope")
+                .unwrap()
+                .verb,
+            Verb::HarnessCheck {
+                engine: None,
+                plugins: true,
+                names: vec!["mockup".into(), "nope".into()]
+            }
+        );
+        assert_eq!(
+            parse_str("harness check --plugins").unwrap().verb,
+            Verb::HarnessCheck {
+                engine: None,
+                plugins: true,
+                names: vec![]
+            }
+        );
+        for bad in [
+            "harness check --plugins --engine claude",
+            "harness check --engine claude --plugins",
+        ] {
+            assert_eq!(
+                parse_str(bad).unwrap_err().0,
+                "--plugins takes no --engine",
+                "{bad}"
+            );
+        }
         assert_eq!(
             parse_str("harness ls mcp").unwrap().verb,
             Verb::HarnessList {

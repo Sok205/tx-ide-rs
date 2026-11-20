@@ -211,7 +211,7 @@ fn warm_when_down(core: &TxCore, io: &mut VerbIo<'_>) -> Result<bool, VerbError>
     if !assistant_down(core) {
         return Ok(false);
     }
-    let tx = Txc::current(core)?;
+    let tx = Txc::current(core);
     let mut warm = tx.command(&[ASSISTANT_VERB, "warm"]);
     warm.stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -281,31 +281,7 @@ impl Verb for Install {
             return usage(io, "_home-install <session>");
         };
         let ui = Ui::from_core(core);
-        let installed = Txc::current(core).and_then(|tx| {
-            let pane = floor::install(&ui, session, &floor::hook_command(&tx.shell(&[])))
-                .map_err(failed)?;
-            // A TUI an earlier attach left comes back as a first open while the assistant is
-            // down, so every attach starts it again.
-            let earlier_tui = tx
-                .exe
-                .file_name()
-                .is_some_and(|name| name == pane.command.as_str())
-                && assistant_down(core);
-            if !floor::takes_floor(pane.dead, &pane.command) && !earlier_tui {
-                return Ok(());
-            }
-            // A fresh TUI: a choice or a last session left by a pane of an earlier server with
-            // the same id is not this pane's.
-            let directory = plugin_directory(core);
-            for file in [
-                floor::choice_path(&directory, &pane.id),
-                floor::last_path(&directory, &pane.id),
-            ] {
-                remove(&file).map_err(failed)?;
-            }
-            ui.respawn_pane(&pane.id, &tx.shell(&[TUI_VERB, &pane.id, "--first"]))
-                .map_err(failed)
-        });
+        let installed = take_floor(core, &ui, session);
         if let Err(error) = installed {
             let message = format!("tx home: {error}");
             let _ = writeln!(io.stderr, "{message}");
@@ -315,6 +291,30 @@ impl Verb for Install {
         }
         Ok(0)
     }
+}
+
+/// The floor on `session`'s pane, and the TUI in it unless the pane holds something to leave
+/// alone (see [`floor::takes_floor`]).
+fn take_floor(core: &TxCore, ui: &Ui, session: &str) -> Result<(), VerbError> {
+    let tx = Txc::current(core);
+    let pane = floor::install(ui, session, &floor::hook_command(&tx.shell(&[]))).map_err(failed)?;
+    // A TUI an earlier attach left comes back as a first open while the assistant is down, so
+    // every attach starts it again.
+    let earlier_tui = runs_the_tui(&pane.command)? && assistant_down(core);
+    if !floor::takes_floor(pane.dead, &pane.command) && !earlier_tui {
+        return Ok(());
+    }
+    // A fresh TUI: a choice or a last session left by a pane of an earlier server with the same
+    // id is not this pane's.
+    let directory = plugin_directory(core);
+    for file in [
+        floor::choice_path(&directory, &pane.id),
+        floor::last_path(&directory, &pane.id),
+    ] {
+        remove(&file).map_err(failed)?;
+    }
+    ui.respawn_pane(&pane.id, &tx.shell(&[TUI_VERB, &pane.id, "--first"]))
+        .map_err(failed)
 }
 
 /// `_home-perform <pane>`: the `pane-died` hook. Runs the choice the TUI left for `pane`, else
@@ -335,7 +335,7 @@ impl Verb for Perform {
             return usage(io, "_home-perform <pane>");
         };
         let ui = Ui::from_core(core);
-        let tx = Txc::current(core)?;
+        let tx = Txc::current(core);
         let directory = plugin_directory(core);
         let session = ui.display_message("#{session_name}", Some(pane));
         let performer = Performer {
@@ -366,6 +366,14 @@ impl Verb for Perform {
     }
 }
 
+/// Whether `command`, a pane's foreground program, is the one the home TUI runs in. That is
+/// this very program: `_home-install` and `_home-tui` are verbs of the same plugin, so they run
+/// in `tx-home` when the plugin is installed and in `tx` when it is compiled in.
+fn runs_the_tui(command: &str) -> Result<bool, VerbError> {
+    let program = std::env::current_exe().map_err(|e| failed(format!("current_exe: {e}")))?;
+    Ok(program.file_name().is_some_and(|name| name == command))
+}
+
 /// The clients attached to `session`, in tmux's order.
 fn clients_on(ui: &Ui, session: &str) -> Vec<String> {
     let (_, clients) = ui.quiet(&["list-clients", "-F", "#{client_session}\t#{client_name}"]);
@@ -385,7 +393,9 @@ fn reported(ui: &Ui, client: &str, result: Result<i32, VerbError>) -> Result<i32
     result
 }
 
-/// How to run this `tx` against this core.
+/// How to run `tx` against this core. Every command line the home builds starts with it, not
+/// with the program the home runs in: tmux runs most of them later (the floor's hook, a popup,
+/// the pane's next program), and the rest are other plugins' verbs and built-ins.
 struct Txc {
     exe: PathBuf,
     /// The core's `cli_arguments()`.
@@ -393,11 +403,11 @@ struct Txc {
 }
 
 impl Txc {
-    fn current(core: &TxCore) -> Result<Self, VerbError> {
-        Ok(Txc {
-            exe: std::env::current_exe().map_err(|e| failed(format!("current_exe: {e}")))?,
+    fn current(core: &TxCore) -> Self {
+        Txc {
+            exe: tx_plugin::sdk::tx_bin(),
             arguments: core.config().cli_arguments(),
-        })
+        }
     }
 
     /// A shell command line, for popups.
@@ -419,7 +429,7 @@ impl Txc {
 }
 
 fn open(core: &TxCore, ui: &Ui, pane: &str, client: &str) -> Result<i32, VerbError> {
-    let tx = Txc::current(core)?;
+    let tx = Txc::current(core);
     let choice = tempfile::Builder::new()
         .prefix("tx-home-")
         .tempfile()

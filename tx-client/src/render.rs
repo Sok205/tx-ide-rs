@@ -259,7 +259,7 @@ mod tests {
         Agent {
             id: format!("id-{name}").parse::<AgentId>().unwrap(),
             name: name.into(),
-            engine: tx_core::EngineKind::Claude,
+            engine: tx_core::EngineKind::CLAUDE,
             working_directory: PathBuf::from("/r"),
             roles: vec![],
             definition: None,

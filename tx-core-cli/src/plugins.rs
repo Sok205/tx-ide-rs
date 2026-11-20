@@ -1,185 +1,117 @@
-//! The plugin switchboard: the compiled-in manifest and the `plugins:` section of `config.yaml`.
-//!
-//! ```yaml
-//! plugins:
-//!   engine-codex: { enabled: false }
-//!   labels:
-//!     settings: { ... }
-//! ```
-//! No entry enables a plugin; an unknown id is a usage error. A retired id is skipped, so a file
-//! written for an older tx keeps loading.
+//! The plugin switchboard: what `tx plugins` lists, and the warning about shipped plugins that
+//! are not this tx's. The `plugins:` section of `config.yaml` is read by `tx_plugin::config`.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::PathBuf;
 
-use serde::Deserialize;
-use tx_core::{Plugin, PluginConfig};
+use serde_json::{Value, json};
+use tx_core::plugin::{Index, Manifest, ShippedStamp};
+use tx_core::{Directories, PluginStatus, updates};
+pub use tx_plugin::config::{Entry, RETIRED};
+use tx_plugin::setup::Installation;
 
-use crate::args::UsageError;
+/// The built-in verbs; a plugin may not provide one of these.
+pub const RESERVED: &[&str] = tx_plugin::RESERVED_VERBS;
 
-/// Every plugin this binary links, in listing order.
-pub const MANIFEST: &[fn() -> Box<dyn Plugin>] = &[
-    || Box::new(tx_engine_claude::ClaudePlugin),
-    || Box::new(tx_engine_codex::CodexPlugin),
-    || Box::new(tx_chat::ChatPlugin),
-    || Box::new(tx_client::IdePlugin),
-    || Box::new(tx_labels::LabelsPlugin),
-    || Box::new(tx_kill::KillPlugin),
-    || Box::new(tx_picker::PickerPlugin),
-    || Box::new(tx_edit::EditPlugin),
-    || Box::new(tx_spawn::SpawnPlugin),
-    || Box::new(tx_assistant::AssistantPlugin),
-    || Box::new(tx_mockup::MockupPlugin),
-    || Box::new(tx_tutor::TutorPlugin),
-    || Box::new(tx_artifacts::ArtifactsPlugin),
-    || Box::new(tx_tour::TourPlugin),
-    || Box::new(tx_timeline::TimelinePlugin),
-    || Box::new(tx_graph::GraphPlugin),
-    || Box::new(tx_home::HomePlugin),
-    || Box::new(tx_home_themes::HomeThemesPlugin),
-    || Box::new(tx_layouts::LayoutsPlugin),
-];
+/// Where a listed plugin comes from: the first plugin root, or any other root.
+pub const SHIPPED: &str = "shipped";
+pub const USER: &str = "user";
 
-/// Ids of plugins this binary no longer links; `config.yaml` entries for them are ignored.
-/// `hooks`: agent state moved into core and the engine adapters (`txi hook`).
-/// `history`: the transcript mirror; core archives conversations through the engines.
-/// `menu`: renamed `home`; an old `menu` entry no longer configures anything.
-pub const RETIRED: &[&str] = &["hooks", "history", "menu"];
-
-/// The built-in verbs; a plugin may not register one of these.
-pub const RESERVED: &[&str] = &[
-    "help", "engines", "plugins", "create", "fork", "respawn", "ls", "show", "rename", "tag",
-    "send", "where", "attach", "stop", "gc", "update", "harness",
-];
-
-/// One `plugins.<id>` entry of `config.yaml`.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Entry {
-    #[serde(default = "yes")]
-    enabled: bool,
-    #[serde(default)]
-    settings: Option<serde_json::Value>,
+/// On stderr, once: the shipped plugins were laid out by another tx, or an install that has
+/// data has none. They link the same core as `tx` and read the records directly, so they must
+/// come from the same build. Never refuses. Nothing is said when the plugin roots were
+/// replaced: the shipped plugins are then not what runs.
+pub fn warn_if_shipped_differ(index: &Index, directories: &Directories) {
+    match &index.shipped {
+        None => {}
+        Some(ShippedStamp::By(version)) if version == tx_plugin::VERSION => {}
+        Some(ShippedStamp::By(version)) => {
+            eprintln!("tx: shipped plugins are from tx {version}: run install --upgrade");
+        }
+        Some(ShippedStamp::Absent) => match updates::is_fresh(directories) {
+            Ok(true) => {}
+            Ok(false) => eprintln!("tx: no shipped plugins are installed: run install"),
+            Err(error) => eprintln!("tx: {error}"),
+        },
+        Some(ShippedStamp::Unreadable(why)) => eprintln!("tx: {why}"),
+    }
 }
 
-fn yes() -> bool {
-    true
+/// One row of `tx plugins`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub id: String,
+    pub status: PluginStatus,
+    /// Why it is in error, or what an active plugin declares and does not get.
+    pub detail: Option<String>,
+    /// `None` for an entry of the config that names no plugin.
+    pub origin: Option<&'static str>,
+    pub directory: Option<PathBuf>,
+    /// Of an installed plugin whose manifest loaded.
+    pub manifest: Option<Manifest>,
 }
 
-/// `known` are the manifest's ids: any other key is refused, even an empty entry. `path` only
-/// names the file in errors.
-pub fn plugin_config(
-    entries: BTreeMap<String, Entry>,
-    known: &[&str],
-    reserved: &[&str],
-    path: &Path,
-) -> Result<PluginConfig, UsageError> {
-    let mut cfg = PluginConfig {
-        reserved: reserved.iter().map(|s| (*s).to_owned()).collect(),
-        ..Default::default()
-    };
-    for (id, entry) in entries {
-        if RETIRED.contains(&id.as_str()) {
-            continue;
+impl Row {
+    /// `<id>\t<status>[\t<detail>]`.
+    pub fn line(&self) -> String {
+        let mut line = format!("{}\t{}", self.id, self.status.as_str());
+        if let Some(detail) = &self.detail {
+            line.push('\t');
+            line.push_str(detail);
         }
-        if !known.contains(&id.as_str()) {
-            return Err(UsageError(format!(
-                "{}: no plugin named {id:?} (known: {})",
-                path.display(),
-                known.join(", ")
-            )));
-        }
-        if !entry.enabled {
-            cfg.disabled.insert(id.clone());
-        }
-        if let Some(settings) = entry.settings {
-            cfg.settings.insert(id, settings);
-        }
+        line
     }
-    Ok(cfg)
+
+    /// `{id, status, detail, origin, directory, description, tier, requires, needs, verbs,
+    /// engine}`: what only a manifest says is `null`, or an empty list, without one.
+    pub fn json(&self) -> Value {
+        let manifest = self.manifest.as_ref();
+        let verbs: Vec<&str> = manifest
+            .iter()
+            .flat_map(|manifest| &manifest.verbs)
+            .map(|verb| verb.name.as_str())
+            .collect();
+        json!({
+            "id": self.id,
+            "status": self.status.as_str(),
+            "detail": self.detail,
+            "origin": self.origin,
+            "directory": self.directory.as_ref().map(|directory| directory.to_string_lossy()),
+            "description": manifest.map(|manifest| &manifest.description),
+            "tier": manifest.map(|manifest| manifest.tier.as_str()),
+            "requires": manifest.map_or(&[][..], |manifest| &manifest.requires),
+            "needs": manifest.map_or(&[][..], |manifest| &manifest.needs),
+            "verbs": verbs,
+            "engine": manifest
+                .and_then(|manifest| manifest.engine.as_ref())
+                .map(|engine| &engine.kind),
+        })
+    }
 }
 
-pub fn manifest() -> Vec<Box<dyn Plugin>> {
-    MANIFEST.iter().map(|make| make()).collect()
-}
-
-/// The manifest's ids, for validating the `plugins:` section.
-pub fn known_ids() -> Vec<&'static str> {
-    MANIFEST.iter().map(|make| make().id()).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::{BTreeMap, BTreeSet};
-
-    fn parse_text(text: &str) -> Result<PluginConfig, UsageError> {
-        let path = Path::new("/c/config.yaml");
-        let config = crate::config::parse(text, path)?;
-        plugin_config(config.plugins, &["engine-codex", "labels"], &["ls"], path)
-    }
-
-    #[test]
-    fn an_id_outside_the_manifest_is_refused_even_with_an_empty_entry() {
-        let error = parse_text("plugins:\n  engine-cloud: {}\n").unwrap_err();
-        assert!(error.0.contains("engine-cloud"), "{error}");
-        assert!(
-            error.0.contains("engine-codex"),
-            "names the known ids: {error}"
-        );
-    }
-
-    #[test]
-    fn a_retired_id_is_skipped_with_its_settings() {
-        let cfg = parse_text(
-            "plugins:\n  hooks:\n    enabled: false\n    settings: { stuck_after_seconds: 600 }\n  menu: { enabled: false }\n",
-        )
-        .unwrap();
-        assert!(cfg.disabled.is_empty());
-        assert!(cfg.settings.is_empty());
-    }
-
-    #[test]
-    fn empty_yaml_enables_everything() {
-        for text in ["", "# nothing\n", "plugins:\n", "plugins: {}\n"] {
-            let cfg = parse_text(text).unwrap();
-            assert!(cfg.disabled.is_empty(), "{text:?}");
-            assert!(cfg.settings.is_empty(), "{text:?}");
-            assert_eq!(cfg.reserved, BTreeSet::from(["ls".to_owned()]));
-        }
-    }
-
-    #[test]
-    fn enabled_false_disables_and_settings_pass_through() {
-        let cfg = parse_text(
-            "plugins:\n  engine-codex: { enabled: false }\n  labels:\n    enabled: true\n    settings: { stuck_after_seconds: 5 }\n",
-        )
-        .unwrap();
-        assert_eq!(cfg.disabled, BTreeSet::from(["engine-codex".to_owned()]));
-        assert_eq!(
-            cfg.settings,
-            BTreeMap::from([(
-                "labels".to_owned(),
-                serde_json::json!({"stuck_after_seconds": 5})
-            )])
-        );
-    }
-
-    #[test]
-    fn enabled_defaults_to_true() {
-        let cfg = parse_text("plugins:\n  labels: {}\n").unwrap();
-        assert!(cfg.disabled.is_empty());
-    }
-
-    #[test]
-    fn malformed_yaml_is_a_usage_error() {
-        let error = parse_text("plugins: [1, 2\n").unwrap_err();
-        assert!(error.0.starts_with("/c/config.yaml: "), "{error}");
-    }
-
-    #[test]
-    fn unknown_keys_on_an_entry_are_refused() {
-        let error = parse_text("plugins:\n  labels: { enabledd: true }\n").unwrap_err();
-        assert!(error.0.contains("enabledd"), "{error}");
-    }
+/// What `tx plugins` lists: the installed plugins in plugin order, then the entries of the
+/// config that name none.
+pub fn rows(installation: &Installation) -> Vec<Row> {
+    let index = &installation.index;
+    let activation = &installation.activation;
+    activation
+        .plugins
+        .iter()
+        .map(|state| {
+            let installed = state.installed.map(|position| &index.plugins[position]);
+            Row {
+                id: state.id.clone(),
+                status: state.status.clone(),
+                detail: activation.detail(state),
+                origin: installed.map(|installed| {
+                    if index.roots.first() == Some(&installed.root) {
+                        SHIPPED
+                    } else {
+                        USER
+                    }
+                }),
+                directory: installed.map(|installed| installed.directory.clone()),
+                manifest: installed.and_then(|installed| installed.manifest.as_ref().ok().cloned()),
+            }
+        })
+        .collect()
 }

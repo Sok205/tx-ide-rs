@@ -3,14 +3,20 @@
 This page follows `tx ui attach` to the first screen, the home. As of this branch, the `home`
 plugin (crate `tx-home`) replaces the earlier start menu (`menu`, now a retired id).
 
+The plugin ships as a bundle (`plugins/home/plugin.yaml`) and runs as the program `tx-home`:
+`tx _home-tui …` becomes that program, so it is what the floor's pane runs. The same program
+hosts the `home-themes` plugin (see [The backdrop](#the-backdrop-home-themes)). Every command line the home builds (the
+floor's hook, its popups, the pane's next program, the other plugins' verbs it runs) starts with
+`tx`, never with `tx-home`.
+
 ## The attach path
 
-`tx ui attach` belongs to the `ide` plugin in `tx-client`. It does three things:
+`tx ui attach` belongs to the `ide` plugin, `plugins/ide`. It does three things:
 
 1. **Ensure the `home` view.** If there is no session named `home`, it creates one: a view of
    kind `home` running your shell, window named `home`, status bar and pane-border labels on.
 2. **Hand the pane to the home plugin.** If the `home` plugin is active (the core has a verb named
-   `_home-install`), attach runs it in-process with the argument `home`, on every attach. A
+   `_home-install`), attach runs it with the argument `home`, on every attach. A
    failure here is reported and never stops the attach.
 3. **Attach.** From a bare terminal it execs `tmux attach-session` to `home` with the client
    flag `no-detach-on-destroy`, so the terminal stays in tmux when a session ends. Inside tx's
@@ -97,6 +103,40 @@ roles, model and effort, parent, the last exchange, artifact counts, start and e
 but the assistant, a first-run panel shows instead. Data comes from a worker thread every second
 and after every action, so git and tmux never hold up a key or a frame.
 
+## Where the home takes its data from
+
+The home is the screen that is always running, and it gathers its data again every second. So
+nothing it gathers starts a process: what it shows of another plugin it reads from the core or
+from disk, and the one verb it runs for a list runs again only when something changed.
+
+- **Agents, views, the assistant's state**: the records in the core and one tmux listing.
+- **The plugin list (`p`)**: the core's plugin status, which holds the plugins hosted by
+  `tx-home` and every installed bundle, each `on` or `off`.
+- **The key sheet (`?`)**: the key fragments `tx update` published, `<data>/keys/<id>.tmux`,
+  one per active plugin. The hint is the fragment's `# keys:` line and the first sentence of its
+  comment. A plugin that is off, or a fragment not published yet (no `tx update`), gives no hint.
+- **The layouts (`w`)**: the names `tx layout ls` prints. The home asks the `layouts` plugin
+  once when it starts, and again only when the modification time of `<config>/layouts` changed,
+  which is when a layout was added, removed or renamed. Without the `layouts` plugin there is
+  no list and no `w`.
+- **An agent's history** (→): read when the row is unfolded, never before. Its artifact counts
+  are one `tx artifact ls --session <id>`, asked once per unfolded row.
+
+## The backdrop: `home-themes`
+
+The animated background and logo are not the home's own: they are the `home-themes` plugin
+(`koi`, `stars`, `fireflies`, `rain`, `garden`, `abyss`, `snow`, `campfire`, `life`). It has no
+program of its own. `tx-home` hosts it: the program registers the themes only when
+`home-themes` is installed and enabled, with that plugin's own settings, and the themes then
+install their catalogue into the home in-process (the API is the package `tx-home-backdrop`,
+re-exported as `tx_home::backdrop`).
+
+The home starts with the theme last chosen, kept in `<data>/plugins/home-themes/theme`, else
+with `plugins.home-themes.settings.theme` (default `koi`). `b` cycles through the themes and
+then off. With `home-themes` disabled or not installed the home is plain and `b` does nothing.
+The themes reach the home only inside the program that runs it, so both plugins must be
+installed.
+
 ## The assistant in the header
 
 An attach-triggered open (`--first`, on the floor) runs `tx assistant warm` detached when the
@@ -127,6 +167,7 @@ keypress triggers nothing. Ctrl and Alt chords belong to tmux and never reach th
 | `L` | the tutor |
 | `w` | the layout list (only with the `layouts` plugin on); Enter opens the highlighted layout in the selected project, around the selected agent unless it ended; `n` asks `new layout › NAME DESCRIPTION` and starts a `layout-author` agent in the selected project that writes it (Esc cancels; a bad name, an existing name or an empty description keeps the line open with a hint) |
 | `p` | the plugin list; `?`/`K` the key sheet |
+| `b` | the next backdrop theme, then off (only with the `home-themes` plugin on) |
 | `q`, Esc | close (popup only; on the floor they do nothing) |
 
 The footer changes with context: `enter resume …` on an ended agent,

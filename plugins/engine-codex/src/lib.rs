@@ -33,16 +33,21 @@
 //! recorded `transcript_path` when that file is gone. The rollout's name carries its creation
 //! time, so a record without a `transcript_path` cannot be restored and says so.
 
+pub mod app_server;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tx_core::engine::{
+    AgentSummary, DefinitionsRequest, EngineCheck, EngineTools, Finding, ToolsRequest,
+};
 use tx_core::harness::{AUTHORIZATION_HEADER, McpServer, bearer_variable, variable_name};
 use tx_core::{
-    Agent, Conversation, ENGINE_ARGS_OPTION, EngineError, EngineKind, IdleReason, Input, Key,
-    LaunchPlan, LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
+    Agent, ENGINE_ARGS_OPTION, EngineError, EngineKind, IdleReason, Input, Key, LaunchPlan,
+    LaunchRequest, LlmEngine, LlmEngineChange, LlmEngineHook, LlmEngineState, Profile,
     WorkspaceAction, engine_data, hook_shell_command, mirror_file, mirror_file_exact,
 };
 
@@ -122,7 +127,7 @@ const MAPPED_TOOLS: [&str; 12] = [
 
 /// What one agent definition gets on Codex that its file does not say: tools that cannot be
 /// separated or removed, and listed names with no Codex counterpart.
-pub fn definition_notes(agent: &tx_core::harness::AgentDefinition) -> Vec<String> {
+pub fn definition_notes(agent: &AgentSummary) -> Vec<String> {
     let lists = |tool: &str| agent.tools.iter().any(|listed| listed == tool);
     let cuts = |tool: &str| agent.disallowed_tools.iter().any(|cut| cut == tool);
     let mut notes = Vec::new();
@@ -398,7 +403,7 @@ fn archived_rollout(archive_directory: &Path, conversation: &str) -> PathBuf {
 
 impl LlmEngine for CodexAdapter {
     fn kind(&self) -> EngineKind {
-        EngineKind::Codex
+        EngineKind::CODEX
     }
 
     fn ext_key(&self) -> &'static str {
@@ -553,13 +558,70 @@ impl LlmEngine for CodexAdapter {
         Ok(true)
     }
 
-    /// The recorded `conversation_id` and `transcript_path`; `None` until both are known.
-    fn conversation(&self, session: &Agent) -> Option<Conversation> {
-        let data = engine_data(self, session);
-        Some(Conversation {
-            id: data.get(CONVERSATION_ID_KEY)?.as_str()?.to_owned(),
-            transcript_path: PathBuf::from(data.get(TRANSCRIPT_PATH_KEY)?.as_str()?),
+    fn check(&self, request: &DefinitionsRequest<'_>) -> Result<EngineCheck, EngineError> {
+        Ok(check_report(request))
+    }
+
+    /// [`tools_report`], with the MCP servers' tools from `codex app-server`.
+    fn tools(&self, request: &ToolsRequest<'_>) -> Result<EngineTools, EngineError> {
+        Ok(EngineTools {
+            mcp: Some(app_server::mcp_tools(request.mcp_servers)),
+            ..tools_report()
         })
+    }
+}
+
+/// What `tx harness check --engine codex` reports: [`FORCED`]; per agent each skill an engine provides,
+/// which Codex has not got, at the line of its `skills`; per agent [`definition_notes`].
+pub fn check_report(request: &DefinitionsRequest<'_>) -> EngineCheck {
+    let mut problems = Vec::new();
+    for agent in request.agents {
+        for name in &agent.skills {
+            if let Some(provider) = request.provided_skills.get(name) {
+                problems.push(Finding {
+                    path: agent.path.clone(),
+                    line: Some(agent.lines.get("skills").copied().unwrap_or(1)),
+                    message: format!(
+                        "skill {name:?} is provided by {}: not on codex",
+                        provider.as_str()
+                    ),
+                });
+            }
+        }
+    }
+    let notes = request
+        .agents
+        .iter()
+        .flat_map(|agent| {
+            definition_notes(agent).into_iter().map(|message| Finding {
+                path: agent.path.clone(),
+                line: None,
+                message,
+            })
+        })
+        .collect();
+    EngineCheck {
+        always_present: FORCED.iter().map(|item| (*item).to_owned()).collect(),
+        problems,
+        notes,
+    }
+}
+
+/// What `tx harness ls tools` prints for Codex before the MCP part: each Claude tool name it
+/// maps, with the switch that turns its counterpart off when an agent leaves the name out.
+pub fn tools_report() -> EngineTools {
+    EngineTools {
+        heading: "codex (the Claude names it switches off when left out):".to_owned(),
+        rows: BUILT_IN_SWITCHES
+            .iter()
+            .flat_map(|(names, switch)| {
+                names
+                    .iter()
+                    .map(|name| ((*name).to_owned(), switch.join(" ")))
+            })
+            .collect(),
+        footer: Vec::new(),
+        mcp: None,
     }
 }
 
@@ -797,7 +859,7 @@ impl tx_core::Plugin for CodexPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tx_core::{Profile, ResolvedProfile};
+    use tx_core::{Conversation, Profile, ResolvedProfile};
 
     fn profile(text: &str, skills: &[&str]) -> (tempfile::TempDir, Profile) {
         let dir = tempfile::tempdir().unwrap();
@@ -1055,7 +1117,7 @@ mod tests {
 
     #[test]
     fn id_is_codex() {
-        assert_eq!(adapter().kind(), EngineKind::Codex);
+        assert_eq!(adapter().kind(), EngineKind::CODEX);
     }
 
     #[test]
@@ -1551,7 +1613,7 @@ mod tests {
         assert_eq!(CodexPlugin.id(), "engine-codex");
         core.plug(vec![Box::new(CodexPlugin)], &PluginConfig::default())
             .unwrap();
-        assert_eq!(core.engine_kinds(), vec![EngineKind::Codex]);
+        assert_eq!(core.engine_kinds(), vec![EngineKind::CODEX]);
     }
 
     fn write(path: &Path, data: &[u8]) {
@@ -1787,5 +1849,71 @@ mod tests {
                 "{partial}"
             );
         }
+    }
+
+    #[test]
+    fn a_check_names_every_provided_skill_and_what_the_agent_gets_on_codex() {
+        let agents = [AgentSummary {
+            name: "mine".to_owned(),
+            path: "/d/agents/mine.md".into(),
+            tools: vec!["Read".to_owned(), "Nope".to_owned()],
+            disallowed_tools: Vec::new(),
+            skills: vec!["pdf".to_owned(), "tx-artifacts".to_owned()],
+            lines: [("skills".to_owned(), 6)].into_iter().collect(),
+        }];
+        let skills = [("pdf".to_owned(), tx_core::SkillProvider::ClaudeBundled)]
+            .into_iter()
+            .collect();
+        let request = DefinitionsRequest {
+            agents: &agents,
+            provided_skills: &skills,
+            cache: Path::new("/c"),
+        };
+        let check = CodexAdapter::new("/nowhere").check(&request).unwrap();
+        assert_eq!(check.always_present, FORCED);
+        assert_eq!(
+            check.problems,
+            [Finding {
+                path: "/d/agents/mine.md".into(),
+                line: Some(6),
+                message: "skill \"pdf\" is provided by claude-bundled: not on codex".to_owned(),
+            }]
+        );
+        let notes: Vec<&str> = check
+            .notes
+            .iter()
+            .map(|note| note.message.as_str())
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                "`Read` without `Bash`: codex reads only through the shell, so nothing reads",
+                "no codex counterpart: Nope"
+            ]
+        );
+        assert!(check.notes.iter().all(|note| note.line.is_none()));
+    }
+
+    #[test]
+    fn the_tools_report_is_a_row_per_claude_name_with_its_switch() {
+        let report = tools_report();
+        assert_eq!(
+            report.heading,
+            "codex (the Claude names it switches off when left out):"
+        );
+        assert_eq!(report.rows.len(), 8);
+        assert_eq!(
+            report.rows[0],
+            ("Bash".to_owned(), "--disable shell_tool".to_owned())
+        );
+        assert_eq!(
+            report.rows[3],
+            (
+                "WebFetch".to_owned(),
+                "-c web_search=\"disabled\"".to_owned()
+            )
+        );
+        assert!(report.footer.is_empty() && report.mcp.is_none());
+        assert!(CodexAdapter::new("/nowhere").notes().is_empty());
     }
 }

@@ -80,19 +80,20 @@ fn two_concurrent_warms_make_one_assistant() {
     cli.ok(&["update"]);
     let path = cli.fake_claude_path();
     let env = [("PATH", path.as_str())];
-    let barrier = std::sync::Barrier::new(2);
-    let outputs: Vec<std::process::Output> = std::thread::scope(|scope| {
-        let warms: Vec<_> = (0..2)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut command = cli.command(&["assistant", "warm"], &env);
-                    barrier.wait();
-                    command.output().unwrap()
-                })
-            })
-            .collect();
-        warms.into_iter().map(|warm| warm.join().unwrap()).collect()
-    });
+    let children: Vec<std::process::Child> = (0..2)
+        .map(|_| {
+            cli.command(&["assistant", "warm"], &env)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    let outputs: Vec<std::process::Output> = children
+        .into_iter()
+        .map(|child| child.wait_with_output().unwrap())
+        .collect();
     for output in &outputs {
         assert_eq!(
             output.status.code(),
@@ -215,5 +216,56 @@ fn disabled_assistant_hides_the_verb() {
             .any(|line| line == "assistant\tdisabled"),
         "{}",
         cli.ok(&["plugins"])
+    );
+}
+
+/// The one row of `assistant` in `tx plugins --json`.
+fn row(cli: &Cli) -> serde_json::Value {
+    let rows: serde_json::Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let found: Vec<&serde_json::Value> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == "assistant")
+        .collect();
+    assert_eq!(found.len(), 1, "{rows}");
+    found[0].clone()
+}
+
+/// The `assistant` verb with no arguments (its usage, exit 2), and what `TX_PLUGIN_TRACE` holds
+/// after it.
+fn traced_usage(cli: &Cli) -> String {
+    let trace = cli.dir.path().join("trace");
+    let output = cli.run(
+        &["assistant"],
+        &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(2));
+    std::fs::read_to_string(&trace).unwrap_or_default()
+}
+
+#[test]
+fn the_bundle_is_the_shipped_plugin_and_its_verb_is_its_program() {
+    let cli = Cli::new();
+    let row = row(&cli);
+    assert_eq!(row["origin"], "shipped");
+    assert_eq!(row["status"], "active");
+    assert_eq!(row["tier"], "ide");
+    assert_eq!(row["requires"], serde_json::json!(["engine-claude"]));
+    assert_eq!(row["verbs"], serde_json::json!(["assistant"]));
+    let help = cli.ok(&["help"]);
+    assert_eq!(
+        help.lines()
+            .filter(|line| line.trim_start().starts_with("assistant "))
+            .count(),
+        1,
+        "{help}"
+    );
+    let program = common::shipped().join("assistant/bin/tx-assistant");
+    assert_eq!(
+        traced_usage(&cli),
+        format!("verb\tassistant\t{}\n", program.display()),
+        "one plugin program was started: tx became it"
     );
 }

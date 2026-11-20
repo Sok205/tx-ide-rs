@@ -27,6 +27,6 @@ impl Plugin for GraphPlugin {
         for verb in verbs::verbs() {
             registry.verb(verb);
         }
-        registry.resource("keys/graph.tmux", include_bytes!("../tmux/keys.tmux"))
+        Ok(())
     }
 }

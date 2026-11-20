@@ -8,11 +8,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use tx_core::TxCore;
+use tx_core::plugin::external::PLUGIN_GIVEN_ENV;
 
-use crate::install::NVIM_RESOURCE;
 use crate::views::{HOME_FLOOR_OPTION, KIND_OPTION, VIEW_OPTION, ViewKind};
 
 const BINARY: &str = "tmux";
+/// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
+/// view's runtimepath by `views::open`.
+pub const NVIM_RESOURCE: &str = "nvim";
 const LABEL_REV_OPTION: &str = "@tx-label-rev";
 const STATUS_MILLISECONDS: &str = "5000";
 
@@ -59,6 +62,9 @@ pub struct Ui {
     conf: PathBuf,
     /// `<data>/nvim`, what `tx update` materialises the `nvim/` resources into.
     nvim_runtime: PathBuf,
+    /// The variables of this process's environment that no tmux call inherits, next to
+    /// [`PLUGIN_GIVEN_ENV`], which names them: the core's `given`.
+    withheld: Vec<String>,
 }
 
 /// An exact session target for pane-typed `-t` (`show-options`, `set-option`).
@@ -71,13 +77,20 @@ fn non_empty(value: &str) -> Option<String> {
 }
 
 impl Ui {
+    /// Bound to the core's server. Like core's own tmux calls, its calls are made without the
+    /// variables that were added to this process's environment on the way to it: the call that
+    /// starts the server gives it its environment, which every pane inherits, and a plugin
+    /// program's own variables are not the server's.
     pub fn from_core(core: &TxCore) -> Self {
         let config = core.config();
-        Self::new(
-            core.socket_path().to_path_buf(),
-            config.tmux_conf_path(),
-            config.directories.data.join(NVIM_RESOURCE),
-        )
+        Self {
+            withheld: config.given.clone(),
+            ..Self::new(
+                core.socket_path().to_path_buf(),
+                config.tmux_conf_path(),
+                config.directories.data.join(NVIM_RESOURCE),
+            )
+        }
     }
 
     /// Bound to a socket, config and nvim runtime of the caller's choosing (scratch servers in
@@ -87,6 +100,7 @@ impl Ui {
             socket,
             conf,
             nvim_runtime,
+            withheld: Vec::new(),
         }
     }
 
@@ -111,9 +125,17 @@ impl Ui {
         argv
     }
 
+    /// One tmux call, not yet made: this process's environment without the withheld variables
+    /// and without the one that lists them.
     pub fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(BINARY);
-        command.args(self.argv(args)).stdin(Stdio::null());
+        command
+            .args(self.argv(args))
+            .stdin(Stdio::null())
+            .env_remove(PLUGIN_GIVEN_ENV);
+        for name in &self.withheld {
+            command.env_remove(name);
+        }
         command
     }
 
@@ -672,11 +694,45 @@ mod tests {
     }
 
     fn ui() -> Ui {
-        Ui {
-            socket: PathBuf::from("/s/tmux.sock"),
-            conf: PathBuf::from("/s/tmux.conf"),
-            nvim_runtime: PathBuf::from("/s/data/nvim"),
-        }
+        Ui::new(
+            PathBuf::from("/s/tmux.sock"),
+            PathBuf::from("/s/tmux.conf"),
+            PathBuf::from("/s/data/nvim"),
+        )
+    }
+
+    /// The variables a call is made without.
+    fn removed(command: &Command) -> Vec<&str> {
+        let mut names: Vec<&str> = command
+            .get_envs()
+            .map(|(name, value)| {
+                assert_eq!(value, None, "{name:?} is set, not removed");
+                name.to_str().unwrap()
+            })
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    #[test]
+    fn no_call_inherits_the_variables_given_to_this_process() {
+        // Nothing was given: only the variable that would list them is kept from tmux.
+        assert_eq!(
+            removed(&ui().command(&["list-sessions"])),
+            [PLUGIN_GIVEN_ENV]
+        );
+        // A Ui of a core holds what the core was told was given to this process.
+        let dir = tempfile::Builder::new()
+            .prefix("tx")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let config = tx_core::CoreConfig::new(tx_core::Directories::under(dir.path()))
+            .given(["TX_PLUGIN_ID", "TX_DATA_DIR"]);
+        let core = TxCore::open(config).unwrap();
+        assert_eq!(
+            removed(&Ui::from_core(&core).command(&["new-session"])),
+            ["TX_DATA_DIR", "TX_PLUGIN_GIVEN", "TX_PLUGIN_ID"]
+        );
     }
 
     fn loc(host: &str, window_index: &str, pane_id: &str, pane_index: &str) -> Location {
@@ -788,11 +844,7 @@ mod tests {
             .unwrap();
         let conf = dir.path().join("tmux.conf");
         std::fs::write(&conf, "").unwrap();
-        let ui = Ui {
-            socket: dir.path().join("tmux.sock"),
-            conf,
-            nvim_runtime: dir.path().join("nvim"),
-        };
+        let ui = Ui::new(dir.path().join("tmux.sock"), conf, dir.path().join("nvim"));
         if ui.run(&["new-session", "-d", "-s", "t"]).is_err() {
             eprintln!("tmux not available; skipping");
             return;

@@ -1,0 +1,12 @@
+api: 1
+id: tutor
+description: "The vimtutor-style walkthrough, `tx tutor`."
+tier: extra
+requires: [ide]
+needs: [nvim, git, python3]
+
+verbs:
+  - name: tutor
+    usage: "tutor start [LANG] [--dir DIR] [--detach] | check | next | prev | goto N | status | hint | reset [--hard]   learn tx by building an HTTP server"
+    bin: tx-tutor
+    args: [tutor]

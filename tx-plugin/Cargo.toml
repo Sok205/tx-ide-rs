@@ -1,0 +1,20 @@
+[package]
+name = "tx-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "What a tx plugin program shares with tx: global flags, the directories, config.yaml and opening the core."
+
+[dependencies]
+tx-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

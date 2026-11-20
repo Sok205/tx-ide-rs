@@ -13,6 +13,7 @@ use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::DefinitionChoice;
+use crate::engine::AgentSummary;
 use crate::profile::{Profiles, ResolvedProfile, SkillProvider};
 
 pub const AGENTS_DIR: &str = "agents";
@@ -130,6 +131,28 @@ impl AgentDefinition {
                     .is_some_and(|rest| rest.starts_with(':'))
             })
             .map(|index| index + 2)
+    }
+
+    /// What an engine needs to know of this definition: no prompt, and the line of each
+    /// frontmatter key (the first, when one is repeated), as [`Self::line_of`] gives it.
+    pub fn summary(&self) -> AgentSummary {
+        let mut lines = BTreeMap::new();
+        for (index, line) in self.frontmatter.lines().enumerate() {
+            if let Some((key, _)) = line.split_once(':')
+                && !key.is_empty()
+                && !key.starts_with([' ', '\t', '-', '#'])
+            {
+                lines.entry(key.to_owned()).or_insert(index + 2);
+            }
+        }
+        AgentSummary {
+            name: self.name.clone(),
+            path: self.path.clone(),
+            tools: self.tools.clone(),
+            disallowed_tools: self.disallowed_tools.clone(),
+            skills: self.skills.clone(),
+            lines,
+        }
     }
 }
 
@@ -862,6 +885,42 @@ mod tests {
         assert_eq!(agent.roles, ["COMMON", "QA"]);
         assert_eq!(agent.prompt, "The prompt.");
         assert_eq!(agent.line_of("skills"), Some(7));
+    }
+
+    #[test]
+    fn a_summary_is_the_definition_without_its_prompt_and_with_the_line_of_each_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agents/pm.md");
+        write(
+            &path,
+            "---\nname: pm\ndescription: Triages.\ntools: Bash, Read\n\
+             disallowedTools: WebFetch\nskills:\n  - pdf\n---\n\nThe prompt.\n",
+        );
+        let agent = read_agent(&path).unwrap();
+        let summary = agent.summary();
+        assert_eq!(
+            summary,
+            AgentSummary {
+                name: "pm".into(),
+                path: path.clone(),
+                tools: vec!["Bash".into(), "Read".into()],
+                disallowed_tools: vec!["WebFetch".into()],
+                skills: vec!["pdf".into()],
+                lines: [
+                    ("name", 2),
+                    ("description", 3),
+                    ("tools", 4),
+                    ("disallowedTools", 5),
+                    ("skills", 6)
+                ]
+                .into_iter()
+                .map(|(key, line)| (key.to_owned(), line))
+                .collect(),
+            }
+        );
+        for key in ["name", "tools", "disallowedTools", "skills"] {
+            assert_eq!(summary.lines.get(key).copied(), agent.line_of(key), "{key}");
+        }
     }
 
     #[test]

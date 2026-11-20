@@ -204,21 +204,20 @@ impl Verb for Timeline {
 }
 
 /// `<tx> <cli_arguments> <arguments>`, as argv.
-fn tx_argv(core: &TxCore, arguments: &[&str]) -> Result<Vec<String>, VerbError> {
-    let exe = std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
-    let mut words = vec![exe.to_string_lossy().into_owned()];
+fn tx_argv(core: &TxCore, arguments: &[&str]) -> Vec<String> {
+    let mut words = vec![tx_plugin::sdk::tx_bin().to_string_lossy().into_owned()];
     words.extend(core.config().cli_arguments().iter().cloned());
     words.extend(arguments.iter().map(|word| (*word).to_owned()));
-    Ok(words)
+    words
 }
 
 /// `<tx> <cli_arguments> <arguments>`, as one shell command.
-fn tx_command(core: &TxCore, arguments: &[&str]) -> Result<String, VerbError> {
-    Ok(tx_argv(core, arguments)?
+fn tx_command(core: &TxCore, arguments: &[&str]) -> String {
+    tx_argv(core, arguments)
         .iter()
         .map(|word| shell_quote(word))
         .collect::<Vec<_>>()
-        .join(" "))
+        .join(" ")
 }
 
 /// Starts the resident view unless it is running, and sizes its window to the popup's inside
@@ -226,7 +225,7 @@ fn tx_command(core: &TxCore, arguments: &[&str]) -> Result<String, VerbError> {
 /// hold the popup lock.
 fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
     if !ui.has_session(POPUP_SESSION) {
-        let argv = tx_argv(core, &[RESIDENT_VERB, "--last", RESIDENT_WINDOW])?;
+        let argv = tx_argv(core, &[RESIDENT_VERB, "--last", RESIDENT_WINDOW]);
         views::open(
             ui,
             &ViewRequest {
@@ -277,7 +276,7 @@ impl Verb for TimelineOpen {
             say(io.stderr, "usage: tx _timeline-open <pane> <client>\n")?;
             return Ok(2);
         };
-        let command = tx_command(core, &[ATTACH_VERB, pane, client])?;
+        let command = tx_command(core, &[ATTACH_VERB, pane, client]);
         Ui::from_core(core)
             .run(&[
                 "display-popup",

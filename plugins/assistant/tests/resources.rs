@@ -1,4 +1,4 @@
-//! The assistant plugin's resources and create options, through the core.
+//! The assistant plugin's create options, through the core.
 
 use tx_assistant::{AssistantPlugin, Settings, create_options, latest_ended};
 use tx_core::{CoreConfig, LaunchOptions, PluginConfig, TxCore};
@@ -14,26 +14,6 @@ fn core(config: &PluginConfig) -> (tempfile::TempDir, TxCore) {
     .unwrap();
     core.plug(vec![Box::new(AssistantPlugin)], config).unwrap();
     (dir, core)
-}
-
-#[test]
-fn the_key_fragment_is_a_resource_and_the_role_comes_from_the_core() {
-    let (_dir, core) = core(&PluginConfig::default());
-    assert!(core.plugin_resources("agents/").is_empty());
-    let role = core
-        .resources("agents/")
-        .into_iter()
-        .find(|r| r.name == "agents/TX-ASSISTANT.md")
-        .expect("shipped by tx-core");
-    assert_eq!(role.plugin, "tx-core");
-    assert!(role.bytes.starts_with(b"# TX-ASSISTANT role"));
-    let keys = core.resources("keys/");
-    assert_eq!(keys.len(), 1);
-    assert_eq!(keys[0].name, "keys/assistant.tmux");
-    let fragment = String::from_utf8_lossy(keys[0].bytes);
-    assert!(fragment.contains("# keys: /\n"), "declares prefix+/");
-    assert!(fragment.contains("set-buffer -b tx-assistant-input \"%%\""));
-    assert!(fragment.contains("assistant ask --from-buffer --pane '#{pane_id}'"));
 }
 
 #[test]
@@ -77,18 +57,17 @@ fn the_assistant_is_claude_with_common_and_its_role_in_its_own_repository() {
     else {
         panic!("an agent launch");
     };
-    assert_eq!(engine, tx_core::EngineKind::Claude);
+    assert_eq!(engine, tx_core::EngineKind::CLAUDE);
     assert_eq!(profile, ["COMMON", "TX-ASSISTANT"]);
     assert_eq!(options, serde_json::json!({"model": "opus", "effort": "2"}));
     assert_eq!(initial_prompt, tx_assistant::GREETING);
 }
 
 #[test]
-fn a_disabled_plugin_publishes_nothing() {
+fn a_disabled_plugin_has_no_verb() {
     let mut config = PluginConfig::default();
     config.disabled.insert("assistant".to_owned());
     let (_dir, core) = core(&config);
-    assert!(core.plugin_resources("").is_empty());
     assert!(core.verb("assistant").is_none());
 }
 

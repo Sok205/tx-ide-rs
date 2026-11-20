@@ -68,7 +68,7 @@ pub fn state_label(state: LlmEngineState, idle_reason: Option<IdleReason>) -> St
 }
 
 /// One hook firing, as the CLI delivered it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LlmEngineHook {
     /// The CLI's own event name: "Stop", "PermissionRequest", …
     pub name: String,
@@ -77,8 +77,10 @@ pub struct LlmEngineHook {
     pub at: f64,
 }
 
-/// What the engine decided about one hook. Every field optional: a hook may change nothing.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// What the engine decided about one hook. Every field optional: a hook may change nothing, and
+/// on the wire `{}` says so.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LlmEngineChange {
     pub state: Option<LlmEngineState>,
     /// Why the new state is `Idle`; read only when `state` is `Some(Idle)`.

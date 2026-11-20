@@ -10,7 +10,7 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, Pixels};
+use tx_home_backdrop::{Backdrop, Pixels};
 
 use crate::common::{Steps, draw_logo, logo_size, pixel_of};
 

@@ -235,7 +235,7 @@ pub fn wait_for(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool 
 pub struct ShellStub;
 
 /// The kind the stub registers as; a core with the stub has no Codex.
-pub const STUB_KIND: EngineKind = EngineKind::Claude;
+pub const STUB_KIND: EngineKind = EngineKind::CLAUDE;
 pub const STUB_ID: &str = "stub";
 
 impl LlmEngine for ShellStub {

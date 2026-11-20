@@ -34,7 +34,10 @@ column stays the single token `idle`, so it splits on whitespace as before. A `s
 line reads `working → idle (waiting)`.
 
 The vocabulary is core's; the rules are the engine adapter's. At launch the adapter wires the
-CLI's own hooks to run `txi hook <Event>`. When one fires inside the session, core asks the
+CLI's own hooks to the engine's own program, `tx-engine-<kind> --tx-hook <Event>`, which applies
+the hook in one process. `txi hook <Event>` stays for an engine that names no hook entry of its
+own and for agents launched before the engines became programs: those keep the command they
+were launched with until they are respawned. When a hook fires inside the session, core asks the
 adapter's `on_hook` for an [`LlmEngineChange`](../internal/tx_core/state/struct.LlmEngineChange.html)
 (a new state, why when it is idle, and new engine data, all optional) and writes it under the
 agent's lock. For Claude, `SessionStart`, `Stop` and `StopFailure` mean idle, finished;
@@ -142,13 +145,33 @@ session; when it is unset the launch is refused, on both engines.
 An [`LlmEngine`](../internal/tx_core/engine/trait.LlmEngine.html) is a pure function from a
 launch request to a [`LaunchPlan`](../internal/tx_core/engine/struct.LaunchPlan.html): program,
 arguments, environment and workspace actions (such as skill symlinks). Core applies the plan; the
-adapter does no I/O, so it is testable without tmux. The kinds are a closed set, `claude` and
-`codex`; model and effort are launch options each adapter validates.
+adapter does no I/O, so it is testable without tmux. Model and effort are launch options each
+adapter validates.
+
+An engine has a **kind**, which is a name: `[a-z0-9-]{1,31}`, such as `claude` or `codex`. It is
+what `--engine`, `agent.engine` in `config.yaml` and a record's `engine` say. The set is open:
+any such name is a kind, and `tx engines` lists the ones an active engine provides. What cannot be
+a kind is refused where it is written (`engine kind "Bad Kind" must match [a-z0-9-]{1,31}`). A
+kind no active engine provides is found out at launch:
+
+```console
+$ tx create a --cwd . --engine nope --prompt hi
+tx: engine nope is not enabled (enabled: claude, codex)
+```
+
+A record of such a kind (written on another machine, or by an engine plugin since removed or
+switched off) is a record like any other: it lists and shows, and it cannot be respawned or forked
+until an engine of its kind is active. An engine is either linked into the program or a plugin's
+own program that speaks the engine protocol (see [Writing plugins](writing-plugins.md#an-engine));
+nothing else in core can tell which.
 
 ## The conversation
 
 Each adapter records the conversation in its own `ext` key (`ext.claude`, `ext.codex`):
-`conversation_id` and `transcript_path`, reported by the `SessionStart` hook. Core asks the engine
-to archive the transcript under `<data>/agents/<id>/archive/`, so a respawn can restore it even
-after the CLI has cleaned it up. Readers ask core: `TxCore::conversation(id)` returns what the
-engine names, and `tx chat ls <agent>` prints it.
+`conversation_id` and `transcript_path`, reported by the `SessionStart` hook. These two keys are
+reserved in every engine's data: an engine that records a conversation spells it so. Core asks
+the engine to archive the transcript under `<data>/agents/<id>/archive/`, so a respawn can restore
+it even after the CLI has cleaned it up. Readers ask core: `TxCore::conversation(id)` is those
+two keys of the record, known once both are strings, and `tx chat ls <agent>` prints it. So no
+reader (the timeline, the graph, the home, `chat ls`) ever starts an engine to find a
+transcript.

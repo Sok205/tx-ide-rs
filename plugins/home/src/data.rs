@@ -1,14 +1,17 @@
 //! Gathering the home's [`Context`]: the agents, projects and views, the assistant's state,
-//! plugin status and the cheat sheet from the core's registry. Reads only; another plugin is seen through its status, its resources and
-//! `Agent.ext` (D3).
+//! the plugins with their status, the cheat sheet and the layouts. Reads only; another plugin
+//! is seen through its status, the key fragment it published, its verbs and `Agent.ext` (D3).
+//! A context is gathered every second, so nothing here starts a process per context: the one
+//! verb it runs, `layout ls`, runs again only when `<config>/layouts` changed.
 
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use tx_client::tmux::Ui;
 use tx_client::views::ViewKind;
-use tx_core::{Agent, CoreError, ListFilter, LlmEngineState, PluginStatus, TxCore, VerbIo};
+use tx_core::{Agent, CoreError, ListFilter, LlmEngineState, PluginStatus, TxCore, Verb, VerbIo};
 
 use crate::model::{AgentRow, AssistantState, Context, KeyHint, Project, ViewRow};
 use crate::project::ProjectCache;
@@ -125,6 +128,7 @@ pub fn context(
                 .collect()
         })
         .unwrap_or_default();
+    let (layouts, layouts_modified) = layouts(core, previous);
     Ok(Context {
         assistant: assistant_from(core, &agents),
         projects,
@@ -136,25 +140,63 @@ pub fn context(
             .iter()
             .map(|(id, status)| (id.clone(), *status == PluginStatus::Active))
             .collect(),
-        keys: core
-            .resources("keys/")
-            .iter()
-            .filter_map(|resource| {
-                key_hint(&resource.plugin, &String::from_utf8_lossy(resource.bytes))
-            })
-            .collect(),
+        keys: key_hints(core),
         now: tx_core::events::now(),
         home_directory: home_directory(std::env::var_os("HOME")),
-        layouts: layouts(core),
+        layouts,
+        layouts_modified,
     })
 }
 
-const LAYOUT_VERB: &str = "layout";
+/// Under the data directory: the key fragments `tx update` published, `<plugin id>.tmux`.
+const KEYS_DIRECTORY: &str = "keys";
 
-/// The names `tx layout ls` prints, run in-process; `None` without the verb. A failing `ls`
-/// lists nothing, its message on stderr.
-fn layouts(core: &TxCore) -> Option<Vec<String>> {
-    let verb = core.verb(LAYOUT_VERB)?;
+/// The hints of the active plugins' published key fragments, in the order of the plugin list.
+/// The fragments are read where `tx update` wrote them: a plugin that runs as its own program
+/// holds no resource in this process.
+fn key_hints(core: &TxCore) -> Vec<KeyHint> {
+    let directory = core.config().directories.data.join(KEYS_DIRECTORY);
+    core.plugin_status()
+        .iter()
+        .filter(|(_, status)| *status == PluginStatus::Active)
+        .filter_map(|(id, _)| {
+            let fragment = std::fs::read_to_string(directory.join(format!("{id}.tmux"))).ok()?;
+            key_hint(id, &fragment)
+        })
+        .collect()
+}
+
+const LAYOUT_VERB: &str = "layout";
+/// Under the config directory: where the `layouts` plugin keeps its files. The home looks at
+/// the directory's modification time only, never at the files.
+const LAYOUTS_DIRECTORY: &str = "layouts";
+
+/// The layouts and the modification time of `<config>/layouts` they were listed at; `None`
+/// names without the `layout` verb. `previous`'s names stand while the directory's time is the
+/// one they were listed at: listing runs the `layouts` plugin's program, so it happens for the
+/// first context and then only when a layout was added, removed or renamed.
+fn layouts(core: &TxCore, previous: Option<&Context>) -> (Option<Vec<String>>, Option<SystemTime>) {
+    let Some(verb) = core.verb(LAYOUT_VERB) else {
+        return (None, None);
+    };
+    let directory = core.config().directories.config.join(LAYOUTS_DIRECTORY);
+    // Read before the listing: a layout added while `ls` runs changes the time again.
+    let modified = std::fs::metadata(directory)
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let names = match previous {
+        Some(Context {
+            layouts: Some(names),
+            layouts_modified,
+            ..
+        }) if *layouts_modified == modified => names.clone(),
+        _ => list_layouts(core, verb.as_ref()),
+    };
+    (Some(names), modified)
+}
+
+/// The names `tx layout ls` prints. A failing `ls` lists nothing.
+fn list_layouts(core: &TxCore, verb: &dyn Verb) -> Vec<String> {
     let mut stdin = io::empty();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -168,14 +210,12 @@ fn layouts(core: &TxCore) -> Option<Vec<String>> {
         &["ls".to_owned()],
     );
     if !matches!(result, Ok(0)) {
-        return Some(Vec::new());
+        return Vec::new();
     }
-    Some(
-        String::from_utf8_lossy(&stdout)
-            .lines()
-            .map(str::to_owned)
-            .collect(),
-    )
+    String::from_utf8_lossy(&stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `$HOME`, else the root.
@@ -322,7 +362,7 @@ mod tests {
 
     #[test]
     fn the_shipped_fragment_has_a_hint() {
-        let hint = key_hint("home", include_str!("../tmux/keys.tmux")).unwrap();
+        let hint = key_hint("home", include_str!("../keys/home.tmux")).unwrap();
         assert_eq!(hint.keys, ["m"]);
         assert!(hint.text.starts_with("prefix+m opens"), "{}", hint.text);
     }

@@ -29,7 +29,8 @@ one front end; every action an operator, a key binding or an agent takes goes th
   messaging, the plugin host. It never parses arguments and never reads the environment.
 - Two engine adapters, for Claude Code and Codex, which turn a launch request into a command line
   and turn the engine's hook events into agent states.
-- `tx-client`, the tmux layer: views, the composed `tmux.conf`, and `tx ui attach`.
+- `tx-client`, the tmux layer: views. The composed `tmux.conf` and `tx ui attach` are the `ide`
+  plugin, `plugins/ide`.
 - A set of plugins for the IDE itself: the home screen, the session picker, the new-agent form,
   the timeline, artifacts and code tours, the assistant, mockups and a tutor.
 - Two binaries: `tx`, the CLI people type, and `txi`, the internal entry point the engines' hooks
@@ -39,19 +40,32 @@ one front end; every action an operator, a key binding or an agent takes goes th
 
 ## Install
 
-You need Rust 1.92 or newer, tmux, git, jq, fzf and curl, at least one engine CLI (`claude` or
-`codex`) and `nvim` for views. Then:
+You need Rust 1.92 or newer, tmux, git and jq; for the IDE also fzf and `nvim`, and at least one
+engine CLI (`claude` or `codex`). The installer warns about each program a plugin you selected
+needs and `PATH` does not have. Then:
 
 ```sh
 git clone <this-repo> ~/tx-ide-rs
-~/tx-ide-rs/install --dry-run   # print every change, change nothing
-~/tx-ide-rs/install             # cargo install tx and txi, tx update, config links
+~/tx-ide-rs/install --dry-run   # print what every step would do, change nothing
+~/tx-ide-rs/install             # choose the plugins, build them, install tx and txi, tx update
 tx ui attach                    # the IDE: lands on the home screen
 ```
 
-The install script is idempotent; a second run finds nothing to do. Run `tx update` after you
-rebuild `tx`: it runs the pending update steps (see [Files](files.md)), then each plugin's
-updater, which rewrites the tmux configuration: it names the binary's path.
+Which of the shipped plugins an install takes is a preset: `headless` (what an agent needs
+without the IDE), `ide` or `full`, or one of your own, resolved and recorded by `tx setup` (see
+[Files](files.md)). On a terminal `install` shows a checklist with `full` ticked; `--preset NAME`
+or `--plugins a,b,c` chooses without asking, and `--yes`, or a run without a terminal, takes
+`full`. Only the selected plugins are built and laid out under `<data>/shipped`; `tx` and `txi`
+are the only programs that go on `PATH`. `config.yaml` is written once, with the selected
+plugins. Your `~/.config/nvim` and `~/.tmux.conf` are left alone unless you pass
+`--link-dotfiles` (or tick the checklist's last row), which links them to the checkout's
+`config/`.
+
+The install script is safe to re-run. To upgrade, `git pull` and run `install --upgrade`: it
+asks nothing, resolves the recorded selection again, rebuilds, and never writes `config.yaml`
+or a dotfile. Run `tx update` after you rebuild `tx` by hand: it runs the pending update steps
+(see [Files](files.md)), then each plugin's updater, which rewrites the tmux configuration: it
+names the binary's path.
 
 Once attached, the tmux prefix is `C-a`. The home screen lists your projects, their agents and
 their views; `n` starts a new agent, Enter goes into one, `?` shows every key.

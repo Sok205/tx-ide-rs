@@ -1,0 +1,16 @@
+api: 1
+id: assistant
+description: "The tx-assistant agent session (`assistant warm`, `assistant ask`)."
+tier: ide
+requires: [engine-claude]
+needs: [claude, git]
+settings: { model: opus, effort: 2 }
+
+verbs:
+  - name: assistant
+    usage: "assistant warm | ask --from-buffer [--pane PANE] | ask TEXT…   start the tx-assistant session unless it is running (a stopped one is respawned in place) and print its name; deliver a line to it as the operator (from the tx-assistant-input paste buffer, or the words given): typed in PANE's session behind its focus envelope, else via prefix+/"
+    bin: tx-assistant
+    args: [assistant]
+
+resources:
+  - keys/assistant.tmux

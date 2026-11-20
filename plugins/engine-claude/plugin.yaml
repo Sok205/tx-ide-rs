@@ -1,0 +1,14 @@
+api: 1
+id: engine-claude
+description: The Claude Code engine.
+tier: core
+needs: [claude]
+engine:
+  kind: claude
+  ext_key: claude
+  bin: tx-engine-claude
+  args: [--tx-engine]
+  hook: { bin: tx-engine-claude, args: [--tx-hook] }
+  methods: [prepare, archive, restore, warnings, check, tools]
+  interrupt: { key: Escape, state: idle }
+  notes: ["claude adds to every agent's tools: Skill, ToolSearch"]

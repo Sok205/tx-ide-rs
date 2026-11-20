@@ -1,0 +1,37 @@
+api: 1
+id: ide
+description: "The tmux IDE: the server config `tx update` composes, `ui attach` and `ui view`."
+tier: ide
+needs: [tmux, nvim]
+
+verbs:
+  - name: ui
+    usage: "ui attach | view <open|ls|close>   enter the IDE's server; manage views"
+    bin: tx-ide
+    args: [ui]
+  - name: _resource
+    usage: "_resource NAME   print a plugin resource (internal)"
+    bin: tx-ide
+    args: [_resource]
+  - name: _show
+    usage: "_show <client> focus|attach-to|popup <session> [<pane>]   show a session on the terminal (internal)"
+    bin: tx-ide
+    args: [_show]
+  - name: _attach-into
+    usage: "_attach-into <client> <session> <pane>   attach a session into a pane (attach-to's Enter, internal)"
+    bin: tx-ide
+    args: [_attach-into]
+
+update:
+  bin: tx-ide
+  args: [--tx-update]
+
+resources:
+  - conf/tmux.conf
+  - keys/ide.tmux
+  - bin/tmux-nav
+  - bin/tmux-system-resources
+  - nvim/lua/tx-tour.lua
+  - nvim/lua/tx-diffview-return.lua
+  - nvim/lua/tx-ask.lua
+  - nvim/plugin/tx.lua

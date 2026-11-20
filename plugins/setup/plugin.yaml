@@ -1,0 +1,9 @@
+api: 1
+id: setup
+description: Chooses the shipped plugins to install, from a preset or a checklist.
+tier: core
+
+verbs:
+  - name: setup
+    usage: "setup --bundles DIR [--preset NAME | --plugins a,b,c | --upgrade] [--list]   choose the shipped plugins: a preset, a list, or the wizard"
+    bin: tx-setup

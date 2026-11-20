@@ -46,7 +46,7 @@ escaped so tmux cannot read it as a command separator), waits 300 ms so the engi
 text as input rather than a shortcut, then presses Enter. The whole delivery holds the target's
 lock, so two senders never interleave keystrokes. The receipt means "submitted": not read, not
 completed, not retried. The pause is the main throughput limit, roughly three messages a second
-per recipient. The message also lands in `log.jsonl` as a `message-sent` event.
+per recipient. The message also lands in `log.jsonl` as a `message-sent` event; a plugin can be handed the same events through `on-event` (see [Writing plugins](writing-plugins.md#an-event-sink-on-event)).
 
 ## Asking the assistant: prefix+/ and the focus envelope
 

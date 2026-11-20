@@ -518,7 +518,7 @@ impl TxCore {
         }
         Ok(Self {
             store: AgentStore::new(directories.data.join(AGENTS_DIR)),
-            tmux: Tmux::new(TMUX_BINARY, config.socket_path(), conf),
+            tmux: Tmux::new(TMUX_BINARY, config.socket_path(), conf).withholding(&config.given),
             events: EventLog::new(directories.data.join(LOG_FILE)),
             engines: EngineRegistry::new(),
             profiles: Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone()),
@@ -526,7 +526,7 @@ impl TxCore {
             worktrees: WorktreeManager::new(config.worktrees_dir()),
             locks: Locks::new(directories.state.join(LOCKS_DIR)),
             sinks: Vec::new(),
-            host: crate::plugin::Host::with_shipped_roles(),
+            host: crate::plugin::Host::default(),
             config,
         })
     }
@@ -555,6 +555,11 @@ impl TxCore {
     /// The kinds with an adapter registered, sorted: every enabled engine plugin's.
     pub fn engine_kinds(&self) -> Vec<EngineKind> {
         self.engines.kinds()
+    }
+
+    /// The engine registered for `kind`; `None`: no active plugin provides it.
+    pub fn engine(&self, kind: EngineKind) -> Option<&dyn LlmEngine> {
+        self.engines.get(kind)
     }
 
     /// Registers an in-process listener for every event this core emits. See [`EventSink`].
@@ -1520,7 +1525,7 @@ mod tests {
         }
 
         fn kind(&self) -> EngineKind {
-            EngineKind::Claude
+            EngineKind::CLAUDE
         }
 
         fn ext_key(&self) -> &'static str {
@@ -1563,7 +1568,7 @@ mod tests {
             core.register_engine(Box::new(Stub)).unwrap_err(),
             CoreError::EngineTaken(_)
         ));
-        assert_eq!(core.engine_kinds(), [EngineKind::Claude]);
+        assert_eq!(core.engine_kinds(), [EngineKind::CLAUDE]);
     }
 
     #[test]
@@ -1614,7 +1619,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let opts = |launch: LaunchOptions| CreateOptions::new("n", cwd.clone(), launch);
         // No engine is registered on this core: every kind is "disabled".
-        let agent = || LaunchOptions::agent(EngineKind::Codex).initial_prompt("go");
+        let agent = || LaunchOptions::agent(EngineKind::CODEX).initial_prompt("go");
         let mut bad = opts(agent());
         bad.name = "no spaces".into();
         assert!(matches!(
@@ -1636,7 +1641,7 @@ mod tests {
         let bad = opts(agent());
         assert!(matches!(
             core.create_agent(bad).unwrap_err(),
-            CoreError::EngineDisabled(EngineKind::Codex)
+            CoreError::EngineDisabled(EngineKind::CODEX)
         ));
         assert!(
             std::fs::read_dir(directories.data.join("agents"))
@@ -1677,7 +1682,7 @@ mod tests {
         let session = |parent: Option<&str>, tags: &[&str], state| Agent {
             id: "i".parse().unwrap(),
             name: "n".into(),
-            engine: EngineKind::Claude,
+            engine: EngineKind::CLAUDE,
             working_directory: "/".into(),
             roles: vec![],
             definition: None,

@@ -1,5 +1,5 @@
-//! What the core ships, listed by `TxCore::resources` (plugin id [`PLUGIN_ID`]) ahead of every
-//! plugin's; a plugin that registers a resource of the same name is refused as a duplicate.
+//! What the core ships, published by `tx update` ahead of every plugin's resources; a plugin
+//! that publishes a resource of the same name replaces the core's.
 //! - The roles: `agents/…` resources from `tx-core/agents/`, which `tx update` writes under
 //!   `<data>/roles/`, so a role is not tied to the plugin that first needed it.
 //! - The harness: `harness/…` resources from the repo's `config/tx/` (`skills/`,

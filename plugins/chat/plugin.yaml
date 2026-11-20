@@ -1,0 +1,23 @@
+api: 1
+id: chat
+description: "tx-core plugin `chat`: prefix+f fork, `chat ls`, `doctor --fix-hooks`."
+tier: core
+needs: [fzf]
+
+verbs:
+  - name: chat
+    usage: "chat ls <session>   a session's current conversation"
+    bin: tx-chat
+    args: [chat]
+  - name: doctor
+    usage: "doctor --fix-hooks   remove the global agent hooks older versions installed"
+    bin: tx-chat
+    args: [doctor]
+  - name: _fork-pane
+    usage: "_fork-pane PANE CLIENT [NAME]   prefix+f: fork the pane's tx session (internal)"
+    bin: tx-chat
+    args: [_fork-pane]
+
+resources:
+  - keys/chat.tmux
+  - bin/tmux-fork-tx-session

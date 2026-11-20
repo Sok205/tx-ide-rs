@@ -1,4 +1,6 @@
-//! The artifacts plugin through the binary: `tx artifact …`, `tx group`, and prefix+a.
+//! The artifacts plugin through the binary: `tx artifact …`, `tx group`, and prefix+a. Both
+//! `artifacts` and `tour` ship as bundles, so here their verbs run as the programs
+//! `tx-artifacts` and `tx-tour`.
 
 mod common;
 
@@ -82,6 +84,83 @@ fn disabled_plugin_hides_the_verbs() {
     cli.write_yaml("plugins:\n  artifacts: { enabled: false }\n");
     let stderr = cli.fails(&["artifact", "ls"], 2);
     assert!(stderr.contains("unknown verb \"artifact\""), "{stderr}");
+}
+
+/// The program of a plugin's bundle, as `tx` runs it.
+fn program(id: &str) -> PathBuf {
+    common::shipped()
+        .join(id)
+        .join("bin")
+        .join(format!("tx-{id}"))
+}
+
+/// The one row of `id` in `tx plugins --json`.
+fn row(cli: &Cli, id: &str) -> serde_json::Value {
+    let rows: serde_json::Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let found: Vec<&serde_json::Value> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == id)
+        .collect();
+    assert_eq!(found.len(), 1, "{rows}");
+    found[0].clone()
+}
+
+/// `tx args…` with `env`, every plugin program it starts traced into `<dir>/trace`: the output
+/// of the command, and the trace.
+fn traced(cli: &Cli, args: &[&str], env: &[(&str, &str)]) -> (std::process::Output, String) {
+    let trace = cli.dir.path().join("trace");
+    std::fs::write(&trace, "").unwrap();
+    let mut env = env.to_vec();
+    env.push(("TX_PLUGIN_TRACE", trace.to_str().unwrap()));
+    let output = cli.run(args, &env, "");
+    (output, std::fs::read_to_string(&trace).unwrap())
+}
+
+#[test]
+fn the_bundles_are_the_shipped_plugins_and_their_verbs_are_their_programs() {
+    let cli = Cli::new();
+    assert_eq!(
+        row(&cli, "artifacts"),
+        serde_json::json!({
+            "id": "artifacts", "status": "active", "detail": null, "origin": "shipped",
+            "directory": common::shipped().join("artifacts"),
+            "description": "Durable versioned artifacts, effort groups, and the prefix+a menu.",
+            "tier": "core", "requires": [], "needs": ["git", "nvim"],
+            "verbs": ["artifact", "group", "_artifact-menu", "_artifact-pick", "_artifact-go"],
+            "engine": null,
+        })
+    );
+    assert_eq!(
+        row(&cli, "tour"),
+        serde_json::json!({
+            "id": "tour", "status": "active", "detail": null, "origin": "shipped",
+            "directory": common::shipped().join("tour"),
+            "description": "Code tours, artifacts of kind `tour` opened as nvim views of their stops.",
+            "tier": "extra", "requires": ["artifacts", "ide"], "needs": ["nvim"],
+            "verbs": ["tour"], "engine": null,
+        })
+    );
+    let help = cli.ok(&["help"]);
+    for verb in [
+        "artifact",
+        "group",
+        "_artifact-menu",
+        "_artifact-pick",
+        "_artifact-go",
+        "tour",
+    ] {
+        let listed = help.lines().filter(|line| lists_verb(line, verb)).count();
+        assert_eq!(listed, 1, "{verb}: {help}");
+    }
+    let (output, trace) = traced(&cli, &["artifact", "ls"], &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        trace,
+        format!("verb\tartifacts\t{}\n", program("artifacts").display()),
+        "one plugin program was started: tx became it"
+    );
 }
 
 #[test]
@@ -469,6 +548,87 @@ fn artifact_open_starts_the_server_when_none_runs() {
     assert!(cli.ok(&["ui", "view", "ls"]).contains("plan-md"));
 }
 
+// ----- tours: a kind opened by the plugin whose verb is named after it --------------------
+
+/// A PATH whose `nvim` passes the tour's stops check (`nvim --clean -l -`) and otherwise stays
+/// alive: a tour view without nvim.
+fn fake_nvim_path(cli: &Cli) -> String {
+    cli.shim_path(&[(
+        "nvim",
+        "[ \"$1\" = --clean ] && { cat >/dev/null; exit 0; }\nexec sleep 60",
+    )])
+}
+
+/// `tx tour create` of a one-stop tour of a fresh repository, `path` on PATH; its id.
+fn create_tour(cli: &Cli, path: &str) -> String {
+    let worktree = cli.repository("toured");
+    let stops = write_file(
+        cli,
+        "stops.lua",
+        "return {\n  { file = \"README.md\", line = 1, label = \"1/1 start\", body = \"the first line\" },\n}\n",
+    );
+    let output = cli.run(
+        &[
+            "tour",
+            "create",
+            &stops,
+            "--title",
+            "QA tour",
+            "--cwd",
+            worktree.to_str().unwrap(),
+        ],
+        &[("PATH", path)],
+        "",
+    );
+    let out = String::from_utf8_lossy(&output.stdout);
+    out.strip_prefix("Created tour artifact ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("{output:?}"))
+        .to_owned()
+}
+
+/// `tx artifact open <tour>`, traced: checks that it opened a `tour` view bound to the tour, and
+/// returns the trace.
+fn open_tour(cli: &Cli, id: &str, path: &str) -> String {
+    let (output, trace) = traced(cli, &["artifact", "open", id], &[("PATH", path)]);
+    let out = String::from_utf8_lossy(&output.stdout);
+    let view = out
+        .strip_prefix(&format!("Opened tour {id} in view '"))
+        .and_then(|rest| rest.split('\'').next())
+        .unwrap_or_else(|| panic!("{output:?}"));
+    assert_eq!(view_option(cli, view, "@tx-view-kind"), "tour");
+    assert_eq!(view_option(cli, view, "@tx-view-bound"), id);
+    assert!(cli.ok(&["ui", "view", "ls"]).contains(view));
+    trace
+}
+
+/// `artifact open` on a tour runs `tour open` through the proxy: `tx` becomes `tx-artifacts`,
+/// which starts `tx-tour`. Without the `tour` plugin, nothing opens that kind.
+#[test]
+fn artifact_open_of_a_tour_runs_the_tour_program() {
+    require_tmux!();
+    let cli = Cli::new();
+    let path = fake_nvim_path(&cli);
+    let id = create_tour(&cli, &path);
+    assert!(
+        cli.ok(&["artifact", "ls", "--kind", "tour"])
+            .contains(&id[..8])
+    );
+    assert_eq!(
+        open_tour(&cli, &id, &path),
+        format!(
+            "verb\tartifacts\t{}\nverb\ttour\t{}\n",
+            program("artifacts").display(),
+            program("tour").display()
+        )
+    );
+    cli.write_yaml("plugins:\n  tour: { enabled: false }\n");
+    assert_eq!(
+        cli.fails(&["artifact", "open", &id], 1),
+        "tx artifact: no opener for kind `tour` (expected verb `tx tour open`)\n"
+    );
+}
+
 // ----- prefix+a ---------------------------------------------------------------------------
 
 /// The operator's setup for prefix+a: a server set up by `tx update`, an agent `a`, an outer
@@ -576,6 +736,15 @@ fn prefix_a_in_an_agent_pane_attaches_the_chosen_artifact() {
     require_tmux!();
     let cli = Cli::new();
     let (a, artifact) = operator(&cli);
+    // What the server runs from now on is traced: only a program `tx` starts leaves a line.
+    let trace = cli.dir.path().join("trace");
+    std::fs::write(&trace, "").unwrap();
+    cli.tmux(&[
+        "set-environment",
+        "-g",
+        "TX_PLUGIN_TRACE",
+        trace.to_str().unwrap(),
+    ]);
     outer_keys(&cli, &["C-a", "a"]);
     assert!(
         cli.wait_for(10, || running_pick(&cli)),
@@ -588,6 +757,14 @@ fn prefix_a_in_an_agent_pane_attaches_the_chosen_artifact() {
         "{:?}",
         client_sessions(&cli)
     );
+    // The key's helper, the popup's picker and the background go each start with `tx`.
+    let started = std::fs::read_to_string(&trace).unwrap();
+    let artifacts: Vec<&str> = started
+        .lines()
+        .filter(|line| line.contains("\tartifacts\t"))
+        .collect();
+    let line = format!("verb\tartifacts\t{}", program("artifacts").display());
+    assert_eq!(artifacts, [line.as_str(); 3], "{started}");
     assert_eq!(view_option(&cli, "plan-md", "@tx-view-kind"), "editor");
     assert_eq!(view_option(&cli, "plan-md", "@tx-view-bound"), artifact);
     assert_eq!(view_option(&cli, "plan-md", "@tx-view-parent"), a);

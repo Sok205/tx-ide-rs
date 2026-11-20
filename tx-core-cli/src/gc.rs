@@ -16,6 +16,20 @@ use tx_core::{CoreError, ListFilter, TxCore};
 
 use crate::config::BuildOutput;
 
+/// `--older-than` as minutes: `30m`, `2h`, `90s`, `1d`, `1.5h`, or bare minutes.
+pub fn parse_duration_minutes(raw: &str) -> Option<f64> {
+    let raw = raw.trim();
+    let (number, unit) = match raw.chars().last()? {
+        'd' => (&raw[..raw.len() - 1], 1440.0),
+        'h' => (&raw[..raw.len() - 1], 60.0),
+        'm' => (&raw[..raw.len() - 1], 1.0),
+        's' => (&raw[..raw.len() - 1], 1.0 / 60.0),
+        _ => (raw, 1.0),
+    };
+    let value: f64 = number.trim().parse().ok()?;
+    (value.is_finite() && value > 0.0).then_some(value * unit)
+}
+
 /// A worktree whose agents all ended before the threshold.
 #[derive(Debug)]
 pub struct Worktree {
@@ -242,5 +256,17 @@ mod tests {
         assert_eq!(human_size(4096), "4.1 KB");
         assert_eq!(human_size(1_700_000_000), "1.7 GB");
         assert_eq!(human_size(21_000_000_000_000), "21.0 TB");
+    }
+
+    #[test]
+    fn durations_read_as_minutes() {
+        assert_eq!(parse_duration_minutes("30m"), Some(30.0));
+        assert_eq!(parse_duration_minutes("2h"), Some(120.0));
+        assert_eq!(parse_duration_minutes("90s"), Some(1.5));
+        assert_eq!(parse_duration_minutes("1d"), Some(1440.0));
+        assert_eq!(parse_duration_minutes("45"), Some(45.0));
+        assert_eq!(parse_duration_minutes("1.5h"), Some(90.0));
+        assert_eq!(parse_duration_minutes("soon"), None);
+        assert_eq!(parse_duration_minutes("-5m"), None);
     }
 }

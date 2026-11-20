@@ -6,15 +6,24 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
 
 use tx_client::tmux::Ui;
+use tx_core::plugin::Index;
+use tx_core::plugin::external::TRACE_VERB;
 use tx_core::{
     AgentId, CoreError, CreateOptions, ForkOptions, IdleReason, ListFilter, SendOptions, Sender,
     TxCore,
 };
-use tx_core_cli::args::{self, Invocation, Verb};
+use tx_core_cli::args::{self, Global, HarnessKind, Invocation, Verb};
+use tx_core_cli::harness::Engines;
 
-use tx_core_cli::setup::{Failure, config_file, core_config, load_config, open, preview_verbs};
+use tx_core_cli::plugins::warn_if_shipped_differ;
+use tx_core_cli::setup::{Failure, Installation, config_file, core_config, load_config};
 
 fn main() -> ExitCode {
+    // First thing: the plugin programs and the sessions this run starts are told which `tx`
+    // this is.
+    if let Ok(exe) = std::env::current_exe() {
+        tx_plugin::sdk::set_tx_bin(exe);
+    }
     let args: Result<Vec<String>, args::UsageError> = std::env::args_os()
         .skip(1)
         .map(|arg| {
@@ -67,103 +76,238 @@ fn sender_from_env(core: &TxCore, via: Option<String>) -> Result<Sender, CoreErr
     Ok(Sender::User { via: view.or(via) })
 }
 
-fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
-    if invocation.verb == Verb::Help {
-        print!("{}", args::USAGE);
-        if let Ok(config) = core_config(&invocation.global) {
-            println!(
-                "Config file here: {}",
-                config_file(&invocation.global, &config).display()
-            );
+/// `tx help`: the built-in usage, the config file this run would read, then one line per verb
+/// of an active plugin, by verb name. A `config.yaml` that cannot be read still gets the
+/// built-in usage.
+fn help(global: &Global) {
+    print!("{}", args::USAGE);
+    let Ok(config) = core_config(global) else {
+        return;
+    };
+    println!(
+        "Config file here: {}",
+        config_file(global, &config).display()
+    );
+    let Ok(installation) = Installation::read_with(global, config) else {
+        return;
+    };
+    warn_if_shipped_differ(&installation.index, &installation.config.directories);
+    let verbs = &installation.activation.verbs;
+    if !verbs.is_empty() {
+        println!("\nplugin verbs:");
+        for verb in verbs.values() {
+            println!("  {}", verb.usage);
         }
-        // A broken config.yaml still gets the built-in usage.
-        if let Ok(verbs) = preview_verbs(&invocation.global)
-            && !verbs.is_empty()
-        {
-            println!("\nplugin verbs:");
-            for verb in verbs {
-                println!("  {}", verb.usage());
-            }
-        }
-        return Ok(ExitCode::SUCCESS);
     }
-    if let Verb::Plugin { name, .. } = &invocation.verb
-        && !preview_verbs(&invocation.global)?
-            .iter()
-            .any(|verb| verb.name() == name)
-    {
+}
+
+/// A verb that is not built in: an active plugin's, or unknown. `tx` becomes that plugin's
+/// program: its standard streams, terminal, signals and exit code are the plugin's own, and
+/// neither a plugin nor the core is set up here.
+fn plugin_verb(global: &Global, name: &str, argv: &[String]) -> Result<ExitCode, Failure> {
+    let installation = Installation::read(global)?;
+    let Some(verb) = installation.activation.verbs.get(name) else {
         return Err(Failure::Usage(args::UsageError(format!(
             "unknown verb {name:?}"
         ))));
+    };
+    // The internal `_…` verbs run from tmux hooks, where a warning is noise.
+    if !name.starts_with('_') {
+        tx_core_cli::update::warn_if_behind(&installation.config.directories);
+        warn_if_shipped_differ(&installation.index, &installation.config.directories);
     }
-    // `update` runs its steps before anything opens the core; the internal `_…` verbs run from
-    // tmux hooks, where a warning is noise.
-    match &invocation.verb {
-        Verb::Update => return tx_core_cli::update::run(&invocation.global),
-        Verb::Plugin { name, .. } if name.starts_with('_') => {}
-        _ => tx_core_cli::update::warn_if_behind(&core_config(&invocation.global)?.directories),
+    installation.cache();
+    let error = installation
+        .launcher(global, &verb.plugin)
+        .command(TRACE_VERB, &verb.program, &verb.args)
+        .args(argv)
+        .exec();
+    eprintln!("tx: {name}: cannot run {}: {error}", verb.program.display());
+    Ok(ExitCode::from(1))
+}
+
+/// `tx plugins [--json]`: every plugin and its status. The index and `config.yaml` say it all,
+/// so no core is opened.
+fn plugins(global: &Global, json: bool) -> Result<ExitCode, Failure> {
+    let installation = Installation::read(global)?;
+    tx_core_cli::update::warn_if_behind(&installation.config.directories);
+    warn_if_shipped_differ(&installation.index, &installation.config.directories);
+    installation.cache();
+    let rows = tx_core_cli::plugins::rows(&installation);
+    let mut out = std::io::stdout().lock();
+    if json {
+        let rows = rows.iter().map(|row| row.json()).collect();
+        writeln!(out, "{}", serde_json::Value::Array(rows)).ok();
+    } else {
+        for row in rows {
+            writeln!(out, "{}", row.line()).ok();
+        }
     }
-    // The harness is files under two roots: no core to open, nothing created.
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tx harness check`: the harness, the plugins, or one of the two. Neither opens a core, and
+/// nothing is written, the plugin index included.
+fn harness_check(
+    global: &args::Global,
+    engine: Option<tx_core::EngineKind>,
+    plugins_only: bool,
+    names: &[String],
+) -> Result<ExitCode, Failure> {
+    let installation = tx_core_cli::setup::Installation::read_with(global, core_config(global)?)?;
+    let mut out = std::io::stdout().lock();
+    let mut clean = true;
+    let mut summary = None;
+    if !plugins_only {
+        let engines = Engines::read(global, &installation);
+        // The engine asked about is named next to the active ones before anything is printed.
+        if let Some(kind) = engine
+            && !engines.all().contains_key(&kind)
+        {
+            let enabled: Vec<String> = engines.all().keys().map(ToString::to_string).collect();
+            eprintln!(
+                "tx: {} (enabled: {})",
+                CoreError::EngineDisabled(kind),
+                enabled.join(", ")
+            );
+            return Ok(ExitCode::from(1));
+        }
+        let config = &installation.config;
+        let profiles =
+            tx_core::profile::Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone());
+        let checked = tx_core_cli::harness::check(
+            &config.directories,
+            &profiles,
+            &engines,
+            engine,
+            names,
+            &mut out,
+        )
+        .map_err(Failure::Harness)?;
+        clean = checked.clean;
+        summary = Some(checked.summary);
+    }
+    let mut closing = summary.clone();
+    if plugins_only || (engine.is_none() && names.is_empty()) {
+        let ids = if plugins_only { names } else { &[] };
+        if let Some(id) = tx_core_cli::check::unknown(&installation, ids) {
+            eprintln!("tx harness check: no plugin {id:?}");
+            return Ok(ExitCode::from(1));
+        }
+        let file = tx_core_cli::setup::config_file(global, &installation.config);
+        let report = tx_core_cli::check::plugins(&installation, &file, ids, &mut out)?;
+        clean &= report.problems == 0;
+        let loaded = format!("{} plugins", report.loaded);
+        closing = Some(match summary {
+            Some(summary) => format!("{summary}, {loaded}"),
+            None => loaded,
+        });
+    }
+    if clean && let Some(closing) = closing {
+        writeln!(out, "ok: {closing}").ok();
+    }
+    Ok(if clean {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
+}
+
+/// `tx harness ls [KIND]`. What the active engines add is read only for the kinds that show
+/// it, agents and tools: those read `config.yaml`, which says which engines are active.
+fn harness_ls(global: &args::Global, kind: Option<HarnessKind>) -> Result<ExitCode, Failure> {
+    let config = core_config(global)?;
+    let directories = config.directories.clone();
+    let mut out = std::io::stdout().lock();
+    match kind {
+        Some(HarnessKind::Skills | HarnessKind::Mcp) => {
+            tx_core_cli::harness::list(&directories, kind, &[], &mut out)
+        }
+        _ => {
+            let installation = tx_core_cli::setup::Installation::read_with(global, config)?;
+            let engines = Engines::read(global, &installation);
+            match kind {
+                Some(HarnessKind::Tools) => {
+                    tx_core_cli::tools::list(&directories, &engines, &mut out)
+                }
+                _ => tx_core_cli::harness::list(&directories, kind, &engines.notes(), &mut out),
+            }
+        }
+    }
+    .map_err(Failure::Harness)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     match &invocation.verb {
-        Verb::HarnessList { kind } => {
-            let directories = core_config(&invocation.global)?.directories;
-            tx_core_cli::harness::list(&directories, *kind, &mut std::io::stdout().lock())
-                .map_err(Failure::Harness)?;
+        Verb::Help => {
+            help(&invocation.global);
             return Ok(ExitCode::SUCCESS);
         }
-        Verb::HarnessCheck { engine, names } => {
-            let config = core_config(&invocation.global)?;
-            let profiles = tx_core::profile::Profiles::new(
-                config.profile_dirs.clone(),
-                config.skill_dirs.clone(),
-            );
-            let clean = tx_core_cli::harness::check(
-                &config.directories,
-                &profiles,
-                *engine,
-                names,
-                &mut std::io::stdout().lock(),
-            )
-            .map_err(Failure::Harness)?;
-            return Ok(if clean {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            });
+        // `update` runs its steps before anything opens the core.
+        Verb::Update { arguments } => {
+            return tx_core_cli::update::run(&invocation.global, arguments);
         }
+        Verb::Plugin { name, argv } => return plugin_verb(&invocation.global, name, argv),
+        Verb::Plugins { json } => return plugins(&invocation.global, *json),
         _ => {}
     }
-    let core = open(&invocation.global)?;
+    let config = core_config(&invocation.global)?;
+    tx_core_cli::update::warn_if_behind(&config.directories);
+    // The harness is files under two roots: no core to open, nothing created. Neither
+    // verb needs `config.yaml` for the warning: the index alone holds the shipped stamp.
+    if matches!(
+        invocation.verb,
+        Verb::HarnessList { .. } | Verb::HarnessCheck { .. }
+    ) {
+        let index = Index::read(&config, tx_plugin::VERSION);
+        warn_if_shipped_differ(&index, &config.directories);
+    }
+    match &invocation.verb {
+        Verb::HarnessList { kind } => {
+            return harness_ls(&invocation.global, *kind);
+        }
+        Verb::HarnessCheck {
+            engine,
+            plugins,
+            names,
+        } => return harness_check(&invocation.global, *engine, *plugins, names),
+        _ => {}
+    }
+    let installation = Installation::read_with(&invocation.global, config)?;
+    warn_if_shipped_differ(&installation.index, &installation.config.directories);
+    let core = installation.open_hosted(&invocation.global, Vec::new())?;
+    built_in(&core, invocation).or_else(|failure| match failure {
+        // An engine kind nothing here provides is named next to the kinds that are provided.
+        Failure::Core(error @ CoreError::EngineDisabled(_)) => {
+            let enabled: Vec<String> = core
+                .engine_kinds()
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            eprintln!("tx: {error} (enabled: {})", enabled.join(", "));
+            Ok(ExitCode::from(1))
+        }
+        failure => Err(failure),
+    })
+}
+
+/// A built-in verb that runs on the opened core.
+fn built_in(core: &TxCore, invocation: Invocation) -> Result<ExitCode, Failure> {
     let mut out = std::io::stdout().lock();
     match invocation.verb {
-        Verb::Help | Verb::Update | Verb::HarnessList { .. } | Verb::HarnessCheck { .. } => {
+        Verb::Help
+        | Verb::Update { .. }
+        | Verb::Plugin { .. }
+        | Verb::Plugins { .. }
+        | Verb::HarnessList { .. }
+        | Verb::HarnessCheck { .. } => {
             unreachable!()
         }
         Verb::Engines => {
             for kind in core.engine_kinds() {
                 writeln!(out, "{kind}").ok();
             }
-        }
-        Verb::Plugins => {
-            for (id, status) in core.plugin_status() {
-                writeln!(out, "{id}\t{}", status.as_str()).ok();
-            }
-        }
-        Verb::Plugin { name, argv } => {
-            let verb = core.verb(&name).expect("checked by preview_verbs");
-            drop(out);
-            let (mut stdin, mut stdout, mut stderr) = (
-                std::io::stdin().lock(),
-                std::io::stdout().lock(),
-                std::io::stderr().lock(),
-            );
-            let mut io = tx_core::VerbIo {
-                stdin: &mut stdin,
-                stdout: &mut stdout,
-                stderr: &mut stderr,
-            };
-            let code = verb.run(&core, &mut io, &argv).map_err(Failure::Verb)?;
-            return Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)));
         }
         Verb::Create {
             name,
@@ -187,26 +331,29 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             };
             // `config.yaml`'s `agent:` block fills in every flag not given.
             let defaults = &core.config().agent_defaults;
-            if let Some(choice) = &definition {
-                // Claude turns its bundled skills on all at once: say so before the launch.
-                if engine.unwrap_or(defaults.engine) == tx_core::EngineKind::Claude
-                    && let Ok(agent) =
-                        tx_core::harness::Harness::new(core.config().directories.harness_roots())
-                            .agent(&choice.agent)
-                {
-                    let skills: Vec<String> = agent
-                        .skills
-                        .into_iter()
-                        .chain(choice.skills.clone())
-                        .collect();
-                    if let Some(warning) =
-                        tx_core_cli::harness::bundle_warning(&core.config().directories, &skills)
-                            .map_err(Failure::Harness)?
-                    {
-                        eprintln!("tx: warning: {warning}");
-                    }
+            // What the launch engine would do with the agent that its file does not let one
+            // expect (Claude's whole bundle for one bundled skill): said before the launch, by
+            // the engine that then launches it.
+            let directories = &core.config().directories;
+            if let Some(choice) = &definition
+                && let Some(launch_engine) = core.engine(engine.unwrap_or(defaults.engine))
+                && let Ok(agent) =
+                    tx_core::harness::Harness::new(directories.harness_roots()).agent(&choice.agent)
+            {
+                let mut summary = agent.summary();
+                summary.skills.extend(choice.skills.iter().cloned());
+                let provided =
+                    tx_core_cli::harness::provided_skills(directories).map_err(Failure::Harness)?;
+                let request = tx_core::engine::DefinitionsRequest {
+                    agents: std::slice::from_ref(&summary),
+                    provided_skills: &provided,
+                    cache: &directories.cache,
+                };
+                for warning in launch_engine.warnings(&request) {
+                    eprintln!("tx: warning: {}", warning.message);
                 }
             }
+            let definition = definition.map(|choice| *choice);
             let mut launch = defaults.launch(engine, roles, definition, options, prompt);
             if !engine_args.is_empty() {
                 launch = launch.option(tx_core::ENGINE_ARGS_OPTION, engine_args);
@@ -319,7 +466,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             writeln!(out, "{}\t{}", session.id, session.tags.join(",")).ok();
         }
         Verb::Send { target, text, via } => {
-            let options = SendOptions::from(sender_from_env(&core, via)?);
+            let options = SendOptions::from(sender_from_env(core, via)?);
             let receipt = core.send_message(&core.resolve(&target)?, &text, options)?;
             writeln!(out, "{}\t{}", receipt.recipient, receipt.pane).ok();
         }
@@ -360,7 +507,13 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             writeln!(out, "{id}\tinterrupted").ok();
         }
         Verb::Respawn { target } => {
-            let session = core.respawn_agent(&core.resolve(&target)?)?;
+            let id = core.resolve(&target)?;
+            // The resume needs the engine, and core asks it under the session lock: an engine
+            // that runs as its own program is started before the lock is taken.
+            if let Some(engine) = core.engine(core.get_agent(&id)?.engine) {
+                engine.warm();
+            }
+            let session = core.respawn_agent(&id)?;
             writeln!(out, "{}\t{}", session.id, session.name).ok();
         }
         Verb::Gc {
@@ -372,7 +525,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
                 .build_outputs;
             let mut total = 0;
             let mut failed = false;
-            for worktree in tx_core_cli::gc::ended_worktrees(&core, older_than)? {
+            for worktree in tx_core_cli::gc::ended_worktrees(core, older_than)? {
                 let outcome = tx_core_cli::gc::clean(&worktree.directory, &build_outputs, dry_run);
                 for failure in &outcome.failures {
                     eprintln!("tx: gc: {failure}");

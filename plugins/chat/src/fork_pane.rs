@@ -4,6 +4,7 @@
 //! the firing pane through `TxCore::fork_agent` (a new worktree, the source's engine, the
 //! fixed first prompt below) and reports the outcome on the firing client's status line.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use tx_client::prompt::prompt_with_default;
@@ -57,29 +58,37 @@ fn ask(core: &TxCore, pane: &str, client: &str) -> Result<i32, VerbError> {
     let Some(name) = name else {
         return Ok(0);
     };
-    let exe = std::env::current_exe()
-        .map_err(|e| VerbError::Failed(format!("current_exe: {e}")))?
-        .display()
-        .to_string();
-    let arguments: Vec<String> = core
-        .config()
-        .cli_arguments()
-        .iter()
-        .map(|word| shell_quote(word))
-        .collect();
-    // A nonzero exit would make `run-shell` echo the whole command; the outcome is already on
-    // the status line.
-    let command = format!(
-        "{} {} _fork-pane {} {} {} || true",
-        shell_quote(&exe),
-        arguments.join(" "),
-        shell_quote(pane),
-        shell_quote(client),
-        shell_quote(name.trim()),
+    let command = background_command(
+        &tx_plugin::sdk::tx_bin(),
+        &core.config().cli_arguments(),
+        pane,
+        client,
+        name.trim(),
     );
     ui.run_shell_background(&command)
         .map_err(|e| VerbError::Failed(e.to_string()))?;
     Ok(0)
+}
+
+/// What tmux runs later for the background half. It starts with `tx`, whatever program this
+/// code runs in: `run-shell` gives it neither this program nor its environment. A nonzero exit
+/// would make `run-shell` echo the whole command; the outcome is already on the status line.
+fn background_command(
+    tx: &Path,
+    arguments: &[String],
+    pane: &str,
+    client: &str,
+    name: &str,
+) -> String {
+    let arguments: Vec<String> = arguments.iter().map(|word| shell_quote(word)).collect();
+    format!(
+        "{} {} _fork-pane {} {} {} || true",
+        shell_quote(&tx.display().to_string()),
+        arguments.join(" "),
+        shell_quote(pane),
+        shell_quote(client),
+        shell_quote(name),
+    )
 }
 
 /// The background half: fork and report on the firing client's status line.
@@ -126,4 +135,24 @@ fn source_in_pane(
         ui.display_status(client, "prefix+f: no tx session in this pane");
     }
     Ok(source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_background_command_starts_with_the_tx_binary() {
+        let command = background_command(
+            Path::new("/opt/my tx/tx"),
+            &["--config-dir".to_owned(), "/c".to_owned()],
+            "%3",
+            "/dev/ttys001",
+            "c2",
+        );
+        assert_eq!(
+            command,
+            "'/opt/my tx/tx' '--config-dir' '/c' _fork-pane '%3' '/dev/ttys001' 'c2' || true"
+        );
+    }
 }

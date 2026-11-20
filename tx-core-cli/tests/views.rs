@@ -334,3 +334,69 @@ fn ui_lists_the_view_subcommand_in_its_usage() {
     let usage = cli.fails(&["ui"], 2);
     assert!(usage.contains("view <open|ls|close>"), "{usage}");
 }
+
+/// The one row of `layouts` in `tx plugins --json`.
+fn layouts_row(cli: &Cli) -> serde_json::Value {
+    let rows: serde_json::Value = serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    let found: Vec<&serde_json::Value> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == "layouts")
+        .collect();
+    assert_eq!(found.len(), 1, "{rows}");
+    found[0].clone()
+}
+
+/// A two-pane layout `demo`, then `tx layout check demo` traced: its output, and the trace.
+fn traced_layout_check(cli: &Cli) -> (String, String) {
+    let file = cli.ok(&["layout", "path", "demo"]);
+    let file = std::path::Path::new(file.trim());
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        file,
+        "panes:\n  - agent: developer\n  - split: below\n    of: 0\n    size: 30%\n",
+    )
+    .unwrap();
+    let trace = cli.dir.path().join("trace");
+    let output = cli.run(
+        &["layout", "check", "demo"],
+        &[("TX_PLUGIN_TRACE", trace.to_str().unwrap())],
+        "",
+    );
+    assert!(output.status.success());
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        std::fs::read_to_string(&trace).unwrap_or_default(),
+    )
+}
+
+#[test]
+fn the_layouts_bundle_is_the_shipped_plugin_and_its_verb_is_its_program() {
+    let cli = Cli::new();
+    let bundle = common::shipped().join("layouts");
+    let row = layouts_row(&cli);
+    assert_eq!(row["origin"], "shipped");
+    assert_eq!(row["directory"], bundle.to_str().unwrap());
+    assert_eq!(row["tier"], "ide");
+    assert_eq!(row["requires"], serde_json::json!(["ide"]));
+    assert_eq!(row["needs"], serde_json::json!(["git"]));
+    assert_eq!(row["verbs"], serde_json::json!(["layout"]));
+    let help = cli.ok(&["help"]);
+    assert_eq!(
+        help.lines()
+            .filter(|line| line.starts_with("  layout "))
+            .count(),
+        1,
+        "{help}"
+    );
+    let (output, trace) = traced_layout_check(&cli);
+    assert_eq!(output, "demo ok: 2 panes\n");
+    assert_eq!(
+        trace,
+        format!(
+            "verb\tlayouts\t{}\n",
+            bundle.join("bin/tx-layouts").display()
+        )
+    );
+}

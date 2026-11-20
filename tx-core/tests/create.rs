@@ -324,10 +324,10 @@ fn failures_before_launch_leave_nothing_behind() {
     let cwd = h.repository("a");
 
     let mut opts = agent("x", &cwd);
-    opts.launch = LaunchOptions::agent(EngineKind::Codex);
+    opts.launch = LaunchOptions::agent(EngineKind::CODEX);
     assert!(matches!(
         core.create_agent(opts).unwrap_err(),
-        CoreError::EngineDisabled(EngineKind::Codex)
+        CoreError::EngineDisabled(EngineKind::CODEX)
     ));
 
     let mut opts = agent("x", &cwd);

@@ -2,6 +2,7 @@
 //! library: argument parsing, the plugin switchboard and opening the core.
 
 pub mod args;
+pub mod check;
 pub mod config;
 pub mod gc;
 pub mod harness;

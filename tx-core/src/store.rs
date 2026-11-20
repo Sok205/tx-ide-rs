@@ -128,7 +128,7 @@ impl AgentStore {
         match read(&self.path(id), id) {
             Ok(session) => Ok(Some(session)),
             Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(ReadError::Record(RecordError::UnknownEngine(_))) => Ok(None),
+            Err(ReadError::Record(RecordError::InvalidEngineKind(_))) => Ok(None),
             Err(source) => Err(StoreError::Unreadable {
                 file: record_name(id),
                 source,
@@ -157,8 +157,8 @@ impl AgentStore {
         Ok(self.scan()?.0)
     }
 
-    /// The records this build skips, each with why: records naming an engine this build does
-    /// not know. Every read skips them. Sorted by id.
+    /// The records every read skips, each with why: records whose engine is not the name of
+    /// an engine kind. Sorted by id.
     pub fn skipped(&self) -> Result<Vec<SkippedRecord>, StoreError> {
         Ok(self.scan()?.1)
     }
@@ -212,7 +212,7 @@ impl AgentStore {
             match read(&path, &id) {
                 Ok(session) => sessions.push(session),
                 Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(ReadError::Record(reason @ RecordError::UnknownEngine(_))) => {
+                Err(ReadError::Record(reason @ RecordError::InvalidEngineKind(_))) => {
                     skipped.push((id, reason));
                 }
                 Err(source) => {
@@ -265,7 +265,7 @@ mod tests {
         Agent {
             id: sid(id),
             name: format!("n-{id}"),
-            engine: EngineKind::Claude,
+            engine: EngineKind::CLAUDE,
             working_directory: PathBuf::from("/"),
             roles: vec![],
             definition: None,
@@ -316,33 +316,44 @@ mod tests {
         skipped.iter().map(|(id, _)| id.clone()).collect()
     }
 
-    /// A record naming an engine this build does not know (hand-edited, or another build's) is
-    /// skipped and named, so the other records still list; a record whose engine is not even a
-    /// string is unreadable, as before.
+    /// A record naming an engine kind nothing here provides is a record like any other. One
+    /// whose engine is not the name of a kind (hand-edited) is skipped and named, so the other
+    /// records still list; a record whose engine is not even a string is unreadable, as before.
     #[test]
-    fn records_with_an_unknown_engine_are_skipped_and_named() {
+    fn records_of_any_engine_kind_load_and_an_invalid_kind_is_skipped_and_named() {
         let (_dir, store) = store();
         store.save(&session("a", 1.0)).unwrap();
         store.save(&session("k", 2.0)).unwrap();
-        let text = std::fs::read_to_string(store.path(&sid("k")))
-            .unwrap()
-            .replace("\"claude\"", "\"kodex\"");
-        assert!(text.contains("\"kodex\""), "{text}");
-        std::fs::write(store.path(&sid("k")), text).unwrap();
+        store.save(&session("b", 3.0)).unwrap();
+        let renamed = |id: &str, engine: &str| {
+            let text = std::fs::read_to_string(store.path(&sid(id)))
+                .unwrap()
+                .replace("\"claude\"", &format!("{engine:?}"));
+            assert!(text.contains(&format!("{engine:?}")), "{text}");
+            std::fs::write(store.path(&sid(id)), text).unwrap();
+        };
+        renamed("k", "kodex");
+        renamed("b", "Bad Kind");
         let all = store.all().unwrap();
-        assert_eq!(all.len(), 1);
-        assert_eq!(all[0].id, sid("a"));
-        assert_eq!(store.load(&sid("k")).unwrap(), None);
+        let kinds: Vec<(&str, &str)> = all
+            .iter()
+            .map(|session| (session.id.as_str(), session.engine.as_str()))
+            .collect();
+        assert_eq!(kinds, [("a", "claude"), ("k", "kodex")]);
+        assert_eq!(
+            store.load(&sid("k")).unwrap().unwrap().engine.as_str(),
+            "kodex"
+        );
+        assert_eq!(store.load(&sid("b")).unwrap(), None);
         let skipped = store.skipped().unwrap();
-        assert_eq!(ids_of(&skipped), [sid("k")]);
+        assert_eq!(ids_of(&skipped), [sid("b")]);
         assert!(
-            matches!(&skipped[0].1, RecordError::UnknownEngine(engine) if engine == "kodex"),
+            matches!(&skipped[0].1, RecordError::InvalidEngineKind(engine) if engine == "Bad Kind"),
             "{skipped:?}"
         );
-        let message = skipped[0].1.to_string();
-        assert!(
-            message.contains("\"kodex\"") && message.contains("claude, codex"),
-            "{message}"
+        assert_eq!(
+            skipped[0].1.to_string(),
+            "engine kind \"Bad Kind\" must match [a-z0-9-]{1,31}"
         );
         let (_dir, empty) = self::tests::store();
         assert!(empty.skipped().unwrap().is_empty());

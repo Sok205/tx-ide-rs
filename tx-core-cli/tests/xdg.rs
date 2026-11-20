@@ -36,7 +36,9 @@ impl Sandbox {
         self.path().join("home")
     }
 
-    fn command(&self, environment: &[(&str, &str)]) -> Command {
+    /// `tx` in the sandbox with no flag at all: every directory and both plugin roots are the
+    /// defaults `environment` leads to.
+    fn bare(&self, environment: &[(&str, &str)]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_tx"));
         command
             .env("HOME", self.home())
@@ -58,12 +60,50 @@ impl Sandbox {
             "XDG_STATE_HOME",
             "XDG_CACHE_HOME",
             "XDG_RUNTIME_DIR",
+            "TX_BIN",
+            "TX_PLUGIN_PATH",
+            "TX_PROFILE_PATH",
+            "TX_SKILL_PATH",
+            "TX_CONFIG_FILE",
+            "TX_SESSION_ENV",
+            "TX_PLUGIN_TRACE",
         ] {
             command.env_remove(key);
         }
         for (key, value) in environment {
             command.env(key, value);
         }
+        command
+    }
+
+    /// The config directory `environment` leads to: a sandbox's own plugins live under it.
+    fn config_directory(&self, environment: &[(&str, &str)]) -> PathBuf {
+        let get = |key: &str| {
+            environment
+                .iter()
+                .find(|(name, value)| *name == key && !value.is_empty())
+                .map(|(_, value)| *value)
+        };
+        let application = get("TX_APPNAME").unwrap_or("tx-ide");
+        match (get("TX_CONFIG_DIR"), get("XDG_CONFIG_HOME")) {
+            (Some(directory), _) => PathBuf::from(directory),
+            (None, Some(base)) => Path::new(base).join(application),
+            (None, None) => self.home().join(".config").join(application),
+        }
+    }
+
+    /// The plugin roots the suites run with: the shared root of the shipped bundles, then the
+    /// sandbox's own `<config>/plugins`.
+    fn plugin_dirs(&self, environment: &[(&str, &str)]) -> Vec<PathBuf> {
+        vec![
+            common::shipped().to_path_buf(),
+            self.config_directory(environment).join("plugins"),
+        ]
+    }
+
+    fn command(&self, environment: &[(&str, &str)]) -> Command {
+        let mut command = self.bare(environment);
+        command.args(common::plugin_flags(&self.plugin_dirs(environment)));
         command
     }
 
@@ -205,6 +245,7 @@ fn defaults_are_the_xdg_directories_under_tx_ide() {
     assert!(home.join(".local/share/tx-ide/tmux.conf").is_file());
     assert!(home.join(".local/state/tx-ide/locks/create.lock").is_file());
     assert!(home.join(".local/state/tx-ide/profiles").is_dir());
+    assert!(home.join(".cache/tx-ide/plugins-index.json").is_file());
     assert!(exists, "{} missing", socket.display());
     assert!(!home.join(".tx-core").exists());
 }
@@ -216,7 +257,8 @@ fn a_session_carries_every_directory_and_the_application_name() {
     }
     let sandbox = Sandbox::new();
     common::stand_in_definition(&sandbox.home().join(".config/tx-qa-13"));
-    let environment = sandbox.session_environment(&[("TX_APPNAME", "tx-qa-13")]);
+    let application = [("TX_APPNAME", "tx-qa-13")];
+    let environment = sandbox.session_environment(&application);
     let socket = sandbox.path().join("tmp/tx-qa-13.u/tmux.sock");
     kill_server(&socket);
     let get = |key: &str| {
@@ -239,10 +281,27 @@ fn a_session_carries_every_directory_and_the_application_name() {
         assert_eq!(PathBuf::from(get(key)), expected, "{key}");
     }
     assert_eq!(get("TX_APPNAME"), "tx-qa-13");
+    // The `tx` that launched it, for the command lines its plugins build.
+    assert_eq!(
+        PathBuf::from(get("TX_BIN")),
+        Path::new(env!("CARGO_BIN_EXE_tx"))
+    );
+    // The plugin roots it was given, so that a `tx` run inside finds the same plugins.
+    let roots: Vec<String> = sandbox
+        .plugin_dirs(&application)
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(get("TX_PLUGIN_PATH"), roots.join(":"));
+    assert!(roots[1].ends_with("/.config/tx-qa-13/plugins"), "{roots:?}");
+    // Nothing of the default application leaks in. `TX_BIN` and the shipped root are paths of
+    // this build, which may hold that name by chance.
     assert!(
         environment
             .iter()
-            .filter(|(key, _)| key.starts_with("TX_"))
+            .filter(|(key, _)| {
+                key.starts_with("TX_") && key != "TX_BIN" && key != "TX_PLUGIN_PATH"
+            })
             .all(|(_, value)| !value.contains("tx-ide")),
         "{environment:?}"
     );
@@ -254,17 +313,20 @@ fn xdg_variables_move_each_directory() {
     let sandbox = Sandbox::new();
     let x = sandbox.path().join("x");
     let y = sandbox.path().join("y");
+    let k = sandbox.path().join("k");
     let run = sandbox.path().join("r");
     sandbox.ok(
         &["engines"],
         &[
             ("XDG_DATA_HOME", x.to_str().unwrap()),
             ("XDG_STATE_HOME", y.to_str().unwrap()),
+            ("XDG_CACHE_HOME", k.to_str().unwrap()),
             ("XDG_RUNTIME_DIR", run.to_str().unwrap()),
         ],
     );
     assert!(x.join("tx-ide/agents").is_dir());
     assert!(y.join("tx-ide/locks").is_dir());
+    assert!(k.join("tx-ide/plugins-index.json").is_file());
     let mode = std::os::unix::fs::PermissionsExt::mode(
         &std::fs::metadata(run.join("tx-ide")).unwrap().permissions(),
     );
@@ -311,5 +373,70 @@ fn the_config_file_lives_in_the_config_directory() {
     assert_eq!(
         sandbox.ok(&["engines"], &[("XDG_CONFIG_HOME", xdg.to_str().unwrap())]),
         "claude\n"
+    );
+}
+
+/// A plugin `id` with no verb, as the directory `<root>/<id>`.
+fn plugin(root: &Path, id: &str) {
+    common::write_plugin(
+        root,
+        id,
+        &format!("api: 1\nid: {id}\ndescription: The {id} plugin.\n"),
+        &[],
+    );
+}
+
+/// The ids and origins `tx plugins --json` lists for the installed plugins, in its order.
+fn installed(output: &str) -> Vec<(String, String)> {
+    let rows: serde_json::Value = serde_json::from_str(output).unwrap();
+    rows.as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["id"].as_str().unwrap().to_owned(),
+                row["origin"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// With no flag and no variable, plugins are the directories of `<data>/shipped`, then of
+/// `<config>/plugins`; `TX_PLUGIN_PATH` replaces both, and `--plugin-dir` replaces that.
+#[test]
+fn the_plugin_roots_default_to_the_shipped_directory_then_the_users_own() {
+    let sandbox = Sandbox::new();
+    let home = sandbox.home();
+    plugin(&home.join(".local/share/tx-ide/shipped"), "zebra");
+    plugin(&home.join(".config/tx-ide/plugins"), "alpha");
+    let elsewhere = sandbox.path().join("elsewhere");
+    plugin(&elsewhere, "third");
+    let flagged = sandbox.path().join("flagged");
+    plugin(&flagged, "fourth");
+    let list = |command: &mut Command| {
+        let output = command.args(["plugins", "--json"]).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        installed(&String::from_utf8_lossy(&output.stdout))
+    };
+    let pair = |id: &str, origin: &str| (id.to_owned(), origin.to_owned());
+    assert_eq!(
+        list(&mut sandbox.bare(&[])),
+        [pair("zebra", "shipped"), pair("alpha", "user")]
+    );
+    let variable = [("TX_PLUGIN_PATH", elsewhere.to_str().unwrap())];
+    assert_eq!(
+        list(&mut sandbox.bare(&variable)),
+        [pair("third", "shipped")]
+    );
+    assert_eq!(
+        list(
+            sandbox
+                .bare(&variable)
+                .arg("--plugin-dir")
+                .arg(&flagged)
+                .arg("--plugin-dir")
+                .arg(&elsewhere)
+        ),
+        [pair("fourth", "shipped"), pair("third", "user")]
     );
 }

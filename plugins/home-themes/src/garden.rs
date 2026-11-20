@@ -9,7 +9,7 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use tx_home::backdrop::{Backdrop, Pixels};
+use tx_home_backdrop::{Backdrop, Pixels};
 
 use crate::common::{STEP, Steps, between, draw_logo, fill, logo_size, pixel_of};
 
@@ -262,7 +262,7 @@ impl Backdrop for Garden {
 #[cfg(test)]
 mod tests {
     use ratatui::crossterm::event::{MouseButton, MouseEventKind};
-    use tx_home::backdrop::layout;
+    use tx_home_backdrop::layout;
 
     use super::*;
     use crate::common::MAX_GAP;

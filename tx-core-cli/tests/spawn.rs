@@ -131,9 +131,16 @@ fn a_failed_create_is_reported_on_the_status_line() {
     assert!(cli.ok(&["ls"]).is_empty());
 }
 
+fn plugin_row(cli: &Cli, id: &str) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    rows.into_iter().find(|row| row["id"] == id).unwrap()
+}
+
 #[test]
 fn new_agent_wants_a_pane_and_a_client() {
     let cli = Cli::new();
+    assert_eq!(plugin_row(&cli, "spawn")["origin"], "shipped");
     assert!(
         cli.fails(&["_new-agent", "%0"], 2)
             .starts_with("usage: tx _new-agent <pane> <client>")

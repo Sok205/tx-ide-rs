@@ -1,26 +1,10 @@
-//! The roles and harness the core ships (`tx_core::roles`): listed first, under the plugin id
-//! `tx-core`, written for `tx`.
+//! The roles and harness the core ships (`tx_core::roles`), which `tx update` publishes.
 
-use tx_core::{CoreConfig, PluginConfig, TxCore, roles};
-
-fn core() -> (tempfile::TempDir, TxCore) {
-    let dir = tempfile::Builder::new()
-        .prefix("tx")
-        .tempdir_in("/tmp")
-        .unwrap();
-    let mut core = TxCore::open(CoreConfig::new(tx_core::Directories::under(
-        dir.path().join("state"),
-    )))
-    .unwrap();
-    core.plug(vec![], &PluginConfig::default()).unwrap();
-    (dir, core)
-}
+use tx_core::roles;
 
 #[test]
-fn the_shipped_roles_and_harness_are_resources_of_the_core() {
-    let (_dir, core) = core();
-    let resources = core.resources("");
-    let names: Vec<&str> = resources.iter().map(|r| r.name.as_str()).collect();
+fn the_core_ships_its_roles_and_harness() {
+    let names: Vec<&str> = roles::SHIPPED.iter().map(|(name, _)| *name).collect();
     assert_eq!(
         names,
         [
@@ -76,10 +60,6 @@ fn the_shipped_roles_and_harness_are_resources_of_the_core() {
             "harness/skills/xlsx/SKILL.md",
         ]
     );
-    assert!(resources.iter().all(|r| r.plugin == roles::PLUGIN_ID));
-    assert_eq!(names.len(), roles::SHIPPED.len());
-    assert!(core.plugin_resources("").is_empty(), "no plugin was loaded");
-    assert_eq!(core.resources("").len(), roles::SHIPPED.len());
 }
 
 #[test]

@@ -14,7 +14,7 @@ struct SleepStub;
 
 impl LlmEngine for SleepStub {
     fn kind(&self) -> EngineKind {
-        EngineKind::Claude
+        EngineKind::CLAUDE
     }
 
     fn ext_key(&self) -> &'static str {
@@ -111,7 +111,7 @@ impl Harness {
         core.create_agent(CreateOptions::new(
             name,
             cwd,
-            LaunchOptions::agent(EngineKind::Claude).initial_prompt("start"),
+            LaunchOptions::agent(EngineKind::CLAUDE).initial_prompt("start"),
         ))
         .unwrap()
     }

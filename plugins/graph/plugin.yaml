@@ -1,0 +1,25 @@
+api: 1
+id: graph
+description: The agent graph (lineage and messages) in the terminal (ratatui).
+tier: ide
+
+verbs:
+  - name: graph
+    usage: "graph [--tag T] [--group G] [--last DURATION] [--snapshot]   the agents as a graph of lineage and messages (q quits)"
+    bin: tx-graph
+    args: [graph]
+  - name: _graph-resident
+    usage: "_graph-resident   the popup's resident graph; q detaches (internal)"
+    bin: tx-graph
+    args: [_graph-resident]
+  - name: _graph-attach
+    usage: "_graph-attach   start or attach the resident graph; q detaches (the popup's command, internal)"
+    bin: tx-graph
+    args: [_graph-attach]
+  - name: _graph-open
+    usage: "_graph-open <pane> <client>   prefix+g: the resident graph in a popup, then what it asked for (internal)"
+    bin: tx-graph
+    args: [_graph-open]
+
+resources:
+  - keys/graph.tmux

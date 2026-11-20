@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::agent::AgentId;
+use crate::plugin::external::PLUGIN_GIVEN_ENV;
 
 /// The session option that links a tmux session to its record.
 pub const TX_ID_OPTION: &str = "@tx-id";
@@ -150,6 +151,9 @@ pub struct Tmux {
     binary: OsString,
     socket: PathBuf,
     conf: PathBuf,
+    /// The variables of this process's environment that no call inherits, next to
+    /// [`PLUGIN_GIVEN_ENV`], which names them.
+    withheld: Vec<String>,
 }
 
 impl Tmux {
@@ -162,7 +166,17 @@ impl Tmux {
             binary: binary.into(),
             socket: socket.into(),
             conf: conf.into(),
+            withheld: Vec::new(),
         }
+    }
+
+    /// Every call is made without the variables `names` of this process's environment: the
+    /// ones that were added on the way to it ([`crate::CoreConfig::given`]). The call that
+    /// starts the server gives it its environment, which every pane then inherits; what was
+    /// given to this process for itself must not get there.
+    pub fn withholding(mut self, names: &[String]) -> Self {
+        self.withheld = names.to_vec();
+        self
     }
 
     pub fn binary(&self) -> &OsStr {
@@ -189,10 +203,22 @@ impl Tmux {
         argv
     }
 
-    fn output(&self, args: &[OsString]) -> Result<std::process::Output, TmuxError> {
-        Command::new(&self.binary)
+    /// One call, not yet made: this process's environment without the withheld variables and
+    /// without the one that lists them.
+    fn command(&self, args: &[OsString]) -> Command {
+        let mut command = Command::new(&self.binary);
+        command
             .args(self.argv(args))
             .stdin(Stdio::null())
+            .env_remove(PLUGIN_GIVEN_ENV);
+        for name in &self.withheld {
+            command.env_remove(name);
+        }
+        command
+    }
+
+    fn output(&self, args: &[OsString]) -> Result<std::process::Output, TmuxError> {
+        self.command(args)
             .output()
             .map_err(|source| TmuxError::Spawn {
                 binary: self.binary.to_string_lossy().into_owned(),
@@ -363,6 +389,35 @@ mod tests {
 
     fn strs(argv: &[OsString]) -> Vec<&str> {
         argv.iter().map(|a| a.to_str().unwrap()).collect()
+    }
+
+    /// The variables a call is made without, in the order they are removed.
+    fn removed(command: &Command) -> Vec<&str> {
+        command
+            .get_envs()
+            .map(|(name, value)| {
+                assert_eq!(value, None, "{name:?} is set, not removed");
+                name.to_str().unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn no_call_inherits_the_variables_given_to_this_process() {
+        // Nothing was given: only the variable that would list them is kept from tmux.
+        assert_eq!(
+            removed(&tmux().command(&["list-sessions".into()])),
+            [PLUGIN_GIVEN_ENV]
+        );
+        let given = ["TX_PLUGIN_ID".to_owned(), "TX_DATA_DIR".to_owned()];
+        let command = tmux().withholding(&given).command(&["new-session".into()]);
+        let mut names = removed(&command);
+        names.sort_unstable();
+        assert_eq!(names, ["TX_DATA_DIR", "TX_PLUGIN_GIVEN", "TX_PLUGIN_ID"]);
+        assert_eq!(
+            strs(&command.get_args().map(OsStr::to_owned).collect::<Vec<_>>()),
+            ["-S", "/s/tmux.sock", "-f", "/s/tmux.conf", "new-session"]
+        );
     }
 
     #[test]

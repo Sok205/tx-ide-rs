@@ -168,3 +168,19 @@ fn disabled_labels_hides_its_verbs_but_not_kill() {
     let help = cli.ok(&["help"]);
     assert!(lists_verb(&help, "kill"), "{help}");
 }
+
+fn plugin_row(cli: &Cli, id: &str) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&cli.ok(&["plugins", "--json"])).unwrap();
+    rows.into_iter().find(|row| row["id"] == id).unwrap()
+}
+
+/// The border label runs the program the plugin is: `tx-labels` as a bundle, so tmux starts it
+/// directly.
+#[test]
+fn the_label_program_is_the_bundles_program() {
+    let cli = Cli::new();
+    assert_eq!(plugin_row(&cli, "labels")["origin"], "shipped");
+    let program = cli.ok(&["_label-program"]);
+    assert!(program.ends_with("/tx-labels\n"), "{program:?}");
+}

@@ -1,0 +1,6 @@
+api: 1
+id: home-themes
+description: Animated themes for the tx-ide home backdrop, chosen by settings.theme.
+tier: ide
+requires: [home]
+settings: { theme: koi }

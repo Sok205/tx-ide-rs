@@ -4,11 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "tx-core plugin: the tx-assistant agent session (`assistant warm`); ships the TX-ASSISTANT role."
+description = "tx-core plugin: the tx-assistant agent session (`assistant warm`, `assistant ask`)."
+
+# The plugin as its own program: what `plugin.yaml` names for its verb.
+[[bin]]
+name = "tx-assistant"
+path = "src/main.rs"
 
 [dependencies]
 tx-core.workspace = true
 tx-client.workspace = true
+tx-plugin.workspace = true
 tx-engine-claude = { path = "../engine-claude" }
 serde.workspace = true
 serde_json.workspace = true

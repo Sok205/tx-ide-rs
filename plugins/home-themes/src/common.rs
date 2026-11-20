@@ -8,7 +8,7 @@ use ratatui::crossterm::event::MouseEvent;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 use tx_client::palette::palette;
-use tx_home::backdrop::{LOGO, Pixels};
+use tx_home_backdrop::{LOGO, Pixels};
 
 /// Seconds of simulation per fixed step.
 pub const STEP: f32 = 1.0 / 60.0;
@@ -209,7 +209,7 @@ pub mod tests {
     use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
     use ratatui::style::{Color, Style};
-    use tx_home::backdrop::{Backdrop, is_text, layout};
+    use tx_home_backdrop::{Backdrop, is_text, layout};
 
     use super::*;
 

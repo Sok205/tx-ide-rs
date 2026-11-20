@@ -4,7 +4,7 @@
 //! act at once (attach-to's key table outlives the popup), and the popup waits in a background
 //! `run-shell` until the caller's popup has gone, since a client shows one popup at a time.
 //!
-//! Attach-to is the key table [`TABLE`] (`tmux/keys.tmux`): h/j/k/l, the arrows, a pane number
+//! Attach-to is the key table [`TABLE`] (`plugins/ide/keys/ide.tmux`): h/j/k/l, the arrows, a pane number
 //! or a click select a pane under a gold active border, Enter runs `tx _attach-into`, Esc / q
 //! leave; any other key stays in it.
 
@@ -15,7 +15,7 @@ use crate::tmux::{Ui, popup_args, shell_quote};
 pub const TABLE: &str = "tx-attach-to";
 /// Global option: the session attach-to attaches; the table's Enter reads it.
 pub const SESSION_OPTION: &str = "@tx-attach-to-session";
-/// Attach-to's message, a format; `tmux/keys.tmux` shows the same text after every key.
+/// Attach-to's message, a format; `plugins/ide/keys/ide.tmux` shows the same text after every key.
 pub const MESSAGE: &str = "attach #{@tx-attach-to-session}: h/j/k/l, a number or a click picks a pane, Enter attaches here, Esc cancels";
 const POPUP_SIZE: &str = "90%";
 
@@ -165,7 +165,7 @@ impl Ui {
 mod tests {
     use super::*;
 
-    const FRAGMENT: &str = include_str!("../tmux/keys.tmux");
+    const FRAGMENT: &str = include_str!("../../plugins/ide/keys/ide.tmux");
 
     #[test]
     fn modes_round_trip() {

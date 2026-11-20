@@ -25,7 +25,7 @@ fn session(id: &str, created_at: f64) -> Agent {
     Agent {
         id: sid(id),
         name: format!("n-{id}"),
-        engine: EngineKind::Claude,
+        engine: EngineKind::CLAUDE,
         working_directory: PathBuf::from("/"),
         roles: vec![],
         definition: None,
@@ -107,7 +107,8 @@ fn lower_id() -> impl Strategy<Value = String> {
 }
 
 fn engine() -> impl Strategy<Value = EngineKind> {
-    prop::sample::select(EngineKind::ALL.to_vec())
+    // Any name of the grammar is a kind, whether or not an engine provides it.
+    "[a-z0-9-]{1,31}".prop_map(|name| name.parse().unwrap())
 }
 
 fn state() -> impl Strategy<Value = LlmEngineState> {
@@ -137,6 +138,7 @@ fn arb_session(id: impl Strategy<Value = String>) -> impl Strategy<Value = Agent
                     roles,
                     definition: None,
                     state,
+                    idle_reason: None,
                     created_at,
                     last_modified_at: created_at,
                     last_activity_at,
@@ -616,9 +618,10 @@ proptest! {
     }
 }
 
-/// A record naming an engine this build lacks is skipped and named, not an error.
+/// A record naming an engine kind nothing here provides is a record like any other; one whose
+/// engine is not the name of a kind is skipped and named, not an error.
 #[test]
-fn unknown_engine_records_are_skipped_and_named() {
+fn any_engine_kind_loads_and_an_invalid_one_is_skipped_and_named() {
     let (_dir, store) = store();
     store.save(&session("a", 1.0)).unwrap();
     plant(
@@ -626,15 +629,24 @@ fn unknown_engine_records_are_skipped_and_named() {
         "k",
         record_text("k", 2.0).replace("\"claude\"", "\"kodex\""),
     );
-    assert_eq!(ids(&store.all().unwrap()), ["a"]);
+    plant(
+        &store,
+        "b",
+        record_text("b", 3.0).replace("\"claude\"", "\"Bad Kind\""),
+    );
+    assert_eq!(ids(&store.all().unwrap()), ["a", "k"]);
+    assert_eq!(
+        store.load(&sid("k")).unwrap().unwrap().engine.as_str(),
+        "kodex"
+    );
     let skipped: Vec<_> = store
         .skipped()
         .unwrap()
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    assert_eq!(skipped, [sid("k")]);
-    assert_eq!(store.load(&sid("k")).unwrap(), None);
+    assert_eq!(skipped, [sid("b")]);
+    assert_eq!(store.load(&sid("b")).unwrap(), None);
 }
 
 #[test]

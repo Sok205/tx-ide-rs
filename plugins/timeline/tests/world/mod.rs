@@ -99,19 +99,3 @@ pub fn records(dir: &Path) -> Vec<Value> {
         .map(|session| record(session, &transcripts))
         .collect()
 }
-
-/// What `TxCore::conversation` answers for these records: each engine's recorded
-/// `transcript_path` (both engines name it the same way).
-pub fn transcripts(sessions: &[tx_core::Agent]) -> tx_timeline::model::Transcripts {
-    sessions
-        .iter()
-        .filter_map(|session| {
-            let path = session
-                .ext
-                .get(session.engine.as_str())?
-                .get("transcript_path")?
-                .as_str()?;
-            Some((session.id.clone(), PathBuf::from(path)))
-        })
-        .collect()
-}

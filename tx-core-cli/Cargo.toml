@@ -20,27 +20,8 @@ path = "src/txi.rs"
 shlex = "2"
 tx-core.workspace = true
 tx-client.workspace = true
-tx-engine-claude = { path = "../plugins/engine-claude" }
-tx-engine-codex = { path = "../plugins/engine-codex" }
-tx-chat = { path = "../plugins/chat" }
-tx-labels = { path = "../plugins/labels" }
-tx-kill = { path = "../plugins/kill" }
-tx-picker = { path = "../plugins/picker" }
-tx-edit = { path = "../plugins/edit" }
-tx-spawn = { path = "../plugins/spawn" }
-tx-assistant = { path = "../plugins/assistant" }
-tx-mockup = { path = "../plugins/mockup" }
-tx-tutor = { path = "../plugins/tutor" }
-tx-artifacts = { path = "../plugins/artifacts" }
-tx-tour = { path = "../plugins/tour" }
-tx-timeline = { path = "../plugins/timeline" }
-tx-graph = { path = "../plugins/graph" }
-tx-home = { path = "../plugins/home" }
-tx-home-themes = { path = "../plugins/home-themes" }
-tx-layouts = { path = "../plugins/layouts" }
-serde.workspace = true
+tx-plugin.workspace = true
 serde_json.workspace = true
-serde_norway.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 

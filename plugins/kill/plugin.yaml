@@ -1,0 +1,14 @@
+api: 1
+id: kill
+description: Prefix+X, confirm then `tx kill` the session in the active pane.
+tier: core
+
+verbs:
+  - name: kill
+    usage: "kill <name>   stop a session, or close a view (prefix+X)"
+    bin: tx-kill
+    args: [kill]
+
+resources:
+  - keys/kill.tmux
+  - bin/tmux-kill-tx-session

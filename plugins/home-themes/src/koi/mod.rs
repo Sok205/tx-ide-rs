@@ -12,7 +12,7 @@ use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tx_client::palette::palette;
-use tx_home::backdrop::{Backdrop, Pixels};
+use tx_home_backdrop::{Backdrop, Pixels};
 
 use crate::common::{Pointer, STEP, Steps, angle, distance, draw_logo, logo_size, pixel_of};
 use fish::{Attractions, Fish};
@@ -235,7 +235,7 @@ impl Backdrop for Pond {
 mod tests {
     use ratatui::crossterm::event::MouseEventKind;
     use ratatui::style::Style;
-    use tx_home::backdrop::layout;
+    use tx_home_backdrop::layout;
 
     use super::*;
     use crate::common::MAX_GAP;

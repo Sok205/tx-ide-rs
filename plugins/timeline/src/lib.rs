@@ -32,6 +32,6 @@ impl Plugin for TimelinePlugin {
         for verb in verbs::verbs() {
             r.verb(verb);
         }
-        r.resource("keys/timeline.tmux", include_bytes!("../tmux/keys.tmux"))
+        Ok(())
     }
 }

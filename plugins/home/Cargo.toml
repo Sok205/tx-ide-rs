@@ -6,10 +6,18 @@ license.workspace = true
 rust-version.workspace = true
 description = "tx-core plugin: the tx-ide home (ratatui): projects, agents, views and history; the floor of the home pane and prefix+m."
 
+# The plugin as its own program: what `plugin.yaml` names for its verbs. It hosts `home-themes`.
+[[bin]]
+name = "tx-home"
+path = "src/main.rs"
+
 [dependencies]
 tx-core.workspace = true
 tx-client.workspace = true
+tx-plugin.workspace = true
 tx-chat = { path = "../chat" }
+tx-home-backdrop = { path = "../home-backdrop" }
+tx-home-themes = { path = "../home-themes" }
 serde_json.workspace = true
 tempfile.workspace = true
 ratatui = "0.30"

@@ -75,7 +75,7 @@ fn record(cwd: &Path) -> Agent {
     Agent {
         id: AgentId::mint(),
         name: "s".into(),
-        engine: EngineKind::Claude,
+        engine: EngineKind::CLAUDE,
         working_directory: cwd.to_owned(),
         roles: Vec::new(),
         definition: None,
@@ -97,7 +97,7 @@ fn create_options_and_launch_options_builders() {
     let opts = CreateOptions::new(
         "w",
         "/w",
-        LaunchOptions::agent(EngineKind::Claude)
+        LaunchOptions::agent(EngineKind::CLAUDE)
             .profile(["dev", "ops"])
             .option("model", "opus")
             .option("effort", "max")
@@ -122,21 +122,21 @@ fn create_options_and_launch_options_builders() {
     else {
         panic!("{:?}", opts.launch)
     };
-    assert_eq!(*engine, EngineKind::Claude);
+    assert_eq!(*engine, EngineKind::CLAUDE);
     assert_eq!(profile, &["dev", "ops"]);
     // A repeated key replaces; `options(..)` replaces the whole object.
     assert_eq!(
         *options,
         serde_json::json!({"model": "sonnet", "effort": "max"})
     );
-    let replaced = LaunchOptions::agent(EngineKind::Claude)
+    let replaced = LaunchOptions::agent(EngineKind::CLAUDE)
         .option("model", "opus")
         .options(serde_json::json!({"effort": "low"}));
     assert!(matches!(
         &replaced,
         LaunchOptions::Agent { options, .. } if *options == serde_json::json!({"effort": "low"})
     ));
-    let bare = LaunchOptions::agent(EngineKind::Claude);
+    let bare = LaunchOptions::agent(EngineKind::CLAUDE);
     assert!(matches!(
         &bare,
         LaunchOptions::Agent { options, .. } if *options == serde_json::json!({})

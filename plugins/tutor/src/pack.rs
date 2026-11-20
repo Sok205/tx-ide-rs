@@ -1,4 +1,4 @@
-//! A tutorial pack: `<packs>/<lang>/` (materialised from the plugin's `tutor/` resources) holding `pack.toml`, `lessons.toml`, `skeleton/`,
+//! A tutorial pack: `<packs>/<lang>/` (materialised from the packs compiled into the plugin) holding `pack.toml`, `lessons.toml`, `skeleton/`,
 //! `lessons/` and `solutions/`.
 
 use std::collections::{BTreeMap, HashSet};

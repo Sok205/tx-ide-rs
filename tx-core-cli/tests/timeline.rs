@@ -121,7 +121,7 @@ fn a_disabled_engine_never_fails_the_view_and_health_reports_it() {
         .unwrap_or_else(|| panic!("{text}"));
     assert!(line.contains("0/0 transcripts"), "{line}");
     assert!(
-        line.contains("conversation: engine claude is disabled"),
+        line.contains("conversation: engine claude is not enabled"),
         "{line}"
     );
     assert!(

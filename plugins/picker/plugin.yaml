@@ -1,0 +1,39 @@
+api: 1
+id: picker
+description: Prefix+t, the fzf session picker.
+tier: ide
+requires: [ide]
+needs: [fzf]
+
+verbs:
+  - name: _list
+    usage: "_list   picker feed (internal)"
+    bin: tx-picker
+    args: [_list]
+  - name: pick
+    usage: "pick [-f QUERY] [-j]   fzf session picker (prefix+t)"
+    bin: tx-picker
+    args: [pick]
+  - name: _picker-popup
+    usage: "_picker-popup <client> <name>   a picked session in a popup (alt-p, internal)"
+    bin: tx-picker
+    args: [_picker-popup]
+  - name: _picker-key
+    usage: "_picker-key <esc|enter|p>   the picker's normal-mode key handler (internal)"
+    bin: tx-picker
+    args: [_picker-key]
+  - name: _roles
+    usage: "_roles [--chips]   the picker's role chips: header line, else TAB panel feed (internal)"
+    bin: tx-picker
+    args: [_roles]
+  - name: _toggle-hide
+    usage: "_toggle-hide <role>|--all|--click <column> <line>   flip a role the picker hides; --all: all on, or all off when none is hidden (internal)"
+    bin: tx-picker
+    args: [_toggle-hide]
+  - name: _roles-panel
+    usage: "_roles-panel   the picker's TAB roles panel (internal)"
+    bin: tx-picker
+    args: [_roles-panel]
+
+resources:
+  - keys/picker.tmux
