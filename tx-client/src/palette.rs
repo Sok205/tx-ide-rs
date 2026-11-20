@@ -23,6 +23,8 @@ pub const INFO_ANSI: &str = "\x1b[38;2;125;207;255m";
 
 /// In transition, look at this.
 pub const WARN: Color = Color::Rgb(224, 175, 104);
+/// Also the active border while attach-to picks a pane.
+pub const WARN_HEX: &str = "#e0af68";
 pub const WARN_ANSI: &str = "\x1b[38;2;224;175;104m";
 
 /// Primary text.
@@ -94,6 +96,7 @@ mod tests {
         };
         for (text, color) in [
             (ACCENT_HEX, ACCENT),
+            (WARN_HEX, WARN),
             (FG_HEX, FG),
             (DIM_FG_HEX, DIM_FG),
             (WORKING_HEX, GREEN),

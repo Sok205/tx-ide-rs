@@ -9,6 +9,7 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use tx_client::show::Show;
 
 use super::model::{Edge, EdgeKind, Lane, Payload};
 
@@ -61,8 +62,8 @@ pub struct App {
     pub searching: bool,
     pub geometry: Geometry,
     pub quit: bool,
-    /// Enter on a lane: the event loop focuses the pane hosting that session, then clears it.
-    pub goto: Option<usize>,
+    /// Enter / a / p on a lane: the event loop shows that session that way, then clears it.
+    pub goto: Option<(Show, usize)>,
     /// A one-shot message for the status line (a failed jump); the next key clears it.
     pub notice: Option<String>,
     drag: Option<(u16, f64)>,
@@ -400,7 +401,9 @@ impl App {
             KeyCode::Char('-' | '[') => self.zoom_by(1),
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_cursor(-1),
-            KeyCode::Enter => self.goto = self.cursor,
+            KeyCode::Enter => self.goto = self.cursor.map(|lane| (Show::Focus, lane)),
+            KeyCode::Char('a') => self.goto = self.cursor.map(|lane| (Show::AttachTo, lane)),
+            KeyCode::Char('p') => self.goto = self.cursor.map(|lane| (Show::Popup, lane)),
             KeyCode::Tab | KeyCode::Char('.') => self.select_message(1),
             KeyCode::BackTab | KeyCode::Char(',') => self.select_message(-1),
             KeyCode::Char('n') => self.jump_to_now(),
@@ -625,7 +628,7 @@ impl App {
         .collect::<Vec<_>>()
         .join(" ");
         format!(
-            "h/l pan  [ ] zoom  j/k lane  enter go  tab/shift-tab message  / search  s sys  i idle  n now  q   {zoom} {flags}"
+            "h/l pan  [ ] zoom  j/k lane  ⏎ focus  a/p attach/popup  tab msg  / search  s sys  i idle  n now  q   {zoom} {flags}"
         )
     }
 }
@@ -844,7 +847,11 @@ mod tests {
         let mut app = app();
         app.handle_key(KeyEvent::from(KeyCode::Char('j')));
         app.handle_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(app.goto.take(), Some(1));
+        assert_eq!(app.goto.take(), Some((Show::Focus, 1)));
+        app.handle_key(KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(app.goto.take(), Some((Show::AttachTo, 1)));
+        app.handle_key(KeyEvent::from(KeyCode::Char('p')));
+        assert_eq!(app.goto.take(), Some((Show::Popup, 1)));
         app.notice = Some("two: not attached to any pane".into());
         assert_eq!(app.status_line(), "two: not attached to any pane");
         app.handle_key(KeyEvent::from(KeyCode::Char('k')));

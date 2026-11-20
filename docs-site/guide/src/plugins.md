@@ -172,7 +172,10 @@ diagnostics and a quickfix list; `artifact open` and prefix+a run it for a tour.
 
 **`timeline`**: `timeline` draws swimlanes of session activity from the transcripts' turn
 markers; `timeline health` prints, per agent record, what the timeline can read for it; prefix+T opens a resident timeline view in a popup
-(q detaches, it stays warm). Tier `ide`. Its verbs run as the program `tx-timeline` (`plugins/timeline/plugin.yaml`).
+(q detaches, it stays warm). On a lane, as prefix+a: Enter focuses the pane showing its agent,
+a picks a pane to attach the agent into (h/j/k/l, arrows, a pane number or a click, under a gold border, starting
+on the pane prefix+T was pressed in; Enter attaches, Esc cancels), p opens it in a popup.
+Tier `ide`. Its verbs run as the program `tx-timeline` (`plugins/timeline/plugin.yaml`).
 
 **`graph`**: `graph` draws the agents as a graph: columns by lineage depth, dashed edges for
 lineage, and solid edges for the messages agents (and you, the node "you") sent each other in the

@@ -8,5 +8,6 @@ pub mod editor;
 pub mod palette;
 pub mod prompt;
 pub mod render;
+pub mod show;
 pub mod tmux;
 pub mod views;

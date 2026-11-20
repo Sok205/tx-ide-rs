@@ -107,6 +107,23 @@ pane border shows the nested session's name and tags.
 tx's it nests and warns that the outer prefix wins (press it twice). Inside tx's own server it
 switches the current client to `home` instead.
 
+## Showing a session: focus, attach-to, popup
+
+A plugin that lets the operator pick a session shows it through tx-client, either with
+`Ui::show_session(client, show, session, pane)` in-process or with
+`tx _show <client> focus|attach-to|popup <session> [<pane>]`:
+
+- **focus** moves the terminal to the pane already showing the session.
+- **attach-to** lets the operator pick the pane. The `tx-attach-to` key table (in `keys/ide.tmux`)
+  takes over the terminal's keys with the window's active border turned gold. h/j/k/l, the
+  arrows, a pane number or a click select a pane, starting on `pane`. Enter attaches the session
+  there (`tx _attach-into`, which never replaces an agent's own pane), and Esc or q cancel.
+- **popup** nest-attaches the session in a popup over the terminal.
+
+`client` may be a nested client: the terminal it is shown on is the one that moves. All three are
+safe to call from inside the caller's own popup. The popup waits in a background `run-shell` until
+the caller's popup is gone, because a client shows one popup at a time.
+
 ## Keys
 
 The prefix is `C-a`. Each key belongs to a plugin and disappears when that plugin is disabled:

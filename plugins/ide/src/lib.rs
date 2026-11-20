@@ -5,6 +5,7 @@
 //! its runtimepath. The tmux and views code it runs on is the library `tx-client`.
 
 pub mod install;
+pub mod show_verb;
 pub mod view_verb;
 
 use std::sync::Arc;
@@ -25,6 +26,8 @@ impl Plugin for IdePlugin {
         r.verb(Arc::new(install::UiVerb));
         r.updater(Arc::new(install::IdeUpdater));
         r.verb(Arc::new(install::ResourceVerb));
+        r.verb(Arc::new(show_verb::ShowVerb));
+        r.verb(Arc::new(show_verb::AttachIntoVerb));
         Ok(())
     }
 }

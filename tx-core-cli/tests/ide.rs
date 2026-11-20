@@ -95,7 +95,7 @@ fn start_server(cli: &Cli) {
                     .contains("tmux-artifact-menu")
                 && cli
                     .tmux_out(&["list-keys", "-T", "prefix", "T"])
-                    .contains("_timeline-attach")
+                    .contains("_timeline-open")
                 && cli
                     .tmux_out(&["list-keys", "-T", "prefix", "m"])
                     .contains("_home-open")
@@ -180,7 +180,10 @@ fn the_ide_bundle_is_the_shipped_plugin_and_its_verbs_and_updater_are_its_progra
     assert_eq!(row["tier"], "ide");
     assert_eq!(row["requires"], serde_json::json!([]));
     assert_eq!(row["needs"], serde_json::json!(["tmux", "nvim"]));
-    assert_eq!(row["verbs"], serde_json::json!(["ui", "_resource"]));
+    assert_eq!(
+        row["verbs"],
+        serde_json::json!(["ui", "_resource", "_show", "_attach-into"])
+    );
     assert_eq!(help_lines(&cli), HELP_LINES);
     // A verb is the program, once; so is the updater.
     let (listed, trace) = traced(&cli, &["ui", "view", "ls"]);
@@ -393,7 +396,7 @@ fn update_fragment_loads() {
     );
     assert!(bound("prefix", "n").contains("tmux-new-agent"));
     assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
-    assert!(bound("prefix", "T").contains("_timeline-attach"));
+    assert!(bound("prefix", "T").contains("_timeline-open"));
     assert!(bound("prefix", "m").contains("_home-open"));
     cli.tmux(&["kill-server"]);
 }
@@ -1361,4 +1364,131 @@ fn ui_attach_with_home_disabled_after_it_was_enabled_repairs_the_pane() {
     assert_eq!(option("remain-on-exit"), "off");
     assert_eq!(option("@tx-home-floor"), "");
     assert_eq!(option("remain-on-exit-format"), "");
+}
+
+/// `tx _show <client> attach-to <session> <pane>` from a terminal attached through an outer
+/// tmux: the `tx-attach-to` table takes the terminal's keys under a gold border, a pane number
+/// selects (one with no pane, and a stray key, stay in the mode), Enter attaches the session in
+/// the selected pane and leaves the mode.
+#[test]
+fn attach_to_picks_a_pane_by_number_and_enter_attaches_there() {
+    require_tmux!();
+    let cli = Cli::new();
+    cli.write_yaml("plugins:\n  assistant: { enabled: false }\n  home: { enabled: false }\n");
+    cli.ok(&["update"]);
+    for args in [
+        &[
+            "new-session",
+            "-d",
+            "-s",
+            "host",
+            "-x",
+            "120",
+            "-y",
+            "40",
+            "sh",
+        ][..],
+        &["split-window", "-d", "-t", "=host:", "sh"],
+        &["new-session", "-d", "-s", "target", "sh"],
+    ] {
+        assert!(cli.tmux_with_conf(args).status.success(), "{args:?}");
+    }
+    assert!(
+        cli.wait_for(5, || cli
+            .tmux_out(&["list-keys", "-T", "tx-attach-to", "Enter"])
+            .contains("_attach-into")),
+        "tx-attach-to never bound"
+    );
+    let sock = cli.sock().display().to_string();
+    cli.in_outer_pane(&format!("TMUX= tmux -S {sock} attach -t =host"));
+    assert!(
+        cli.wait_for(10, || cli.tmux_out(&[
+            "list-clients",
+            "-F",
+            "#{client_session}"
+        ]) == "host"),
+        "the terminal never attached"
+    );
+    let client = cli.tmux_out(&["list-clients", "-F", "#{client_name}"]);
+    let panes = cli.tmux_out(&[
+        "list-panes",
+        "-t",
+        "=host:",
+        "-F",
+        "#{pane_id} #{pane_index}",
+    ]);
+    let panes: Vec<(&str, &str)> = panes
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .collect();
+    let [(first, _), (second, second_index)] = panes[..] else {
+        panic!("{panes:?}");
+    };
+    let table = || {
+        cli.tmux_out(&[
+            "display-message",
+            "-p",
+            "-c",
+            &client,
+            "#{client_key_table}",
+        ])
+    };
+    let border = || {
+        cli.tmux_out(&[
+            "show-options",
+            "-wv",
+            "-t",
+            "=host:",
+            "pane-active-border-style",
+        ])
+    };
+    let press = |key: &str| {
+        let sent = Command::new("tmux")
+            .arg("-S")
+            .arg(cli.outer_sock())
+            .args(["-f", "/dev/null", "send-keys", "-t", "=outer:", key])
+            .env_remove("TMUX")
+            .output()
+            .unwrap();
+        assert!(sent.status.success(), "{sent:?}");
+    };
+
+    cli.ok(&["_show", &client, "attach-to", "target", first]);
+    assert_eq!(table(), "tx-attach-to");
+    assert_eq!(border(), "fg=#e0af68,bold");
+    press(second_index);
+    press("9");
+    press("x");
+    assert!(
+        cli.wait_for(5, || cli.tmux_out(&[
+            "display-message",
+            "-p",
+            "-t",
+            "=host:",
+            "#{pane_id}"
+        ]) == second),
+        "the number never selected {second}"
+    );
+    assert_eq!(table(), "tx-attach-to", "a stray key left the mode");
+    press("Enter");
+    assert!(
+        cli.wait_for(10, || cli
+            .tmux_out(&["list-clients", "-F", "#{client_session}"])
+            .lines()
+            .any(|session| session == "target")),
+        "Enter never attached target"
+    );
+    assert_eq!(
+        cli.tmux_out(&[
+            "display-message",
+            "-p",
+            "-t",
+            second,
+            "#{pane_current_command}"
+        ]),
+        "tmux"
+    );
+    assert_eq!(table(), "root");
+    assert_eq!(border(), "");
+    cli.tmux(&["kill-server"]);
 }

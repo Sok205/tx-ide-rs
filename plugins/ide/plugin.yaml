@@ -13,6 +13,14 @@ verbs:
     usage: "_resource NAME   print a plugin resource (internal)"
     bin: tx-ide
     args: [_resource]
+  - name: _show
+    usage: "_show <client> focus|attach-to|popup <session> [<pane>]   show a session on the terminal (internal)"
+    bin: tx-ide
+    args: [_show]
+  - name: _attach-into
+    usage: "_attach-into <client> <session> <pane>   attach a session into a pane (attach-to's Enter, internal)"
+    bin: tx-ide
+    args: [_attach-into]
 
 update:
   bin: tx-ide

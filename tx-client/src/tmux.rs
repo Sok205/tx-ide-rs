@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use tx_core::TxCore;
 use tx_core::plugin::external::PLUGIN_GIVEN_ENV;
 
-use crate::views::{KIND_OPTION, VIEW_OPTION, ViewKind};
+use crate::views::{HOME_FLOOR_OPTION, KIND_OPTION, VIEW_OPTION, ViewKind};
 
 const BINARY: &str = "tmux";
 /// The nvim runtime directory (`<data>/nvim`, `lua/` and `plugin/`), prepended to every nvim
@@ -105,6 +105,11 @@ impl Ui {
     }
 
     /// The directory every nvim view puts first on its runtimepath.
+    /// The server's socket, as text for a shell command.
+    pub(crate) fn socket_text(&self) -> String {
+        self.socket.to_string_lossy().into_owned()
+    }
+
     pub fn nvim_runtime(&self) -> &Path {
         &self.nvim_runtime
     }
@@ -399,6 +404,53 @@ impl Ui {
             shell_quote(target),
         );
         format!("bash -c {}", shell_quote(&script))
+    }
+
+    /// Focus the pane showing session `name` for the terminal `client` is shown on. `client` may
+    /// be a nested client, so the client to move is its outer one. A pane in the outer client's
+    /// session is selected in place; one in another plain session gets the outer client switched
+    /// to it; one in another view that hosts nested attaches (home, tutor) is reported, not
+    /// switched to. `Err` is the reason, for the user.
+    pub fn focus_session(&self, client: &str, name: &str) -> Result<(), String> {
+        let (outer, outer_session) = self
+            .outer_client(client)
+            .ok_or_else(|| "no terminal client to move".to_owned())?;
+        let pane = self
+            .pane_for_session(name, &outer_session)
+            .ok_or_else(|| "not attached to any pane".to_owned())?;
+        let host = pane.split(':').next().unwrap_or_default();
+        let focused = if host == outer_session {
+            self.select_window(&pane) && self.select_pane(&pane)
+        } else if self.hosts_nested_attaches(host) {
+            return Err(format!("attached in view {host}, not in {outer_session}"));
+        } else {
+            self.quiet(&["switch-client", "-c", &outer, "-t", &format!("={pane}")])
+                .0
+        };
+        if focused {
+            Ok(())
+        } else {
+            Err(format!("tmux could not focus {pane}"))
+        }
+    }
+
+    /// Re-host `pane` on a nested attach of session `name`; what ran there ends. Never an
+    /// agent's own pane (its session carries `@tx-id`): that would end the agent behind core's
+    /// back. The home's floor pane gets the attach alone, so its TUI comes back when the attach
+    /// ends; any other pane falls back to a shell. `Err` is the reason, for the user.
+    pub fn attach_into(&self, pane: &str, name: &str) -> Result<(), String> {
+        if self.display_message("#{@tx-id}", Some(pane)).is_some() {
+            let session = self.display_message("#S", Some(pane)).unwrap_or_default();
+            return Err(format!("{session} is an agent's own pane"));
+        }
+        let target = format!("={name}");
+        let command = if self.pane_option(pane, HOME_FLOOR_OPTION).is_some() {
+            self.nest_attach_only_command(&target)
+        } else {
+            self.nest_attach_command(&target)
+        };
+        self.respawn_pane(pane, &command)
+            .map_err(|error| error.to_string())
     }
 
     /// Opens a `width`×`height` popup on `client` running `command`; returns when it closes.

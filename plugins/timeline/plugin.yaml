@@ -12,8 +12,12 @@ verbs:
     usage: "_timeline-resident [--last DURATION]   the popup's resident timeline; q detaches (internal)"
     bin: tx-timeline
     args: [_timeline-resident]
+  - name: _timeline-open
+    usage: "_timeline-open <pane> <client>   prefix+T: the resident timeline in a popup (internal)"
+    bin: tx-timeline
+    args: [_timeline-open]
   - name: _timeline-attach
-    usage: "_timeline-attach   start or attach the resident timeline; q detaches (prefix+T, internal)"
+    usage: "_timeline-attach [<pane> <client>]   start or attach the resident timeline; q detaches (internal)"
     bin: tx-timeline
     args: [_timeline-attach]
   - name: _timeline-json

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # keys: C-h C-j C-k C-l
+# unset: @tx-attach-to-session
 # tx key plugin `ide`: the IDE's root-table keys and global look. Run by `run-shell` from the
 # server's tmux.conf, which `tx update` writes (first, before the other plugins' fragments).
 #
@@ -8,6 +9,7 @@
 #   M-1..9          select-pane
 #   User0..8        select-window (the terminal must send ESC W <digit>)
 #   pane borders    colours, heavy lines, both indicators; the border format is `labels`'
+#   tx-attach-to    the key table that picks a pane to attach a session into (tx-client's `show.rs`)
 #
 # The status bar, status-right included, is conf/tmux.conf's.
 #
@@ -108,5 +110,38 @@ for n in 1 2 3 4 5 6 7 8 9; do
   printf 'bind -n User%d select-window -t %s\n' "$i" "$n" >>"$CONF"
   i=$((i + 1))
 done
+
+# --- Attach-to (tx-attach-to: pick a pane, attach a session there) ---
+# `tx _show <client> attach-to <session>` enters the table on the terminal client, preselects a
+# pane, turns the window's active border gold and keeps @tx-attach-to-session (tx-client's show.rs).
+# Sticky: every bind switches back into the table; Any swallows the rest (stray keys, mouse
+# release and wheel). A pane number with no pane fails select-pane, which ends a command list, so
+# the number binds stay first. Enter runs `tx _attach-into`; Enter, Esc and q leave, undoing the
+# option and the border. MESSAGE is `show::MESSAGE`, kept in LOCKSTEP (a test there checks it).
+TX_BIN=$(tmux show-option -gv @tx-bin 2>/dev/null)
+ARGUMENTS=$(tmux show-option -gv @tx-arguments 2>/dev/null)
+if [ -n "$TX_BIN" ] && [ -n "$ARGUMENTS" ]; then
+  MESSAGE='attach #{@tx-attach-to-session}: h/j/k/l, a number or a click picks a pane, Enter attaches here, Esc cancels'
+  STAY="switch-client -T tx-attach-to ; display-message -d 0 \"$MESSAGE\""
+  LEAVE="set -gu @tx-attach-to-session ; set -wu pane-active-border-style"
+  cat >>"$CONF" <<EOF2
+bind -T tx-attach-to h { select-pane -L ; $STAY }
+bind -T tx-attach-to j { select-pane -D ; $STAY }
+bind -T tx-attach-to k { select-pane -U ; $STAY }
+bind -T tx-attach-to l { select-pane -R ; $STAY }
+bind -T tx-attach-to Left { select-pane -L ; $STAY }
+bind -T tx-attach-to Down { select-pane -D ; $STAY }
+bind -T tx-attach-to Up { select-pane -U ; $STAY }
+bind -T tx-attach-to Right { select-pane -R ; $STAY }
+bind -T tx-attach-to MouseDown1Pane { select-pane -t = ; $STAY }
+bind -T tx-attach-to Any { $STAY }
+bind -T tx-attach-to Enter { run-shell -b "$TX_BIN $ARGUMENTS _attach-into '#{client_name}' '#{@tx-attach-to-session}' '#{pane_id}' >/dev/null 2>&1 || true" ; $LEAVE }
+bind -T tx-attach-to Escape { $LEAVE }
+bind -T tx-attach-to q { $LEAVE }
+EOF2
+  for n in 0 1 2 3 4 5 6 7 8 9; do
+    printf 'bind -T tx-attach-to %s { %s ; select-pane -t :.%s }\n' "$n" "$STAY" "$n" >>"$CONF"
+  done
+fi
 
 tmux source-file "$CONF"
