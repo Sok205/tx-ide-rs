@@ -80,11 +80,11 @@ restart.
 ## Views
 
 A **view** is any tmux session on tx's server that is not an agent: the `home` base, editors,
-diffviews, code tours, shells, the resident timeline and graph, the tutor and mockup viewers. A view has no
+diffviews, code tours, shells, the resident timeline, graph and board, the tutor and mockup viewers. A view has no
 core record and never shows in `tx ls`. Its fields are tmux session options:
 
 - `@tx-view` is `1` on every view; `@tx-view-kind` is one of `home`, `editor`, `diff`, `tour`,
-  `shell`, `timeline`, `graph`, `tutor`, `mockup`.
+  `shell`, `timeline`, `graph`, `tutor`, `mockup`, `board`.
 - `@tx-view-parent` is the id of the agent it belongs to; `@tx-view-bound` the artifact it shows;
   `@tx-view-tags` and `@tx-view-created` complete it.
 
@@ -140,6 +140,7 @@ The prefix is `C-a`. Each key belongs to a plugin and disappears when that plugi
 | prefix+a | the artifacts an agent touched; in an artifact's view, back to the agent (`artifacts`) |
 | prefix+T | the resident timeline in a popup (`timeline`) |
 | prefix+g | the resident agent graph in a popup (`graph`) |
+| prefix+b | the resident GitHub issue board of the pane's checkout in a popup (`board`) |
 | prefix+/ | one line to the assistant, with the focus envelope (`assistant`) |
 | C-h C-j C-k C-l, C-u C-d | move between panes; page the scrollback (`ide`) |
 

@@ -1,0 +1,32 @@
+api: 1
+id: board
+description: A GitHub issue board in the terminal (ratatui), with the tx agents on each issue, prefix+b.
+tier: ide
+requires: [ide]
+needs: [gh, git]
+settings: { repository: null }
+
+verbs:
+  - name: board
+    usage: "board [--repo OWNER/NAME] [--cwd DIR] [--snapshot]   the GitHub issue board of a checkout (q quits)"
+    bin: tx-board
+    args: [board]
+  - name: _board-resident
+    usage: "_board-resident --repo OWNER/NAME [--cwd DIR]   the popup's resident board; q detaches (internal)"
+    bin: tx-board
+    args: [_board-resident]
+  - name: _board-open
+    usage: "_board-open <pane> <client> <path>   prefix+b: the resident board of a checkout in a popup (internal)"
+    bin: tx-board
+    args: [_board-open]
+  - name: _board-attach
+    usage: "_board-attach <pane> <client> <path>   start or attach the resident board; q detaches (internal)"
+    bin: tx-board
+    args: [_board-attach]
+  - name: _board-json
+    usage: "_board-json [--repo OWNER/NAME] [--cwd DIR]   the board as JSON (internal)"
+    bin: tx-board
+    args: [_board-json]
+
+resources:
+  - keys/board.tmux
