@@ -17,6 +17,8 @@ Everything around the agents is a plugin:
 - **The graph** (prefix+g): the agents by lineage, every message between them travelling its edge
   live; send, fork, stop, respawn and open artifacts from it.
 - **The timeline** (prefix+T): swimlanes of each agent's working and idle time, and of messages.
+- **The board** (prefix+b): the checkout's GitHub issues as a kanban, with the agents on each
+  issue; one key starts an agent on an issue.
 - **Artifacts** (prefix+a): durable, versioned deliverables: documents, diffs opened in diffview,
   code tours walked in nvim.
 - **Layouts**: a window of agents, commands and shells, saved as YAML and opened in any project.
@@ -114,8 +116,8 @@ attach also starts the assistant in the background.
   terminal itself; `tx ui attach` brings everything back as it was.
 - **Talk**: type into the agent, or `tx send NAME -- TEXT` from anywhere (run inside an agent, the
   message is signed as that agent). prefix+/ asks the assistant one line from any pane.
-- **Watch**: prefix+g the graph of agents and their messages, prefix+T the timeline, prefix+t the
-  picker, prefix+a the artifacts an agent touched.
+- **Watch**: prefix+g the graph of agents and their messages, prefix+T the timeline, prefix+b the
+  issue board, prefix+t the picker, prefix+a the artifacts an agent touched.
 - **Finish**: `x` then `y` in the home, or `tx stop NAME`, ends an agent; Enter on an ended agent,
   or `tx respawn NAME`, resumes it in the same worktree and conversation. `tx gc` deletes the build
   output of agents ended more than a day ago.
@@ -133,6 +135,7 @@ attach also starts the assistant in the background.
 | prefix+/ | ask the assistant one line |
 | prefix+g | the agent graph |
 | prefix+T | the timeline |
+| prefix+b | the GitHub issue board of the pane's checkout |
 | prefix+a | in an agent: the artifacts it touched, its parent and children; in a view: back to its agent |
 | prefix+s | refresh the labels, then `choose-tree` |
 | prefix+\| / prefix+- | split right / below |
@@ -164,7 +167,7 @@ the popup. The graph lists its keys on `?`.
 | `tx engines`, `tx plugins` | the enabled engines; every plugin and whether it is on |
 
 Plugins add `ui`, `home`, `pick`, `kill`, `whoami`, `chat`, `doctor`, `assistant`, `artifact`,
-`group`, `tour`, `timeline`, `graph`, `layout`, `mockup` and `tutor`. `tx help` prints every verb
+`group`, `tour`, `timeline`, `board`, `graph`, `layout`, `mockup` and `tutor`. `tx help` prints every verb
 with its flags; verbs starting with `_` are internal, run by key bindings and hooks.
 
 ## Agent definitions

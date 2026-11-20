@@ -1,0 +1,26 @@
+[package]
+name = "tx-board"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "tx-core plugin: a GitHub issue board in the terminal (ratatui), prefix+b."
+
+# The plugin as its own program: what `plugin.yaml` names for its verbs.
+[[bin]]
+name = "tx-board"
+path = "src/main.rs"
+
+[dependencies]
+tx-core.workspace = true
+tx-client.workspace = true
+tx-plugin.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ratatui = "0.30"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
