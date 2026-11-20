@@ -322,6 +322,8 @@ fn a_directory_of_the_users_with_the_same_id_is_in_error_and_the_shipped_one_run
 
 /// The round the `tx-mockup` skill describes, run by the agent itself: no `--for`, and `tx` is
 /// the one its session is told about.
+/// `tx create` starts the session before it saves the record, so the stand-in waits for its
+/// record before the round, as a real engine's start-up does.
 #[test]
 fn the_round_works_from_inside_an_agents_session() {
     require_tmux!();
@@ -329,7 +331,8 @@ fn the_round_works_from_inside_an_agents_session() {
     let checkout = cli.repository("a");
     let path = cli.shim_path(&[(
         "claude",
-        "\"$TX_BIN\" mockup start --project \"$PWD\" > start.out 2> start.err; \
+        "until \"$TX_BIN\" show \"$TX_SESSION_ID\" > /dev/null 2>&1; do sleep 0.1; done; \
+         \"$TX_BIN\" mockup start --project \"$PWD\" > start.out 2> start.err; \
          \"$TX_BIN\" mockup show > show.out 2> show.err; echo done > round.done; exec sleep 60",
     )]);
     let output = cli.run(
