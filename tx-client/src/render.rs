@@ -157,7 +157,8 @@ pub fn role_of(entry: PickerEntry<'_>) -> &'static str {
             | ViewKind::Timeline
             | ViewKind::Graph
             | ViewKind::Tutor
-            | ViewKind::Mockup => "other",
+            | ViewKind::Mockup
+            | ViewKind::Board => "other",
         },
     }
 }
@@ -538,6 +539,7 @@ mod tests {
             (ViewKind::Graph, "other"),
             (ViewKind::Tutor, "other"),
             (ViewKind::Mockup, "other"),
+            (ViewKind::Board, "other"),
         ];
         assert_eq!(roles.map(|(kind, _)| kind), ViewKind::ALL);
         for (kind, role) in roles {

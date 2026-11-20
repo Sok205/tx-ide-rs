@@ -1,0 +1,32 @@
+ tx-board tx-devs/tx-ide   refreshed 12s ago
+┌ Backlog 2 ──────────────────────────┐┌ In progress 2 ─────────────────────┐┌ Done 1 ─────────────────────────────┐
+│ #115 Add shortcut + p to enable/dis…││ #116 Tx-board                      ││ #112 Timeline: Enter nests the lane…│
+│   feature plugins                   ││   feature plugins ● issue-116      ││   feature @sok                      │
+│ #108 tx send: a message longer than…││ #114 Split shipped defaults from u…││                                     │
+│   bug core × fixer                  ││   feature core @sok                ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+│                                     ││                                    ││                                     │
+└─────────────────────────────────────┘└────────────────────────────────────┘└─────────────────────────────────────┘
+┌ #115 Add shortcut + p to enable/disable plugins ─────────────────────────────────────────────────────────────────┐
+│ feature plugins   open by @sok, opened 1d ago, updated 1d ago                                                    │
+│ agents: none (s starts one)                                                                                      │
+│                                                                                                                  │
+│ A key in the home.                                                                                               │
+│                                                                                                                  │
+│                                                                                                                  │
+│                                                                                                                  │
+│                                                                                                                  │
+│                                                                                                                  │
+│                                                                                                                  │
+│                                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ j/k h/l move  / filter  L labels  s start agent  Enter show agent  ? all keys  q quit
