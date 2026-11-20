@@ -18,7 +18,8 @@ pub fn issue_tag(number: u64) -> String {
 
 /// A filter in GitHub's issue search language, applied to the issues the board holds:
 /// `label:bug -label:wip assignee:sok no:assignee author:ada milestone:0.2 is:open "free text"`.
-/// Every term must hold; a `-` in front of a term negates it. Free words match the title, the
+/// Every term must hold; a `-` in front of a term negates it; `label:bug,core` is either label,
+/// as on GitHub, so a comma typed between terms costs nothing. Free words match the title, the
 /// body and the number; `in:`, `sort:` and `type:` are accepted and ignored.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Query {
@@ -34,10 +35,11 @@ struct Term {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TermKind {
-    Label(String),
-    Assignee(String),
-    Author(String),
-    Milestone(String),
+    /// Any of the names.
+    Label(Vec<String>),
+    Assignee(Vec<String>),
+    Author(Vec<String>),
+    Milestone(Vec<String>),
     NoAssignee,
     NoLabel,
     NoMilestone,
@@ -95,14 +97,22 @@ fn term(token: String) -> Term {
         Some(rest) if !rest.is_empty() => (true, rest.to_owned()),
         _ => (false, token),
     };
+    let token = token.trim_matches(',').to_owned();
     let kind = match token.split_once(':') {
         Some((qualifier, value)) if !value.is_empty() => {
             let value = value.to_lowercase();
+            let values = || -> Vec<String> {
+                value
+                    .split(',')
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            };
             match qualifier.to_lowercase().as_str() {
-                "label" => TermKind::Label(value),
-                "assignee" => TermKind::Assignee(value),
-                "author" => TermKind::Author(value),
-                "milestone" => TermKind::Milestone(value),
+                "label" => TermKind::Label(values()),
+                "assignee" => TermKind::Assignee(values()),
+                "author" => TermKind::Author(values()),
+                "milestone" => TermKind::Milestone(values()),
                 "no" => match value.as_str() {
                     "assignee" => TermKind::NoAssignee,
                     "label" => TermKind::NoLabel,
@@ -127,16 +137,20 @@ fn term(token: String) -> Term {
 fn holds(kind: &TermKind, issue: &Issue) -> bool {
     let same = |left: &str, right: &str| left.eq_ignore_ascii_case(right);
     match kind {
-        TermKind::Label(name) => issue.labels.iter().any(|label| same(&label.name, name)),
-        TermKind::Assignee(login) => {
+        TermKind::Label(names) => names
+            .iter()
+            .any(|name| issue.labels.iter().any(|label| same(&label.name, name))),
+        TermKind::Assignee(logins) => logins.iter().any(|login| {
             (login == "@me" && !issue.assignees.is_empty())
                 || issue.assignees.iter().any(|user| same(&user.login, login))
-        }
-        TermKind::Author(login) => same(&issue.author.login, login),
-        TermKind::Milestone(title) => issue
-            .milestone
-            .as_ref()
-            .is_some_and(|milestone| same(&milestone.title, title)),
+        }),
+        TermKind::Author(logins) => logins.iter().any(|login| same(&issue.author.login, login)),
+        TermKind::Milestone(titles) => titles.iter().any(|title| {
+            issue
+                .milestone
+                .as_ref()
+                .is_some_and(|milestone| same(&milestone.title, title))
+        }),
         TermKind::NoAssignee => issue.assignees.is_empty(),
         TermKind::NoLabel => issue.labels.is_empty(),
         TermKind::NoMilestone => issue.milestone.is_none(),
@@ -437,6 +451,11 @@ mod tests {
             &bug
         ));
         assert!(holds("weird:thing", &bug) == bug.title.contains("weird:thing"));
+        // commas: either of the names, and a stray one between terms is nothing
+        assert!(holds("label:docs,bug", &bug) && !holds("label:docs,wip", &bug));
+        assert!(holds("label:bug, assignee:me", &bug));
+        assert!(!holds("-label:bug,docs", &bug) && holds("-label:wip,docs", &bug));
+        assert!(holds("author:bob,ada milestone:0.1,0.2", &bug));
         let board = Board::build(
             Repository::parse("o/n").unwrap(),
             vec![bug, plain],
