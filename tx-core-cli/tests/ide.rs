@@ -94,7 +94,7 @@ fn start_server(cli: &Cli) {
                     .contains("tmux-artifact-menu")
                 && cli
                     .tmux_out(&["list-keys", "-T", "prefix", "T"])
-                    .contains("_timeline-attach")
+                    .contains("_timeline-open")
                 && cli
                     .tmux_out(&["list-keys", "-T", "prefix", "m"])
                     .contains("_home-open")
@@ -298,7 +298,7 @@ fn update_fragment_loads() {
     );
     assert!(bound("prefix", "n").contains("tmux-new-agent"));
     assert!(bound("prefix", "a").contains("tmux-artifact-menu"));
-    assert!(bound("prefix", "T").contains("_timeline-attach"));
+    assert!(bound("prefix", "T").contains("_timeline-open"));
     assert!(bound("prefix", "m").contains("_home-open"));
     cli.tmux(&["kill-server"]);
 }

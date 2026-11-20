@@ -197,7 +197,7 @@ fn prefix_shift_t_opens_the_resident_popup_and_q_detaches() {
     assert!(
         cli.wait_for(5, || cli
             .tmux_out(&["list-keys", "-T", "prefix", "T"])
-            .contains("_timeline-attach")),
+            .contains("_timeline-open")),
         "prefix+T never bound"
     );
     let sock = cli.sock().display().to_string();
