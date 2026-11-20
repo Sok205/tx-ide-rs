@@ -12,7 +12,7 @@ use tx_client::palette::{self, palette};
 use tx_core::LlmEngineState;
 
 use super::app::{App, Picker};
-use super::github::{Issue, age, rgb_of};
+use super::github::{Failure, Issue, age, rgb_of};
 use super::model::{Card, CardAgent, ColumnKind};
 
 /// Each card takes two rows: the number and title, then labels and agents.
@@ -100,9 +100,13 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     app.keep_cursor_visible(visible);
 
     frame.render_widget(header_line(app, header.width), header);
-    let thirds = Layout::horizontal([Constraint::Ratio(1, 3); 3]).split(columns);
-    for (index, kind) in ColumnKind::ALL.into_iter().enumerate() {
-        draw_column(app, kind, thirds[index], frame);
+    if let Some(problem) = &app.problem {
+        draw_problem(problem, columns, frame);
+    } else {
+        let thirds = Layout::horizontal([Constraint::Ratio(1, 3); 3]).split(columns);
+        for (index, kind) in ColumnKind::ALL.into_iter().enumerate() {
+            draw_column(app, kind, thirds[index], frame);
+        }
     }
     draw_drawer(app, drawer, frame);
     frame.render_widget(footer_line(app, footer.width), footer);
@@ -389,6 +393,62 @@ fn footer_line(app: &App, width: u16) -> Line<'static> {
     }
 }
 
+/// What stands where the columns would be while `gh` cannot be used: what is wrong and the
+/// one command that fixes it.
+fn draw_problem(problem: &Failure, area: Rect, frame: &mut Frame) {
+    let (title, lines): (&str, Vec<(String, Style)>) = match problem {
+        Failure::NotInstalled => (
+            " GitHub CLI is not installed ",
+            vec![
+                (
+                    "The board reads and edits issues through gh, GitHub's command line, which is not on PATH."
+                        .to_owned(),
+                    text(),
+                ),
+                (String::new(), text()),
+                ("  brew install gh        https://cli.github.com".to_owned(), accent()),
+                ("  gh auth login          then sign in once".to_owned(), accent()),
+                (String::new(), text()),
+                ("r retries once it is there.".to_owned(), dim()),
+            ],
+        ),
+        Failure::NotLoggedIn(said) => (
+            " gh is not signed in ",
+            vec![
+                (
+                    "The board uses your GitHub login through gh; gh has none yet.".to_owned(),
+                    text(),
+                ),
+                (String::new(), text()),
+                ("  gh auth login          in any shell".to_owned(), accent()),
+                (String::new(), text()),
+                (format!("gh said: {said}"), dim()),
+                ("r retries once you are signed in.".to_owned(), dim()),
+            ],
+        ),
+        Failure::Failed(reason) => (" GitHub did not answer ", vec![(reason.clone(), text())]),
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(palette(palette::WARN)))
+        .title(Span::styled(
+            title,
+            Style::new()
+                .fg(palette(palette::WARN))
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let top = inner.height.saturating_sub(lines.len() as u16) / 2;
+    let mut body: Vec<Line<'static>> = (0..top).map(|_| Line::default()).collect();
+    body.extend(
+        lines
+            .into_iter()
+            .map(|(line, style)| Line::from(Span::styled(format!("   {line}"), style))),
+    );
+    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
 /// The label picker, centred over `area`: one row per label of the repository.
 fn draw_picker(picker: &mut Picker, area: Rect, frame: &mut Frame) {
     let longest = picker
@@ -483,6 +543,31 @@ mod tests {
         assert_eq!(truncate("abc", 3), "abc");
         assert_eq!(truncate("abcd", 3), "ab…");
         assert_eq!(truncate("abcd", 0), "");
+    }
+
+    #[test]
+    fn a_missing_or_signed_out_gh_is_explained_where_the_columns_were() {
+        use crate::github::Repository;
+        use crate::model::Board;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let frame = |problem: Failure| {
+            let mut app = App::new(Board::empty(Repository::parse("o/n").unwrap()), 0.0);
+            app.problem = Some(problem);
+            let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+            terminal.draw(|frame| render(&mut app, frame)).unwrap();
+            buffer_text(terminal.backend().buffer())
+        };
+        let missing = frame(Failure::NotInstalled);
+        assert!(missing.contains("GitHub CLI is not installed"), "{missing}");
+        assert!(missing.contains("brew install gh"), "{missing}");
+        assert!(!missing.contains("Backlog"), "{missing}");
+        let signed_out = frame(Failure::NotLoggedIn("run gh auth login".to_owned()));
+        assert!(signed_out.contains("gh is not signed in"), "{signed_out}");
+        assert!(
+            signed_out.contains("gh said: run gh auth login"),
+            "{signed_out}"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tx_client::show::Show;
 
-use super::github::RepoLabel;
+use super::github::{Failure, RepoLabel};
 use super::model::{Board, Card, ColumnKind, Query};
 
 /// What a key asked for; the event loop does it and clears it.
@@ -136,6 +136,9 @@ pub struct App {
     pub dirty: bool,
     /// A one-shot line for the footer; the next key clears it.
     pub notice: Option<String>,
+    /// `gh` cannot be used at all (not installed, not signed in): drawn in place of the
+    /// columns until a fetch succeeds.
+    pub problem: Option<Failure>,
     /// A fetch is in flight.
     pub refreshing: bool,
     /// Epoch seconds of the last successful fetch.
@@ -161,6 +164,7 @@ impl App {
             request: None,
             dirty: false,
             notice: None,
+            problem: None,
             refreshing: false,
             fetched_at: None,
             now,

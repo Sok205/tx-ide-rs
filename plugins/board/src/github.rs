@@ -165,13 +165,38 @@ pub struct Fetched {
     pub labels: Vec<RepoLabel>,
 }
 
-/// Trimmed stdout of `gh <arguments>`; the error is `gh`'s last stderr line.
-pub fn gh(arguments: &[&str]) -> Result<String, String> {
+/// Why `gh` could not answer: the board tells the operator what to do about the first two and
+/// keeps its last frame on the third.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// `gh` is not on `PATH`.
+    NotInstalled,
+    /// `gh` runs but is not signed in; the line it printed.
+    NotLoggedIn(String),
+    /// Anything else, as `gh` said it.
+    Failed(String),
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::NotInstalled => f.write_str("gh is not installed (brew install gh)"),
+            Failure::NotLoggedIn(_) => f.write_str("gh is not signed in (gh auth login)"),
+            Failure::Failed(reason) => f.write_str(reason),
+        }
+    }
+}
+
+/// Trimmed stdout of `gh <arguments>`; the failure carries `gh`'s last stderr line.
+pub fn gh(arguments: &[&str]) -> Result<String, Failure> {
     let output = Command::new("gh")
         .args(arguments)
         .stdin(Stdio::null())
         .output()
-        .map_err(|error| format!("gh: {error}"))?;
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => Failure::NotInstalled,
+            _ => Failure::Failed(format!("gh: {error}")),
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let reason = stderr
@@ -179,31 +204,47 @@ pub fn gh(arguments: &[&str]) -> Result<String, String> {
             .rev()
             .find(|line| !line.trim().is_empty())
             .unwrap_or("failed")
-            .trim();
-        return Err(format!("gh {}: {reason}", arguments.first().unwrap_or(&"")));
+            .trim()
+            .to_owned();
+        if stderr.contains("gh auth login") || stderr.to_lowercase().contains("not logged in") {
+            return Err(Failure::NotLoggedIn(reason));
+        }
+        return Err(Failure::Failed(format!(
+            "gh {}: {reason}",
+            arguments.first().unwrap_or(&"")
+        )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// `gh` as a plain message, for the footer.
+fn text(failure: Failure) -> String {
+    failure.to_string()
 }
 
 pub fn parse_issues(json: &str) -> Result<Vec<Issue>, String> {
     serde_json::from_str(json).map_err(|error| format!("gh issue list: {error}"))
 }
 
+fn parsed(json: &str) -> Result<Vec<Issue>, Failure> {
+    parse_issues(json).map_err(Failure::Failed)
+}
+
 /// The open issues (newest activity first) followed by the recently closed ones.
-pub fn fetch_issues(repository: &Repository) -> Result<Vec<Issue>, String> {
+pub fn fetch_issues(repository: &Repository) -> Result<Vec<Issue>, Failure> {
     let slug = repository.slug();
     let mut issues = Vec::new();
     for (state, limit) in [("open", OPEN_LIMIT), ("closed", CLOSED_LIMIT)] {
         let json = gh(&[
             "issue", "list", "--repo", &slug, "--state", state, "--limit", limit, "--json", FIELDS,
         ])?;
-        issues.extend(parse_issues(&json)?);
+        issues.extend(parsed(&json)?);
     }
     Ok(issues)
 }
 
 /// The repository's labels, by name.
-pub fn fetch_labels(repository: &Repository) -> Result<Vec<RepoLabel>, String> {
+pub fn fetch_labels(repository: &Repository) -> Result<Vec<RepoLabel>, Failure> {
     let json = gh(&[
         "label",
         "list",
@@ -214,14 +255,14 @@ pub fn fetch_labels(repository: &Repository) -> Result<Vec<RepoLabel>, String> {
         "--json",
         "name,color,description",
     ])?;
-    let mut labels: Vec<RepoLabel> =
-        serde_json::from_str(&json).map_err(|error| format!("gh label list: {error}"))?;
+    let mut labels: Vec<RepoLabel> = serde_json::from_str(&json)
+        .map_err(|error| Failure::Failed(format!("gh label list: {error}")))?;
     labels.sort_by_key(|label| label.name.to_lowercase());
     Ok(labels)
 }
 
 /// The issues and the labels.
-pub fn fetch(repository: &Repository) -> Result<Fetched, String> {
+pub fn fetch(repository: &Repository) -> Result<Fetched, Failure> {
     Ok(Fetched {
         issues: fetch_issues(repository)?,
         labels: fetch_labels(repository)?,
@@ -230,7 +271,7 @@ pub fn fetch(repository: &Repository) -> Result<Fetched, String> {
 
 /// The login `gh` is signed in as.
 pub fn viewer() -> Result<String, String> {
-    gh(&["api", "user", "--jq", ".login"])
+    gh(&["api", "user", "--jq", ".login"]).map_err(text)
 }
 
 pub fn close(repository: &Repository, number: u64) -> Result<(), String> {
@@ -242,6 +283,7 @@ pub fn close(repository: &Repository, number: u64) -> Result<(), String> {
         &repository.slug(),
     ])
     .map(drop)
+    .map_err(text)
 }
 
 pub fn reopen(repository: &Repository, number: u64) -> Result<(), String> {
@@ -253,6 +295,7 @@ pub fn reopen(repository: &Repository, number: u64) -> Result<(), String> {
         &repository.slug(),
     ])
     .map(drop)
+    .map_err(text)
 }
 
 pub fn assign(repository: &Repository, number: u64, login: &str, on: bool) -> Result<(), String> {
@@ -271,6 +314,7 @@ pub fn assign(repository: &Repository, number: u64, login: &str, on: bool) -> Re
         login,
     ])
     .map(drop)
+    .map_err(text)
 }
 
 /// `gh issue edit <n> --add-label a,b --remove-label c`; nothing to change is no call.
@@ -293,7 +337,7 @@ pub fn edit_labels(
     if !remove.is_empty() {
         arguments.extend(["--remove-label", &removed]);
     }
-    gh(&arguments).map(drop)
+    gh(&arguments).map(drop).map_err(text)
 }
 
 pub fn open_in_browser(repository: &Repository, number: u64) -> Result<(), String> {
@@ -306,6 +350,7 @@ pub fn open_in_browser(repository: &Repository, number: u64) -> Result<(), Strin
         "--web",
     ])
     .map(drop)
+    .map_err(text)
 }
 
 /// `gh issue comment <n>` / `gh issue create` on the caller's terminal: `gh` opens the editor.
@@ -401,6 +446,19 @@ mod tests {
         assert_eq!(age("2026-11-17T10:00:00Z", now), "3d");
         assert_eq!(age("2026-10-17T10:00:00Z", now), "4w");
         assert_eq!(age("nope", now), "?");
+    }
+
+    #[test]
+    fn failures_say_what_to_do() {
+        assert_eq!(
+            Failure::NotInstalled.to_string(),
+            "gh is not installed (brew install gh)"
+        );
+        assert_eq!(
+            Failure::NotLoggedIn("x".to_owned()).to_string(),
+            "gh is not signed in (gh auth login)"
+        );
+        assert_eq!(Failure::Failed("boom".to_owned()).to_string(), "boom");
     }
 
     #[test]

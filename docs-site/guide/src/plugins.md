@@ -194,7 +194,9 @@ lane; `o` opens the issue in the browser, `c` comments and `n` files an issue (`
 editor in the view), `x` closes or reopens, `m` assigns you or unassigns you, `r` fetches now
 (every 60 s otherwise), `?` lists the keys. prefix+b opens the resident board of the pane's checkout in a popup (q detaches, it
 stays warm; one resident per repository). `--snapshot` prints one frame as text. Tier `ide` (it
-requires `ide` and needs `gh` and `git`). Its verbs run as the program `tx-board`
+requires `ide` and needs `gh` and `git`). `gh` must be signed in (`gh auth login`); without
+`gh`, or signed out, the board says so where the columns would be, with the command that fixes
+it, and `r` retries. Its verbs run as the program `tx-board`
 (`plugins/board/plugin.yaml`).
 
 **`graph`**: `graph` draws the agents as a graph: columns by lineage depth, dashed edges for
