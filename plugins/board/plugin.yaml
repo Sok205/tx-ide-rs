@@ -24,7 +24,7 @@ verbs:
     bin: tx-board
     args: [_board-attach]
   - name: _board-json
-    usage: "_board-json [--repo OWNER/NAME] [--cwd DIR]   the board as JSON (internal)"
+    usage: "_board-json [--repo OWNER/NAME] [--cwd DIR] [--query Q]   the board as JSON (internal)"
     bin: tx-board
     args: [_board-json]
 

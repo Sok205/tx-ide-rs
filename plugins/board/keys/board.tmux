@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # keys: b
 # tx key plugin `board`: prefix+b attaches the resident GitHub issue board of the pane's checkout
-# in a popup (`_board-open`); q detaches it while the resident stays warm. On a card: s starts a
-# developer agent on the issue, Enter focuses the pane of the agent working on it, a picks a pane
-# to attach it into, p opens it in a popup; o opens the issue in the browser, c comments, n files
-# a new issue, x closes or reopens, m assigns or unassigns you.
+# in a popup (`_board-open`); q detaches it while the resident stays warm. / filters in GitHub's
+# search language, L edits the issue's labels. On a card: s starts a developer agent on the
+# issue, Enter focuses the pane of the agent working on it, a picks a pane to attach it into, p
+# opens it in a popup; o opens the issue in the browser, c comments, n files a new issue, x
+# closes or reopens, m assigns or unassigns you.
 # Run by `run-shell` from the server's tmux.conf, which `tx update` writes.
 #
 # Composes a tmux.conf fragment and source-file's it, so tmux's own parser handles the quoting.

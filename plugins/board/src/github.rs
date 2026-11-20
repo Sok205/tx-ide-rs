@@ -1,5 +1,6 @@
-//! GitHub through `gh`: the repository of a checkout, the issues of a repository and the few
-//! mutations the board makes. `gh` holds the operator's login; the board holds no token.
+//! GitHub through `gh`: the repository of a checkout, the issues and labels of a repository
+//! and the few mutations the board makes. `gh` holds the operator's login; the board holds no
+//! token.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -84,6 +85,7 @@ pub fn checkout_of(directory: &Path) -> Option<std::path::PathBuf> {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Label {
     pub name: String,
+    /// Six hex digits, as GitHub keeps it (`d73a4a`).
     #[serde(default)]
     pub color: String,
 }
@@ -130,6 +132,37 @@ impl Issue {
     pub fn assigned_to(&self, login: &str) -> bool {
         self.assignees.iter().any(|user| user.login == login)
     }
+
+    pub fn has_label(&self, name: &str) -> bool {
+        self.labels.iter().any(|label| label.name == name)
+    }
+}
+
+/// One label of the repository, as `gh label list --json` prints it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct RepoLabel {
+    pub name: String,
+    #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// `d73a4a` (GitHub's label colour, six hex digits, `#` optional) as channels.
+pub fn rgb_of(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let channel = |index: usize| u8::from_str_radix(&hex[index..index + 2], 16).ok();
+    Some((channel(0)?, channel(2)?, channel(4)?))
+}
+
+/// What one fetch brings back.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Fetched {
+    pub issues: Vec<Issue>,
+    pub labels: Vec<RepoLabel>,
 }
 
 /// Trimmed stdout of `gh <arguments>`; the error is `gh`'s last stderr line.
@@ -157,7 +190,7 @@ pub fn parse_issues(json: &str) -> Result<Vec<Issue>, String> {
 }
 
 /// The open issues (newest activity first) followed by the recently closed ones.
-pub fn fetch(repository: &Repository) -> Result<Vec<Issue>, String> {
+pub fn fetch_issues(repository: &Repository) -> Result<Vec<Issue>, String> {
     let slug = repository.slug();
     let mut issues = Vec::new();
     for (state, limit) in [("open", OPEN_LIMIT), ("closed", CLOSED_LIMIT)] {
@@ -167,6 +200,32 @@ pub fn fetch(repository: &Repository) -> Result<Vec<Issue>, String> {
         issues.extend(parse_issues(&json)?);
     }
     Ok(issues)
+}
+
+/// The repository's labels, by name.
+pub fn fetch_labels(repository: &Repository) -> Result<Vec<RepoLabel>, String> {
+    let json = gh(&[
+        "label",
+        "list",
+        "--repo",
+        &repository.slug(),
+        "--limit",
+        "200",
+        "--json",
+        "name,color,description",
+    ])?;
+    let mut labels: Vec<RepoLabel> =
+        serde_json::from_str(&json).map_err(|error| format!("gh label list: {error}"))?;
+    labels.sort_by_key(|label| label.name.to_lowercase());
+    Ok(labels)
+}
+
+/// The issues and the labels.
+pub fn fetch(repository: &Repository) -> Result<Fetched, String> {
+    Ok(Fetched {
+        issues: fetch_issues(repository)?,
+        labels: fetch_labels(repository)?,
+    })
 }
 
 /// The login `gh` is signed in as.
@@ -212,6 +271,29 @@ pub fn assign(repository: &Repository, number: u64, login: &str, on: bool) -> Re
         login,
     ])
     .map(drop)
+}
+
+/// `gh issue edit <n> --add-label a,b --remove-label c`; nothing to change is no call.
+pub fn edit_labels(
+    repository: &Repository,
+    number: u64,
+    add: &[String],
+    remove: &[String],
+) -> Result<(), String> {
+    if add.is_empty() && remove.is_empty() {
+        return Ok(());
+    }
+    let number = number.to_string();
+    let slug = repository.slug();
+    let (added, removed) = (add.join(","), remove.join(","));
+    let mut arguments = vec!["issue", "edit", &number, "--repo", &slug];
+    if !add.is_empty() {
+        arguments.extend(["--add-label", &added]);
+    }
+    if !remove.is_empty() {
+        arguments.extend(["--remove-label", &removed]);
+    }
+    gh(&arguments).map(drop)
 }
 
 pub fn open_in_browser(repository: &Repository, number: u64) -> Result<(), String> {
@@ -322,6 +404,14 @@ mod tests {
     }
 
     #[test]
+    fn label_colours_are_six_hex_digits() {
+        assert_eq!(rgb_of("d73a4a"), Some((0xd7, 0x3a, 0x4a)));
+        assert_eq!(rgb_of("#A2EEEF"), Some((0xa2, 0xee, 0xef)));
+        assert_eq!(rgb_of("red"), None);
+        assert_eq!(rgb_of(""), None);
+    }
+
+    #[test]
     fn issues_read_what_gh_prints() {
         let json = r#"[{"number":1,"title":"t","state":"OPEN","labels":[{"name":"bug","color":"d73a4a"}],
           "assignees":[{"login":"me","name":"Me"}],"milestone":null,"url":"u","body":"b",
@@ -330,6 +420,6 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert!(issues[0].is_open());
         assert!(issues[0].assigned_to("me"));
-        assert_eq!(issues[0].labels[0].name, "bug");
+        assert!(issues[0].has_label("bug"));
     }
 }

@@ -29,4 +29,4 @@
 │                                                                                                                  │
 │                                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- j/k h/l move  s start agent  Enter show agent  o browser  c comment  n new  x close  m assign  r refresh  ? keys  …
+ j/k h/l move  / filter  L labels  s start agent  Enter show agent  ? all keys  q quit

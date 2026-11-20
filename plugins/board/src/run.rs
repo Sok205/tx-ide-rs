@@ -21,8 +21,8 @@ use tx_client::tmux::Ui;
 use tx_core::{Agent, TxCore};
 
 use super::app::{App, Request};
-use super::github::{self, Issue, Repository};
-use super::model::{self, Board};
+use super::github::{self, Fetched, Issue, Repository};
+use super::model::{self, Board, Query};
 use super::ui;
 
 pub const RECORDS_TICK: Duration = Duration::from_secs(3);
@@ -53,8 +53,8 @@ fn agents(core: &TxCore) -> io::Result<Vec<Agent>> {
     model::load_agents(core).map_err(io::Error::other)
 }
 
-fn board(repository: &Repository, issues: &[Issue], agents: &[Agent]) -> Board {
-    Board::build(repository.clone(), issues.to_vec(), agents)
+fn board(repository: &Repository, issues: &[Issue], agents: &[Agent], query: &Query) -> Board {
+    Board::build(repository.clone(), issues.to_vec(), agents, query)
 }
 
 pub fn run(context: Context<'_>) -> io::Result<()> {
@@ -69,7 +69,7 @@ pub fn run(context: Context<'_>) -> io::Result<()> {
 
 /// One fetch at a time, on a thread; its result is read on the loop's next pass.
 struct Fetcher {
-    pending: Option<Receiver<Result<Vec<Issue>, String>>>,
+    pending: Option<Receiver<Result<Fetched, String>>>,
 }
 
 impl Fetcher {
@@ -85,7 +85,7 @@ impl Fetcher {
         self.pending = Some(receiver);
     }
 
-    fn poll(&mut self) -> Option<Result<Vec<Issue>, String>> {
+    fn poll(&mut self) -> Option<Result<Fetched, String>> {
         let outcome = self.pending.as_ref()?.try_recv().ok()?;
         self.pending = None;
         Some(outcome)
@@ -132,12 +132,16 @@ fn event_loop(
             let now = tx_core::events::now();
             match outcome {
                 Ok(fetched) => {
-                    issues = fetched;
+                    issues = fetched.issues;
+                    app.labels = fetched.labels;
                     app.fetched_at = Some(now);
-                    app.refresh(
-                        board(&context.repository, &issues, &agents(context.core)?),
-                        now,
+                    let built = board(
+                        &context.repository,
+                        &issues,
+                        &agents(context.core)?,
+                        &app.query,
                     );
+                    app.refresh(built, now);
                     if !viewer_asked {
                         viewer_asked = true;
                         app.viewer = github::viewer().ok();
@@ -147,11 +151,13 @@ fn event_loop(
             }
             next_github = Instant::now() + GITHUB_TICK;
         }
-        if Instant::now() >= next_records {
+        if app.dirty || Instant::now() >= next_records {
             let now = tx_core::events::now();
             // A store hiccup keeps the last frame; the next tick retries.
             if let Ok(agents) = agents(context.core) {
-                app.refresh(board(&context.repository, &issues, &agents), now);
+                let built = board(&context.repository, &issues, &agents, &app.query);
+                app.refresh(built, now);
+                app.dirty = false;
             }
             next_records = Instant::now() + RECORDS_TICK;
         }
@@ -189,6 +195,13 @@ fn perform(
             .map(|()| true)
             .inspect(|_| app.notice = Some(format!("#{number} reopened"))),
         Request::ToggleAssignee(number) => toggle_assignee(app, repository, number, issues),
+        Request::SetLabels {
+            number,
+            add,
+            remove,
+        } => github::edit_labels(repository, number, &add, &remove)
+            .map(|()| true)
+            .inspect(|_| app.notice = Some(format!("#{number}: labels updated"))),
         Request::Comment(number) => on_terminal(terminal, || {
             github::interactive(repository, &["issue", "comment", &number.to_string()])
         })?
@@ -327,8 +340,16 @@ fn show_agent(tmux: &Ui, resident: Option<&str>, show: Show, name: &str) -> Resu
 }
 
 /// One frame at `columns` × `rows`, as plain text: no terminal and no `gh` needed.
-pub fn snapshot(board: Board, now: f64, fetched_at: f64, columns: u16, rows: u16) -> String {
+pub fn snapshot(
+    board: Board,
+    query: Query,
+    now: f64,
+    fetched_at: f64,
+    columns: u16,
+    rows: u16,
+) -> String {
     let mut app = App::new(board, now);
+    app.query = query;
     app.fetched_at = Some(fetched_at);
     let mut terminal = Terminal::new(TestBackend::new(columns, rows)).expect("test backend");
     terminal
