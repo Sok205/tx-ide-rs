@@ -1,8 +1,8 @@
-//! Definitions: agents (`agents/<name>.md`, Claude's agent format, reduced), skills
+//! The harness: agents (`agents/<name>.md`, Claude's agent format, reduced), skills
 //! (`skills/<name>/SKILL.md`, the Agent Skills standard) and MCP servers (`mcp.json`, Claude's
 //! `.mcp.json` format), read from layered roots. A later root wins by name: an agent, a skill, or
-//! a server key inside `mcp.json`. The roots are `Directories::definition_roots`: the shipped
-//! `<data>/definitions/`, then the user's `<config>/definitions/`.
+//! a server key inside `mcp.json`. The roots are `Directories::harness_roots`: the shipped
+//! `<data>/harness/`, then the user's `<config>/harness/`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -26,13 +26,13 @@ const FRONTMATTER_DELIMITER: &str = "---";
 /// A definition file that cannot be used, at `path` and, when known, a 1-based `line`.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{}{}: {message}", path.display(), line.map(|line| format!(":{line}")).unwrap_or_default())]
-pub struct DefinitionError {
+pub struct HarnessError {
     pub path: PathBuf,
     pub line: Option<usize>,
     pub message: String,
 }
 
-impl DefinitionError {
+impl HarnessError {
     pub fn new(path: &Path, line: Option<usize>, message: impl Into<String>) -> Self {
         Self {
             path: path.to_owned(),
@@ -300,15 +300,12 @@ impl McpDefinitions {
 }
 
 /// Splits `text` into the frontmatter between the opening and closing `---` lines and the body.
-fn split_frontmatter<'a>(
-    path: &Path,
-    text: &'a str,
-) -> Result<(&'a str, &'a str), DefinitionError> {
+fn split_frontmatter<'a>(path: &Path, text: &'a str) -> Result<(&'a str, &'a str), HarnessError> {
     let Some(rest) = text
         .strip_prefix(FRONTMATTER_DELIMITER)
         .and_then(|rest| rest.strip_prefix('\n'))
     else {
-        return Err(DefinitionError::new(
+        return Err(HarnessError::new(
             path,
             Some(1),
             "the file must open with a `---` frontmatter block",
@@ -321,7 +318,7 @@ fn split_frontmatter<'a>(
         }
         offset += line.len();
     }
-    Err(DefinitionError::new(
+    Err(HarnessError::new(
         path,
         Some(1),
         "unclosed frontmatter block",
@@ -332,10 +329,10 @@ fn split_frontmatter<'a>(
 fn parse_frontmatter<T: for<'de> Deserialize<'de>>(
     path: &Path,
     frontmatter: &str,
-) -> Result<T, DefinitionError> {
+) -> Result<T, HarnessError> {
     serde_norway::from_str(frontmatter).map_err(|error| {
         let line = error.location().map(|location| location.line() + 1);
-        DefinitionError::new(path, line, strip_location(&error.to_string()))
+        HarnessError::new(path, line, strip_location(&error.to_string()))
     })
 }
 
@@ -358,8 +355,8 @@ fn stem_of(path: &Path) -> String {
 }
 
 /// Reads `agents/<name>.md`; `name` must match the file name.
-pub fn read_agent(path: &Path) -> Result<AgentDefinition, DefinitionError> {
-    let text = std::fs::read_to_string(path).map_err(|error| DefinitionError::io(path, error))?;
+pub fn read_agent(path: &Path) -> Result<AgentDefinition, HarnessError> {
+    let text = std::fs::read_to_string(path).map_err(|error| HarnessError::io(path, error))?;
     let (frontmatter, body) = split_frontmatter(path, &text)?;
     let parsed: AgentFrontmatter = parse_frontmatter(path, frontmatter)?;
     let agent = AgentDefinition {
@@ -376,7 +373,7 @@ pub fn read_agent(path: &Path) -> Result<AgentDefinition, DefinitionError> {
     };
     let stem = stem_of(path);
     if agent.name != stem {
-        return Err(DefinitionError::new(
+        return Err(HarnessError::new(
             path,
             agent.line_of("name"),
             format!(
@@ -389,9 +386,9 @@ pub fn read_agent(path: &Path) -> Result<AgentDefinition, DefinitionError> {
 }
 
 /// Reads `skills/<name>/SKILL.md`; `name` must match the directory name.
-pub fn read_skill(directory: &Path) -> Result<SkillDefinition, DefinitionError> {
+pub fn read_skill(directory: &Path) -> Result<SkillDefinition, HarnessError> {
     let path = directory.join(SKILL_FILE);
-    let text = std::fs::read_to_string(&path).map_err(|error| DefinitionError::io(&path, error))?;
+    let text = std::fs::read_to_string(&path).map_err(|error| HarnessError::io(&path, error))?;
     let (frontmatter, body) = split_frontmatter(&path, &text)?;
     let parsed: SkillFrontmatter = parse_frontmatter(&path, frontmatter)?;
     let line_of = |key: &str| {
@@ -407,7 +404,7 @@ pub fn read_skill(directory: &Path) -> Result<SkillDefinition, DefinitionError> 
                 .into_iter()
                 .find(|provider| provider.as_str() == text)
                 .ok_or_else(|| {
-                    DefinitionError::new(
+                    HarnessError::new(
                         &path,
                         line_of("provided-by:"),
                         format!("unknown provided-by {text:?} (claude-bundled or claude-synced)"),
@@ -416,7 +413,7 @@ pub fn read_skill(directory: &Path) -> Result<SkillDefinition, DefinitionError> 
         ),
     };
     if provided_by.is_some() && !body.trim().is_empty() {
-        return Err(DefinitionError::new(
+        return Err(HarnessError::new(
             &path,
             None,
             "a reference skill (provided-by) is frontmatter only: the engine supplies the text",
@@ -427,7 +424,7 @@ pub fn read_skill(directory: &Path) -> Result<SkillDefinition, DefinitionError> 
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     if parsed.name != directory_name {
-        return Err(DefinitionError::new(
+        return Err(HarnessError::new(
             &path,
             frontmatter
                 .lines()
@@ -448,10 +445,10 @@ pub fn read_skill(directory: &Path) -> Result<SkillDefinition, DefinitionError> 
 }
 
 /// Reads one `mcp.json`.
-pub fn read_mcp(path: &Path) -> Result<McpDefinitions, DefinitionError> {
-    let text = std::fs::read_to_string(path).map_err(|error| DefinitionError::io(path, error))?;
+pub fn read_mcp(path: &Path) -> Result<McpDefinitions, HarnessError> {
+    let text = std::fs::read_to_string(path).map_err(|error| HarnessError::io(path, error))?;
     let file: McpFile = serde_json::from_str(&text).map_err(|error| {
-        DefinitionError::new(path, Some(error.line()), strip_location(&error.to_string()))
+        HarnessError::new(path, Some(error.line()), strip_location(&error.to_string()))
     })?;
     Ok(McpDefinitions {
         path: path.to_owned(),
@@ -461,27 +458,27 @@ pub fn read_mcp(path: &Path) -> Result<McpDefinitions, DefinitionError> {
 }
 
 /// The entries of `directory`, sorted; none when it does not exist.
-fn entries(directory: &Path) -> Result<Vec<PathBuf>, DefinitionError> {
+fn entries(directory: &Path) -> Result<Vec<PathBuf>, HarnessError> {
     let read = match std::fs::read_dir(directory) {
         Ok(read) => read,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(DefinitionError::io(directory, error)),
+        Err(error) => return Err(HarnessError::io(directory, error)),
     };
     let mut paths = read
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| DefinitionError::io(directory, error))?;
+        .map_err(|error| HarnessError::io(directory, error))?;
     paths.sort();
     Ok(paths)
 }
 
-/// The definition roots, lowest first.
+/// The harness: its roots, lowest first.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Definitions {
+pub struct Harness {
     roots: Vec<PathBuf>,
 }
 
-impl Definitions {
+impl Harness {
     pub fn new(roots: impl IntoIterator<Item = PathBuf>) -> Self {
         Self {
             roots: roots.into_iter().collect(),
@@ -493,7 +490,7 @@ impl Definitions {
     }
 
     /// Every agent name with the file that wins for it.
-    pub fn agent_files(&self) -> Result<BTreeMap<String, PathBuf>, DefinitionError> {
+    pub fn agent_files(&self) -> Result<BTreeMap<String, PathBuf>, HarnessError> {
         let mut files = BTreeMap::new();
         for root in &self.roots {
             for path in entries(&root.join(AGENTS_DIR))? {
@@ -506,7 +503,7 @@ impl Definitions {
     }
 
     /// Every skill name with the directory that wins for it: one holding a `SKILL.md`.
-    pub fn skill_directories(&self) -> Result<BTreeMap<String, PathBuf>, DefinitionError> {
+    pub fn skill_directories(&self) -> Result<BTreeMap<String, PathBuf>, HarnessError> {
         let mut directories = BTreeMap::new();
         for root in &self.roots {
             for path in entries(&root.join(SKILLS_DIR))? {
@@ -531,14 +528,14 @@ impl Definitions {
             .collect()
     }
 
-    pub fn agent(&self, name: &str) -> Result<AgentDefinition, DefinitionError> {
+    pub fn agent(&self, name: &str) -> Result<AgentDefinition, HarnessError> {
         match self.agent_files()?.get(name) {
             Some(path) => read_agent(path),
             None => Err(self.unknown("agent", name, AGENTS_DIR)),
         }
     }
 
-    pub fn skill(&self, name: &str) -> Result<SkillDefinition, DefinitionError> {
+    pub fn skill(&self, name: &str) -> Result<SkillDefinition, HarnessError> {
         match self.skill_directories()?.get(name) {
             Some(directory) => read_skill(directory),
             None => Err(self.unknown("skill", name, SKILLS_DIR)),
@@ -547,7 +544,7 @@ impl Definitions {
 
     /// Every server across the `mcp.json` files, a later file's key winning, with the file it
     /// came from.
-    pub fn mcp_servers(&self) -> Result<BTreeMap<String, (McpServer, PathBuf)>, DefinitionError> {
+    pub fn mcp_servers(&self) -> Result<BTreeMap<String, (McpServer, PathBuf)>, HarnessError> {
         let mut servers = BTreeMap::new();
         for path in self.mcp_files() {
             for (name, server) in read_mcp(&path)?.servers {
@@ -557,7 +554,7 @@ impl Definitions {
         Ok(servers)
     }
 
-    fn unknown(&self, kind: &str, name: &str, directory: &str) -> DefinitionError {
+    fn unknown(&self, kind: &str, name: &str, directory: &str) -> HarnessError {
         let searched = self
             .roots
             .iter()
@@ -565,7 +562,7 @@ impl Definitions {
             .collect::<Vec<_>>()
             .join(", ");
         let user = self.roots.last().map(|root| root.join(directory));
-        DefinitionError::new(
+        HarnessError::new(
             &user.unwrap_or_default(),
             None,
             format!("unknown {kind} {name:?} (searched {searched})"),
@@ -583,7 +580,7 @@ impl Definitions {
         &self,
         mut resolved: ResolvedProfile,
         choice: &DefinitionChoice,
-    ) -> Result<ResolvedProfile, DefinitionError> {
+    ) -> Result<ResolvedProfile, HarnessError> {
         let agent = self.agent(&choice.agent)?;
         if !agent.prompt.is_empty() {
             resolved.text = [resolved.text.as_str(), agent.prompt.as_str()]
@@ -640,7 +637,7 @@ impl Definitions {
         &self,
         names: &[String],
         profiles: &Profiles,
-    ) -> Result<CheckReport, DefinitionError> {
+    ) -> Result<CheckReport, HarnessError> {
         let mut report = CheckReport::default();
         let agent_files = self.agent_files()?;
         let skill_directories = self.skill_directories()?;
@@ -663,7 +660,7 @@ impl Definitions {
                 && !skill_directories.contains_key(name)
                 && !servers.contains_key(name)
             {
-                report.problems.push(DefinitionError::new(
+                report.problems.push(HarnessError::new(
                     self.roots
                         .last()
                         .map(PathBuf::as_path)
@@ -676,7 +673,7 @@ impl Definitions {
         for (name, path) in agent_files.iter().filter(|(name, _)| wanted(name)) {
             report.agents += 1;
             if !is_bare_name(name) {
-                report.problems.push(DefinitionError::new(
+                report.problems.push(HarnessError::new(
                     path,
                     None,
                     format!("agent name {name:?} must match [A-Za-z0-9_-]+"),
@@ -693,7 +690,7 @@ impl Definitions {
         for (name, directory) in skill_directories.iter().filter(|(name, _)| wanted(name)) {
             report.skills += 1;
             if !is_bare_name(name) {
-                report.problems.push(DefinitionError::new(
+                report.problems.push(HarnessError::new(
                     directory,
                     None,
                     format!("skill name {name:?} must match [A-Za-z0-9_-]+"),
@@ -719,13 +716,13 @@ impl Definitions {
     }
 }
 
-/// What `Definitions::check` looked at, and what is wrong.
+/// What `Harness::check` looked at, and what is wrong.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CheckReport {
     pub agents: usize,
     pub skills: usize,
     pub servers: usize,
-    pub problems: Vec<DefinitionError>,
+    pub problems: Vec<HarnessError>,
     /// The checked agents that read, for engine-specific reports.
     pub agent_definitions: Vec<AgentDefinition>,
 }
@@ -750,7 +747,7 @@ fn check_agent(
     report: &mut CheckReport,
 ) {
     let problem =
-        |key: &str, message: String| DefinitionError::new(&agent.path, agent.line_of(key), message);
+        |key: &str, message: String| HarnessError::new(&agent.path, agent.line_of(key), message);
     let problems = &mut report.problems;
     for skill in &agent.skills {
         if !skill_directories.contains_key(skill) {
@@ -801,11 +798,10 @@ fn check_server(
     definitions: &McpDefinitions,
     name: &str,
     server: &McpServer,
-    problems: &mut Vec<DefinitionError>,
+    problems: &mut Vec<HarnessError>,
 ) {
-    let problem = |message: String| {
-        DefinitionError::new(&definitions.path, definitions.line_of(name), message)
-    };
+    let problem =
+        |message: String| HarnessError::new(&definitions.path, definitions.line_of(name), message);
     if !is_bare_name(name) {
         problems.push(problem(format!(
             "server name {name:?} must match [A-Za-z0-9_-]+"
@@ -997,12 +993,12 @@ mod tests {
             &user.join("mcp.json"),
             r#"{"mcpServers": {"m": {"command": "b"}}}"#,
         );
-        let definitions = Definitions::new([shipped, user.clone()]);
-        assert_eq!(definitions.agent("a").unwrap().description, "yours");
-        assert_eq!(definitions.skill("s").unwrap().description, "d");
-        let servers = definitions.mcp_servers().unwrap();
+        let harness = Harness::new([shipped, user.clone()]);
+        assert_eq!(harness.agent("a").unwrap().description, "yours");
+        assert_eq!(harness.skill("s").unwrap().description, "d");
+        let servers = harness.mcp_servers().unwrap();
         assert_eq!(servers["m"].1, user.join("mcp.json"));
-        assert!(definitions.agent("missing").is_err());
+        assert!(harness.agent("missing").is_err());
     }
 
     #[test]
@@ -1028,7 +1024,7 @@ mod tests {
             &root.join("mcp.json"),
             r#"{"mcpServers": {"probe": {"command": "p"}, "web": {"type": "http", "url": "u"}}}"#,
         );
-        let definitions = Definitions::new([root.clone()]);
+        let harness = Harness::new([root.clone()]);
         let roles = ResolvedProfile {
             text: "Roles.".into(),
             skill_dirs: vec![root.join("skills/a")],
@@ -1040,7 +1036,7 @@ mod tests {
             mcp_servers: vec!["web".into()],
             tools: vec!["Read".into(), "Bash".into()],
         };
-        let resolved = definitions.apply(roles, &choice).unwrap();
+        let resolved = harness.apply(roles, &choice).unwrap();
         assert_eq!(resolved.text, "Roles.\n\nTriage.");
         assert_eq!(
             resolved.skill_dirs,
@@ -1055,7 +1051,7 @@ mod tests {
             resolved.mcp_servers.keys().collect::<Vec<_>>(),
             ["probe", "web"]
         );
-        let plain = definitions
+        let plain = harness
             .apply(ResolvedProfile::default(), &DefinitionChoice::new("plain"))
             .unwrap();
         assert_eq!(plain.tools, Some(Vec::new()));
@@ -1064,11 +1060,7 @@ mod tests {
             mcp_servers: vec!["nope".into()],
             ..DefinitionChoice::new("plain")
         };
-        assert!(
-            definitions
-                .apply(ResolvedProfile::default(), &unknown)
-                .is_err()
-        );
+        assert!(harness.apply(ResolvedProfile::default(), &unknown).is_err());
     }
 
     #[test]
@@ -1089,13 +1081,11 @@ mod tests {
                 &format!("---\nname: {skill}\ndescription: d\n---\n"),
             );
         }
-        let definitions = Definitions::new([root.clone()]);
+        let harness = Harness::new([root.clone()]);
         let profiles = Profiles::new(vec![root.join("roles")], vec![root.join("skills")]);
-        let agent = definitions.agent("dev").unwrap();
+        let agent = harness.agent("dev").unwrap();
         let roles = profiles.resolve(&agent.roles).unwrap();
-        let resolved = definitions
-            .apply(roles, &DefinitionChoice::new("dev"))
-            .unwrap();
+        let resolved = harness.apply(roles, &DefinitionChoice::new("dev")).unwrap();
         assert_eq!(
             resolved.skill_dirs,
             [root.join("skills/a"), root.join("skills/b")]
@@ -1118,9 +1108,7 @@ mod tests {
             &root.join("mcp.json"),
             "{\"mcpServers\": {\n  \"probe\": {\"command\": \"${BIN}\", \"env\": {\"A\": \"x${B}\", \"C\": \"${C}\"}},\n  \"web\": {\"type\": \"http\", \"url\": \"u\", \"headers\": {\"Authorization\": \"Bearer ${T}\", \"X\": \"Bearer ${T}\"}}\n}}",
         );
-        let report = Definitions::new([root.clone()])
-            .check(&[], &profiles)
-            .unwrap();
+        let report = Harness::new([root.clone()]).check(&[], &profiles).unwrap();
         let lines: Vec<String> = report
             .problems
             .iter()
@@ -1150,7 +1138,7 @@ mod tests {
             ]
         );
         assert_eq!((report.agents, report.skills, report.servers), (2, 0, 2));
-        let named = Definitions::new([root])
+        let named = Harness::new([root])
             .check(&["probe".to_owned(), "x".to_owned()], &profiles)
             .unwrap();
         assert_eq!((named.agents, named.servers), (0, 1));

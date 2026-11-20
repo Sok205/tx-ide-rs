@@ -4,8 +4,8 @@
 //! resumed, and every hook it wired runs the plugin's own program. Each test that launches an
 //! agent skips itself without tmux.
 //!
-//! What an engine adds to the definitions comes from the engine too: `tx definitions`,
-//! `tx definitions tools`, `tx check` and the warning of `tx create --agent` print what the
+//! What an engine adds to the definitions comes from the engine too: `tx harness ls`,
+//! `tx harness ls tools`, `tx harness check` and the warning of `tx create --agent` print what the
 //! engines report.
 
 mod common;
@@ -248,7 +248,7 @@ fn codex_as_a_plugin_program_lives_through_its_own_hook_entry() {
     life(&CODEX);
 }
 
-// What an engine adds to the definitions (`tx definitions`, `tx definitions tools`, `tx check`,
+// What an engine adds to the definitions (`tx harness ls`, `tx harness ls tools`, `tx harness check`,
 // the warning of `tx create --agent`) comes from the engine. A `claude` that answers `--version`
 // and the probe, and a `codex` whose `app-server` lists one tool: nothing real runs.
 
@@ -277,7 +277,7 @@ exec sleep 600"#;
 /// An agent definition of the operator's that lists a bundled skill and a tool Claude does not
 /// know, the bundled skill's reference, and one MCP server.
 fn definitions(cli: &Cli) {
-    let root = cli.state().join("definitions");
+    let root = cli.state().join("harness");
     std::fs::create_dir_all(root.join("agents")).unwrap();
     std::fs::write(
         root.join("agents/mine.md"),
@@ -317,9 +317,9 @@ fn reported(cli: &Cli, args: &[&str], codex: &str, env: &[(&str, &str)]) -> (i32
 fn what_the_engines_add_is_what_their_programs_report() {
     let as_programs = Cli::new();
     definitions(&as_programs);
-    let mine = "<sandbox>/state/definitions/agents/mine.md";
+    let mine = "<sandbox>/state/harness/agents/mine.md";
 
-    let (code, out, _) = reported(&as_programs, &["definitions"], LISTING_CODEX, &[]);
+    let (code, out, _) = reported(&as_programs, &["harness", "ls"], LISTING_CODEX, &[]);
     assert_eq!(code, 0);
     assert!(
         out.contains(
@@ -328,7 +328,12 @@ fn what_the_engines_add_is_what_their_programs_report() {
         "{out}"
     );
 
-    let (code, out, _) = reported(&as_programs, &["definitions", "tools"], LISTING_CODEX, &[]);
+    let (code, out, _) = reported(
+        &as_programs,
+        &["harness", "ls", "tools"],
+        LISTING_CODEX,
+        &[],
+    );
     assert_eq!(code, 0);
     assert!(
         out.starts_with("claude (Claude Code 2.1.999):\nAgent\tbuilt-in\nAskUserQuestion\tbuilt-in, interactive only\n"),
@@ -348,7 +353,12 @@ fn what_the_engines_add_is_what_their_programs_report() {
         "{out}"
     );
 
-    let (code, out, _) = reported(&as_programs, &["check", "mine"], LISTING_CODEX, &[]);
+    let (code, out, _) = reported(
+        &as_programs,
+        &["harness", "check", "mine"],
+        LISTING_CODEX,
+        &[],
+    );
     assert_eq!(code, 0);
     assert_eq!(
         out,
@@ -361,7 +371,7 @@ fn what_the_engines_add_is_what_their_programs_report() {
 
     let (code, out, _) = reported(
         &as_programs,
-        &["check", "--engine", "claude", "mine"],
+        &["harness", "check", "--engine", "claude", "mine"],
         LISTING_CODEX,
         &[],
     );
@@ -380,7 +390,7 @@ fn what_the_engines_add_is_what_their_programs_report() {
 
     let (code, out, _) = reported(
         &as_programs,
-        &["check", "--engine", "codex", "mine"],
+        &["harness", "check", "--engine", "codex", "mine"],
         LISTING_CODEX,
         &[],
     );
@@ -420,14 +430,17 @@ fn started(cli: &Cli, args: &[&str]) -> Vec<String> {
 fn listing_definitions_starts_no_engine_and_a_check_starts_the_one_it_asks() {
     let cli = Cli::new();
     definitions(&cli);
-    assert_eq!(started(&cli, &["definitions"]), Vec::<String>::new());
-    assert_eq!(started(&cli, &["check", "mine"]), ["engine engine-claude"]);
+    assert_eq!(started(&cli, &["harness", "ls"]), Vec::<String>::new());
     assert_eq!(
-        started(&cli, &["check", "--engine", "claude", "mine"]),
+        started(&cli, &["harness", "check", "mine"]),
         ["engine engine-claude"]
     );
     assert_eq!(
-        started(&cli, &["check", "--engine", "codex", "mine"]),
+        started(&cli, &["harness", "check", "--engine", "claude", "mine"]),
+        ["engine engine-claude"]
+    );
+    assert_eq!(
+        started(&cli, &["harness", "check", "--engine", "codex", "mine"]),
         ["engine engine-codex"]
     );
 }
@@ -437,7 +450,7 @@ fn without_codex_no_engine_lists_mcp_tools_and_codex_cannot_be_checked() {
     let cli = Cli::new();
     definitions(&cli);
     cli.write_yaml("plugins:\n  engine-codex: { enabled: false }\n");
-    let (code, out, _) = reported(&cli, &["definitions", "tools"], LISTING_CODEX, &[]);
+    let (code, out, _) = reported(&cli, &["harness", "ls", "tools"], LISTING_CODEX, &[]);
     assert_eq!(code, 0);
     assert!(
         out.ends_with(
@@ -446,7 +459,12 @@ fn without_codex_no_engine_lists_mcp_tools_and_codex_cannot_be_checked() {
         "{out}"
     );
     assert_eq!(
-        reported(&cli, &["check", "--engine", "codex"], LISTING_CODEX, &[]),
+        reported(
+            &cli,
+            &["harness", "check", "--engine", "codex"],
+            LISTING_CODEX,
+            &[]
+        ),
         (
             1,
             String::new(),
@@ -461,7 +479,7 @@ fn without_codex_no_engine_lists_mcp_tools_and_codex_cannot_be_checked() {
 fn an_mcp_listing_that_fails_as_a_whole_fails_after_every_engines_section() {
     let cli = Cli::new();
     definitions(&cli);
-    let (code, out, err) = reported(&cli, &["definitions", "tools"], REFUSING_CODEX, &[]);
+    let (code, out, err) = reported(&cli, &["harness", "ls", "tools"], REFUSING_CODEX, &[]);
     assert_eq!(code, 1);
     assert!(
         out.ends_with("ScheduleWakeup\t--disable sleep_tool\n"),

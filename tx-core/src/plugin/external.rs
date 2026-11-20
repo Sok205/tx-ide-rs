@@ -657,7 +657,7 @@ pub(super) fn plug_engines(
 
 /// A proxy, with its plugin's id, for the engine of every active plugin that is not hosted
 /// here and that the activation gave its engine kind: what [`TxCore::plug_external`] registers,
-/// and what a command that opens no core (`tx check`, `tx definitions`) asks.
+/// and what a command that opens no core (`tx harness check`, `tx harness ls`) asks.
 pub fn engine_proxies(
     index: &Index,
     activation: &Activation,

@@ -12,8 +12,8 @@ use tx_core::{
     AgentId, CoreError, CreateOptions, ForkOptions, IdleReason, ListFilter, SendOptions, Sender,
     TxCore,
 };
-use tx_core_cli::args::{self, DefinitionKind, Global, Invocation, Verb};
-use tx_core_cli::definitions::Engines;
+use tx_core_cli::args::{self, Global, HarnessKind, Invocation, Verb};
+use tx_core_cli::harness::Engines;
 
 use tx_core_cli::plugins::warn_if_shipped_differ;
 use tx_core_cli::setup::{Failure, Installation, config_file, core_config, load_config};
@@ -146,9 +146,9 @@ fn plugins(global: &Global, json: bool) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `tx check`: the definitions, the plugins, or one of the two. Neither opens a core, and
+/// `tx harness check`: the harness, the plugins, or one of the two. Neither opens a core, and
 /// nothing is written, the plugin index included.
-fn check(
+fn harness_check(
     global: &args::Global,
     engine: Option<tx_core::EngineKind>,
     plugins_only: bool,
@@ -175,7 +175,7 @@ fn check(
         let config = &installation.config;
         let profiles =
             tx_core::profile::Profiles::new(config.profile_dirs.clone(), config.skill_dirs.clone());
-        let checked = tx_core_cli::definitions::check(
+        let checked = tx_core_cli::harness::check(
             &config.directories,
             &profiles,
             &engines,
@@ -183,7 +183,7 @@ fn check(
             names,
             &mut out,
         )
-        .map_err(Failure::Definition)?;
+        .map_err(Failure::Harness)?;
         clean = checked.clean;
         summary = Some(checked.summary);
     }
@@ -191,7 +191,7 @@ fn check(
     if plugins_only || (engine.is_none() && names.is_empty()) {
         let ids = if plugins_only { names } else { &[] };
         if let Some(id) = tx_core_cli::check::unknown(&installation, ids) {
-            eprintln!("tx check: no plugin {id:?}");
+            eprintln!("tx harness check: no plugin {id:?}");
             return Ok(ExitCode::from(1));
         }
         let file = tx_core_cli::setup::config_file(global, &installation.config);
@@ -213,28 +213,28 @@ fn check(
     })
 }
 
-/// `tx definitions [KIND]`. What the active engines add is read only for the kinds that show
+/// `tx harness ls [KIND]`. What the active engines add is read only for the kinds that show
 /// it, agents and tools: those read `config.yaml`, which says which engines are active.
-fn definitions(global: &args::Global, kind: Option<DefinitionKind>) -> Result<ExitCode, Failure> {
+fn harness_ls(global: &args::Global, kind: Option<HarnessKind>) -> Result<ExitCode, Failure> {
     let config = core_config(global)?;
     let directories = config.directories.clone();
     let mut out = std::io::stdout().lock();
     match kind {
-        Some(DefinitionKind::Skills | DefinitionKind::Mcp) => {
-            tx_core_cli::definitions::list(&directories, kind, &[], &mut out)
+        Some(HarnessKind::Skills | HarnessKind::Mcp) => {
+            tx_core_cli::harness::list(&directories, kind, &[], &mut out)
         }
         _ => {
             let installation = tx_core_cli::setup::Installation::read_with(global, config)?;
             let engines = Engines::read(global, &installation);
             match kind {
-                Some(DefinitionKind::Tools) => {
+                Some(HarnessKind::Tools) => {
                     tx_core_cli::tools::list(&directories, &engines, &mut out)
                 }
-                _ => tx_core_cli::definitions::list(&directories, kind, &engines.notes(), &mut out),
+                _ => tx_core_cli::harness::list(&directories, kind, &engines.notes(), &mut out),
             }
         }
     }
-    .map_err(Failure::Definition)?;
+    .map_err(Failure::Harness)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -254,24 +254,24 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     }
     let config = core_config(&invocation.global)?;
     tx_core_cli::update::warn_if_behind(&config.directories);
-    // The definitions are files under two roots: no core to open, nothing created. Neither
+    // The harness is files under two roots: no core to open, nothing created. Neither
     // verb needs `config.yaml` for the warning: the index alone holds the shipped stamp.
     if matches!(
         invocation.verb,
-        Verb::Definitions { .. } | Verb::Check { .. }
+        Verb::HarnessList { .. } | Verb::HarnessCheck { .. }
     ) {
         let index = Index::read(&config, tx_plugin::VERSION);
         warn_if_shipped_differ(&index, &config.directories);
     }
     match &invocation.verb {
-        Verb::Definitions { kind } => {
-            return definitions(&invocation.global, *kind);
+        Verb::HarnessList { kind } => {
+            return harness_ls(&invocation.global, *kind);
         }
-        Verb::Check {
+        Verb::HarnessCheck {
             engine,
             plugins,
             names,
-        } => return check(&invocation.global, *engine, *plugins, names),
+        } => return harness_check(&invocation.global, *engine, *plugins, names),
         _ => {}
     }
     let installation = Installation::read_with(&invocation.global, config)?;
@@ -300,8 +300,8 @@ fn built_in(core: &TxCore, invocation: Invocation) -> Result<ExitCode, Failure> 
         | Verb::Update { .. }
         | Verb::Plugin { .. }
         | Verb::Plugins { .. }
-        | Verb::Definitions { .. }
-        | Verb::Check { .. } => {
+        | Verb::HarnessList { .. }
+        | Verb::HarnessCheck { .. } => {
             unreachable!()
         }
         Verb::Engines => {
@@ -338,13 +338,12 @@ fn built_in(core: &TxCore, invocation: Invocation) -> Result<ExitCode, Failure> 
             if let Some(choice) = &definition
                 && let Some(launch_engine) = core.engine(engine.unwrap_or(defaults.engine))
                 && let Ok(agent) =
-                    tx_core::definitions::Definitions::new(directories.definition_roots())
-                        .agent(&choice.agent)
+                    tx_core::harness::Harness::new(directories.harness_roots()).agent(&choice.agent)
             {
                 let mut summary = agent.summary();
                 summary.skills.extend(choice.skills.iter().cloned());
-                let provided = tx_core_cli::definitions::provided_skills(directories)
-                    .map_err(Failure::Definition)?;
+                let provided =
+                    tx_core_cli::harness::provided_skills(directories).map_err(Failure::Harness)?;
                 let request = tx_core::engine::DefinitionsRequest {
                     agents: std::slice::from_ref(&summary),
                     provided_skills: &provided,

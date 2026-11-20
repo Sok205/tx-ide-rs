@@ -1,4 +1,4 @@
-//! `tx definitions tools`: the names an agent definition's `tools` and `disallowedTools` can use,
+//! `tx harness ls tools`: the names an agent definition's `tools` and `disallowedTools` can use,
 //! as the active engines report them: each engine's own tool names, then the MCP servers'
 //! tools as the first engine that can list them lists them.
 
@@ -6,10 +6,10 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 use tx_core::Directories;
-use tx_core::definitions::{DefinitionError, Definitions, McpServer};
 use tx_core::engine::{EngineTools, ToolsRequest};
+use tx_core::harness::{Harness, HarnessError, McpServer};
 
-use crate::definitions::Engines;
+use crate::harness::Engines;
 
 /// Per active engine in kind order its heading, rows and footer, a blank line between engines
 /// (an engine that reports nothing prints nothing); then a `mcp <server>:` section per server,
@@ -19,9 +19,9 @@ pub fn list(
     directories: &Directories,
     engines: &Engines,
     out: &mut dyn Write,
-) -> Result<(), DefinitionError> {
-    let failed = |message: String| DefinitionError::new(&directories.cache, None, message);
-    let servers: BTreeMap<String, McpServer> = Definitions::new(directories.definition_roots())
+) -> Result<(), HarnessError> {
+    let failed = |message: String| HarnessError::new(&directories.cache, None, message);
+    let servers: BTreeMap<String, McpServer> = Harness::new(directories.harness_roots())
         .mcp_servers()
         .map_err(|error| failed(error.to_string()))?
         .into_iter()

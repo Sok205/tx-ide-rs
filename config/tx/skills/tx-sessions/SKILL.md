@@ -51,7 +51,7 @@ tx create <name> --tag <scope> --cwd <project-root> --parent "$(tx whoami)" \
 
 - `--agent` picks the worker's agent definition: its prompt, tools, skills, and the roles it
   runs on (the shared conventions, COMMON). `developer` is the usual one; `qa` and `orchestrator`
-  also ship, and `tx definitions agents` lists every one, the operator's own included. Leave
+  also ship, and `tx harness ls agents` lists every one, the operator's own included. Leave
   `--role` out: the definition names its roles, and any `--role` replaces them.
 - `--cwd` and `--prompt` are required. `--engine` is `claude` or `codex` (`tx engines` lists
   them); left out, it is the operator's `agent.engine` in `config.yaml` (default `claude`). Keep

@@ -11,8 +11,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::Agent;
-use crate::definitions::McpServer;
 use crate::error::CoreError;
+use crate::harness::McpServer;
 use crate::profile::{Profile, SkillProvider};
 use crate::state::{LlmEngineChange, LlmEngineHook, LlmEngineState};
 
@@ -255,7 +255,7 @@ pub struct DefinitionsRequest<'a> {
     pub cache: &'a Path,
 }
 
-/// What `tx check --engine` prints of one engine: what every launch carries that no flag
+/// What `tx harness check --engine` prints of one engine: what every launch carries that no flag
 /// removes, the problems (each fails the check), and per agent what it gets that its file does
 /// not say.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,7 +276,7 @@ pub struct ToolsRequest<'a> {
 /// The tools of one MCP server as (name, description), or why there are none.
 pub type ServerTools = Result<Vec<(String, String)>, String>;
 
-/// What `tx definitions tools` prints of one engine: a heading line, a row per tool name an
+/// What `tx harness ls tools` prints of one engine: a heading line, a row per tool name an
 /// agent definition can use (`name<TAB>note`), footer lines, and the MCP servers' tools.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EngineTools {
@@ -511,27 +511,27 @@ pub trait LlmEngine: Send + Sync {
     fn warm(&self) {}
 
     /// What this engine adds to every agent, one line each, printed as `# <note>` by
-    /// `tx definitions` and `tx check`. Pure. The default adds nothing.
+    /// `tx harness ls` and `tx harness check`. Pure. The default adds nothing.
     fn notes(&self) -> Vec<String> {
         Vec::new()
     }
 
     /// What this engine would do with the agents that the agents' files do not let one
-    /// expect, printed as warnings by `tx check` and `tx create --agent`. The default warns of
+    /// expect, printed as warnings by `tx harness check` and `tx create --agent`. The default warns of
     /// nothing.
     fn warnings(&self, request: &DefinitionsRequest<'_>) -> Vec<Finding> {
         let _ = request;
         Vec::new()
     }
 
-    /// What `tx check --engine` reports of this engine for the agents. The default reports
+    /// What `tx harness check --engine` reports of this engine for the agents. The default reports
     /// nothing.
     fn check(&self, request: &DefinitionsRequest<'_>) -> Result<EngineCheck, EngineError> {
         let _ = request;
         Ok(EngineCheck::default())
     }
 
-    /// The tool names an agent definition can use on this engine, for `tx definitions tools`.
+    /// The tool names an agent definition can use on this engine, for `tx harness ls tools`.
     /// The default lists none, and no MCP tools.
     fn tools(&self, request: &ToolsRequest<'_>) -> Result<EngineTools, EngineError> {
         let _ = request;

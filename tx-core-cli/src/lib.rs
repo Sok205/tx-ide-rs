@@ -4,8 +4,8 @@
 pub mod args;
 pub mod check;
 pub mod config;
-pub mod definitions;
 pub mod gc;
+pub mod harness;
 pub mod plugins;
 pub mod setup;
 pub mod tools;

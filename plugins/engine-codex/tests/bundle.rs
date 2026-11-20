@@ -28,7 +28,7 @@ fn the_manifest_says_what_the_adapter_answers() {
         r#"{"version":2,"id":"a1","name":"worker","engine":"codex","working_directory":"/w","roles":[],"state":"working","created_at":1.0,"last_modified_at":1.0,"tags":[]}"#,
     )
     .unwrap();
-    // Codex adds nothing to every agent; `tx definitions` prints the manifest's notes.
+    // Codex adds nothing to every agent; `tx harness ls` prints the manifest's notes.
     assert_eq!(engine.notes, adapter.notes());
     assert_eq!(
         engine.methods,

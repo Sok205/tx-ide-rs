@@ -727,7 +727,7 @@ fn shipped_plugins_of_another_tx_are_named_once_and_the_command_carries_on() {
         &["ls"][..],
         &["help"],
         &["plugins"],
-        &["definitions", "skills"],
+        &["harness", "ls", "skills"],
         &["hello"],
     ] {
         assert_eq!(cli.stderr(args, 0), UPGRADE, "tx {args:?}");
@@ -739,8 +739,8 @@ fn shipped_plugins_of_another_tx_are_named_once_and_the_command_carries_on() {
         "an internal verb says nothing"
     );
     assert!(!cli.stderr(&["update"], 0).contains("shipped plugins"));
-    // `tx check` reports it as a problem of its own as well.
-    assert_eq!(cli.stderr(&["check", "--plugins"], 1), UPGRADE);
+    // `tx harness check` reports it as a problem of its own as well.
+    assert_eq!(cli.stderr(&["harness", "check", "--plugins"], 1), UPGRADE);
 
     cli.stamp(env!("CARGO_PKG_VERSION"));
     assert_eq!(cli.stderr(&["ls"], 0), "");

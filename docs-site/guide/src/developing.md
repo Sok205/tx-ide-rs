@@ -142,7 +142,7 @@ resources:
   - keys/notes.tmux
 ```
 
-A verb may not take the name of a built-in (`create`, `send`, `stop`, …): `tx check` reports it
+A verb may not take the name of a built-in (`create`, `send`, `stop`, …): `tx harness check` reports it
 and the built-in stays. `tier` decides which presets install the plugin (`core`, `ide`, `extra`);
 `./install` builds the program of every selected plugin and `tx update` lays the bundle out.
 

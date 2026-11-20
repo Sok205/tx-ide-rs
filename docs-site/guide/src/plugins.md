@@ -38,13 +38,13 @@ same program is the hook command of every agent it launches (`tx-engine-<kind> -
 so a hook is one process.
 
 What an engine adds to the definitions is the engine's to say, not `tx`'s. The `# claude adds to
-every agent's tools: …` line of `tx definitions` and `tx check` is the manifest's `notes`, printed
+every agent's tools: …` line of `tx harness ls` and `tx harness check` is the manifest's `notes`, printed
 without starting the program. The rest is asked of each active engine, over the protocol for a
-bundle: the bundled-skill warning of `tx check` and `tx create --agent` (`warnings`); the
-`<kind>: always present:` lines, the problems and the per-agent notes of `tx check --engine
-<kind>` (`check`); and each engine's section of `tx definitions tools`, with the `mcp <server>:`
+bundle: the bundled-skill warning of `tx harness check` and `tx create --agent` (`warnings`); the
+`<kind>: always present:` lines, the problems and the per-agent notes of `tx harness check --engine
+<kind>` (`check`); and each engine's section of `tx harness ls tools`, with the `mcp <server>:`
 sections of the first engine that can list MCP tools (`tools`; here Codex, through
-`codex app-server`). A disabled engine prints nothing there, and `tx check --engine` refuses it.
+`codex app-server`). A disabled engine prints nothing there, and `tx harness check --engine` refuses it.
 
 **`engine-claude`** registers the Claude Code adapter. It launches a minimal session,
 `claude --session-id <tx id> --strict-mcp-config --setting-sources "" --tools
@@ -56,16 +56,16 @@ Granted skills are delivered as a per-agent plugin named `tx` (`tx:<skill>`) und
 `.claude/tx-plugin/`, passed with `--plugin-dir`. An agent created with `--agent` gets its
 definition's `tools` instead of Bash, Read, Edit and Write. Every agent also gets the one baseline,
 `BASELINE_TOOLS`: `Skill` (so granted skills are listed) and `ToolSearch` (so MCP schemas stay
-deferred); `tx definitions` and `tx check` show it, and nothing else is ever added. The definition's
+deferred); `tx harness ls` and `tx harness check` show it, and nothing else is ever added. The definition's
 `disallowedTools` go as `--disallowedTools`, and its MCP servers as inline `--mcp-config` JSON.
-`tx check --engine claude` lists what every launch carries that no flag removes. The plugin's
+`tx harness check --engine claude` lists what every launch carries that no flag removes. The plugin's
 own settings (`plugins.engine-claude.settings.claude_settings` in `config.yaml`) are Claude
 settings merged into every launch's `--settings`, under tx's own keys; `~/.claude/settings.json`
 is never read. Reference skills (`metadata.provided-by: claude-bundled|claude-synced`, frontmatter only) are
 delivered without their text passing through tx. A synced skill is a link in the per-agent plugin
 to `~/.claude/skills/synced/<account>/<name>/`. Bundled skills stay off (`disableBundledSkills`)
 unless the agent lists one. Claude cannot turn them on one by one, so that turns the whole bundle
-on, and `tx check` and `tx create` warn with the known names. The built-in `plugin-authoring`
+on, and `tx harness check` and `tx create` warn with the known names. The built-in `plugin-authoring`
 plugin is off unless listed. Before each launch the plugin marks the worktree trusted in Claude's config file
 (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`), so it never stops on the trust dialog. It wires Claude's hooks, through `--settings`, to its own program. It keeps
 `conversation_id`, `transcript_path`, `model` and `effort` under `ext.claude`, archives each
@@ -79,7 +79,7 @@ server in your `config.toml`, and switches off the `codex_worktrees` server the 
 Codex silently drops an http server whose bearer variable is unset, and an unset `env_vars` entry),
 its `mcp__<server>__<tool>` cuts as `disabled_tools`, and the built-in tools it leaves out as
 switches (`--disable shell_tool`, `-c web_search="disabled"`, …). Codex has no baseline (skills are
-files, not a tool); `tx check --engine codex` lists what cannot be separated or removed. Codex picks its own conversation id, so it arrives with the first `SessionStart`;
+files, not a tool); `tx harness check --engine codex` lists what cannot be separated or removed. Codex picks its own conversation id, so it arrives with the first `SessionStart`;
 until then a resume or fork is refused. Without a `model` option Codex runs your configured
 default.
 
@@ -203,7 +203,7 @@ layout under `<config>/layouts/` (see [Files and directories](files.md)), as one
 the names, and `path NAME` prints the file to edit, existing or not. `check NAME` reads and
 validates the file as `open` does, with the same errors, but starts no tmux and no agent: it
 prints `NAME ok: N panes` and exits 0, or prints the error and exits 1. It does not check that
-the `agent:` definitions exist (`tx definitions agents` lists them). `open NAME [--cwd DIR]
+the `agent:` definitions exist (`tx harness ls agents` lists them). `open NAME [--cwd DIR]
 [--agent A] [--tag T]… [--detach]` reads the file's `panes:`, one record per pane in build order:
 
 ```yaml

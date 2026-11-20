@@ -18,7 +18,7 @@ pub const MANIFEST_FILE: &str = "plugin.yaml";
 /// In a plugin's directory: the programs its manifest names.
 pub const BIN_DIR: &str = "bin";
 /// What a resource name starts with: the directory under `<data>` it is published to.
-pub const RESOURCE_KINDS: &[&str] = &["keys", "conf", "bin", "nvim", "agents", "definitions"];
+pub const RESOURCE_KINDS: &[&str] = &["keys", "conf", "bin", "nvim", "agents", "harness"];
 
 /// A manifest that cannot be used, at `path` and, when the YAML parser gave one, a 1-based
 /// `line`.
@@ -58,7 +58,7 @@ pub struct Manifest {
     /// Plugin ids it is of no use without.
     #[serde(default)]
     pub requires: Vec<String>,
-    /// Programs it runs, looked up on `PATH` by `tx check`.
+    /// Programs it runs, looked up on `PATH` by `tx harness check`.
     #[serde(default)]
     pub needs: Vec<String>,
     /// Its default settings, spelled out: only ever used to seed `config.yaml`. `Null` when
@@ -139,7 +139,7 @@ pub struct ManifestEngine {
     pub methods: Vec<EngineMethod>,
     /// A fixed answer to `interrupt`, instead of the method.
     pub interrupt: Option<ManifestInterrupt>,
-    /// Printed by `tx definitions` and `tx check`.
+    /// Printed by `tx harness ls` and `tx harness check`.
     pub notes: Vec<String>,
 }
 
@@ -560,7 +560,7 @@ update:
 resources:
   - keys/kill.tmux
   - bin/tmux-kill-tx-session
-  - definitions/skills/tx-kill/SKILL.md
+  - harness/skills/tx-kill/SKILL.md
 ";
 
     #[test]
@@ -965,7 +965,7 @@ resources:
             "bin/tmux-nav",
             "nvim/lua/tx/init.lua",
             "agents/COMMON.md",
-            "definitions/skills/tx-kill/SKILL.md",
+            "harness/skills/tx-kill/SKILL.md",
         ] {
             read("hello", &format!("{MINIMAL}resources: [{name}]\n"))
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
@@ -977,11 +977,11 @@ resources:
             ("\"\"", "invalid resource name"),
             (
                 "kill.tmux",
-                "must be a file under one of keys, conf, bin, nvim, agents, definitions",
+                "must be a file under one of keys, conf, bin, nvim, agents, harness",
             ),
             (
                 "lib/kill.tmux",
-                "must be a file under one of keys, conf, bin, nvim, agents, definitions",
+                "must be a file under one of keys, conf, bin, nvim, agents, harness",
             ),
             ("keys/", "must be a file under one of"),
             ("keys/kill.conf", "a key fragment is keys/<name>.tmux"),

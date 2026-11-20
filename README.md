@@ -68,7 +68,7 @@ selection is not installed: its verbs are unknown to `tx`.
   built with `cargo build --release` and laid out by
   `tx update --bundles plugins --binaries target/release`; the selection itself is recorded in
   `<data>/shipped/.selection`. The same `tx update` runs the pending update steps, publishes the
-  shipped roles and definitions and every plugin's keys and scripts under the data directory, and
+  shipped roles and harness and every plugin's keys and scripts under the data directory, and
   runs each plugin's updater (the IDE's tmux config).
 - `~/.config/tx-ide/config.yaml`, written once by `tx setup` with every default spelled out and
   the selected plugins. A file that exists is never touched.
@@ -83,7 +83,7 @@ It is safe to re-run; a run with another `--preset` or `--plugins` changes the s
 preset again (so a plugin that is new in `full` arrives), rebuilds and lays everything out, and
 never writes `config.yaml` or a dotfile. After rebuilding `tx` by hand, run `tx update`: it runs
 the update steps a newer tx needs, such as moving files (the last one run is in
-`<data>/update-version`; other verbs warn while one is pending), publishes the roles, definitions
+`<data>/update-version`; other verbs warn while one is pending), publishes the roles, harness
 and plugin resources again, then reinstalls the tmux config, which names the binary's path. With
 `tx update --bundles plugins --binaries target/debug --link` the shipped plugins are links into
 the checkout and the build, so a rebuild is live.
@@ -159,8 +159,8 @@ the popup. The graph lists its keys on `?`.
 | `tx rename NAME NEW`, `tx tag NAME TAG…` | rename it; replace its tags |
 | `tx gc [--older-than 1d] [--dry-run]` | delete the build output (`worktree.build_outputs`) in the worktrees of agents that ended longer ago than that |
 | `tx setup [--bundles DIR] [--preset NAME \| --plugins a,b,c \| --upgrade] [--list]` | choose which shipped plugins this machine has (a preset, ids, or a checklist on a terminal), record the selection in `<data>/shipped/.selection` and seed `config.yaml` when there is none |
-| `tx definitions`, `tx check [--plugins [ID…]]` | list and validate the agent definitions, skills and MCP servers; `tx check` then validates the installed plugins (manifests, programs, resources, clashes, `requires`, the config, the shipped stamp), and `--plugins` checks only those |
-| `tx update [--bundles DIR --binaries DIR [--link]]` | bring this machine up to this tx: lay the shipped plugins out from a checkout's `plugins/` and its build (with `--bundles`), run the pending update steps, publish the roles, definitions and plugin resources under the data directory, run each plugin's updater |
+| `tx harness ls`, `tx harness check [--plugins [ID…]]` | list and validate the agent definitions, skills and MCP servers; `tx harness check` then validates the installed plugins (manifests, programs, resources, clashes, `requires`, the config, the shipped stamp), and `--plugins` checks only those |
+| `tx update [--bundles DIR --binaries DIR [--link]]` | bring this machine up to this tx: lay the shipped plugins out from a checkout's `plugins/` and its build (with `--bundles`), run the pending update steps, publish the roles, harness and plugin resources under the data directory, run each plugin's updater |
 | `tx engines`, `tx plugins` | the enabled engines; every plugin and whether it is on |
 
 Plugins add `ui`, `home`, `pick`, `kill`, `whoami`, `chat`, `doctor`, `assistant`, `artifact`,
@@ -183,11 +183,11 @@ agent format, `name`, `description`, `tools`, `mcpServers`, `disallowedTools`, `
 | `claude` | plain Claude Code: every built-in tool, no prompt of its own |
 
 `tx create NAME --agent qa …` picks one; `--skill`, `--mcp` and `--tool` add to it. The shipped
-definitions, the tx skills (`tx-sessions`, `tx-artifacts`, `tx-diff-review`, `tx-code-tours`,
+agent definitions, the tx skills (`tx-sessions`, `tx-artifacts`, `tx-diff-review`, `tx-code-tours`,
 `tx-mockup`, `tx-agents`) and `mcp.json` live in `config/tx/` and are installed under
-`<data>/definitions`. Yours go in `<config>/definitions/` (`agents/<name>.md`,
+`<data>/harness`. Yours go in `<config>/harness/` (`agents/<name>.md`,
 `skills/<name>/SKILL.md`, `mcp.json`) and win by name, as your roles do in `<config>/roles/`.
-`tx definitions` lists what resolves; `tx check` validates it.
+`tx harness ls` lists what resolves; `tx harness check` validates it.
 
 ## Configuration
 
@@ -236,8 +236,8 @@ Five directories, XDG style (on macOS too), named after the application: `tx-ide
 
 | directory | default | holds |
 |---|---|---|
-| config | `~/.config/tx-ide` | `config.yaml`; your `roles/`, `definitions/` and `layouts/` |
-| data | `~/.local/share/tx-ide` | the agent records with their conversation archives, `log.jsonl`, the agents' `worktrees/`, plugin data, the shipped roles and definitions, the IDE's tmux config |
+| config | `~/.config/tx-ide` | `config.yaml`; your `roles/`, `harness/` and `layouts/` |
+| data | `~/.local/share/tx-ide` | the agent records with their conversation archives, `log.jsonl`, the agents' `worktrees/`, plugin data, the shipped roles and harness, the IDE's tmux config |
 | state | `~/.local/state/tx-ide` | locks, each agent's assembled prompt |
 | cache | `~/.cache/tx-ide` | Claude's built-in tool list, per Claude version |
 | run | `$XDG_RUNTIME_DIR/tx-ide`, else `$TMPDIR/tx-ide.$USER` | `tmux.sock`, tx's own tmux server |
@@ -251,7 +251,7 @@ cargo test --workspace --features fuzz                  # the slow property-base
 cargo run -p tx-core-cli -- help                        # the tx binary
 ```
 
-One Cargo workspace: `tx-core`, the library (records, lifecycle, messaging, definitions, the
+One Cargo workspace: `tx-core`, the library (records, lifecycle, messaging, the harness, the
 plugin host; it never parses arguments or reads the environment); `tx-client`, the tmux and nvim
 layer and the `ide` plugin; one crate per plugin under `plugins/`; and `tx-core-cli`, which builds
 `tx` and `txi` (the entry point the engines' hooks run). The architecture, writing an engine or a

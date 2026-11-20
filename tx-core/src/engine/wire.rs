@@ -37,7 +37,7 @@ use serde_json::{Map, Value};
 
 use super::{AgentSummary, DefinitionsRequest, EngineError, EngineTools, Input, LaunchRequest};
 use crate::agent::{Agent, RecordOut};
-use crate::definitions::McpServer;
+use crate::harness::McpServer;
 use crate::messaging::EnvelopeSender;
 use crate::profile::{Profile, SkillProvider};
 use crate::state::{LlmEngineHook, LlmEngineState};

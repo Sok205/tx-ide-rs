@@ -35,7 +35,7 @@ then default):
 |---|---|---|
 | `--plugin-dir`, repeatable | `TX_PLUGIN_PATH`, colon-separated | `<data>/shipped`, then `<config>/plugins` |
 | `--profile-dir`, repeatable | `TX_PROFILE_PATH`, colon-separated | `<data>/roles`, then `<config>/roles` |
-| `--skill-dir`, repeatable | `TX_SKILL_PATH`, colon-separated | `<data>/definitions/skills`, then `<config>/definitions/skills` |
+| `--skill-dir`, repeatable | `TX_SKILL_PATH`, colon-separated | `<data>/harness/skills`, then `<config>/harness/skills` |
 | `--config` | `TX_CONFIG_FILE` | `<config>/config.yaml` |
 | `--env KEY=VALUE`, repeatable | `TX_SESSION_ENV`, a JSON object of strings | none |
 
@@ -51,8 +51,8 @@ line for every plugin program started.
 `agent:` block, the build output `tx gc` may delete in `worktree:`, and which plugins are on,
 with their settings, in `plugins:`; `tx setup` writes it once, when there is none, and nothing
 writes it after that), `roles/` (your own
-roles, never pruned, overriding a shipped role of the same name), `definitions/` (your own
-`agents/` and `skills/`, each overriding a shipped one of the same name), `layouts/` (one `<name>.yaml` per
+roles, never pruned, overriding a shipped role of the same name), `harness/` (your own
+`agents/`, `skills/` and `mcp.json`, each agent, skill or MCP server overriding a shipped one of the same name), `layouts/` (one `<name>.yaml` per
 saved pane layout, opened by `tx layout open <name>`; `tx layout path <name>` prints the file,
 and `tx layout save <name>` writes one from a view), `presets/` (your own presets, one
 `<name>.yaml` each: see "Presets and the selection" below) and `plugins/` (your own plugins, one
@@ -71,7 +71,7 @@ shipped/<id>/               the plugins tx ships, each a directory with a `plugi
                             first plugin root, written by `tx update --bundles`
 shipped/.selection          which plugins are laid out there, written by `tx setup` alone
 shipped/.stamp              the tx and the build they were laid out from
-roles/ definitions/         core's roles, and its agent definitions, skills and MCP servers
+roles/ harness/             core's roles, and its agent definitions, skills and MCP servers
 bin/ keys/ conf/ nvim/      helper scripts, key fragments, the theme, the nvim runtime
                             (these six: the published resources, written by `tx update`)
 tmux.conf                   the server's config, composed by the `ide` updater on `tx update`
@@ -152,8 +152,8 @@ pays for it during the update instead of on the first key; a shipped program ans
 "linked"}`: the shipped plugins link the same core as `tx`, so they must come from its build.
 
 **The published resources.** On every run `tx update` writes the six directories `bin`, `keys`,
-`conf`, `nvim`, `roles` and `definitions` itself, so an install without the `ide` plugin has its
-roles and definitions too. The sources, in order: core's own roles and definitions, then every
+`conf`, `nvim`, `roles` and `harness` itself, so an install without the `ide` plugin has its
+roles and harness too. The sources, in order: core's own roles and harness, then every
 active plugin's resources in plugin order (a plugin's `agents/…` lands under `roles/`). A later
 source replaces an earlier one of the same name, so a plugin of your own can replace a shipped
 role. `bin/` and `keys/` files are executable. A file in those directories that no source
@@ -177,12 +177,14 @@ it ships an update step; `tx update` runs each pending step in order and stamps 
 each, so a failure leaves the stamp at the last success and a re-run continues from there. Steps
 check before they act, so running one twice (a `config` shared across machines) does no harm. A
 fresh install (a `data` that is empty apart from `shipped/` and the stamp, no subdirectory in
-`config`) is stamped at the latest version without running any. Step 1, "plugins run as their own
-programs", is the one an install of v0.1.0 runs after `git pull` and `install --upgrade`: it
+`config`) is stamped at the latest version without running any. An install of v0.1.0 runs steps 1
+and 2 after `git pull` and `install --upgrade`. Step 2, "plugins run as their own programs",
 changes no file and asks for a respawn, because agents started before the upgrade keep reporting
 through `txi hook`, and a respawned agent uses its engine's own program. While the stamp is behind, every other verb prints
 `tx: N update steps pending: run tx update` on stderr once and carries on; when a
 step says so, `tx update` also asks you to respawn the running agents.
+Step 1 moves `config/definitions/` to `config/harness/` (it stops when both exist, for you to
+merge them) and removes `data/definitions/`; respawn the running agents after it.
 
 `log.jsonl` is a notification trail, not the record: each line is at most 512 bytes and written
 with a single append, so `tail -f` never sees a torn line. On an event, re-read the agent with

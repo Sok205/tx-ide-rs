@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::definitions::McpServer;
+use crate::harness::McpServer;
 
 pub const ROLE_SUFFIX: &str = ".md";
 pub const LOCAL_SUFFIX: &str = ".local.md";

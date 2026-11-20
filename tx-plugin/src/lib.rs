@@ -34,6 +34,5 @@ pub const RESERVED_VERBS: &[&str] = &[
     "interrupt",
     "gc",
     "update",
-    "check",
-    "definitions",
+    "harness",
 ];

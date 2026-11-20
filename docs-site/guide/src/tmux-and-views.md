@@ -31,11 +31,11 @@ history limit) and never looks at it again. The IDE's configuration is put there
 in two steps.
 
 **`tx update` publishes the resources.** After the core's update steps it writes, under the data
-directory, core's roles and definitions and every active plugin's resources (`bin/` and `keys/`
-executable, `conf/`, `roles/`, `definitions/` and the nvim runtime plain). Files under those
+directory, core's roles and harness and every active plugin's resources (`bin/` and `keys/`
+executable, `conf/`, `roles/`, `harness/` and the nvim runtime plain). Files under those
 directories that no active plugin provides are deleted, so the installed tree always matches the
 enabled plugins and `tx` needs nothing from the source tree at run time. This step is `tx`'s own:
-an install without the `ide` plugin has its roles and definitions all the same.
+an install without the `ide` plugin has its roles and harness all the same.
 
 **The `ide` plugin composes the server config.** `ide` (`plugins/ide`) has an updater, which
 `tx update` runs after the publish: as the program `tx-ide --tx-update` where the plugin is

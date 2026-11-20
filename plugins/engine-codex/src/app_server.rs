@@ -1,6 +1,6 @@
 //! The MCP servers' tools, from `codex app-server`'s `mcpServerStatus/list`, which starts each
 //! server and asks it (the list comes from the server, so it is the same on every engine): what
-//! `tx definitions tools` shows under `mcp <server>:`.
+//! `tx harness ls tools` shows under `mcp <server>:`.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -9,8 +9,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use serde_json::Value;
-use tx_core::definitions::McpServer;
 use tx_core::engine::ServerTools;
+use tx_core::harness::McpServer;
 
 use crate::{CODEX_BIN, server_overrides};
 

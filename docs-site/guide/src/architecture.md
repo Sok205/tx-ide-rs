@@ -97,9 +97,9 @@ A manifest declares up to five things:
 - **resources**: files of the plugin that `tx update` publishes under the data directory. The
   name is `<kind>/<path>`: `keys/<id>.tmux` (a key-binding fragment), `conf/<file>` (tmux
   config), `bin/<file>` (a helper script), `nvim/…`, `agents/<file>` (a role),
-  `definitions/…`. `tx update` writes core's own roles and definitions, then every active
+  `harness/…`. `tx update` writes core's own roles and harness, then every active
   plugin's resources in plugin order, into `bin`, `keys`, `conf`, `nvim`, `roles` and
-  `definitions`; a later source replaces an earlier one of the same name; see [Files](files.md).
+  `harness`; a later source replaces an earlier one of the same name; see [Files](files.md).
 
 **A plugin written in Rust** is a crate with a type implementing
 [`Plugin`](../internal/tx_core/plugin/trait.Plugin.html): an `id` and a `register` method that

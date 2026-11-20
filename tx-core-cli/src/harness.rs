@@ -1,21 +1,19 @@
-//! `tx definitions` and `tx check`: list and validate the agent, skill and MCP definitions, and
-//! print what the active engines add to them. Both read only the definition roots and
-//! `config.yaml`, never the core's state; an engine that runs as its own program is asked over
-//! the protocol.
+//! `tx harness ls` and `tx harness check`: list and validate the harness: the agent, skill and
+//! MCP definitions, and print what the active engines add to them. Both read only the harness
+//! roots and `config.yaml`, never the core's state; an engine that runs as its own program is
+//! asked over the protocol.
 
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::Arc;
 
-use tx_core::definitions::{
-    AgentDefinition, DefinitionError, Definitions, McpServer, read_agent, read_skill,
-};
 use tx_core::engine::{AgentSummary, DefinitionsRequest, Finding};
+use tx_core::harness::{AgentDefinition, Harness, HarnessError, McpServer, read_agent, read_skill};
 use tx_core::plugin::external::{ProcessEngine, engine_proxies};
 use tx_core::profile::Profiles;
 use tx_core::{Directories, EngineKind, LlmEngine, SkillProvider};
 
-use crate::args::{DefinitionKind, Global};
+use crate::args::{Global, HarnessKind};
 use crate::setup::{Installation, exec_context};
 
 /// The engines a core of this installation would have, without opening one: a proxy for the
@@ -61,8 +59,8 @@ impl Engines {
 /// `SKILL.md`.
 pub fn provided_skills(
     directories: &Directories,
-) -> Result<BTreeMap<String, SkillProvider>, DefinitionError> {
-    Ok(Definitions::new(directories.definition_roots())
+) -> Result<BTreeMap<String, SkillProvider>, HarnessError> {
+    Ok(Harness::new(directories.harness_roots())
         .skill_directories()?
         .into_iter()
         .filter_map(|(name, directory)| Some((name, read_skill(&directory).ok()?.provided_by?)))
@@ -82,17 +80,17 @@ fn place(finding: &Finding) -> String {
 /// agent or skill that does not read is listed as invalid; a broken `mcp.json` fails the listing.
 pub fn list(
     directories: &Directories,
-    kind: Option<DefinitionKind>,
+    kind: Option<HarnessKind>,
     notes: &[String],
     out: &mut dyn Write,
-) -> Result<(), DefinitionError> {
-    let definitions = Definitions::new(directories.definition_roots());
+) -> Result<(), HarnessError> {
+    let harness = Harness::new(directories.harness_roots());
     let kinds = match kind {
         Some(kind) => vec![kind],
-        None => DefinitionKind::ALL.to_vec(),
+        None => HarnessKind::ALL.to_vec(),
     };
     for (index, kind) in kinds.iter().enumerate() {
-        let rows = rows(&definitions, *kind)?;
+        let rows = rows(&harness, *kind)?;
         if kinds.len() > 1 {
             if index > 0 {
                 writeln!(out).ok();
@@ -102,7 +100,7 @@ pub fn list(
         for (name, description) in rows {
             writeln!(out, "{name}\t{description}").ok();
         }
-        if *kind == DefinitionKind::Agents {
+        if *kind == HarnessKind::Agents {
             for note in notes {
                 writeln!(out, "# {note}").ok();
             }
@@ -111,12 +109,9 @@ pub fn list(
     Ok(())
 }
 
-fn rows(
-    definitions: &Definitions,
-    kind: DefinitionKind,
-) -> Result<Vec<(String, String)>, DefinitionError> {
+fn rows(harness: &Harness, kind: HarnessKind) -> Result<Vec<(String, String)>, HarnessError> {
     Ok(match kind {
-        DefinitionKind::Agents => definitions
+        HarnessKind::Agents => harness
             .agent_files()?
             .into_iter()
             .map(|(name, path)| {
@@ -124,7 +119,7 @@ fn rows(
                 (name, described(description))
             })
             .collect(),
-        DefinitionKind::Skills => definitions
+        HarnessKind::Skills => harness
             .skill_directories()?
             .into_iter()
             .map(|(name, directory)| {
@@ -132,7 +127,7 @@ fn rows(
                 (name, described(description))
             })
             .collect(),
-        DefinitionKind::Mcp => definitions
+        HarnessKind::Mcp => harness
             .mcp_servers()?
             .into_iter()
             .map(|(name, (server, _))| {
@@ -145,19 +140,19 @@ fn rows(
                 (name, description)
             })
             .collect(),
-        DefinitionKind::Tools => unreachable!("listed by crate::tools"),
+        HarnessKind::Tools => unreachable!("listed by crate::tools"),
     })
 }
 
-/// The description on one line; a file that does not read is still listed, pointing at `check`.
-fn described(description: Result<String, DefinitionError>) -> String {
+/// The description on one line; a file that does not read is still listed, pointing at `harness check`.
+fn described(description: Result<String, HarnessError>) -> String {
     match description {
         Ok(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
         Err(_) => INVALID.to_owned(),
     }
 }
 
-const INVALID: &str = "(invalid: see `tx check`)";
+const INVALID: &str = "(invalid: see `tx harness check`)";
 
 /// What [`check`] found: whether there were no problems, and what was checked, for the caller to
 /// close with `ok: <summary>` (and more, when it checked more).
@@ -180,8 +175,8 @@ pub fn check(
     engine: Option<EngineKind>,
     names: &[String],
     out: &mut dyn Write,
-) -> Result<Checked, DefinitionError> {
-    let report = Definitions::new(directories.definition_roots()).check(names, profiles)?;
+) -> Result<Checked, HarnessError> {
+    let report = Harness::new(directories.harness_roots()).check(names, profiles)?;
     for problem in &report.problems {
         writeln!(out, "{problem}").ok();
     }
@@ -217,7 +212,7 @@ pub fn check(
     {
         let checked = consulted
             .check(&request)
-            .map_err(|error| DefinitionError::new(&directories.cache, None, error.to_string()))?;
+            .map_err(|error| HarnessError::new(&directories.cache, None, error.to_string()))?;
         for item in &checked.always_present {
             writeln!(out, "{kind}: always present: {item}").ok();
         }

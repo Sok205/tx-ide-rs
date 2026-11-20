@@ -9,7 +9,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::config::{Directories, SHIPPED_PLUGINS_DIR};
+use crate::config::{Directories, SHIPPED_PLUGINS_DIR, USER_HARNESS_DIR};
 
 /// Under the data directory: the last update step applied, one integer and a newline.
 pub const STAMP_FILE: &str = "update-version";
@@ -29,14 +29,55 @@ pub struct UpdateStep {
 }
 
 /// Every update step, in order. Append only.
-pub const UPDATE_STEPS: &[UpdateStep] = &[UpdateStep {
-    version: 1,
-    description: "plugins run as their own programs",
-    run: plugins_run_as_their_own_programs,
-}];
+pub const UPDATE_STEPS: &[UpdateStep] = &[
+    UpdateStep {
+        version: 1,
+        description: "the harness: move <config>/definitions to <config>/harness, remove <data>/definitions",
+        run: definitions_to_harness,
+    },
+    UpdateStep {
+        version: 2,
+        description: "plugins run as their own programs",
+        run: plugins_run_as_their_own_programs,
+    },
+];
 
-/// Changes no file. Agents started before the upgrade keep reporting through `txi hook`; one
-/// respawned wires its engine's own program as its hook command.
+/// The harness directories' name before step 1.
+const DEFINITIONS_DIR: &str = "definitions";
+
+/// Step 1: `definitions/` became `harness/`. The user's tree moves; the shipped one is written
+/// again under `<data>/harness/` by the IDE's updater, so the old one goes, and a symlink there
+/// goes without its target. Running agents link skills under the old path: respawn them.
+fn definitions_to_harness(directories: &Directories) -> io::Result<Outcome> {
+    let old = directories.config.join(DEFINITIONS_DIR);
+    let new = directories.config.join(USER_HARNESS_DIR);
+    if old.symlink_metadata().is_ok() {
+        if new.symlink_metadata().is_ok() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "both {} and {} exist: merge the first into the second by hand, then remove it",
+                    old.display(),
+                    new.display()
+                ),
+            ));
+        }
+        std::fs::rename(&old, &new)?;
+    }
+    let shipped = directories.data.join(DEFINITIONS_DIR);
+    match shipped.symlink_metadata() {
+        Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(&shipped)?,
+        Ok(_) => std::fs::remove_file(&shipped)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(Outcome {
+        respawn_agents: true,
+    })
+}
+
+/// Step 2. Changes no file. Agents started before the upgrade keep reporting through `txi hook`;
+/// one respawned wires its engine's own program as its hook command.
 fn plugins_run_as_their_own_programs(_: &Directories) -> io::Result<Outcome> {
     Ok(Outcome {
         respawn_agents: true,
@@ -286,18 +327,18 @@ mod tests {
     }
 
     #[test]
-    fn the_first_step_changes_no_file_and_asks_for_a_respawn() {
+    fn step_two_changes_no_file_and_asks_for_a_respawn() {
         let (_root, directories) = used_layout();
         let before = entries(&directories.data).unwrap();
         let applied = collect(&directories, UPDATE_STEPS);
-        assert_eq!(applied.len(), 1);
-        assert_eq!(applied[0].version, 1);
-        assert_eq!(applied[0].description, "plugins run as their own programs");
-        assert!(applied[0].outcome.respawn_agents);
+        assert_eq!(applied.len(), 2);
+        assert_eq!(applied[1].version, 2);
+        assert_eq!(applied[1].description, "plugins run as their own programs");
+        assert!(applied[1].outcome.respawn_agents);
         let mut after = entries(&directories.data).unwrap();
         after.retain(|path| !path.ends_with(STAMP_FILE));
         assert_eq!(after, before);
-        assert_eq!(stamp(&directories), "1\n");
+        assert_eq!(stamp(&directories), "2\n");
     }
 
     #[test]
@@ -428,6 +469,88 @@ mod tests {
         let (_root, directories) = used_layout();
         assert!(collect(&directories, &[]).is_empty());
         assert_eq!(stamp(&directories), "0\n");
+    }
+
+    fn old_layout() -> (tempfile::TempDir, Directories) {
+        let (root, directories) = used_layout();
+        let user = directories.config.join("definitions/agents");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("x.md"), "mine").unwrap();
+        let shipped = directories.data.join("definitions/skills/s");
+        std::fs::create_dir_all(&shipped).unwrap();
+        std::fs::write(shipped.join("SKILL.md"), "shipped").unwrap();
+        (root, directories)
+    }
+
+    #[test]
+    fn step_one_moves_the_users_definitions_and_drops_the_shipped_ones() {
+        let (_root, directories) = old_layout();
+        let applied = collect(&directories, UPDATE_STEPS);
+        assert_eq!(applied.len(), 2);
+        assert_eq!(applied[0].version, 1);
+        assert!(applied[0].outcome.respawn_agents);
+        assert_eq!(
+            std::fs::read_to_string(directories.config.join("harness/agents/x.md")).unwrap(),
+            "mine"
+        );
+        assert!(!directories.config.join("definitions").exists());
+        assert!(!directories.data.join("definitions").exists());
+        assert_eq!(stamp(&directories), "2\n");
+        assert!(
+            collect(&directories, UPDATE_STEPS).is_empty(),
+            "a rerun does nothing"
+        );
+    }
+
+    #[test]
+    fn step_one_again_after_a_lost_stamp_changes_nothing() {
+        let (_root, directories) = old_layout();
+        collect(&directories, UPDATE_STEPS);
+        std::fs::remove_file(stamp_path(&directories)).unwrap();
+        std::fs::create_dir_all(directories.data.join("harness")).unwrap();
+        assert_eq!(collect(&directories, UPDATE_STEPS).len(), 2);
+        assert!(directories.config.join("harness/agents/x.md").exists());
+        assert!(directories.data.join("harness").exists());
+    }
+
+    #[test]
+    fn step_one_refuses_when_both_trees_exist() {
+        let (_root, directories) = old_layout();
+        std::fs::create_dir_all(directories.config.join("harness")).unwrap();
+        let error = apply_pending(&directories, |_| {}).unwrap_err();
+        let text = error.to_string();
+        assert!(
+            text.contains(&directories.config.join("definitions").display().to_string()),
+            "{text}"
+        );
+        assert!(
+            text.contains(&directories.config.join("harness").display().to_string()),
+            "{text}"
+        );
+        assert!(directories.config.join("definitions/agents/x.md").exists());
+        assert!(
+            directories.data.join("definitions").exists(),
+            "nothing removed"
+        );
+        assert_eq!(current(&directories).unwrap(), 0);
+    }
+
+    #[test]
+    fn step_one_removes_a_shipped_symlink_without_following_it() {
+        let (root, directories) = used_layout();
+        let target = root.path().join("elsewhere");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("kept"), "").unwrap();
+        std::os::unix::fs::symlink(&target, directories.data.join("definitions")).unwrap();
+        collect(&directories, UPDATE_STEPS);
+        assert!(
+            directories
+                .data
+                .join("definitions")
+                .symlink_metadata()
+                .is_err()
+        );
+        assert!(target.join("kept").exists());
     }
 
     #[test]

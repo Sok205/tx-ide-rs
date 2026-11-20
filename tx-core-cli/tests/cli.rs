@@ -53,7 +53,7 @@ fn usage_errors_exit_2_without_touching_state() {
                 .contains(&format!("unknown verb {retired:?}"))
         );
     }
-    // Nothing beyond what the harness put there: the stand-in definition and the update stamp.
+    // Nothing beyond the harness's stand-in definition and the update stamp.
     assert_eq!(
         std::fs::read_dir(cli.state()).unwrap().count(),
         2,

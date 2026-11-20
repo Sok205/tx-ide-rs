@@ -521,7 +521,7 @@ fn kind_dir(data: &Path, kind: &str) -> PathBuf {
 }
 
 /// Publishes `resources`, each a name and its bytes, under `data`: every `keys/`, `conf/`,
-/// `bin/`, `nvim/`, `agents/` and `definitions/` name is written to its place, and the files in
+/// `bin/`, `nvim/`, `agents/` and `harness/` name is written to its place, and the files in
 /// those six directories that no resource accounts for are removed. `bin/` and `keys/` files
 /// are executable: scripts, and fragments the server config runs. The caller decides which
 /// source wins a name: it is a map.
@@ -1076,8 +1076,8 @@ mod tests {
         assert_eq!(kind_dir(data, "agents"), Path::new("/d/roles"));
         assert_eq!(kind_dir(data, "keys"), Path::new("/d/keys"));
         assert_eq!(
-            published_path(data, "definitions/skills/x/SKILL.md"),
-            Path::new("/d/definitions/skills/x/SKILL.md")
+            published_path(data, "harness/skills/x/SKILL.md"),
+            Path::new("/d/harness/skills/x/SKILL.md")
         );
         assert_eq!(
             published_path(data, "bin/tmux-nav"),
@@ -1097,7 +1097,7 @@ mod tests {
                 ("conf/tmux.conf", "set -g x y\n"),
                 ("nvim/lua/tx.lua", "-- lua\n"),
                 ("agents/COMMON.md", "common\n"),
-                ("definitions/agents/developer.md", "developer\n"),
+                ("harness/agents/developer.md", "developer\n"),
             ]),
         )
         .unwrap();
@@ -1107,7 +1107,7 @@ mod tests {
             ("conf/tmux.conf", "set -g x y\n", 0o644),
             ("nvim/lua/tx.lua", "-- lua\n", 0o644),
             ("roles/COMMON.md", "common\n", 0o644),
-            ("definitions/agents/developer.md", "developer\n", 0o644),
+            ("harness/agents/developer.md", "developer\n", 0o644),
         ] {
             let path = data.join(file);
             assert_eq!(std::fs::read_to_string(&path).unwrap(), text, "{file}");
@@ -1160,7 +1160,7 @@ mod tests {
             "conf/old.conf",
             "nvim/lua/old.lua",
             "roles/OLD.md",
-            "definitions/skills/old/SKILL.md",
+            "harness/skills/old/SKILL.md",
         ];
         let kept = [
             "keys/.installed",
@@ -1181,10 +1181,7 @@ mod tests {
             assert!(data.join(file).is_file(), "{file}");
         }
         assert!(data.join("keys/a.tmux").is_file());
-        assert!(
-            data.join("definitions/skills/old").is_dir(),
-            "directories stay"
-        );
+        assert!(data.join("harness/skills/old").is_dir(), "directories stay");
     }
 
     #[test]
@@ -1222,24 +1219,24 @@ mod tests {
         std::fs::write(victim.join("precious"), "x").unwrap();
         std::fs::create_dir_all(&data).unwrap();
         // The last kind checked: nothing of the earlier ones may be written either.
-        std::os::unix::fs::symlink(&victim, data.join("definitions")).unwrap();
+        std::os::unix::fs::symlink(&victim, data.join("harness")).unwrap();
 
         let error = publish(
             &data,
-            &resources(&[("keys/a.tmux", "a\n"), ("definitions/mcp.json", "{}\n")]),
+            &resources(&[("keys/a.tmux", "a\n"), ("harness/mcp.json", "{}\n")]),
         )
         .unwrap_err();
         assert_eq!(
             error.to_string(),
             format!(
                 "{} is a symlink; refusing to prune",
-                data.join("definitions").display()
+                data.join("harness").display()
             )
         );
         assert!(!data.join("keys").exists());
         assert_eq!(std::fs::read_dir(&victim).unwrap().count(), 1);
 
-        std::fs::remove_file(data.join("definitions")).unwrap();
+        std::fs::remove_file(data.join("harness")).unwrap();
         std::os::unix::fs::symlink(&victim, data.join("roles")).unwrap();
         let error = publish(&data, &resources(&[("agents/COMMON.md", "c\n")])).unwrap_err();
         assert!(matches!(error, Error::SymlinkedKind(path) if path == data.join("roles")));

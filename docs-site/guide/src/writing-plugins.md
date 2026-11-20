@@ -8,7 +8,7 @@ runs it; nothing is compiled into `tx` and nothing is registered anywhere else.
 <root>/<id>/
   plugin.yaml                 the manifest
   bin/<program>               what its verbs run; helper scripts
-  keys/  conf/  nvim/  agents/  definitions/    files it publishes (resources)
+  keys/  conf/  nvim/  agents/  harness/        files it publishes (resources)
   …                           anything else is the plugin's own, read through $TX_PLUGIN_DIR
 ```
 
@@ -144,7 +144,7 @@ id: kill                     # required. [a-z0-9-]+, equal to the directory name
 description: Stop the agent or close the view in the active pane, after a y/n prompt.   # required, one line
 tier: core                   # core | ide | extra (default extra): what a preset selects
 requires: [ide]              # plugin ids it is of no use without
-needs: [fzf]                 # programs it runs, looked up on PATH by `tx check`
+needs: [fzf]                 # programs it runs, looked up on PATH by `tx harness check`
 settings: { editor: nvim }   # its default settings, spelled out: used only to seed config.yaml
 
 verbs:
@@ -181,17 +181,17 @@ resources:                   # files it publishes; the name is the path inside t
 This version reads, checks and acts on every section: `verbs` (above), `engine` (see [An
 engine](#an-engine)), `on-event` (see [An event sink](#an-event-sink-on-event)), and `update` and
 `resources`, which `tx update` runs and publishes (see [Files](files.md)). `tier`, `requires`,
-`needs` and `settings` are for the installer and `tx check`; nothing is refused at run time
+`needs` and `settings` are for the installer and `tx harness check`; nothing is refused at run time
 because of them. `tx setup` (see [Files](files.md)) is what uses them when the shipped plugins
 are chosen:
 
 - `tier` is what a preset selects: `headless` takes tier `core`, `ide` takes `core` and `ide`,
   `full` all three, and a preset of your own names its tiers.
 - `requires`: `tx setup --plugins` and a tick in its checklist add the plugins a plugin requires,
-  and unticking one unticks what requires it. A preset is exact and adds nothing. `tx check`
+  and unticking one unticks what requires it. A preset is exact and adds nothing. `tx harness check`
   reports a requirement that is not installed or is disabled.
 - `needs`: the checklist shows `needs <program> (not found)` for a program that is not on `PATH`,
-  and `tx check` warns about it. The plugin can still be selected.
+  and `tx harness check` warns about it. The plugin can still be selected.
 - `settings` are written into a new `config.yaml`, under the plugin's entry, when `tx setup`
   seeds the file. They are read nowhere else: the plugin's own code holds its defaults, and the
   manifest spells them out for whoever opens the file.
@@ -201,7 +201,7 @@ Rules checked when the manifest is read:
 - `bin` is a plain file name; the program is `<plugin>/bin/<bin>`. Whether it exists is found
   when it is run.
 - A resource name is `<kind>/<path>` with `kind` one of `keys`, `conf`, `bin`, `nvim`, `agents`,
-  `definitions`; `[A-Za-z0-9_./-]+`, no leading `/`, no `..` segment; a key fragment is
+  `harness`; `[A-Za-z0-9_./-]+`, no leading `/`, no `..` segment; a key fragment is
   `keys/<name>.tmux`.
 - `engine.methods` is a subset of `prepare`, `receive_message`, `interrupt`, `archive`, `restore`,
   `warnings`, `check`, `tools`. `interrupt:` and the `interrupt` method exclude each other; its
@@ -226,7 +226,7 @@ enabled, and they cost a plugin only the verb, not its place:
 
 - The built-in verbs are reserved: `help`, `engines`, `plugins`, `create`, `fork`, `respawn`,
   `ls`, `show`, `rename`, `tag`, `send`, `where`, `attach`, `stop`, `interrupt`, `gc`, `update`,
-  `check`, `definitions`. A plugin's verb of one of these names is dropped:
+  `harness`. A plugin's verb of one of these names is dropped:
   `verb "create" is a built-in`.
 - A verb an earlier plugin in plugin order already has is dropped:
   `verb "hello" is already "hello"'s`.
@@ -235,12 +235,12 @@ The plugin stays `active`, and `tx plugins` shows what it lost next to its statu
 
 ### Checking a plugin
 
-`tx check --plugins [ID…]` checks the installed plugins (all, or those named) and nothing else;
-plain `tx check` checks the definitions and then the plugins. It opens no core, starts no
+`tx harness check --plugins [ID…]` checks the installed plugins (all, or those named) and nothing else;
+plain `tx harness check` checks the harness and then the plugins. It opens no core, starts no
 plugin program and writes nothing, not even the index. One line per finding, `path: message` with
 the path of the plugin's `plugin.yaml` unless said otherwise, in plugin order; the exit code is 1
-when any problem was printed. A clean run ends `ok: <n> plugins` (after the definitions' counts,
-for plain `tx check`).
+when any problem was printed. A clean run ends `ok: <n> plugins` (after the harness's counts,
+for plain `tx harness check`).
 
 Problems:
 
@@ -396,9 +396,9 @@ prints the message as the error of the command.
 | `restore`* | `session`, `archive_directory` | `true` or `false` | respawn |
 | `receive_message`* | `sender`, `text` | an input | send |
 | `interrupt`* | `session` | `null`, or `{"input", "state"}` | interrupt |
-| `warnings`* | `agents`, `skills`, `cache` | findings | `tx check`, `tx create --agent` |
-| `check`* | `agents`, `skills`, `cache` | `{"always_present", "problems", "notes"}` | `tx check --engine` |
-| `tools`* | `cache`, `mcp_servers` | a tools report | `tx definitions tools` |
+| `warnings`* | `agents`, `skills`, `cache` | findings | `tx harness check`, `tx create --agent` |
+| `check`* | `agents`, `skills`, `cache` | `{"always_present", "problems", "notes"}` | `tx harness check --engine` |
+| `tools`* | `cache`, `mcp_servers` | a tools report | `tx harness ls tools` |
 
 \* optional: asked only when `engine.methods` lists it. Otherwise tx answers itself, without
 starting the program: nothing to prepare, archive or restore; the standard `<from-user>` /
@@ -527,11 +527,11 @@ the hosted plugins register.
 
 ### What an engine adds: `notes`, `warnings`, `check`, `tools`
 
-`tx definitions`, `tx check` and `tx definitions tools` print what each active engine adds to the
+`tx harness ls`, `tx harness check` and `tx harness ls tools` print what each active engine adds to the
 agent, skill and MCP definitions, in kind order. An engine that says nothing adds nothing.
 
 - `notes` (a manifest key, a list of lines): what the engine adds to every agent, printed as
-  `# <note>` under the agents of `tx definitions` and at the top of `tx check`. tx reads them from
+  `# <note>` under the agents of `tx harness ls` and at the top of `tx harness check`. tx reads them from
   the manifest and never starts the program for them.
 - `warnings`: what the engine would do with an agent that its file does not let one expect.
   Params: `agents`, the agent definitions as `{"name", "path", "tools", "disallowed_tools",
@@ -539,11 +539,11 @@ agent, skill and MCP definitions, in kind order. An engine that says nothing add
   starts); `skills`, every skill of the definition roots that an engine provides,
   `{<name>: "claude-bundled" | "claude-synced"}`; `cache`, a directory the engine may keep what
   it learns in. The answer is a list of findings, `{"path", "line": number | null, "message"}`,
-  printed `<path>:<line>: warning: <message>` by `tx check`, and `tx: warning: <message>` by
+  printed `<path>:<line>: warning: <message>` by `tx harness check`, and `tx: warning: <message>` by
   `tx create --agent` for the engine it launches with. It cannot fail: a broken exchange is no
   warnings and one line on standard error.
 - `check`: the same params. The answer is `{"always_present": [line], "problems": [finding],
-  "notes": [finding]}`, printed by `tx check --engine <kind>` as `<kind>: always present:
+  "notes": [finding]}`, printed by `tx harness check --engine <kind>` as `<kind>: always present:
   <line>`, `<path>:<line>: <message>` (each problem makes the check exit 1) and
   `<path>: <kind>: <message>`.
 - `tools`: params `cache` and `mcp_servers` (the definition roots' servers, as `mcp.json` gives
@@ -551,14 +551,14 @@ agent, skill and MCP definitions, in kind order. An engine that says nothing add
   heading, a `name<TAB>note` row per tool name an agent definition can use, and the footer lines.
   `mcp` is `null` when the engine cannot list MCP tools. Otherwise it is `{"ok": {<server>:
   {"ok": [[tool, description]]} | {"error": why}}}`, or `{"error": why}` when the listing failed
-  as a whole: then `tx definitions tools` prints every engine's section and fails with
+  as a whole: then `tx harness ls tools` prints every engine's section and fails with
   `tx: <cache>: <why>`. The first engine whose report has `mcp` gives the `mcp <server>:`
   sections. When none has, the command ends with
   `# no MCP tools listed: no active engine can list them`.
 
 Each is asked only when `engine.methods` lists it; otherwise tx answers for the engine, with
-nothing. `tx definitions` starts no engine; `tx check` starts each that lists `warnings`;
-`tx check --engine <kind>` starts that one; `tx create --agent` asks the engine it launches with,
+nothing. `tx harness ls` starts no engine; `tx harness check` starts each that lists `warnings`;
+`tx harness check --engine <kind>` starts that one; `tx create --agent` asks the engine it launches with,
 which is then the one program the create starts.
 
 ## A plugin in Rust: the SDK

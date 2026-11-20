@@ -28,7 +28,7 @@ fn the_manifest_says_what_the_adapter_answers() {
         r#"{"version":2,"id":"a1","name":"worker","engine":"claude","working_directory":"/w","roles":[],"state":"working","created_at":1.0,"last_modified_at":1.0,"tags":[]}"#,
     )
     .unwrap();
-    // `tx definitions` and `tx check` print the manifest's notes without starting the program.
+    // `tx harness ls` and `tx harness check` print the manifest's notes without starting the program.
     assert_eq!(engine.notes, adapter.notes());
     assert_eq!(
         engine.methods,

@@ -448,9 +448,9 @@ fn a_fresh_install_is_stamped_at_the_latest_step_without_running_any() {
     );
 }
 
-/// An install that has data and no stamp, or the stamp `0` that v0.1.0 left, has not had step 1.
+/// An install that has data and no stamp, or the stamp `0` that v0.1.0 left, has had no step.
 #[test]
-fn an_install_with_data_runs_the_first_step_once_and_asks_for_a_respawn() {
+fn an_install_with_data_runs_the_steps_once_and_asks_for_a_respawn() {
     for stamp in [None, Some("0\n")] {
         let sandbox = Sandbox::new();
         sandbox.bundle("hello");
@@ -461,7 +461,7 @@ fn an_install_with_data_runs_the_first_step_once_and_asks_for_a_respawn() {
         let out = stdout(&sandbox.update(&["--link"]));
         let lines: Vec<&str> = out.lines().collect();
         assert!(
-            lines.contains(&"update 1: plugins run as their own programs"),
+            lines.contains(&"update 2: plugins run as their own programs"),
             "{out}"
         );
         assert_eq!(
@@ -471,19 +471,22 @@ fn an_install_with_data_runs_the_first_step_once_and_asks_for_a_respawn() {
         );
         assert_eq!(
             std::fs::read_to_string(sandbox.data().join("update-version")).unwrap(),
-            "1\n"
+            "2\n"
         );
         let again = stdout(&sandbox.update(&["--link"]));
-        assert!(!again.contains("update 1:"), "{again}");
+        assert!(
+            !again.contains("update 1:") && !again.contains("update 2:"),
+            "{again}"
+        );
         assert!(!again.contains("respawn running agents"), "{again}");
     }
 }
 
 #[test]
-fn a_verb_warns_of_the_pending_step_until_tx_update_has_run_it() {
+fn a_verb_warns_of_the_pending_steps_until_tx_update_has_run_it() {
     let sandbox = Sandbox::new();
     std::fs::create_dir_all(sandbox.data().join("agents")).unwrap();
-    let warning = "tx: 1 update step pending: run tx update";
+    let warning = "tx: 2 update steps pending: run tx update";
     assert!(stderr(&sandbox.run(&["plugins"])).contains(warning));
     assert!(sandbox.run(&["update"]).status.success());
     assert!(!stderr(&sandbox.run(&["plugins"])).contains(warning));
@@ -693,14 +696,14 @@ fn a_retire_that_fails_is_named_and_the_directory_goes_all_the_same() {
 const FRAGMENT: &str = "#!/usr/bin/env bash\n# keys: H\ntmux bind H display-message hello\n";
 
 #[test]
-fn cores_roles_and_definitions_are_published_without_a_plugin() {
+fn cores_roles_and_harness_are_published_without_a_plugin() {
     let sandbox = Sandbox::new();
     let out = sandbox.ok(&["update"]);
     assert!(!out.contains("ide:"), "{out}");
     for file in [
         "roles/COMMON.md",
-        "definitions/agents/developer.md",
-        "definitions/mcp.json",
+        "harness/agents/developer.md",
+        "harness/mcp.json",
     ] {
         assert!(sandbox.data().join(file).is_file(), "{file}");
     }

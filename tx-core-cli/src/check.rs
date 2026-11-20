@@ -1,4 +1,4 @@
-//! `tx check` for plugins: what is wrong with the installed ones (a problem, exit 1) and what
+//! `tx harness check` for plugins: what is wrong with the installed ones (a problem, exit 1) and what
 //! is only odd (a warning). It reads the installation and the files under it and opens no core:
 //! nothing is created and no plugin program runs.
 
