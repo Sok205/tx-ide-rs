@@ -21,7 +21,7 @@ use tx_client::tmux::Ui;
 use tx_core::{Agent, TxCore};
 
 use super::app::{App, Request};
-use super::github::{self, Fetched, Issue, Repository};
+use super::github::{self, Failure, Fetched, Issue, Repository};
 use super::model::{self, Board, Query};
 use super::ui;
 
@@ -69,7 +69,7 @@ pub fn run(context: Context<'_>) -> io::Result<()> {
 
 /// One fetch at a time, on a thread; its result is read on the loop's next pass.
 struct Fetcher {
-    pending: Option<Receiver<Result<Fetched, String>>>,
+    pending: Option<Receiver<Result<Fetched, Failure>>>,
 }
 
 impl Fetcher {
@@ -85,7 +85,7 @@ impl Fetcher {
         self.pending = Some(receiver);
     }
 
-    fn poll(&mut self) -> Option<Result<Fetched, String>> {
+    fn poll(&mut self) -> Option<Result<Fetched, Failure>> {
         let outcome = self.pending.as_ref()?.try_recv().ok()?;
         self.pending = None;
         Some(outcome)
@@ -132,6 +132,7 @@ fn event_loop(
             let now = tx_core::events::now();
             match outcome {
                 Ok(fetched) => {
+                    app.problem = None;
                     issues = fetched.issues;
                     app.labels = fetched.labels;
                     app.fetched_at = Some(now);
@@ -147,7 +148,10 @@ fn event_loop(
                         app.viewer = github::viewer().ok();
                     }
                 }
-                Err(reason) => app.notice = Some(reason),
+                Err(failure @ (Failure::NotInstalled | Failure::NotLoggedIn(_))) => {
+                    app.problem = Some(failure);
+                }
+                Err(Failure::Failed(reason)) => app.notice = Some(reason),
             }
             next_github = Instant::now() + GITHUB_TICK;
         }
