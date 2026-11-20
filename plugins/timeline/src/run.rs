@@ -1,11 +1,13 @@
 //! The terminal and the event loop: raw mode + alternate screen + mouse capture (restored on
 //! exit and on panic), keys / mouse / resize multiplexed with the refresh tick.
 //!
-//! Enter jumps to the cursor lane's session. Run in a pane, the loop focuses the hosting pane
-//! itself. The resident (viewed through a popup) cannot reach the outer client, so it leaves the
-//! session name in [`GOTO_OPTION`] on its own tmux session and detaches; `tx _timeline-attach`,
-//! which runs on the outer client, picks it up and does the focusing. Every tmux call goes
-//! through `tx-client` against the core's own server.
+//! Enter, a and p show the cursor lane's session through tx-client ([`Ui::show_session`]):
+//! Enter focuses the pane already showing it, a lets the operator pick a pane to attach it into
+//! (attach-to), p nest-attaches it in a popup. Run in a pane, the loop does it itself. The
+//! resident (viewed through a popup) cannot reach the outer client, so it leaves `<mode> <name>`
+//! in [`GOTO_OPTION`] on its own tmux session and detaches; `tx _timeline-attach`, which runs
+//! on the outer client, picks it up. Every tmux call goes through `tx-client` against the core's
+//! own server.
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -18,6 +20,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::crossterm::execute;
 
+use tx_client::show::Show;
 use tx_client::tmux::Ui;
 use tx_core::{CoreError, TxCore};
 
@@ -30,29 +33,8 @@ pub const TICK: Duration = Duration::from_secs(3);
 /// Terminals report several wheel events per physical notch: Ctrl+wheel zoom steps at most
 /// once per this interval.
 pub const WHEEL_ZOOM_INTERVAL: Duration = Duration::from_millis(150);
-/// Session option on the resident's tmux session: the session id Enter asked to jump to.
+/// Session option on the resident's tmux session: `<mode> <session name>` a pick asked for.
 pub const GOTO_OPTION: &str = "@tx_timeline_goto";
-
-/// Focus the pane hosting session `name` for the terminal the caller is shown on. `Err` is the
-/// reason, for the user.
-pub fn focus_session_pane(tmux: &Ui, name: &str) -> Result<(), String> {
-    let client = tmux
-        .display_message("#{client_name}", None)
-        .ok_or_else(|| "not inside tmux".to_owned())?;
-    // The caller's client may be nested in a view's pane; the terminal is the one to move.
-    let (client, _) = tmux
-        .outer_client(&client)
-        .ok_or_else(|| "no terminal client to move".to_owned())?;
-    let pane = tmux
-        .pane_for_session(name, "")
-        .ok_or_else(|| "not attached to any pane".to_owned())?;
-    tmux.run(&["switch-client", "-c", &client, "-t", &pane])
-        .map_err(|error| error.to_string())?;
-    tmux.select_window(&pane);
-    tmux.select_pane(&pane);
-    Ok(())
-}
-
 /// `detach-client -s`: every client viewing `session` (the popup's nested attach) lets go.
 pub fn detach_session(tmux: &Ui, session: &str) -> io::Result<()> {
     tmux.run(&["detach-client", "-s", &format!("={session}")])
@@ -132,8 +114,8 @@ fn event_loop(
                 dispatch(app, terminal, event::read()?, &mut last_wheel_zoom)?;
             }
         }
-        if let Some(index) = app.goto.take() {
-            jump(app, index, tmux, resident)?;
+        if let Some(pick) = app.goto.take() {
+            jump(app, pick, tmux, resident)?;
         }
         if Instant::now() >= next_tick {
             let now = tx_core::events::now();
@@ -153,29 +135,45 @@ fn event_loop(
     Ok(())
 }
 
-/// Enter on lane `index`: focus its session's pane, or tell the user why not.
-fn jump(app: &mut App, index: usize, tmux: &Ui, resident: Option<&str>) -> io::Result<()> {
+/// A pick on lane `index`: show its session that way, or tell the user why not. A focus on a
+/// session no pane shows is declined here, with the timeline still open.
+fn jump(
+    app: &mut App,
+    (show, index): (Show, usize),
+    tmux: &Ui,
+    resident: Option<&str>,
+) -> io::Result<()> {
     let lane = &app.payload.lanes[index];
     let outcome = if !lane.live {
         Err("not running".to_owned())
+    } else if show == Show::Focus && tmux.pane_for_session(&lane.name, "").is_none() {
+        Err("not attached to any pane".to_owned())
     } else {
         match resident {
-            Some(session) => {
-                if tmux.pane_for_session(&lane.name, "").is_none() {
-                    Err("not attached to any pane".to_owned())
-                } else {
-                    tmux.set_session_option(session, GOTO_OPTION, &lane.name)
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| detach_session(tmux, session).map_err(|e| e.to_string()))
-                }
-            }
-            None => focus_session_pane(tmux, &lane.name),
+            Some(session) => tmux
+                .set_session_option(
+                    session,
+                    GOTO_OPTION,
+                    &format!("{} {}", show.name(), lane.name),
+                )
+                .map_err(|error| error.to_string())
+                .and_then(|()| detach_session(tmux, session).map_err(|e| e.to_string())),
+            None => show_here(tmux, show, &lane.name),
         }
     };
     if let Err(reason) = outcome {
         app.notice = Some(format!("{}: {reason}", lane.name));
     }
     Ok(())
+}
+
+/// Shows session `name` from the pane this timeline runs in.
+fn show_here(tmux: &Ui, show: Show, name: &str) -> Result<(), String> {
+    let client = tmux
+        .display_message("#{client_name}", None)
+        .ok_or_else(|| "not inside tmux".to_owned())?;
+    let pane = tmux.current_pane_id();
+    tmux.show_session(&client, show, name, pane.as_deref())
 }
 
 fn is_wheel_zoom(mouse: &ratatui::crossterm::event::MouseEvent) -> bool {

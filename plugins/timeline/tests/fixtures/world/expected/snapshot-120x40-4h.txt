@@ -37,4 +37,4 @@ ALPHA (2)                                                                       
                                                                                                                       ┃
                                                                                                                       ┃
 claude-sonnet-4 · effort medium · ctx — · reviewer · claude · idle · 11 msgs · 1 messages
-h/l pan  [ ] zoom  j/k lane  enter go  tab/shift-tab message  / search  s sys  i idle  n now  q   2.6m/col follow
+h/l pan  [ ] zoom  j/k lane  ⏎ focus  a/p attach/popup  tab msg  / search  s sys  i idle  n now  q   2.6m/col follow

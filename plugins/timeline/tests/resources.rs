@@ -26,8 +26,8 @@ fn the_key_fragment_declares_prefix_shift_t() {
     let text = std::str::from_utf8(keys[0].bytes).unwrap();
     assert!(text.starts_with("#!"), "{text}");
     assert!(text.lines().any(|line| line == "# keys: T"), "{text}");
-    assert!(text.contains("bind T display-popup"), "{text}");
-    assert!(text.contains("_timeline-attach"), "{text}");
+    assert!(text.contains("bind T run-shell"), "{text}");
+    assert!(text.contains("_timeline-open"), "{text}");
 }
 
 #[test]
@@ -36,6 +36,7 @@ fn the_verbs_are_registered() {
     for verb in [
         "timeline",
         "_timeline-resident",
+        "_timeline-open",
         "_timeline-attach",
         "_timeline-json",
     ] {

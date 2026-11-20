@@ -1,6 +1,7 @@
 //! `tx timeline` (the swimlane TUI, `--snapshot`, `health`), `_timeline-resident` (the TUI a
-//! popup attaches to), `_timeline-attach` (prefix+T: start or attach the resident) and
-//! `_timeline-json` (the payload as the artifact-browser's `/api/timeline` JSON, for parity
+//! popup attaches to), `_timeline-open` (prefix+T: the popup on the client the key was pressed
+//! on), `_timeline-attach` (inside the popup: start or attach the resident, then show what a
+//! pick asked for) and `_timeline-json` (the payload as the artifact-browser's `/api/timeline` JSON, for parity
 //! diffs against main's `tx _timeline-json`).
 
 use std::fs::OpenOptions;
@@ -8,7 +9,8 @@ use std::io::Write;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use tx_client::tmux::Ui;
+use tx_client::show::Show;
+use tx_client::tmux::{Ui, shell_quote};
 use tx_client::views::{self, ViewKind, ViewRequest};
 use tx_core::{TxCore, Verb, VerbError, VerbIo};
 
@@ -17,13 +19,17 @@ use crate::model::{Builder, DEFAULT_DAYS, load_sessions};
 use crate::{PLUGIN_ID, run};
 
 pub const RESIDENT_VERB: &str = "_timeline-resident";
+const ATTACH_VERB: &str = "_timeline-attach";
 /// The tmux session (a view, not a record) hosting the resident timeline.
 pub const POPUP_SESSION: &str = "tx-timeline";
 const POPUP_LOCK: &str = "popup.lock";
 const DEFAULT_SNAPSHOT_COLUMNS: u16 = 120;
 const DEFAULT_SNAPSHOT_ROWS: u16 = 40;
 const RESIDENT_WINDOW: &str = "30m";
-/// The inside of prefix+T's popup (`tmux/keys.tmux`: 118×30 less its border): the resident's
+/// prefix+T's popup.
+const POPUP_COLUMNS: &str = "118";
+const POPUP_ROWS: &str = "30";
+/// The inside of prefix+T's popup (118×30 less its border): the resident's
 /// window is exactly this, or the popup clips its right columns (now, `▸`) and its footer.
 const POPUP_INSIDE_COLUMNS: &str = "116";
 const POPUP_INSIDE_ROWS: &str = "28";
@@ -38,6 +44,7 @@ pub fn verbs() -> Vec<Arc<dyn Verb>> {
     vec![
         Arc::new(Timeline { resident: false }),
         Arc::new(Timeline { resident: true }),
+        Arc::new(TimelineOpen),
         Arc::new(TimelineAttach),
         Arc::new(TimelineJson),
     ]
@@ -196,17 +203,22 @@ impl Verb for Timeline {
     }
 }
 
-/// `<tx> <cli_arguments> _timeline-resident --last 30m`, as argv.
-fn resident_argv(core: &TxCore) -> Result<Vec<String>, VerbError> {
+/// `<tx> <cli_arguments> <arguments>`, as argv.
+fn tx_argv(core: &TxCore, arguments: &[&str]) -> Result<Vec<String>, VerbError> {
     let exe = std::env::current_exe().map_err(|error| failed(format!("current exe: {error}")))?;
     let mut words = vec![exe.to_string_lossy().into_owned()];
     words.extend(core.config().cli_arguments().iter().cloned());
-    words.extend([
-        RESIDENT_VERB.to_owned(),
-        "--last".to_owned(),
-        RESIDENT_WINDOW.to_owned(),
-    ]);
+    words.extend(arguments.iter().map(|word| (*word).to_owned()));
     Ok(words)
+}
+
+/// `<tx> <cli_arguments> <arguments>`, as one shell command.
+fn tx_command(core: &TxCore, arguments: &[&str]) -> Result<String, VerbError> {
+    Ok(tx_argv(core, arguments)?
+        .iter()
+        .map(|word| shell_quote(word))
+        .collect::<Vec<_>>()
+        .join(" "))
 }
 
 /// Starts the resident view unless it is running, and sizes its window to the popup's inside
@@ -214,7 +226,7 @@ fn resident_argv(core: &TxCore) -> Result<Vec<String>, VerbError> {
 /// hold the popup lock.
 fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
     if !ui.has_session(POPUP_SESSION) {
-        let argv = resident_argv(core)?;
+        let argv = tx_argv(core, &[RESIDENT_VERB, "--last", RESIDENT_WINDOW])?;
         views::open(
             ui,
             &ViewRequest {
@@ -246,23 +258,74 @@ fn ensure_resident(core: &TxCore, ui: &Ui) -> Result<(), VerbError> {
     Ok(())
 }
 
+/// `_timeline-open <pane> <client>`: prefix+T. The popup cannot expand formats in its command,
+/// so the bind runs this through `run-shell`, which hands over the pane the key was pressed in
+/// and the client it was pressed on.
+struct TimelineOpen;
+
+impl Verb for TimelineOpen {
+    fn name(&self) -> &'static str {
+        "_timeline-open"
+    }
+
+    fn usage(&self) -> &'static str {
+        "_timeline-open <pane> <client>   prefix+T: the resident timeline in a popup (internal)"
+    }
+
+    fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
+        let [pane, client] = argv else {
+            say(io.stderr, "usage: tx _timeline-open <pane> <client>\n")?;
+            return Ok(2);
+        };
+        let command = tx_command(core, &[ATTACH_VERB, pane, client])?;
+        Ui::from_core(core)
+            .run(&[
+                "display-popup",
+                "-c",
+                client,
+                "-E",
+                "-w",
+                POPUP_COLUMNS,
+                "-h",
+                POPUP_ROWS,
+                "-x",
+                "C",
+                "-y",
+                "1",
+                "-T",
+                " timeline ",
+                &command,
+            ])
+            .map_err(failed)?;
+        Ok(0)
+    }
+}
+
 /// The popup is a client of a persistent resident timeline, so closing it keeps the cache warm.
+/// A pick in the resident (Enter / a / p) is shown once the attach returns, through tx-client
+/// ([`Ui::show_session`], safe from inside this popup). `<pane> <client>` are where prefix+T
+/// was pressed. Without them (the home TUI's popup) the client is the caller's and attach-to
+/// starts on whatever pane is active: from inside a popup tmux cannot tell which pane it covers.
 struct TimelineAttach;
 
 impl Verb for TimelineAttach {
     fn name(&self) -> &'static str {
-        "_timeline-attach"
+        ATTACH_VERB
     }
 
     fn usage(&self) -> &'static str {
-        "_timeline-attach   start or attach the resident timeline; q detaches (prefix+T, internal)"
+        "_timeline-attach [<pane> <client>]   start or attach the resident timeline; q detaches (internal)"
     }
 
     fn run(&self, core: &TxCore, io: &mut VerbIo<'_>, argv: &[String]) -> Result<i32, VerbError> {
-        if !argv.is_empty() {
-            say(io.stderr, "usage: tx _timeline-attach\n")?;
-            return Ok(2);
-        }
+        let (pane, client) = match argv {
+            [] => (None, None),
+            [pane, client] => (Some(pane.as_str()), Some(client.clone())),
+            _ => {
+                say(io.stderr, "usage: tx _timeline-attach [<pane> <client>]\n")?;
+                return Ok(2);
+            }
+        };
         let ui = Ui::from_core(core);
         let dir = core.config().plugin_data_dir(PLUGIN_ID);
         tx_chat::ensure_dir(&dir).map_err(|error| failed(format!("{}: {error}", dir.display())))?;
@@ -283,9 +346,8 @@ impl Verb for TimelineAttach {
             .env_remove("TMUX")
             .status()
             .map_err(failed)?;
-        // Enter in the resident left the target behind and detached us; this process runs on
-        // the outer client, so the focusing happens here.
-        if let Some(target) = ui.session_option(POPUP_SESSION, run::GOTO_OPTION) {
+        // A pick in the resident left `<mode> <name>` behind and detached us.
+        if let Some(pick) = ui.session_option(POPUP_SESSION, run::GOTO_OPTION) {
             ui.quiet(&[
                 "set-option",
                 "-u",
@@ -293,10 +355,16 @@ impl Verb for TimelineAttach {
                 &format!("={POPUP_SESSION}:"),
                 run::GOTO_OPTION,
             ]);
-            if let Err(reason) = run::focus_session_pane(&ui, &target)
-                && let Some(client) = ui.display_message("#{client_name}", None)
-            {
-                ui.display_status(&client, &format!("timeline: {target}: {reason}"));
+            let (show, name) = pick
+                .split_once(' ')
+                .ok_or_else(|| failed(format!("{}: {pick:?}", run::GOTO_OPTION)))?;
+            let client = client
+                .or_else(|| ui.display_message("#{client_name}", None))
+                .ok_or_else(|| failed("not inside tmux"))?;
+            let show = Show::parse(show)
+                .ok_or_else(|| failed(format!("{}: {pick:?}", run::GOTO_OPTION)))?;
+            if let Err(reason) = ui.show_session(&client, show, name, pane) {
+                ui.display_status(&client, &format!("timeline: {name}: {reason}"));
             }
         }
         Ok(status.code().unwrap_or(1))

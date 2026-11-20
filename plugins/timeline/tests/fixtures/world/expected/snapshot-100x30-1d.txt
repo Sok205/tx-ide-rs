@@ -27,4 +27,4 @@ ALPHA (2)                                                      ┊              
                                                                                                   ┃
                                                                                                   ┃
 claude-haiku-4 · effort — · ctx — · scratch@Oct10 · claude · killed · 2 msgs · 0 messages
-h/l pan  [ ] zoom  j/k lane  enter go  tab/shift-tab message  / search  s sys  i idle  n now  q   20
+h/l pan  [ ] zoom  j/k lane  ⏎ focus  a/p attach/popup  tab msg  / search  s sys  i idle  n now  q
