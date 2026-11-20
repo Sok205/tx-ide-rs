@@ -17,6 +17,7 @@ tier `ide`, and `full`, the default, adds tier `extra`.
 | `labels` | core | `tx-labels` |
 | `setup` | core | `tx-setup` |
 | `assistant` | ide | `tx-assistant` |
+| `board` | ide | `tx-board` |
 | `edit` | ide | `tx-edit` |
 | `graph` | ide | `tx-graph` |
 | `home` | ide | `tx-home` |
@@ -176,6 +177,21 @@ markers; `timeline health` prints, per agent record, what the timeline can read 
 a picks a pane to attach the agent into (h/j/k/l, arrows, a pane number or a click, under a gold border, starting
 on the pane prefix+T was pressed in; Enter attaches, Esc cancels), p opens it in a popup.
 Tier `ide`. Its verbs run as the program `tx-timeline` (`plugins/timeline/plugin.yaml`).
+
+**`board`**: `board` draws the GitHub issue board of the checkout you are in, through `gh`. The
+repository is `--repo OWNER/NAME`, else the checkout's `git config tx.board.repository` (for a
+checkout whose issues live in another repository), else its GitHub `origin`, else
+`plugins.board.settings.repository`. The columns: Backlog (open,
+unassigned), In progress (assigned, or with a tx agent on it), Done (closed, the 20 most recent),
+and the body of the selected issue below. A card shows the agents tagged `issue-<n>` and their
+state. `s` starts a `developer` agent on the issue in that checkout, tagged and prompted with it;
+Enter, a and p show the agent working on it as the timeline shows a lane; `o` opens the issue in
+the browser, `c` comments and `n` files an issue (`gh` opens your editor in the view), `x` closes
+or reopens, `m` assigns you or unassigns you, `r` fetches now (every 60 s otherwise), `?` lists
+the keys. prefix+b opens the resident board of the pane's checkout in a popup (q detaches, it
+stays warm; one resident per repository). `--snapshot` prints one frame as text. Tier `ide` (it
+requires `ide` and needs `gh` and `git`). Its verbs run as the program `tx-board`
+(`plugins/board/plugin.yaml`).
 
 **`graph`**: `graph` draws the agents as a graph: columns by lineage depth, dashed edges for
 lineage, and solid edges for the messages agents (and you, the node "you") sent each other in the

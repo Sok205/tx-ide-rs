@@ -45,6 +45,7 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"/usr/bin/env bash {state}/keys/ide.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/artifacts.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/assistant.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/board.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/chat.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/edit.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/graph.tmux\"\n\
@@ -261,6 +262,7 @@ fn update_materialises_resources() {
         ("timeline", "keys=T"),
         ("graph", "keys=g"),
         ("home", "keys=m"),
+        ("board", "keys=b"),
     ] {
         assert!(
             installed

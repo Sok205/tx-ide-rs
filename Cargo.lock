@@ -1767,6 +1767,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-board"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tx-client",
+ "tx-core",
+ "tx-plugin",
+]
+
+[[package]]
 name = "tx-chat"
 version = "0.1.0"
 dependencies = [
