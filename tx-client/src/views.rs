@@ -38,10 +38,12 @@ pub enum ViewKind {
     Graph,
     Tutor,
     Mockup,
+    /// The resident GitHub issue board behind prefix+b.
+    Board,
 }
 
 impl ViewKind {
-    pub const ALL: [ViewKind; 9] = [
+    pub const ALL: [ViewKind; 10] = [
         ViewKind::Home,
         ViewKind::Editor,
         ViewKind::Diff,
@@ -51,6 +53,7 @@ impl ViewKind {
         ViewKind::Graph,
         ViewKind::Tutor,
         ViewKind::Mockup,
+        ViewKind::Board,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -64,12 +67,13 @@ impl ViewKind {
             ViewKind::Graph => "graph",
             ViewKind::Tutor => "tutor",
             ViewKind::Mockup => "mockup",
+            ViewKind::Board => "board",
         }
     }
 
     /// Whether the picker's Enter may replace one of this view's shell panes with a nested
     /// attach: the home base and the tutor (its viewer pane) are built for that; a shell,
-    /// editor, diff, tour, mockup, timeline or graph view is the operator's own and gets the client
+    /// editor, diff, tour, mockup, timeline, graph or board view is the operator's own and gets the client
     /// switched.
     pub fn hosts_nested_attaches(self) -> bool {
         matches!(self, ViewKind::Home | ViewKind::Tutor)
@@ -78,7 +82,7 @@ impl ViewKind {
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "unknown view kind {0:?} (expected home, editor, diff, tour, shell, timeline, graph, tutor or mockup)"
+    "unknown view kind {0:?} (expected home, editor, diff, tour, shell, timeline, graph, tutor, mockup or board)"
 )]
 pub struct InvalidViewKind(pub String);
 
@@ -553,6 +557,7 @@ mod tests {
             ViewKind::Mockup,
             ViewKind::Timeline,
             ViewKind::Graph,
+            ViewKind::Board,
         ] {
             assert!(!kind.hosts_nested_attaches(), "{kind}");
         }
