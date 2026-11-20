@@ -23,6 +23,9 @@ const ATTACH_VERB: &str = "_board-attach";
 /// The tmux sessions (views, not records) hosting the resident boards: one per repository.
 pub const POPUP_SESSION_PREFIX: &str = "tx-board-";
 const POPUP_LOCK: &str = "popup.lock";
+/// Session option on a resident: the build of the program that started it, so an attach after
+/// an upgrade starts a fresh one instead of showing the old process.
+const BUILD_OPTION: &str = "@tx-board-build";
 const DEFAULT_SNAPSHOT_COLUMNS: u16 = 120;
 const DEFAULT_SNAPSHOT_ROWS: u16 = 40;
 /// prefix+b's popup, and its inside (less the border) that the resident's window is sized to.
@@ -328,10 +331,27 @@ fn tx_command(core: &TxCore, arguments: &[&str]) -> String {
         .join(" ")
 }
 
+/// This program's build, as a resident records it: the modification time of its binary.
+fn build_stamp() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| std::fs::metadata(exe).ok())
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|age| age.as_secs().to_string())
+        .unwrap_or_default()
+}
+
 /// Starts the resident view of `place` unless it is running, and sizes its window to the
-/// popup's inside on every attach. Callers hold the popup lock.
+/// popup's inside on every attach. A resident left by an older build is closed and started
+/// again, so an upgrade shows on the next prefix+b. Callers hold the popup lock.
 fn ensure_resident(core: &TxCore, ui: &Ui, place: &Place) -> Result<String, VerbError> {
     let session = resident_session(&place.repository);
+    let stamp = build_stamp();
+    if ui.has_session(&session) && ui.session_option(&session, BUILD_OPTION) != Some(stamp.clone())
+    {
+        views::close(ui, &session).map_err(failed)?;
+    }
     if !ui.has_session(&session) {
         let slug = place.repository.slug();
         let mut arguments = vec![RESIDENT_VERB, "--repo", &slug];
@@ -361,8 +381,10 @@ fn ensure_resident(core: &TxCore, ui: &Ui, place: &Place) -> Result<String, Verb
             },
         )
         .map_err(failed)?;
-        ui.set_session_option(&session, "status", "off")
-            .map_err(failed)?;
+        for (option, value) in [("status", "off"), (BUILD_OPTION, stamp.as_str())] {
+            ui.set_session_option(&session, option, value)
+                .map_err(failed)?;
+        }
     }
     ui.run(&[
         "resize-window",
