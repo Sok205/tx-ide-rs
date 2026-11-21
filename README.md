@@ -136,6 +136,7 @@ attach also starts the assistant in the background.
 | prefix+g | the agent graph |
 | prefix+T | the timeline |
 | prefix+b | the GitHub issue board of the pane's checkout |
+| prefix+P | switch plugins on and off |
 | prefix+a | in an agent: the artifacts it touched, its parent and children; in a view: back to its agent |
 | prefix+s | refresh the labels, then `choose-tree` |
 | prefix+\| / prefix+- | split right / below |
@@ -167,7 +168,7 @@ the popup. The graph lists its keys on `?`.
 | `tx engines`, `tx plugins` | the enabled engines; every plugin and whether it is on |
 
 Plugins add `ui`, `home`, `pick`, `kill`, `whoami`, `chat`, `doctor`, `assistant`, `artifact`,
-`group`, `tour`, `timeline`, `board`, `graph`, `layout`, `mockup` and `tutor`. `tx help` prints every verb
+`group`, `tour`, `timeline`, `board`, `switch`, `graph`, `layout`, `mockup` and `tutor`. `tx help` prints every verb
 with its flags; verbs starting with `_` are internal, run by key bindings and hooks.
 
 ## Agent definitions

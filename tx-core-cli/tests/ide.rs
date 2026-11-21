@@ -54,6 +54,7 @@ fn expected_conf(cli: &Cli) -> String {
          run-shell \"/usr/bin/env bash {state}/keys/labels.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/picker.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/spawn.tmux\"\n\
+         run-shell \"/usr/bin/env bash {state}/keys/switch.tmux\"\n\
          run-shell \"/usr/bin/env bash {state}/keys/timeline.tmux\"\n",
         exe = exe().display(),
         arguments = cli.arguments(),
@@ -263,6 +264,7 @@ fn update_materialises_resources() {
         ("graph", "keys=g"),
         ("home", "keys=m"),
         ("board", "keys=b"),
+        ("switch", "keys=P"),
     ] {
         assert!(
             installed

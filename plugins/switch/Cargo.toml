@@ -1,0 +1,20 @@
+[package]
+name = "tx-switch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "tx-core plugin: prefix+P, switch plugins on and off without editing config.yaml."
+
+# The plugin as its own program: what `plugin.yaml` names for its verbs.
+[[bin]]
+name = "tx-switch"
+path = "src/main.rs"
+
+[dependencies]
+tx-core.workspace = true
+tx-plugin.workspace = true
+ratatui = "0.30"
+
+[lints]
+workspace = true

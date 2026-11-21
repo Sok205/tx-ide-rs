@@ -18,6 +18,7 @@ tier `ide`, and `full`, the default, adds tier `extra`.
 | `setup` | core | `tx-setup` |
 | `assistant` | ide | `tx-assistant` |
 | `board` | ide | `tx-board` |
+| `switch` | ide | `tx-switch` |
 | `edit` | ide | `tx-edit` |
 | `graph` | ide | `tx-graph` |
 | `home` | ide | `tx-home` |
@@ -198,6 +199,11 @@ requires `ide` and needs `gh` and `git`). `gh` must be signed in (`gh auth login
 `gh`, or signed out, the board says so where the columns would be, with the command that fixes
 it, and `r` retries. Its verbs run as the program `tx-board`
 (`plugins/board/plugin.yaml`).
+
+**`switch`**: `switch <id> on|off` sets `plugins.<id>.enabled` in `config.yaml`, keeping the
+file's comments and layout, then runs `tx update`, which publishes or retires the plugin.
+`switch` alone lists the plugins: space flips one, Enter applies, q cancels. prefix+P opens it
+in a popup. Tier `ide` (it requires `ide`); its program is `tx-switch`.
 
 **`graph`**: `graph` draws the agents as a graph: columns by lineage depth, dashed edges for
 lineage, and solid edges for the messages agents (and you, the node "you") sent each other in the
