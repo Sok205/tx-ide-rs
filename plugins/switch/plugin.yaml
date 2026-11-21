@@ -1,0 +1,14 @@
+api: 1
+id: switch
+description: Prefix+P, switch plugins on and off without editing config.yaml.
+tier: ide
+requires: [ide]
+
+verbs:
+  - name: switch
+    usage: "switch [<id> on|off]   switch a plugin in config.yaml, then tx update; no arguments: pick in a list (prefix+P)"
+    bin: tx-switch
+    args: [switch]
+
+resources:
+  - keys/switch.tmux

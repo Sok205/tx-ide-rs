@@ -2027,6 +2027,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx-switch"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "tx-core",
+ "tx-plugin",
+]
+
+[[package]]
 name = "tx-timeline"
 version = "0.1.0"
 dependencies = [

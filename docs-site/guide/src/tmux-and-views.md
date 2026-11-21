@@ -141,6 +141,7 @@ The prefix is `C-a`. Each key belongs to a plugin and disappears when that plugi
 | prefix+T | the resident timeline in a popup (`timeline`) |
 | prefix+g | the resident agent graph in a popup (`graph`) |
 | prefix+b | the resident GitHub issue board of the pane's checkout in a popup (`board`) |
+| prefix+P | the plugins, to switch on and off, in a popup (`switch`) |
 | prefix+/ | one line to the assistant, with the focus envelope (`assistant`) |
 | C-h C-j C-k C-l, C-u C-d | move between panes; page the scrollback (`ide`) |
 
